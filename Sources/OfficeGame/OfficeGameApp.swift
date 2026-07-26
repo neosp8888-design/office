@@ -5,9 +5,11 @@ import SwiftUI
 
 @main
 struct OfficeGameApp: App {
+    @StateObject private var director = AgentDirector()
+
     var body: some Scene {
         WindowGroup("사무실") {
-            OfficeGameView()
+            OfficeGameView(director: director)
         }
         .defaultSize(width: 1_200, height: 800)
         .windowResizability(.contentMinSize)
@@ -15,7 +17,7 @@ struct OfficeGameApp: App {
 }
 
 private struct OfficeGameView: View {
-    @StateObject private var director = AgentDirector()
+    @ObservedObject var director: AgentDirector
     @State private var command = ""
     @State private var showsCharacterSettings = false
     @State private var historyTarget: ConversationHistoryTarget?
@@ -222,6 +224,10 @@ private struct OfficeGameView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .medium))
                 .onSubmit(submitCommand)
+                .disabled(
+                    !director.isReadyForSubmissions
+                        || director.isUpdatingConfiguration
+                )
 
             Button {
             } label: {
@@ -245,16 +251,8 @@ private struct OfficeGameView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("보내기")
-            .disabled(
-                director.selectedCharacter == nil
-                    || director.isSelectedCharacterRunning
-            )
-            .opacity(
-                director.selectedCharacter == nil
-                    || director.isSelectedCharacterRunning
-                    ? 0.45
-                    : 1
-            )
+            .disabled(commandIsDisabled)
+            .opacity(commandIsDisabled ? 0.45 : 1)
         }
         .padding(.leading, 16)
         .padding(.trailing, 10)
@@ -273,6 +271,19 @@ private struct OfficeGameView: View {
     }
 
     private var commandPlaceholder: String {
+        if let restoreError = director.sessionRestoreError {
+            return "세션 복구 실패 · \(restoreError)"
+        }
+        if !director.isReadyForSubmissions {
+            return "저장된 세션을 복구하는 중입니다"
+        }
+        if
+            let selectedCharacterID = director.selectedCharacterID,
+            let persistenceError =
+                director.turnPersistenceErrors[selectedCharacterID]
+        {
+            return "대화 기록 저장 실패 · \(persistenceError)"
+        }
         if let selectedName = director.selectedName {
             if
                 let selectedCharacterID = director.selectedCharacterID,
@@ -295,6 +306,13 @@ private struct OfficeGameView: View {
             return "\(selectedName)에게 업무를 입력하세요"
         }
         return "캐릭터를 선택하세요"
+    }
+
+    private var commandIsDisabled: Bool {
+        !director.isReadyForSubmissions
+            || director.isUpdatingConfiguration
+            || director.selectedCharacter == nil
+            || director.isSelectedCharacterRunning
     }
 
     private var characterSettingsButton: some View {
@@ -328,6 +346,16 @@ private struct OfficeGameView: View {
         .popover(isPresented: $showsCharacterSettings) {
             CharacterSettingsView(director: director)
         }
+        .disabled(
+            !director.isReadyForSubmissions
+                || director.isUpdatingConfiguration
+        )
+        .opacity(
+            director.isReadyForSubmissions
+                && !director.isUpdatingConfiguration
+                ? 1
+                : 0.45
+        )
         .accessibilityLabel("캐릭터 설정")
         .help("캐릭터 이름 설정")
     }
@@ -336,7 +364,11 @@ private struct OfficeGameView: View {
         let prompt = command.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        guard !prompt.isEmpty, director.selectedCharacter != nil else {
+        guard
+            !commandIsDisabled,
+            !prompt.isEmpty,
+            director.selectedCharacter != nil
+        else {
             return
         }
 
@@ -604,7 +636,11 @@ private struct AgentQuickSettingsView: View {
             }
         }
         .menuStyle(.borderlessButton)
-        .disabled(director.runningCharacters.contains(character.id))
+        .disabled(
+            !director.isReadyForSubmissions
+                || director.isUpdatingConfiguration
+                || director.runningCharacters.contains(character.id)
+        )
     }
 
     private func apply(_ settings: CharacterAgentSettings) {

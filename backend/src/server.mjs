@@ -52,6 +52,26 @@ function routeCharacterHistory(pathname) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+async function endActiveSession(client, characterID) {
+  await client.query(
+    `
+      DELETE FROM active_cli_sessions
+      WHERE character_id = $1
+    `,
+    [characterID],
+  );
+
+  await client.query(
+    `
+      UPDATE cli_sessions
+      SET ended_at = COALESCE(ended_at, now())
+      WHERE character_id = $1
+        AND ended_at IS NULL
+    `,
+    [characterID],
+  );
+}
+
 async function listCharacters(response) {
   const result = await pool.query(
     `
@@ -77,6 +97,25 @@ async function listCharacters(response) {
     `,
   );
   send(response, 200, { characters: result.rows });
+}
+
+async function listActiveSessions(response) {
+  const result = await pool.query(
+    `
+      SELECT
+        active.character_id AS "characterId",
+        session.external_id AS "externalSessionId",
+        session.conversation_id AS "conversationId",
+        session.started_at AS "startedAt"
+      FROM active_cli_sessions AS active
+      JOIN cli_sessions AS session
+        ON session.id = active.cli_session_id
+      WHERE session.external_id IS NOT NULL
+        AND session.ended_at IS NULL
+      ORDER BY active.character_id
+    `,
+  );
+  send(response, 200, { sessions: result.rows });
 }
 
 async function updateCharacterName(response, characterID, body) {
@@ -111,20 +150,40 @@ async function updateCharacterIdentityPrompt(response, characterID, body) {
     return;
   }
 
-  const result = await pool.query(
-    `
-      UPDATE characters
-      SET identity_prompt = $2, updated_at = now()
-      WHERE id = $1
-      RETURNING id, identity_prompt AS "identityPrompt"
-    `,
-    [characterID, identityPrompt],
-  );
-  if (result.rowCount === 0) {
+  const character = await withTransaction(async (client) => {
+    const current = await client.query(
+      `
+        SELECT id, identity_prompt AS "identityPrompt"
+        FROM characters
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [characterID],
+    );
+    if (current.rowCount === 0) {
+      return null;
+    }
+    if (current.rows[0].identityPrompt === identityPrompt) {
+      return current.rows[0];
+    }
+
+    const updated = await client.query(
+      `
+        UPDATE characters
+        SET identity_prompt = $2, updated_at = now()
+        WHERE id = $1
+        RETURNING id, identity_prompt AS "identityPrompt"
+      `,
+      [characterID, identityPrompt],
+    );
+    await endActiveSession(client, characterID);
+    return updated.rows[0];
+  });
+  if (!character) {
     send(response, 404, { error: "캐릭터를 찾을 수 없습니다." });
     return;
   }
-  send(response, 200, result.rows[0]);
+  send(response, 200, character);
 }
 
 async function updateCharacterSettings(response, characterID, body) {
@@ -162,25 +221,52 @@ async function updateCharacterSettings(response, characterID, body) {
       ? "auto"
       : requestedPermission;
 
-  const result = await pool.query(
-    `
-      UPDATE characters
-      SET
-        backend = $2,
-        model = $3,
-        effort = $4,
-        permission = $5,
-        updated_at = now()
-      WHERE id = $1
-      RETURNING id, backend, model, effort, permission
-    `,
-    [characterID, backend, model, effort, permission],
-  );
-  if (result.rowCount === 0) {
+  const character = await withTransaction(async (client) => {
+    const current = await client.query(
+      `
+        SELECT id, backend, model, effort, permission
+        FROM characters
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [characterID],
+    );
+    if (current.rowCount === 0) {
+      return null;
+    }
+
+    const previous = current.rows[0];
+    const changed =
+      previous.backend !== backend ||
+      previous.model !== model ||
+      previous.effort !== effort ||
+      previous.permission !== permission;
+    if (!changed) {
+      return previous;
+    }
+
+    const updated = await client.query(
+      `
+        UPDATE characters
+        SET
+          backend = $2,
+          model = $3,
+          effort = $4,
+          permission = $5,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING id, backend, model, effort, permission
+      `,
+      [characterID, backend, model, effort, permission],
+    );
+    await endActiveSession(client, characterID);
+    return updated.rows[0];
+  });
+  if (!character) {
     send(response, 404, { error: "캐릭터를 찾을 수 없습니다." });
     return;
   }
-  send(response, 200, result.rows[0]);
+  send(response, 200, character);
 }
 
 async function characterHistory(response, characterID) {
@@ -288,10 +374,188 @@ async function globalHistory(response, url) {
   send(response, 200, { turns: result.rows });
 }
 
+async function sessionForTurn(
+  client,
+  conversationID,
+  characterID,
+  externalSessionID,
+) {
+  const activeSession = await client.query(
+    `
+      SELECT active.cli_session_id
+      FROM active_cli_sessions AS active
+      WHERE active.character_id = $1
+      FOR UPDATE
+    `,
+    [characterID],
+  );
+  const previousSessionID =
+    activeSession.rows[0]?.cli_session_id ?? null;
+
+  if (!externalSessionID) {
+    if (previousSessionID) {
+      const previous = await client.query(
+        `
+          SELECT id
+          FROM cli_sessions
+          WHERE id = $1
+            AND ended_at IS NULL
+        `,
+        [previousSessionID],
+      );
+      if (previous.rowCount > 0) {
+        return previous.rows[0].id;
+      }
+      await client.query(
+        `
+          DELETE FROM active_cli_sessions
+          WHERE character_id = $1
+        `,
+        [characterID],
+      );
+    }
+
+    const pending = await client.query(
+      `
+        SELECT id
+        FROM cli_sessions
+        WHERE conversation_id = $1
+          AND character_id = $2
+          AND external_id IS NULL
+          AND ended_at IS NULL
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+      `,
+      [conversationID, characterID],
+    );
+    if (pending.rowCount > 0) {
+      return pending.rows[0].id;
+    }
+
+    const inserted = await client.query(
+      `
+        INSERT INTO cli_sessions (
+          conversation_id,
+          character_id,
+          previous_session_id
+        )
+        VALUES ($1, $2, $3)
+        RETURNING id
+      `,
+      [conversationID, characterID, previousSessionID],
+    );
+    return inserted.rows[0].id;
+  }
+
+  let session = await client.query(
+    `
+      SELECT id, ended_at AS "endedAt"
+      FROM cli_sessions
+      WHERE character_id = $1
+        AND external_id = $2
+    `,
+    [characterID, externalSessionID],
+  );
+
+  if (session.rows[0]?.endedAt) {
+    throw new Error("종료된 CLI 세션은 다시 활성화할 수 없습니다.");
+  }
+
+  if (session.rowCount === 0) {
+    const pending = await client.query(
+      `
+        SELECT id
+        FROM cli_sessions
+        WHERE conversation_id = $1
+          AND character_id = $2
+          AND external_id IS NULL
+          AND ended_at IS NULL
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+      `,
+      [conversationID, characterID],
+    );
+    if (pending.rowCount > 0) {
+      session = await client.query(
+        `
+          UPDATE cli_sessions
+          SET external_id = $2
+          WHERE id = $1
+          RETURNING id
+        `,
+        [pending.rows[0].id, externalSessionID],
+      );
+    } else {
+      session = await client.query(
+        `
+          INSERT INTO cli_sessions (
+            conversation_id,
+            character_id,
+            external_id,
+            previous_session_id
+          )
+          VALUES ($1, $2, $3, $4)
+          RETURNING id
+        `,
+        [
+          conversationID,
+          characterID,
+          externalSessionID,
+          previousSessionID,
+        ],
+      );
+    }
+  }
+
+  const sessionID = session.rows[0].id;
+  await client.query(
+    `
+      UPDATE cli_sessions
+      SET ended_at = COALESCE(ended_at, now())
+      WHERE character_id = $1
+        AND id <> $2
+        AND ended_at IS NULL
+    `,
+    [characterID, sessionID],
+  );
+  await client.query(
+    `
+      UPDATE cli_sessions
+      SET ended_at = NULL
+      WHERE id = $1
+    `,
+    [sessionID],
+  );
+  await client.query(
+    `
+      INSERT INTO active_cli_sessions (
+        character_id,
+        cli_session_id
+      )
+      VALUES ($1, $2)
+      ON CONFLICT (character_id) DO UPDATE
+      SET
+        cli_session_id = EXCLUDED.cli_session_id,
+        activated_at = CASE
+          WHEN active_cli_sessions.cli_session_id =
+            EXCLUDED.cli_session_id
+          THEN active_cli_sessions.activated_at
+          ELSE now()
+        END,
+        updated_at = now()
+    `,
+    [characterID, sessionID],
+  );
+  return sessionID;
+}
+
 async function recordTurn(response, body) {
   const turnID = body.turnId ?? randomUUID();
   const conversationID = body.conversationId;
   const characterID = body.characterId;
+  const externalSessionID = String(
+    body.externalSessionId ?? "",
+  ).trim() || null;
 
   if (!conversationID || !characterID || !body.prompt) {
     send(response, 400, { error: "대화, 캐릭터, 프롬프트가 필요합니다." });
@@ -299,6 +563,28 @@ async function recordTurn(response, body) {
   }
 
   await withTransaction(async (client) => {
+    await client.query(
+      `
+        SELECT id
+        FROM characters
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [characterID],
+    );
+
+    const existingTurn = await client.query(
+      `
+        SELECT id
+        FROM turns
+        WHERE id = $1
+      `,
+      [turnID],
+    );
+    if (existingTurn.rowCount > 0) {
+      return;
+    }
+
     await client.query(
       `
         INSERT INTO conversations (id, title, workdir)
@@ -312,22 +598,14 @@ async function recordTurn(response, body) {
       ],
     );
 
-    const session = await client.query(
-      `
-        INSERT INTO cli_sessions (
-          conversation_id,
-          character_id,
-          external_id
-        )
-        VALUES ($1, $2, $3)
-        ON CONFLICT (conversation_id, character_id) DO UPDATE
-        SET external_id = COALESCE(EXCLUDED.external_id, cli_sessions.external_id)
-        RETURNING id
-      `,
-      [conversationID, characterID, body.externalSessionId ?? null],
+    const sessionID = await sessionForTurn(
+      client,
+      conversationID,
+      characterID,
+      externalSessionID,
     );
 
-    await client.query(
+    const insertedTurn = await client.query(
       `
         INSERT INTO turns (
           id,
@@ -337,23 +615,27 @@ async function recordTurn(response, body) {
           ended_at
         )
         VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
       `,
       [
         turnID,
-        session.rows[0].id,
+        sessionID,
         body.prompt,
         body.startedAt ?? new Date().toISOString(),
         body.finishedAt ?? new Date().toISOString(),
       ],
     );
 
-    await client.query(
-      `
-        INSERT INTO messages (turn_id, role, text)
-        VALUES ($1, 'user', $2), ($1, 'assistant', $3)
-      `,
-      [turnID, body.prompt, body.response ?? ""],
-    );
+    if (insertedTurn.rowCount > 0) {
+      await client.query(
+        `
+          INSERT INTO messages (turn_id, role, text)
+          VALUES ($1, 'user', $2), ($1, 'assistant', $3)
+        `,
+        [turnID, body.prompt, body.response ?? ""],
+      );
+    }
   });
 
   send(response, 201, { turnId: turnID });
@@ -456,6 +738,11 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/characters"
     ) {
       await listCharacters(response);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/active-sessions"
+    ) {
+      await listActiveSessions(response);
     } else if (request.method === "GET" && historyCharacterID) {
       await characterHistory(response, historyCharacterID);
     } else if (

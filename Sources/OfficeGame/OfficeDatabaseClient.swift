@@ -17,6 +17,17 @@ struct OfficeDatabaseClient: Sendable {
         return payload.characters
     }
 
+    func fetchActiveSessions() async throws -> [StoredActiveSession] {
+        let url = baseURL.appending(path: "api/active-sessions")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response)
+        let payload = try JSONDecoder().decode(
+            ActiveSessionListResponse.self,
+            from: data
+        )
+        return payload.sessions
+    }
+
     func updateName(
         _ name: String,
         for character: OfficeCharacter
@@ -220,6 +231,10 @@ private struct CharacterListResponse: Decodable {
     let characters: [StoredCharacterProfile]
 }
 
+private struct ActiveSessionListResponse: Decodable {
+    let sessions: [StoredActiveSession]
+}
+
 struct StoredCharacterProfile: Decodable, Sendable {
     let id: String
     let name: String
@@ -228,6 +243,12 @@ struct StoredCharacterProfile: Decodable, Sendable {
     let effort: String
     let permission: String
     let identityPrompt: String
+}
+
+struct StoredActiveSession: Decodable, Sendable {
+    let characterId: String
+    let externalSessionId: String?
+    let conversationId: UUID
 }
 
 struct CharacterHistory: Decodable, Sendable {

@@ -25,18 +25,24 @@ final class AgentDirector: ObservableObject {
         [OfficeCharacter: String] = [:]
     @Published private(set) var offDutyCharacters:
         [OfficeCharacter: String] = [:]
+    @Published private(set) var isReadyForSubmissions = false
+    @Published private(set) var sessionRestoreError: String?
+    @Published private(set) var isUpdatingConfiguration = false
+    @Published private(set) var turnPersistenceErrors:
+        [OfficeCharacter: String] = [:]
     @Published var selectedCharacterID: OfficeCharacter?
     @Published private(set) var settingsStatus: String?
 
     private let configuration: OfficeAgentConfiguration
     private let runner = AgentCLIRunner()
     private let database: OfficeDatabaseClient
-    private let conversationID = UUID()
+    private var conversationIDs: [OfficeCharacter: UUID] = [:]
     private var sessionIDs: [OfficeCharacter: String] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
     private var lastIdleChatterCharacter: OfficeCharacter?
     private static let bubbleLifetime = Duration.seconds(10)
+    private static let sessionRestoreRetryDelay = Duration.seconds(2)
     private static let idleChatterQuietDelaySeconds = 5 ... 12
     private static let idleChatterMessages = [
         "☕ 커피가 저를 부르네요.",
@@ -88,7 +94,7 @@ final class AgentDirector: ObservableObject {
         )
 
         Task {
-            await refreshCharacters()
+            await restorePersistentState()
         }
         startIdleChatter()
     }
@@ -168,6 +174,8 @@ final class AgentDirector: ObservableObject {
 
         guard
             let character,
+            isReadyForSubmissions,
+            !isUpdatingConfiguration,
             !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             !runningCharacters.contains(character.id)
         else {
@@ -175,9 +183,12 @@ final class AgentDirector: ObservableObject {
         }
 
         let questionBeingAnswered = pendingQuestions[character.id]
+        let conversationID = conversationIDs[character.id] ?? UUID()
+        conversationIDs[character.id] = conversationID
         selectedCharacterID = character.id
         pendingQuestions[character.id] = nil
         questionSubmissionErrors[character.id] = nil
+        turnPersistenceErrors[character.id] = nil
         failedCharacters[character.id] = nil
         offDutyCharacters[character.id] = nil
         if latestQuestion?.character == character.id {
@@ -200,7 +211,6 @@ final class AgentDirector: ObservableObject {
                 }
                 let activeSessionID =
                     response.sessionID ?? sessionIDs[character.id]
-                runningCharacters.remove(character.id)
                 if response.needsInput {
                     pendingQuestions[character.id] = response.text
                     latestQuestion = PendingAgentQuestion(
@@ -217,7 +227,7 @@ final class AgentDirector: ObservableObject {
                     showBubble(response.text, for: character.id)
                 }
 
-                try? await database.recordTurn(
+                await persistTurn(
                     DatabaseTurn(
                         turnId: UUID(),
                         conversationId: conversationID,
@@ -229,8 +239,10 @@ final class AgentDirector: ObservableObject {
                         workdir: configuration.workdir,
                         startedAt: startedAt,
                         finishedAt: Date()
-                    )
+                    ),
+                    for: character.id
                 )
+                runningCharacters.remove(character.id)
             } catch {
                 runningCharacters.remove(character.id)
                 let message = error.localizedDescription
@@ -290,6 +302,23 @@ final class AgentDirector: ObservableObject {
         identityPrompts identityPromptDrafts: [OfficeCharacter: String]
     ) async {
         settingsStatus = nil
+        guard isReadyForSubmissions else {
+            settingsStatus =
+                sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+            return
+        }
+        guard runningCharacters.isEmpty else {
+            settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
+            return
+        }
+        guard !isUpdatingConfiguration else {
+            settingsStatus = "다른 설정을 저장하는 중입니다."
+            return
+        }
+        isUpdatingConfiguration = true
+        defer {
+            isUpdatingConfiguration = false
+        }
         do {
             for character in characters {
                 let name =
@@ -330,7 +359,9 @@ final class AgentDirector: ObservableObject {
             }
             settingsStatus = "설정을 저장했습니다."
         } catch {
-            settingsStatus = error.localizedDescription
+            let message = error.localizedDescription
+            await restorePersistentState()
+            settingsStatus = message
         }
     }
 
@@ -339,12 +370,31 @@ final class AgentDirector: ObservableObject {
         for character: OfficeCharacter
     ) async {
         settingsStatus = nil
+        guard isReadyForSubmissions else {
+            settingsStatus =
+                sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+            return
+        }
+        guard !runningCharacters.contains(character) else {
+            settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
+            return
+        }
+        guard !isUpdatingConfiguration else {
+            settingsStatus = "다른 설정을 저장하는 중입니다."
+            return
+        }
+        isUpdatingConfiguration = true
+        defer {
+            isUpdatingConfiguration = false
+        }
         do {
             try await database.updateSettings(settings, for: character)
             apply(settings, to: character)
             settingsStatus = "설정을 저장했습니다."
         } catch {
-            settingsStatus = error.localizedDescription
+            let message = error.localizedDescription
+            await restorePersistentState()
+            settingsStatus = message
         }
     }
 
@@ -442,26 +492,98 @@ final class AgentDirector: ObservableObject {
         return true
     }
 
-    private func refreshCharacters() async {
-        guard let storedCharacters = try? await database.fetchCharacters()
-        else {
-            return
-        }
-        for stored in storedCharacters {
-            guard let character = OfficeCharacter(rawValue: stored.id) else {
-                continue
+    private func restorePersistentState() async {
+        isReadyForSubmissions = false
+        sessionRestoreError = nil
+        conversationIDs = [:]
+        sessionIDs = [:]
+
+        while !Task.isCancelled {
+            do {
+                let storedCharacters = try await database.fetchCharacters()
+                for stored in storedCharacters {
+                    guard let character = OfficeCharacter(rawValue: stored.id)
+                    else {
+                        continue
+                    }
+                    names[character] = stored.name
+                    apply(
+                        CharacterAgentSettings(
+                            backend: stored.backend,
+                            model: stored.model,
+                            effort: stored.effort,
+                            permission: AgentPermission(
+                                cliValue: stored.permission
+                            )
+                        ),
+                        to: character
+                    )
+                    apply(
+                        identityPrompt: stored.identityPrompt,
+                        to: character
+                    )
+                }
+
+                let activeSessions = try await database.fetchActiveSessions()
+                var restoredConversationIDs:
+                    [OfficeCharacter: UUID] = [:]
+                var restoredSessionIDs: [OfficeCharacter: String] = [:]
+                for storedSession in activeSessions {
+                    guard
+                        let character = OfficeCharacter(
+                            rawValue: storedSession.characterId
+                        ),
+                        let externalSessionID =
+                            storedSession.externalSessionId?
+                            .trimmingCharacters(
+                                in: .whitespacesAndNewlines
+                            ),
+                        !externalSessionID.isEmpty
+                    else {
+                        continue
+                    }
+                    restoredConversationIDs[character] =
+                        storedSession.conversationId
+                    restoredSessionIDs[character] = externalSessionID
+                }
+                conversationIDs = restoredConversationIDs
+                sessionIDs = restoredSessionIDs
+                sessionRestoreError = nil
+                isReadyForSubmissions = true
+                return
+            } catch {
+                conversationIDs = [:]
+                sessionIDs = [:]
+                sessionRestoreError = error.localizedDescription
+                do {
+                    try await Task.sleep(
+                        for: Self.sessionRestoreRetryDelay
+                    )
+                } catch {
+                    return
+                }
             }
-            names[character] = stored.name
-            apply(
-                CharacterAgentSettings(
-                    backend: stored.backend,
-                    model: stored.model,
-                    effort: stored.effort,
-                    permission: AgentPermission(cliValue: stored.permission)
-                ),
-                to: character
-            )
-            apply(identityPrompt: stored.identityPrompt, to: character)
+        }
+    }
+
+    private func persistTurn(
+        _ turn: DatabaseTurn,
+        for character: OfficeCharacter
+    ) async {
+        var attempt = 0
+        while !Task.isCancelled {
+            do {
+                try await database.recordTurn(turn)
+                turnPersistenceErrors[character] = nil
+                return
+            } catch {
+                attempt += 1
+                turnPersistenceErrors[character] =
+                    error.localizedDescription
+                try? await Task.sleep(
+                    for: .seconds(min(attempt, 10))
+                )
+            }
         }
     }
 
@@ -499,6 +621,7 @@ final class AgentDirector: ObservableObject {
     }
 
     private func invalidateSession(for character: OfficeCharacter) {
+        conversationIDs[character] = nil
         sessionIDs[character] = nil
         pendingQuestions[character] = nil
         questionSubmissionErrors[character] = nil
