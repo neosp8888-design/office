@@ -16,9 +16,12 @@ SwiftUI·SpriteKit 사무실에서 캐릭터를 선택해 Codex CLI와 Claude Co
 - 창문, 화이트보드, 책장, 시계, 액자, 화분
 - 60fps SpriteKit 장면과 캐릭터 눈·입·손 애니메이션
 - 밤 창밖 불빛 점멸, 단상 간접조명 호흡, 실제 시각 초침
+- 화이트보드의 Codex·Claude 5시간·주간 잔여 한도
 - 해·달 아이콘으로 낮·밤 전환
 - 선택 캐릭터 이름이 표시되는 하단 명령 입력창
 - Codex·Claude Code JSONL 실행과 캐릭터별 세션 유지
+- 사용자 확인 질문 원문 말풍선과 같은 CLI 세션 답변 재개
+- CLI 비정상 종료를 계속 표시하는 `업무 중단` 말풍선
 - PostgreSQL 대화 저장과 pgvector RAG 스키마
 
 ## 캐릭터 설정
@@ -70,3 +73,5 @@ open dist/OfficeGame.app
 
 현재 앱 메뉴에는 모던 낮·밤만 노출한다. CLI 호출은 앱에서 직접 수행하며
 인증은 각 CLI의 기존 로그인을 사용한다. 앱은 API 키를 저장하지 않는다.
+한도 표시는 설치된 CodexBar CLI의 OAuth 사용량을 5분마다 읽으며, 조회할 수
+없으면 화이트보드에 `LIMIT OFF`를 표시한다.

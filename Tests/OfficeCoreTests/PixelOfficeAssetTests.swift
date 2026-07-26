@@ -180,4 +180,101 @@ final class PixelOfficeAssetTests: XCTestCase {
             "bypassPermissions"
         )
     }
+
+    func testWhiteboardUsageAreaMatchesPerspectiveCorners() {
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(x: 0, y: 0),
+            CGPoint(x: 210, y: 425)
+        )
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(x: 108, y: 0),
+            CGPoint(x: 318, y: 366)
+        )
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(x: 108, y: 69),
+            CGPoint(x: 318, y: 435)
+        )
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(x: 0, y: 69),
+            CGPoint(x: 210, y: 494)
+        )
+    }
+
+    func testNormalAgentResponseRemainsUnchanged() {
+        let text = "작업을 마쳤습니다.\n추가 확인은 필요하지 않습니다."
+
+        XCTAssertEqual(
+            AgentResponseProtocol.decode(text),
+            AgentResponseEnvelope(text: text, needsInput: false)
+        )
+    }
+
+    func testAgentQuestionMarkerIsRemovedAndQuestionIsPreserved() {
+        let response = "\r\n[NEED_INPUT]\r\n첫 번째 선택인가요?\r\n- A\r\n- B"
+
+        XCTAssertEqual(
+            AgentResponseProtocol.decode(response),
+            AgentResponseEnvelope(
+                text: "첫 번째 선택인가요?\n- A\n- B",
+                needsInput: true
+            )
+        )
+    }
+
+    func testEmptyAgentQuestionMarkerIsNotAccepted() {
+        let response = "[NEED_INPUT]\n\n"
+
+        XCTAssertEqual(
+            AgentResponseProtocol.decode(response),
+            AgentResponseEnvelope(text: response, needsInput: false)
+        )
+    }
+
+    func testMarkerAfterNormalTextDoesNotCreateAQuestion() {
+        let response = "설명입니다.\n[NEED_INPUT]\n이 문장은 예시입니다."
+
+        XCTAssertEqual(
+            AgentResponseProtocol.decode(response),
+            AgentResponseEnvelope(text: response, needsInput: false)
+        )
+    }
+
+    func testClaudeSessionLimitIsRecognized() {
+        XCTAssertTrue(
+            AgentUsageLimitClassifier.isLimitReached(
+                "You've hit your session limit · resets 2:50am (Asia/Seoul)"
+            )
+        )
+    }
+
+    func testCodexUsageAndQuotaLimitsAreRecognized() {
+        XCTAssertTrue(
+            AgentUsageLimitClassifier.isLimitReached(
+                "You have reached your weekly usage limit."
+            )
+        )
+        XCTAssertTrue(
+            AgentUsageLimitClassifier.isLimitReached(
+                "insufficient_quota"
+            )
+        )
+        XCTAssertTrue(
+            AgentUsageLimitClassifier.isLimitReached(
+                "0 weighted tokens left"
+            )
+        )
+    }
+
+    func testTransientRateLimitIsNotTreatedAsEndOfShift() {
+        XCTAssertFalse(
+            AgentUsageLimitClassifier.isLimitReached(
+                "Rate limit exceeded. Retry after 10 seconds."
+            )
+        )
+        XCTAssertFalse(
+            AgentUsageLimitClassifier.isLimitReached(
+                "Weekly usage is currently 70 percent."
+            )
+        )
+    }
 }

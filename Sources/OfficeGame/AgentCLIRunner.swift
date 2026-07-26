@@ -6,6 +6,7 @@ import OfficeCore
 struct AgentCLIResponse: Sendable {
     let text: String
     let sessionID: String?
+    let needsInput: Bool
 }
 
 actor AgentCLIRunner {
@@ -29,18 +30,23 @@ actor AgentCLIRunner {
             arguments: arguments,
             workdir: workdir
         )
+        let output = String(decoding: result.stdout, as: UTF8.self)
 
         guard result.status == 0 else {
             let stderr = String(decoding: result.stderr, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let structuredError = structuredFailureMessage(
+                in: output,
+                backend: character.backend
+            )
             throw AgentCLIError.failed(
-                stderr.isEmpty
-                    ? "CLI가 종료 코드 \(result.status)로 끝났습니다."
-                    : stderr
+                structuredError
+                    ?? (stderr.isEmpty
+                        ? "CLI가 종료 코드 \(result.status)로 끝났습니다."
+                        : stderr)
             )
         }
 
-        let output = String(decoding: result.stdout, as: UTF8.self)
         switch character.backend {
         case .codex:
             return try parseCodex(output)
@@ -86,6 +92,9 @@ actor AgentCLIRunner {
             너는 이 사무실의 \(character.name)이다. \(character.seat)에 앉아 있다.
             \(character.identityPrompt)
 
+            응답 규칙
+            \(AgentResponseProtocol.instruction)
+
             사용자 업무
             \(prompt)
             """
@@ -130,6 +139,9 @@ actor AgentCLIRunner {
             let identity = """
             너는 이 사무실의 \(character.name)이다. \(character.seat)에 앉아 있다.
             \(character.identityPrompt)
+
+            응답 규칙
+            \(AgentResponseProtocol.instruction)
             """
             arguments += ["--append-system-prompt", identity]
         }
@@ -186,6 +198,7 @@ actor AgentCLIRunner {
     private func parseCodex(_ output: String) throws -> AgentCLIResponse {
         var sessionID: String?
         var messages: [String] = []
+        var lastError: String?
 
         for object in jsonObjects(from: output) {
             let type = object["type"] as? String
@@ -199,17 +212,26 @@ actor AgentCLIRunner {
                 !text.isEmpty
             {
                 messages.append(text)
+            } else if type == "error" {
+                lastError =
+                    failureMessage(from: object["message"])
+                    ?? failureMessage(from: object["error"])
             } else if type == "turn.failed" {
                 throw AgentCLIError.failed(
-                    object["error"] as? String ?? "Codex 작업이 실패했습니다."
+                    failureMessage(from: object["error"])
+                        ?? lastError
+                        ?? "Codex 작업이 실패했습니다."
                 )
             }
         }
 
         guard let text = messages.last else {
+            if let lastError {
+                throw AgentCLIError.failed(lastError)
+            }
             throw AgentCLIError.invalidOutput("Codex 최종 메시지가 없습니다.")
         }
-        return AgentCLIResponse(text: text, sessionID: sessionID)
+        return response(text: text, sessionID: sessionID)
     }
 
     private func parseClaude(_ output: String) throws -> AgentCLIResponse {
@@ -253,7 +275,69 @@ actor AgentCLIRunner {
                 "Claude Code 최종 메시지가 없습니다."
             )
         }
-        return AgentCLIResponse(text: text, sessionID: sessionID)
+        return response(text: text, sessionID: sessionID)
+    }
+
+    private func structuredFailureMessage(
+        in output: String,
+        backend: AgentBackend
+    ) -> String? {
+        var lastError: String?
+        for object in jsonObjects(from: output) {
+            switch backend {
+            case .codex:
+                if object["type"] as? String == "turn.failed" {
+                    return failureMessage(from: object["error"]) ?? lastError
+                }
+                if object["type"] as? String == "error" {
+                    lastError =
+                        failureMessage(from: object["message"])
+                        ?? failureMessage(from: object["error"])
+                }
+            case .claude:
+                if
+                    object["type"] as? String == "result",
+                    object["is_error"] as? Bool == true
+                {
+                    return failureMessage(from: object["result"])
+                }
+            }
+        }
+        return lastError
+    }
+
+    private func failureMessage(from value: Any?) -> String? {
+        if let value = value as? String {
+            let trimmed = value.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let object = value as? [String: Any] else {
+            return nil
+        }
+        let fields = ["message", "detail", "code", "type", "error"]
+        let messages = fields.compactMap {
+            failureMessage(from: object[$0])
+        }
+        .reduce(into: [String]()) { result, message in
+            if !result.contains(message) {
+                result.append(message)
+            }
+        }
+        return messages.isEmpty ? nil : messages.joined(separator: "\n")
+    }
+
+    private func response(
+        text: String,
+        sessionID: String?
+    ) -> AgentCLIResponse {
+        let decoded = AgentResponseProtocol.decode(text)
+        return AgentCLIResponse(
+            text: decoded.text,
+            sessionID: sessionID,
+            needsInput: decoded.needsInput
+        )
     }
 
     private func jsonObjects(from output: String) -> [[String: Any]] {

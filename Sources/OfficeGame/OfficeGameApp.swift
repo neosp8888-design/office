@@ -42,6 +42,11 @@ private struct OfficeGameView: View {
             .ignoresSafeArea()
             .accessibilityHidden(true)
 
+            WhiteboardUsageLayer(
+                isActive: scenePhase == .active
+            )
+            .ignoresSafeArea()
+
             CharacterInteractionLayer(
                 director: director,
                 onMonitorTapped: {
@@ -51,9 +56,18 @@ private struct OfficeGameView: View {
                     historyTarget = .archive
                 },
                 onBubbleTapped: { character, message in
+                    let offDutyReason = director.offDutyReason(
+                        for: character
+                    )
                     bubbleDetail = BubbleDetail(
+                        character: character,
                         name: director.displayName(for: character),
-                        message: message
+                        message: offDutyReason ?? message,
+                        isQuestion:
+                            director.pendingQuestion(for: character) != nil,
+                        isFailure:
+                            director.failureMessage(for: character) != nil,
+                        isOffDuty: offDutyReason != nil
                     )
                 }
             )
@@ -86,7 +100,38 @@ private struct OfficeGameView: View {
             }
         }
         .sheet(item: $bubbleDetail) { detail in
-            BubbleDetailView(name: detail.name, message: detail.message)
+            BubbleDetailView(
+                director: director,
+                character: detail.character,
+                name: detail.name,
+                message: detail.message,
+                isQuestion: detail.isQuestion,
+                isFailure: detail.isFailure,
+                isOffDuty: detail.isOffDuty
+            )
+        }
+        .onChange(of: director.latestQuestion) { _, question in
+            guard let question else {
+                if
+                    let detail = bubbleDetail,
+                    detail.isQuestion,
+                    director.pendingQuestion(for: detail.character) == nil
+                {
+                    bubbleDetail = nil
+                }
+                return
+            }
+            guard bubbleDetail == nil, historyTarget == nil else {
+                return
+            }
+            bubbleDetail = BubbleDetail(
+                character: question.character,
+                name: director.displayName(for: question.character),
+                message: question.text,
+                isQuestion: true,
+                isFailure: false,
+                isOffDuty: false
+            )
         }
     }
 
@@ -229,6 +274,24 @@ private struct OfficeGameView: View {
 
     private var commandPlaceholder: String {
         if let selectedName = director.selectedName {
+            if
+                let selectedCharacterID = director.selectedCharacterID,
+                director.pendingQuestion(for: selectedCharacterID) != nil
+            {
+                return "\(selectedName)의 질문에 답변하세요"
+            }
+            if
+                let selectedCharacterID = director.selectedCharacterID,
+                director.offDutyReason(for: selectedCharacterID) != nil
+            {
+                return "\(selectedName)은 모델 한도 소진으로 퇴근했습니다"
+            }
+            if
+                let selectedCharacterID = director.selectedCharacterID,
+                director.failureMessage(for: selectedCharacterID) != nil
+            {
+                return "\(selectedName)에게 새 업무를 보내 다시 시작하세요"
+            }
             return "\(selectedName)에게 업무를 입력하세요"
         }
         return "캐릭터를 선택하세요"
@@ -284,22 +347,41 @@ private struct OfficeGameView: View {
 
 private struct BubbleDetail: Identifiable {
     let id = UUID()
+    let character: OfficeCharacter
     let name: String
     let message: String
+    let isQuestion: Bool
+    let isFailure: Bool
+    let isOffDuty: Bool
 }
 
 private struct BubbleDetailView: View {
+    @ObservedObject var director: AgentDirector
+    let character: OfficeCharacter
     let name: String
     let message: String
+    let isQuestion: Bool
+    let isFailure: Bool
+    let isOffDuty: Bool
+    @State private var answer = ""
+    @FocusState private var answerIsFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(name) 응답")
+                    Text(detailTitle)
                         .font(.system(size: 19, weight: .bold))
-                    Text("말풍선에 표시된 응답 전문")
+                    Text(
+                        isQuestion
+                            ? "질문 원문을 확인하고 아래에 답변하세요"
+                            : isOffDuty
+                            ? "모델 한도 소진 원문과 재설정 안내"
+                            : isFailure
+                            ? "CLI 작업이 중단된 원인 전문"
+                            : "말풍선에 표시된 응답 전문"
+                    )
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -320,8 +402,100 @@ private struct BubbleDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
             }
+
+            if isQuestion {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("답변")
+                        .font(.system(size: 13, weight: .bold))
+
+                    if
+                        let error = director.questionSubmissionError(
+                            for: character
+                        )
+                    {
+                        Label(
+                            "전송하지 못했습니다. \(error)",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.red)
+                    }
+
+                    TextEditor(text: $answer)
+                        .font(.system(size: 13))
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(minHeight: 92, maxHeight: 150)
+                        .background(
+                            RoundedRectangle(
+                                cornerRadius: 9,
+                                style: .continuous
+                            )
+                            .fill(Color(nsColor: .textBackgroundColor))
+                        )
+                        .overlay {
+                            RoundedRectangle(
+                                cornerRadius: 9,
+                                style: .continuous
+                            )
+                            .stroke(Color.primary.opacity(0.14))
+                        }
+                        .focused($answerIsFocused)
+
+                    HStack {
+                        Text("답변은 같은 CLI 세션으로 이어집니다.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("답변 보내기", action: submitAnswer)
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(
+                                answer.trimmingCharacters(
+                                    in: .whitespacesAndNewlines
+                                ).isEmpty
+                                    || director.runningCharacters.contains(
+                                        character
+                                    )
+                            )
+                    }
+                }
+                .padding(18)
+            }
         }
-        .frame(minWidth: 560, minHeight: 420)
+        .frame(
+            minWidth: 560,
+            minHeight: isQuestion ? 540 : 420
+        )
+        .onAppear {
+            answerIsFocused = isQuestion
+        }
+    }
+
+    private func submitAnswer() {
+        let value = answer.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !value.isEmpty else {
+            return
+        }
+        director.submit(value, to: character)
+        dismiss()
+    }
+
+    private var detailTitle: String {
+        if isQuestion {
+            return "\(name) 확인 질문"
+        }
+        if isOffDuty {
+            return "\(name) 퇴근"
+        }
+        if isFailure {
+            return "\(name) 업무 중단"
+        }
+        return "\(name) 응답"
     }
 }
 

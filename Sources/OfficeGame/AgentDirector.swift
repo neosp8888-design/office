@@ -4,12 +4,27 @@ import Combine
 import Foundation
 import OfficeCore
 
+struct PendingAgentQuestion: Identifiable, Equatable {
+    let id = UUID()
+    let character: OfficeCharacter
+    let text: String
+}
+
 @MainActor
 final class AgentDirector: ObservableObject {
     @Published private(set) var characters: [CharacterConfiguration]
     @Published private(set) var names: [OfficeCharacter: String]
     @Published private(set) var bubbles: [OfficeCharacter: String] = [:]
+    @Published private(set) var pendingQuestions:
+        [OfficeCharacter: String] = [:]
+    @Published private(set) var questionSubmissionErrors:
+        [OfficeCharacter: String] = [:]
+    @Published private(set) var latestQuestion: PendingAgentQuestion?
     @Published private(set) var runningCharacters: Set<OfficeCharacter> = []
+    @Published private(set) var failedCharacters:
+        [OfficeCharacter: String] = [:]
+    @Published private(set) var offDutyCharacters:
+        [OfficeCharacter: String] = [:]
     @Published var selectedCharacterID: OfficeCharacter?
     @Published private(set) var settingsStatus: String?
 
@@ -20,8 +35,9 @@ final class AgentDirector: ObservableObject {
     private var sessionIDs: [OfficeCharacter: String] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
+    private var lastIdleChatterCharacter: OfficeCharacter?
     private static let bubbleLifetime = Duration.seconds(10)
-    private static let idleChatterInterval = Duration.seconds(14)
+    private static let idleChatterQuietDelaySeconds = 5 ... 12
     private static let idleChatterMessages = [
         "☕ 커피가 저를 부르네요.",
         "🧠 뇌 업데이트 대기 중!",
@@ -32,7 +48,27 @@ final class AgentDirector: ObservableObject {
         "🫠 의자와 한 몸이 됐어요.",
         "🌱 아이디어 새싹 대기 중.",
         "🐙 손은 여덟 개면 좋겠어요.",
-        "🚀 다음 업무 발사 대기!"
+        "🚀 다음 업무 발사 대기!",
+        "📋 우선순위를 조용히 정리 중.",
+        "🔍 놓친 조건이 없는지 살펴보는 중.",
+        "🧭 다음 병목이 어디일지 생각 중.",
+        "🧩 작은 개선점 하나를 찾았어요.",
+        "🛠️ 반복 업무를 줄일 방법 고민 중.",
+        "📈 오늘의 진척을 숫자로 보는 중.",
+        "🤝 동료 의견도 한번 들어보고 싶어요.",
+        "💬 좋은 질문 하나 준비 중.",
+        "🧪 작은 실험부터 해보면 어떨까요?",
+        "📚 새 기술을 짧게 훑어보는 중.",
+        "📝 다음 사람도 알기 쉽게 메모 중.",
+        "🎯 지금 가장 중요한 한 가지는 뭘까요?",
+        "🌤️ 잠깐 먼 곳을 보며 눈 쉬는 중.",
+        "🪴 화분처럼 차분히 성장 중.",
+        "🎧 집중할 리듬을 찾는 중.",
+        "🕰️ 서두르지 않고 정확하게 보는 중.",
+        "🛰️ 다른 관점에서 문제를 내려다보는 중.",
+        "🧹 머릿속 탭을 정리하는 중.",
+        "🔄 반대로 생각하면 답이 보일지도요.",
+        "💡 불편한 점 하나가 개선의 시작이죠."
     ]
 
     init() {
@@ -90,20 +126,63 @@ final class AgentDirector: ObservableObject {
         characters.first { $0.id == character }?.identityPrompt ?? ""
     }
 
-    func select(_ character: CharacterConfiguration) {
-        selectedCharacterID = character.id
-        clearBubbles()
-        showBubble("네!", for: character.id)
+    func pendingQuestion(for character: OfficeCharacter) -> String? {
+        pendingQuestions[character]
     }
 
-    func submit(_ prompt: String) {
+    func questionSubmissionError(for character: OfficeCharacter) -> String? {
+        questionSubmissionErrors[character]
+    }
+
+    func failureMessage(for character: OfficeCharacter) -> String? {
+        failedCharacters[character]
+    }
+
+    func offDutyReason(for character: OfficeCharacter) -> String? {
+        offDutyCharacters[character]
+    }
+
+    func select(_ character: CharacterConfiguration) {
+        selectedCharacterID = character.id
+        clearTransientBubbles()
+        if
+            pendingQuestions[character.id] == nil,
+            !runningCharacters.contains(character.id),
+            failedCharacters[character.id] == nil,
+            offDutyCharacters[character.id] == nil
+        {
+            showBubble("네!", for: character.id)
+        }
+    }
+
+    func submit(
+        _ prompt: String,
+        to requestedCharacter: OfficeCharacter? = nil
+    ) {
+        let character: CharacterConfiguration?
+        if let requestedCharacter {
+            character = characters.first { $0.id == requestedCharacter }
+        } else {
+            character = selectedCharacter
+        }
+
         guard
-            let character = selectedCharacter,
+            let character,
+            !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             !runningCharacters.contains(character.id)
         else {
             return
         }
 
+        let questionBeingAnswered = pendingQuestions[character.id]
+        selectedCharacterID = character.id
+        pendingQuestions[character.id] = nil
+        questionSubmissionErrors[character.id] = nil
+        failedCharacters[character.id] = nil
+        offDutyCharacters[character.id] = nil
+        if latestQuestion?.character == character.id {
+            latestQuestion = nil
+        }
         let startedAt = Date()
         runningCharacters.insert(character.id)
         showBubble("생각 중...", for: character.id, autoDismiss: false)
@@ -119,15 +198,31 @@ final class AgentDirector: ObservableObject {
                 if let sessionID = response.sessionID {
                     sessionIDs[character.id] = sessionID
                 }
-                showBubble(response.text, for: character.id)
+                let activeSessionID =
+                    response.sessionID ?? sessionIDs[character.id]
                 runningCharacters.remove(character.id)
+                if response.needsInput {
+                    pendingQuestions[character.id] = response.text
+                    latestQuestion = PendingAgentQuestion(
+                        character: character.id,
+                        text: response.text
+                    )
+                    showBubble(
+                        response.text,
+                        for: character.id,
+                        autoDismiss: false
+                    )
+                } else {
+                    pendingQuestions[character.id] = nil
+                    showBubble(response.text, for: character.id)
+                }
 
                 try? await database.recordTurn(
                     DatabaseTurn(
                         turnId: UUID(),
                         conversationId: conversationID,
                         characterId: character.id.rawValue,
-                        externalSessionId: response.sessionID,
+                        externalSessionId: activeSessionID,
                         prompt: prompt,
                         response: response.text,
                         title: String(prompt.prefix(60)),
@@ -137,11 +232,42 @@ final class AgentDirector: ObservableObject {
                     )
                 )
             } catch {
-                showBubble(
-                    "오류\n\(error.localizedDescription)",
-                    for: character.id
-                )
                 runningCharacters.remove(character.id)
+                let message = error.localizedDescription
+                if AgentUsageLimitClassifier.isLimitReached(message) {
+                    pendingQuestions[character.id] = nil
+                    questionSubmissionErrors[character.id] = nil
+                    failedCharacters[character.id] = nil
+                    offDutyCharacters[character.id] = message
+                    if latestQuestion?.character == character.id {
+                        latestQuestion = nil
+                    }
+                    showBubble(
+                        "퇴근",
+                        for: character.id,
+                        autoDismiss: false
+                    )
+                } else if let questionBeingAnswered {
+                    pendingQuestions[character.id] = questionBeingAnswered
+                    questionSubmissionErrors[character.id] =
+                        message
+                    latestQuestion = PendingAgentQuestion(
+                        character: character.id,
+                        text: questionBeingAnswered
+                    )
+                    showBubble(
+                        questionBeingAnswered,
+                        for: character.id,
+                        autoDismiss: false
+                    )
+                } else {
+                    failedCharacters[character.id] = message
+                    showBubble(
+                        "업무 중단\n\(message)",
+                        for: character.id,
+                        autoDismiss: false
+                    )
+                }
             }
         }
     }
@@ -262,22 +388,31 @@ final class AgentDirector: ObservableObject {
         }
     }
 
-    private func clearBubbles() {
+    private func clearTransientBubbles() {
         for task in bubbleDismissTasks.values {
             task.cancel()
         }
         bubbleDismissTasks = [:]
-        bubbles = [:]
+        bubbles = bubbles.filter {
+            pendingQuestions[$0.key] != nil
+                || runningCharacters.contains($0.key)
+                || failedCharacters[$0.key] != nil
+                || offDutyCharacters[$0.key] != nil
+        }
     }
 
     private func startIdleChatter() {
         idleChatterTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: .seconds(2))
-
                 while !Task.isCancelled {
-                    self?.showIdleChatter()
-                    try await Task.sleep(for: Self.idleChatterInterval)
+                    let quietDelay = Int.random(
+                        in: Self.idleChatterQuietDelaySeconds
+                    )
+                    try await Task.sleep(for: .seconds(quietDelay))
+
+                    if self?.showIdleChatter() == true {
+                        try await Task.sleep(for: Self.bubbleLifetime)
+                    }
                 }
             } catch {
                 return
@@ -285,15 +420,26 @@ final class AgentDirector: ObservableObject {
         }
     }
 
-    private func showIdleChatter() {
-        let idleCharacters = characters.filter {
-            !runningCharacters.contains($0.id) && bubbles[$0.id] == nil
+    private func showIdleChatter() -> Bool {
+        guard bubbles.isEmpty, runningCharacters.isEmpty else {
+            return false
         }
-        let messages = Self.idleChatterMessages.shuffled()
 
-        for (character, message) in zip(idleCharacters, messages) {
-            showBubble(message, for: character.id)
+        var idleCharacters = characters
+        if idleCharacters.count > 1, let lastIdleChatterCharacter {
+            idleCharacters.removeAll { $0.id == lastIdleChatterCharacter }
         }
+
+        guard
+            let character = idleCharacters.randomElement(),
+            let message = Self.idleChatterMessages.randomElement()
+        else {
+            return false
+        }
+
+        lastIdleChatterCharacter = character.id
+        showBubble(message, for: character.id)
+        return true
     }
 
     private func refreshCharacters() async {
@@ -330,7 +476,7 @@ final class AgentDirector: ObservableObject {
         }
         let previous = characters[index]
         if previous.agentSettings != settings {
-            sessionIDs[character] = nil
+            invalidateSession(for: character)
         }
         characters[index] = previous.applying(settings)
     }
@@ -348,8 +494,21 @@ final class AgentDirector: ObservableObject {
         guard previous.identityPrompt != identityPrompt else {
             return
         }
-        sessionIDs[character] = nil
+        invalidateSession(for: character)
         characters[index] = previous.applying(identityPrompt: identityPrompt)
+    }
+
+    private func invalidateSession(for character: OfficeCharacter) {
+        sessionIDs[character] = nil
+        pendingQuestions[character] = nil
+        questionSubmissionErrors[character] = nil
+        failedCharacters[character] = nil
+        offDutyCharacters[character] = nil
+        bubbleDismissTasks.removeValue(forKey: character)?.cancel()
+        bubbles[character] = nil
+        if latestQuestion?.character == character {
+            latestQuestion = nil
+        }
     }
 
     private func characterWithCurrentName(

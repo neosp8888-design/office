@@ -26,3 +26,19 @@ public enum OfficeCanvasGeometry {
         )
     }
 }
+
+public enum OfficeWhiteboardGeometry {
+    public static let usageOrigin = CGPoint(x: 210, y: 425)
+    public static let usageSize = CGSize(width: 108, height: 69)
+    public static let horizontalShear: CGFloat = -59.0 / 108.0
+
+    public static func usagePoint(
+        x: CGFloat,
+        y: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: usageOrigin.x + x,
+            y: usageOrigin.y + horizontalShear * x + y
+        )
+    }
+}

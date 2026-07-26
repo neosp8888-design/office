@@ -90,6 +90,12 @@ struct CharacterInteractionLayer: View {
                         let isThinking = director.runningCharacters.contains(
                             character.id
                         )
+                        let isQuestion =
+                            director.pendingQuestion(for: character.id) != nil
+                        let isFailure =
+                            director.failureMessage(for: character.id) != nil
+                        let isOffDuty =
+                            director.offDutyReason(for: character.id) != nil
 
                         Button {
                             onBubbleTapped(character.id, message)
@@ -97,7 +103,10 @@ struct CharacterInteractionLayer: View {
                             CharacterSpeechBubble(
                                 name: director.displayName(for: character.id),
                                 message: message,
-                                isThinking: isThinking
+                                isThinking: isThinking,
+                                isQuestion: isQuestion,
+                                isFailure: isFailure,
+                                isOffDuty: isOffDuty
                             )
                         }
                         .buttonStyle(.plain)
@@ -110,9 +119,23 @@ struct CharacterInteractionLayer: View {
                         .allowsHitTesting(!isThinking)
                         .transition(.opacity)
                         .accessibilityLabel(
-                            "\(director.displayName(for: character.id)) 응답 전문 보기"
+                            isQuestion
+                                ? "\(director.displayName(for: character.id)) 질문에 답변하기"
+                                : isOffDuty
+                                ? "\(director.displayName(for: character.id)) 퇴근 사유 보기"
+                                : isFailure
+                                ? "\(director.displayName(for: character.id)) 중단 원인 보기"
+                                : "\(director.displayName(for: character.id)) 응답 전문 보기"
                         )
-                        .help("응답 전문 보기")
+                        .help(
+                            isQuestion
+                                ? "질문에 답변하기"
+                                : isOffDuty
+                                ? "퇴근 사유 보기"
+                                : isFailure
+                                ? "중단 원인 보기"
+                                : "응답 전문 보기"
+                        )
                     }
                 }
             }
@@ -125,13 +148,41 @@ private struct CharacterSpeechBubble: View {
     let name: String
     let message: String
     let isThinking: Bool
+    let isQuestion: Bool
+    let isFailure: Bool
+    let isOffDuty: Bool
 
     var body: some View {
         VStack(spacing: -1) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(name)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.black.opacity(0.62))
+                HStack(spacing: 5) {
+                    Text(name)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.black.opacity(0.62))
+
+                    if isQuestion {
+                        Label("답변 필요", systemImage: "questionmark.bubble.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(
+                                Color(red: 0.56, green: 0.35, blue: 0.08)
+                            )
+                    } else if isOffDuty {
+                        Label("한도 소진", systemImage: "moon.zzz.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(
+                                Color(red: 0.23, green: 0.32, blue: 0.57)
+                            )
+                    } else if isFailure {
+                        Label(
+                            "업무 중단",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(
+                            Color(red: 0.67, green: 0.14, blue: 0.12)
+                        )
+                    }
+                }
 
                 Text(message)
                     .font(.system(size: 13, weight: .semibold))
@@ -144,15 +195,38 @@ private struct CharacterSpeechBubble: View {
             .frame(maxWidth: 250, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.white.opacity(0.96))
+                    .fill(bubbleColor)
                     .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
             )
+            .overlay {
+                if isQuestion || isFailure || isOffDuty {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(
+                            isOffDuty
+                                ? Color(red: 0.33, green: 0.43, blue: 0.72)
+                                : isFailure
+                                ? Color(red: 0.78, green: 0.20, blue: 0.17)
+                                : Color(red: 0.78, green: 0.52, blue: 0.16),
+                            lineWidth: 1.5
+                        )
+                }
+            }
 
             SpeechBubbleTail()
-                .fill(.white.opacity(0.96))
+                .fill(bubbleColor)
                 .frame(width: 16, height: 9)
         }
         .opacity(isThinking ? 0.9 : 1)
+    }
+
+    private var bubbleColor: Color {
+        isQuestion
+            ? Color(red: 1.0, green: 0.97, blue: 0.86).opacity(0.98)
+            : isOffDuty
+            ? Color(red: 0.91, green: 0.94, blue: 1.0).opacity(0.98)
+            : isFailure
+            ? Color(red: 1.0, green: 0.91, blue: 0.90).opacity(0.98)
+            : .white.opacity(0.96)
     }
 }
 
