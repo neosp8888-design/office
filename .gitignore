@@ -3,3 +3,5 @@
 dist/
 .swiftpm/
 *.xcuserstate
+backend/node_modules/
+backend/.env

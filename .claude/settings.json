@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift build:*)",
+      "Bash(node --check:*)",
+      "Bash(curl -s http://127.0.0.1:4317/*)",
+      "Bash(./scripts/start-backend.sh)"
+    ]
+  }
+}
