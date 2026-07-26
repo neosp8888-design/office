@@ -1,5 +1,11 @@
 # 사무실 — Codex ↔ Claude Code 통합 macOS 앱 설계
 
+> **⚠️ 릴레이 전제로 쓴 옛 문서다. 상호작용 설계는 [LLM-WIRING.md](LLM-WIRING.md) 로 대체됐다.**
+>
+> 이 문서는 두 에이전트가 서로 주고받는 **릴레이**를 전제한다.
+> 확정된 모델은 릴레이가 아니라 **동시 실행(fan-out)** 이고, 인원도 2명 고정이 아니라 캐릭터 5명 전원이다.
+> CLI 옵션 표와 실측 함정 목록은 여전히 유효하지만, 상호작용·세션 구조는 LLM-WIRING.md 를 따른다.
+
 Codex 앱과 Claude Code 앱을 도트 오피스 UI 하나로 합친 macOS 전용 앱.
 두 CLI를 감싸는 GUI 프런트엔드이며, 자율 실행 도구가 아니라 **사람이 지시하고 보는 도구**다.
 
@@ -88,11 +94,11 @@ Codex 전용이라 공유 컨트롤로 만들면 Codex의 가장 싼 두 단계�
 | 앱 단계 | Codex `-s` | Claude `--permission-mode` |
 |---|---|---|
 | 읽기 전용 | `read-only` | `plan` |
-| 작업 폴더 쓰기 (기본) | `workspace-write` | `acceptEdits` |
+| 작업 폴더 쓰기 (기본) | `workspace-write` | `auto` |
 | 전체 허용 | `danger-full-access` | `bypassPermissions` |
 
-Claude에만 있는 `auto` · `manual` · `dontAsk`는 3단계에 매핑하지 않고
-고급 설정에서 원시 값으로 노출한다. 억지로 대응시키면 의미가 어긋난다.
+Claude의 `acceptEdits`는 비대화형 실행에서 Bash 승인을 기다리므로 사용하지 않는다.
+`manual` · `dontAsk`는 공통 3단계에 매핑하지 않는다.
 
 ### 릴레이 (하단 바)
 

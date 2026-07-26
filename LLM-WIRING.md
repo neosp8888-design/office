@@ -61,10 +61,10 @@ claude -p "<프롬프트>" --resume <session_id> \
 | 앱 단계 | Codex | Claude |
 |---|---|---|
 | 읽기 전용 | `read-only` | `plan` |
-| 작업 폴더 쓰기 (기본) | `workspace-write` | `acceptEdits` |
+| 작업 폴더 쓰기 (기본) | `workspace-write` | `auto` |
 | 전체 허용 | `danger-full-access` | `bypassPermissions` |
 
-Claude 에만 있는 `auto` · `manual` · `dontAsk` 는 3단계에 억지로 끼우지 말고 고급 설정에서 원시 값으로 노출한다.
+Claude의 `acceptEdits`는 비대화형 실행에서 Bash 승인을 기다리므로 사용하지 않는다. `manual` · `dontAsk`는 공통 3단계에 매핑하지 않는다.
 
 ### 이벤트 정규화
 
@@ -225,6 +225,7 @@ message(id, turn_id, role, text, received_at)
 usage(turn_id, input_tokens, output_tokens,
       cached_input_tokens, reasoning_output_tokens, cost_usd)
 turn_options(turn_id, model, effort, permission)
+rag_document(id, source, title, content, metadata, embedding, search_document)
 ```
 
 - `cli_session.external_id` — `thread_id` / `session_id`
@@ -232,7 +233,9 @@ turn_options(turn_id, model, effort, permission)
 - `turn_options` — 설정을 턴마다 바꿀 수 있으므로 그때 무엇으로 불렀는지 남겨야 재현이 된다
 - `usage.cost_usd` — Claude 만 채워진다. §11 참조
 
-저장소는 SQLite 파일 하나. `~/Library/Application Support/<앱>/sessions.db`
+저장소는 PostgreSQL이다. `pgvector` 확장과 전문검색 `tsvector`를 함께
+사용해 대화 기록뿐 아니라 향후 RAG 문서의 벡터 검색과 키워드 검색을
+같은 저장소에서 처리한다.
 
 ---
 
