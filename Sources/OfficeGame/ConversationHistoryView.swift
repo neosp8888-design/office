@@ -1,0 +1,451 @@
+// 이 파일은 캐릭터별 세션과 전체 날짜별 대화 보관함 화면을 제공한다.
+
+import AppKit
+import OfficeCore
+import SwiftUI
+
+enum ConversationHistoryTarget: Identifiable {
+    case character(OfficeCharacter)
+    case archive
+
+    var id: String {
+        switch self {
+        case .character(let character):
+            "character-\(character.rawValue)"
+        case .archive:
+            "archive"
+        }
+    }
+}
+
+struct CharacterConversationHistoryView: View {
+    @ObservedObject var director: AgentDirector
+    let character: OfficeCharacter
+    @Environment(\.dismiss) private var dismiss
+    @State private var history: CharacterHistory?
+    @State private var errorMessage: String?
+    @State private var isLoading = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            historyHeader(
+                title: "\(director.displayName(for: character)) 대화 내역",
+                subtitle: "모니터에 연결된 CLI 세션"
+            )
+
+            Divider()
+
+            Group {
+                if isLoading {
+                    ProgressView("대화 내역을 불러오는 중")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage {
+                    ContentUnavailableView(
+                        "대화 내역을 불러오지 못했습니다",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(errorMessage)
+                    )
+                } else if let history, history.sessions.isEmpty {
+                    ContentUnavailableView(
+                        "저장된 세션이 없습니다",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("이 캐릭터에게 업무를 보내면 여기에 기록됩니다.")
+                    )
+                } else if let history {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(history.sessions) { session in
+                                SessionHistoryCard(session: session)
+                            }
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 720, minHeight: 600)
+        .task {
+            await load()
+        }
+    }
+
+    private func historyHeader(
+        title: String,
+        subtitle: String
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 19, weight: .bold))
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("닫기") {
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(18)
+    }
+
+    private func load() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            history = try await director.characterHistory(for: character)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+}
+
+private struct SessionHistoryCard: View {
+    let session: HistorySession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("세션 ID")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Text(session.externalId ?? "외부 세션 ID 없음")
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+
+                Spacer()
+
+                if let externalID = session.externalId {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            externalID,
+                            forType: .string
+                        )
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("세션 ID 복사")
+                }
+            }
+
+            HStack {
+                Label(
+                    session.startedAt.formatted(
+                        date: .abbreviated,
+                        time: .shortened
+                    ),
+                    systemImage: "calendar"
+                )
+                Spacer()
+                Text("\(session.turns.count)개 업무")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+
+            if session.turns.isEmpty {
+                Text("저장된 업무가 없습니다.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(session.turns) { turn in
+                    TurnDisclosure(turn: turn)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+    }
+}
+
+private struct TurnDisclosure: View {
+    let turn: HistoryTurn
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                transcriptBlock(title: "업무", text: turn.prompt)
+                transcriptBlock(title: "응답", text: turn.response)
+            }
+            .padding(.top, 8)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(turn.prompt)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text(
+                    turn.startedAt.formatted(
+                        date: .omitted,
+                        time: .shortened
+                    )
+                )
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(0.035))
+        )
+    }
+
+    private func transcriptBlock(
+        title: String,
+        text: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(text.isEmpty ? "내용 없음" : text)
+                .font(.system(size: 12))
+                .textSelection(.enabled)
+        }
+    }
+}
+
+struct ConversationArchiveView: View {
+    @ObservedObject var director: AgentDirector
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedCharacter: OfficeCharacter?
+    @State private var usesDateRange = false
+    @State private var startDate =
+        Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+    @State private var endDate = Date()
+    @State private var turns: [GlobalHistoryTurn] = []
+    @State private var errorMessage: String?
+    @State private var isLoading = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("전체 대화 보관함")
+                        .font(.system(size: 19, weight: .bold))
+                    Text("캐릭터와 날짜 범위로 저장된 업무를 조회합니다.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("닫기") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(18)
+
+            Divider()
+
+            filterBar
+                .padding(14)
+
+            Divider()
+
+            Group {
+                if isLoading {
+                    ProgressView("전체 대화를 불러오는 중")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage {
+                    ContentUnavailableView(
+                        "대화 내역을 불러오지 못했습니다",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(errorMessage)
+                    )
+                } else if turns.isEmpty {
+                    ContentUnavailableView(
+                        "조건에 맞는 대화가 없습니다",
+                        systemImage: "archivebox",
+                        description: Text("캐릭터 또는 날짜 범위를 바꿔보세요.")
+                    )
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            ForEach(dayGroups) { group in
+                                VStack(alignment: .leading, spacing: 9) {
+                                    Text(
+                                        group.date.formatted(
+                                            date: .complete,
+                                            time: .omitted
+                                        )
+                                    )
+                                    .font(.system(size: 14, weight: .bold))
+
+                                    ForEach(group.turns) { turn in
+                                        ArchiveTurnCard(turn: turn)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 820, minHeight: 680)
+        .task {
+            await load()
+        }
+    }
+
+    private var filterBar: some View {
+        HStack(spacing: 12) {
+            Picker("캐릭터", selection: $selectedCharacter) {
+                Text("전체 캐릭터")
+                    .tag(nil as OfficeCharacter?)
+                ForEach(director.characters) { character in
+                    Text(director.displayName(for: character.id))
+                        .tag(character.id as OfficeCharacter?)
+                }
+            }
+            .frame(width: 180)
+
+            Toggle("날짜 지정", isOn: $usesDateRange)
+                .toggleStyle(.checkbox)
+
+            DatePicker(
+                "시작",
+                selection: $startDate,
+                displayedComponents: .date
+            )
+            .disabled(!usesDateRange)
+
+            DatePicker(
+                "종료",
+                selection: $endDate,
+                in: startDate...,
+                displayedComponents: .date
+            )
+            .disabled(!usesDateRange)
+
+            Button("조회") {
+                Task {
+                    await load()
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .controlSize(.small)
+    }
+
+    private var dayGroups: [HistoryDayGroup] {
+        let grouped = Dictionary(grouping: turns) {
+            Calendar.current.startOfDay(for: $0.startedAt)
+        }
+        return grouped.map {
+            HistoryDayGroup(date: $0.key, turns: $0.value)
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    private func load() async {
+        isLoading = true
+        errorMessage = nil
+        let calendar = Calendar.current
+        let from = usesDateRange
+            ? calendar.startOfDay(for: startDate)
+            : nil
+        let to = usesDateRange
+            ? calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: calendar.startOfDay(for: endDate)
+            )?.addingTimeInterval(-0.001)
+            : nil
+
+        do {
+            turns = try await director.globalHistory(
+                character: selectedCharacter,
+                from: from,
+                to: to
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+}
+
+private struct HistoryDayGroup: Identifiable {
+    let date: Date
+    let turns: [GlobalHistoryTurn]
+
+    var id: Date {
+        date
+    }
+}
+
+private struct ArchiveTurnCard: View {
+    let turn: GlobalHistoryTurn
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                transcriptBlock(title: "업무", text: turn.prompt)
+                transcriptBlock(title: "응답", text: turn.response)
+                if let sessionID = turn.externalSessionId {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("세션 ID")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        Text(sessionID)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(turn.characterName)
+                            .font(.system(size: 13, weight: .bold))
+                        Text(turn.backend.title)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(turn.prompt)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(
+                    turn.startedAt.formatted(
+                        date: .omitted,
+                        time: .shortened
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+    }
+
+    private func transcriptBlock(
+        title: String,
+        text: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(text.isEmpty ? "내용 없음" : text)
+                .font(.system(size: 12))
+                .textSelection(.enabled)
+        }
+    }
+}

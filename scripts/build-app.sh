@@ -27,7 +27,8 @@ for resource_name in \
     office-theme-modern-night-v4.png \
     office-theme-wood-day-v4.png \
     office-theme-wood-night-v4.png \
-    office-background-3d-v4.png
+    office-background-3d-v4.png \
+    characters.json
 do
     cp \
         "$PROJECT_DIR/Sources/OfficeCore/Resources/$resource_name" \

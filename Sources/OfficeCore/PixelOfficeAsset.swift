@@ -57,12 +57,23 @@ public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum OfficeCharacter: String, CaseIterable, Hashable, Sendable {
+public enum OfficeCharacter:
+    String,
+    CaseIterable,
+    Codable,
+    Identifiable,
+    Hashable,
+    Sendable
+{
     case boss
     case leftMan = "left-man"
     case leftWoman = "left-woman"
     case rightWoman = "right-woman"
     case rightMan = "right-man"
+
+    public var id: String {
+        rawValue
+    }
 }
 
 public enum OfficeCharacterMotionKind: String, CaseIterable, Hashable, Sendable {

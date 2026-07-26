@@ -1,0 +1,82 @@
+{
+  "workdir": "/Users/neo/office",
+  "databaseBaseURL": "http://127.0.0.1:4317",
+  "archiveCabinetHitbox": {
+    "x": 558,
+    "y": 120,
+    "width": 142,
+    "height": 270
+  },
+  "characters": [
+    {
+      "id": "boss",
+      "name": "보스",
+      "seat": "상단",
+      "backend": "codex",
+      "identityPrompt": "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다.",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "permission": "workspace-write",
+      "executablePath": null,
+      "hitbox": { "x": 716, "y": 174, "width": 130, "height": 174 },
+      "monitorHitbox": { "x": 758, "y": 264, "width": 118, "height": 104 },
+      "bubble": { "x": 780, "y": 160 }
+    },
+    {
+      "id": "left-man",
+      "name": "왼쪽 남자",
+      "seat": "좌측 아래",
+      "backend": "claude",
+      "identityPrompt": "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다.",
+      "model": "claude-opus-5",
+      "effort": "high",
+      "permission": "auto",
+      "executablePath": null,
+      "hitbox": { "x": 284, "y": 494, "width": 142, "height": 188 },
+      "monitorHitbox": { "x": 358, "y": 568, "width": 96, "height": 112 },
+      "bubble": { "x": 350, "y": 478 }
+    },
+    {
+      "id": "left-woman",
+      "name": "왼쪽 여자",
+      "seat": "좌측 위",
+      "backend": "codex",
+      "identityPrompt": "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다.",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "permission": "workspace-write",
+      "executablePath": null,
+      "hitbox": { "x": 438, "y": 436, "width": 142, "height": 184 },
+      "monitorHitbox": { "x": 508, "y": 498, "width": 94, "height": 112 },
+      "bubble": { "x": 506, "y": 420 }
+    },
+    {
+      "id": "right-woman",
+      "name": "코대리",
+      "seat": "우측 위",
+      "backend": "claude",
+      "identityPrompt": "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다.",
+      "model": "claude-opus-5",
+      "effort": "high",
+      "permission": "auto",
+      "executablePath": null,
+      "hitbox": { "x": 1038, "y": 438, "width": 154, "height": 190 },
+      "monitorHitbox": { "x": 1008, "y": 510, "width": 98, "height": 116 },
+      "bubble": { "x": 1112, "y": 420 }
+    },
+    {
+      "id": "right-man",
+      "name": "오른쪽 남자",
+      "seat": "우측 아래",
+      "backend": "codex",
+      "identityPrompt": "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다.",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "permission": "workspace-write",
+      "executablePath": null,
+      "hitbox": { "x": 1170, "y": 518, "width": 150, "height": 190 },
+      "monitorHitbox": { "x": 1148, "y": 598, "width": 108, "height": 122 },
+      "bubble": { "x": 1244, "y": 504 }
+    }
+  ]
+}

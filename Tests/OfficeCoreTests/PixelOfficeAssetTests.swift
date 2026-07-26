@@ -158,4 +158,26 @@ final class PixelOfficeAssetTests: XCTestCase {
             next.monitorGlowOpacity(at: 0)
         )
     }
+
+    func testClaudeWorkspacePermissionUsesNoninteractiveAutoMode() {
+        XCTAssertEqual(
+            AgentPermission.workspaceWrite.cliValue(for: .claude),
+            "auto"
+        )
+        XCTAssertEqual(
+            AgentPermission(cliValue: "acceptEdits"),
+            .workspaceWrite
+        )
+    }
+
+    func testFullAccessPermissionKeepsBackendSpecificValues() {
+        XCTAssertEqual(
+            AgentPermission.fullAccess.cliValue(for: .codex),
+            "danger-full-access"
+        )
+        XCTAssertEqual(
+            AgentPermission.fullAccess.cliValue(for: .claude),
+            "bypassPermissions"
+        )
+    }
 }
