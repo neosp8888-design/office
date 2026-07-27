@@ -1,0 +1,82 @@
+// 이 파일은 생성 이미지 탐색과 Markdown 미리보기 첨부를 검증한다.
+
+import assert from "node:assert/strict";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  appendLocalImagePreviews,
+  generatedImagesForTurn,
+} from "../src/local-artifacts.mjs";
+
+test("절대경로 이미지 링크에 미리보기를 추가한다", () => {
+  const directory = mkdtempSync(join(tmpdir(), "officellm-artifact-"));
+  try {
+    const image = join(directory, "sample image.png");
+    writeFileSync(image, "png");
+
+    const rendered = appendLocalImagePreviews(
+      `[이미지 열기](<${image}>)`,
+    );
+
+    assert.match(
+      rendered,
+      /\[!\[생성 이미지 1\]\(<file:\/\/\/.*>\)\]\(<file:\/\/\//,
+    );
+    assert.equal(
+      appendLocalImagePreviews(rendered),
+      rendered,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("이미 표시된 이미지는 중복 첨부하지 않는다", () => {
+  const directory = mkdtempSync(join(tmpdir(), "officellm-artifact-"));
+  try {
+    const image = join(directory, "sample.png");
+    writeFileSync(image, "png");
+    const markdown = `![결과](<${image}>)`;
+
+    assert.equal(
+      appendLocalImagePreviews(markdown, [image]),
+      markdown,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("업무 시간에 생성된 이미지만 찾는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "officellm-generated-"));
+  try {
+    const sessionID = "session-1";
+    const sessionDirectory = join(root, sessionID);
+    mkdirSync(sessionDirectory);
+    const image = join(sessionDirectory, "generated.png");
+    writeFileSync(image, "png");
+    const generatedAt = new Date("2026-07-27T12:51:32Z");
+    utimesSync(image, generatedAt, generatedAt);
+
+    assert.deepEqual(
+      generatedImagesForTurn({
+        sessionID: "session-1",
+        startedAt: "2026-07-27T12:49:55Z",
+        endedAt: "2026-07-27T12:51:36Z",
+        generatedRoot: root,
+      }),
+      [image],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

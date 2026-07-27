@@ -2,7 +2,17 @@
 
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { WebSocket, WebSocketServer } from "ws";
 
+import {
+  AgentBusyError,
+  AgentRuntime,
+  CharacterNotFoundError,
+} from "./agent-runtime.mjs";
+import {
+  appendLocalImagePreviews,
+  generatedImagesForTurn,
+} from "./local-artifacts.mjs";
 import { pool, withTransaction } from "./db.mjs";
 import {
   readCharacterConfiguration,
@@ -11,6 +21,18 @@ import {
 import { migrate } from "./migrate.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
+const sockets = new Set();
+const webSocketServer = new WebSocketServer({ noServer: true });
+let runtime;
+
+function broadcast(event) {
+  const payload = JSON.stringify(event);
+  for (const socket of sockets) {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(payload);
+    }
+  }
+}
 
 function send(response, status, body) {
   response.writeHead(status, {
@@ -329,7 +351,7 @@ async function characterHistory(response, characterID) {
     ...session,
     turns: turnsResult.rows.filter(
       (turn) => turn.sessionId === session.id,
-    ),
+    ).map((turn) => withArtifactPreviews(turn, session.externalId)),
   }));
   send(response, 200, {
     character: characterResult.rows[0],
@@ -377,7 +399,113 @@ async function globalHistory(response, url) {
     `,
     [characterID, from, to],
   );
-  send(response, 200, { turns: result.rows });
+  send(response, 200, {
+    turns: result.rows.map((turn) => withArtifactPreviews(turn)),
+  });
+}
+
+async function liveFeed(response, url) {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? 120);
+  const limit = Math.max(20, Math.min(requestedLimit, 300));
+  const result = await pool.query(
+    `
+      SELECT
+        t.id,
+        c.id AS "characterId",
+        c.name AS "characterName",
+        c.backend AS "characterBackend",
+        t.backend,
+        t.model,
+        t.effort,
+        s.external_id AS "externalSessionId",
+        t.prompt,
+        t.status,
+        t.needs_input AS "needsInput",
+        t.error_message AS "errorMessage",
+        t.started_at AS "startedAt",
+        t.ended_at AS "endedAt",
+        t.updated_at AS "updatedAt",
+        COALESCE(
+          (
+            SELECT text
+            FROM messages
+            WHERE turn_id = t.id
+              AND role = 'assistant'
+            ORDER BY received_at DESC
+            LIMIT 1
+          ),
+          ''
+        ) AS response,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', activity.id,
+                'kind', activity.kind,
+                'text', activity.text,
+                'occurredAt', activity.occurred_at
+              )
+              ORDER BY activity.seq
+            )
+            FROM turn_activities AS activity
+            WHERE activity.turn_id = t.id
+          ),
+          '[]'::json
+        ) AS activities
+      FROM turns AS t
+      JOIN cli_sessions AS s
+        ON s.id = t.cli_session_id
+      JOIN characters AS c
+        ON c.id = s.character_id
+      ORDER BY t.started_at DESC
+      LIMIT $1
+    `,
+    [limit],
+  );
+  send(response, 200, {
+    turns: result.rows.map((turn) => withArtifactPreviews(turn)),
+  });
+}
+
+function withArtifactPreviews(turn, sessionID = turn.externalSessionId) {
+  const generatedImages = generatedImagesForTurn({
+    sessionID,
+    startedAt: turn.startedAt,
+    endedAt: turn.endedAt,
+  });
+  return {
+    ...turn,
+    response: appendLocalImagePreviews(
+      turn.response,
+      generatedImages,
+    ),
+  };
+}
+
+async function startAgentJob(response, body) {
+  if (!runtime) {
+    send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
+    return;
+  }
+
+  try {
+    const job = await runtime.start({
+      characterID: String(body.characterId ?? ""),
+      prompt: body.prompt,
+      conversationID: body.conversationId,
+    });
+    send(response, 202, job);
+  } catch (error) {
+    if (error instanceof CharacterNotFoundError) {
+      send(response, 404, { error: error.message });
+      return;
+    }
+    if (error instanceof AgentBusyError) {
+      send(response, 409, { error: error.message });
+      return;
+    }
+    throw error;
+  }
 }
 
 async function sessionForTurn(
@@ -779,6 +907,11 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/history"
     ) {
       await globalHistory(response, url);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/live-feed"
+    ) {
+      await liveFeed(response, url);
     } else if (request.method === "PUT" && characterID) {
       await updateCharacterName(
         response,
@@ -804,6 +937,11 @@ const server = createServer(async (request, response) => {
       await recordTurn(response, await readJSON(request));
     } else if (
       request.method === "POST" &&
+      url.pathname === "/api/agent-jobs"
+    ) {
+      await startAgentJob(response, await readJSON(request));
+    } else if (
+      request.method === "POST" &&
       url.pathname === "/api/rag/documents"
     ) {
       await addRAGDocument(response, await readJSON(request));
@@ -820,11 +958,41 @@ const server = createServer(async (request, response) => {
   }
 });
 
+webSocketServer.on("connection", (socket) => {
+  sockets.add(socket);
+  socket.send(JSON.stringify({ type: "ready" }));
+  socket.on("close", () => {
+    sockets.delete(socket);
+  });
+  socket.on("error", () => {
+    sockets.delete(socket);
+  });
+});
+
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (url.pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+  webSocketServer.handleUpgrade(request, socket, head, (client) => {
+    webSocketServer.emit("connection", client, request);
+  });
+});
+
 try {
   await migrate();
+  const configuration = await readCharacterConfiguration();
   await withTransaction(async (client) => {
-    await syncCharacters(client, await readCharacterConfiguration());
+    await syncCharacters(client, configuration);
   });
+  runtime = new AgentRuntime({
+    pool,
+    withTransaction,
+    workdir: configuration.workdir,
+    broadcast,
+  });
+  await runtime.recoverInterruptedJobs();
   server.listen(port, "127.0.0.1", () => {
     console.log(`사무실 백엔드 실행 중 http://127.0.0.1:${port}`);
   });
