@@ -7,6 +7,8 @@ import SwiftUI
 struct WhiteboardUsageLayer: View {
     let isActive: Bool
 
+    private let textVerticalScale: CGFloat = 1.3
+
     @State private var snapshot: AIUsageSnapshot?
     @State private var isLoading = true
     @State private var refreshFailed = false
@@ -238,7 +240,18 @@ struct WhiteboardUsageLayer: View {
         weight: Font.Weight,
         color: Color
     ) {
-        context.draw(
+        var textContext = context
+        textContext.concatenate(
+            CGAffineTransform(
+                a: 1,
+                b: 0,
+                c: 0,
+                d: textVerticalScale,
+                tx: point.x,
+                ty: point.y
+            )
+        )
+        textContext.draw(
             Text(text)
                 .font(
                     .system(
@@ -248,7 +261,7 @@ struct WhiteboardUsageLayer: View {
                     )
                 )
                 .foregroundStyle(color),
-            at: point,
+            at: .zero,
             anchor: anchor
         )
     }
