@@ -301,6 +301,9 @@ async function characterHistory(response, characterID) {
       SELECT
         t.id,
         t.cli_session_id AS "sessionId",
+        t.backend AS "executionBackend",
+        t.model AS "executionModel",
+        t.effort AS "executionEffort",
         t.prompt,
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
@@ -346,6 +349,9 @@ async function globalHistory(response, url) {
         c.id AS "characterId",
         c.name AS "characterName",
         c.backend,
+        t.backend AS "executionBackend",
+        t.model AS "executionModel",
+        t.effort AS "executionEffort",
         s.external_id AS "externalSessionId",
         t.prompt,
         COALESCE(
@@ -556,9 +562,26 @@ async function recordTurn(response, body) {
   const externalSessionID = String(
     body.externalSessionId ?? "",
   ).trim() || null;
+  const executionBackend = String(body.backend ?? "").trim() || null;
+  const executionModel = String(body.model ?? "").trim() || null;
+  const executionEffort = String(body.effort ?? "").trim() || null;
 
   if (!conversationID || !characterID || !body.prompt) {
     send(response, 400, { error: "대화, 캐릭터, 프롬프트가 필요합니다." });
+    return;
+  }
+  if (
+    executionBackend &&
+    !["codex", "claude"].includes(executionBackend)
+  ) {
+    send(response, 400, { error: "지원하지 않는 실행 CLI입니다." });
+    return;
+  }
+  if (
+    executionEffort &&
+    !["high", "xhigh", "max"].includes(executionEffort)
+  ) {
+    send(response, 400, { error: "지원하지 않는 실행 추론 레벨입니다." });
     return;
   }
 
@@ -610,17 +633,23 @@ async function recordTurn(response, body) {
         INSERT INTO turns (
           id,
           cli_session_id,
+          backend,
+          model,
+          effort,
           prompt,
           started_at,
           ended_at
         )
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
       `,
       [
         turnID,
         sessionID,
+        executionBackend,
+        executionModel,
+        executionEffort,
         body.prompt,
         body.startedAt ?? new Date().toISOString(),
         body.finishedAt ?? new Date().toISOString(),

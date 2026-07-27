@@ -219,6 +219,9 @@ struct DatabaseTurn: Encodable, Sendable {
     let conversationId: UUID
     let characterId: String
     let externalSessionId: String?
+    let backend: AgentBackend
+    let model: String?
+    let effort: String
     let prompt: String
     let response: String
     let title: String
@@ -276,6 +279,9 @@ struct HistoryTurn: Decodable, Identifiable, Sendable {
     let sessionId: String
     let prompt: String
     let response: String
+    let executionBackend: AgentBackend?
+    let executionModel: String?
+    let executionEffort: String?
     let startedAt: Date
     let endedAt: Date?
 }
@@ -285,6 +291,9 @@ struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
     let characterId: String
     let characterName: String
     let backend: AgentBackend
+    let executionBackend: AgentBackend?
+    let executionModel: String?
+    let executionEffort: String?
     let externalSessionId: String?
     let prompt: String
     let response: String

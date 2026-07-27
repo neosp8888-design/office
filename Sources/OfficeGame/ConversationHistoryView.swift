@@ -63,7 +63,13 @@ struct CharacterConversationHistoryView: View {
                 }
             }
         }
-        .frame(minWidth: 720, minHeight: 600)
+        .font(.system(size: 14))
+        .frame(
+            minWidth: 960,
+            idealWidth: 1_040,
+            minHeight: 720,
+            idealHeight: 760
+        )
         .task {
             await load()
         }
@@ -76,9 +82,9 @@ struct CharacterConversationHistoryView: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 19, weight: .bold))
+                    .font(.system(size: 22, weight: .bold))
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -110,10 +116,10 @@ private struct SessionHistoryCard: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("세션 ID")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.secondary)
                     Text(session.externalId ?? "외부 세션 ID 없음")
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 14, design: .monospaced))
                         .textSelection(.enabled)
                 }
 
@@ -145,12 +151,12 @@ private struct SessionHistoryCard: View {
                 Spacer()
                 Text("\(session.turns.count)개 업무")
             }
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.secondary)
 
             if session.turns.isEmpty {
                 Text("저장된 업무가 없습니다.")
-                    .font(.system(size: 12))
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(session.turns) { turn in
@@ -179,15 +185,25 @@ private struct TurnDisclosure: View {
         } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text(turn.prompt)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                Text(
-                    turn.startedAt.formatted(
-                        date: .omitted,
-                        time: .shortened
+                HStack(spacing: 5) {
+                    Text(
+                        turn.startedAt.formatted(
+                            date: .omitted,
+                            time: .shortened
+                        )
                     )
-                )
-                .font(.system(size: 10))
+                    Text("·")
+                    Text(
+                        agentExecutionSummary(
+                            backend: turn.executionBackend,
+                            model: turn.executionModel,
+                            effort: turn.executionEffort
+                        )
+                    )
+                }
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             }
         }
@@ -204,7 +220,7 @@ private struct TurnDisclosure: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
             ConversationMarkdownView(source: text)
         }
@@ -228,9 +244,9 @@ struct ConversationArchiveView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("전체 대화 보관함")
-                        .font(.system(size: 19, weight: .bold))
+                        .font(.system(size: 22, weight: .bold))
                     Text("캐릭터와 날짜 범위로 저장된 업무를 조회합니다.")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -275,7 +291,7 @@ struct ConversationArchiveView: View {
                                             time: .omitted
                                         )
                                     )
-                                    .font(.system(size: 14, weight: .bold))
+                                    .font(.system(size: 16, weight: .bold))
 
                                     ForEach(group.turns) { turn in
                                         ArchiveTurnCard(turn: turn)
@@ -288,7 +304,13 @@ struct ConversationArchiveView: View {
                 }
             }
         }
-        .frame(minWidth: 820, minHeight: 680)
+        .font(.system(size: 14))
+        .frame(
+            minWidth: 1_080,
+            idealWidth: 1_120,
+            minHeight: 760,
+            idealHeight: 780
+        )
         .task {
             await load()
         }
@@ -304,7 +326,7 @@ struct ConversationArchiveView: View {
                         .tag(character.id as OfficeCharacter?)
                 }
             }
-            .frame(width: 180)
+            .frame(width: 210)
 
             Toggle("날짜 지정", isOn: $usesDateRange)
                 .toggleStyle(.checkbox)
@@ -331,7 +353,7 @@ struct ConversationArchiveView: View {
             }
             .keyboardShortcut(.defaultAction)
         }
-        .controlSize(.small)
+        .controlSize(.regular)
     }
 
     private var dayGroups: [HistoryDayGroup] {
@@ -392,10 +414,10 @@ private struct ArchiveTurnCard: View {
                 if let sessionID = turn.externalSessionId {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("세션 ID")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.secondary)
                         Text(sessionID)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 13, design: .monospaced))
                             .textSelection(.enabled)
                     }
                 }
@@ -406,13 +428,19 @@ private struct ArchiveTurnCard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(turn.characterName)
-                            .font(.system(size: 13, weight: .bold))
-                        Text(turn.backend.title)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 15, weight: .bold))
+                        Text(
+                            agentExecutionSummary(
+                                backend: turn.executionBackend,
+                                model: turn.executionModel,
+                                effort: turn.executionEffort
+                            )
+                        )
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
                     Text(turn.prompt)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .lineLimit(1)
                 }
                 Spacer()
@@ -422,7 +450,7 @@ private struct ArchiveTurnCard: View {
                         time: .shortened
                     )
                 )
-                .font(.system(size: 11))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
             }
         }
@@ -439,9 +467,34 @@ private struct ArchiveTurnCard: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
             ConversationMarkdownView(source: text)
         }
     }
+}
+
+private func agentExecutionSummary(
+    backend: AgentBackend?,
+    model: String?,
+    effort: String?
+) -> String {
+    guard let backend else {
+        return "실행 정보 기록 없음"
+    }
+
+    var parts = [backend.title]
+    if
+        let model = model?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !model.isEmpty
+    {
+        parts.append(backend.modelTitle(model))
+    }
+    if
+        let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !effort.isEmpty
+    {
+        parts.append("추론 \(effort)")
+    }
+    return parts.joined(separator: " · ")
 }

@@ -496,7 +496,8 @@ private struct BubbleDetailView: View {
             }
         }
         .frame(
-            minWidth: 560,
+            minWidth: 820,
+            idealWidth: 1_000,
             minHeight: isQuestion ? 540 : 420
         )
         .onAppear {
