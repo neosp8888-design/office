@@ -16,6 +16,8 @@ struct ConversationMarkdownView: View {
     var body: some View {
         Markdown(renderedSource)
             .markdownTheme(.gitHub)
+            .markdownImageProvider(.asset)
+            .markdownInlineImageProvider(.asset)
             .markdownTextStyle(\.text) {
                 FontSize(fontSize)
             }
