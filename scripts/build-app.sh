@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_BUNDLE="$PROJECT_DIR/dist/OfficeLLM.app"
+APP_BUNDLE="$PROJECT_DIR/dist/OFFICESTRA.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"

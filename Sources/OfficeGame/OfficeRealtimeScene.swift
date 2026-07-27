@@ -99,6 +99,7 @@ final class OfficeRealtimeScene: SKScene {
 
     private let contentRoot = SKNode()
     private let themeArtworkRoot = SKNode()
+    private let letterboxNode = SKSpriteNode()
     private let backgroundNode = SKSpriteNode()
     private let windowLightRoot = SKNode()
     private let monitorGlowRoot = SKNode()
@@ -166,6 +167,7 @@ final class OfficeRealtimeScene: SKScene {
         super.init(size: OfficeCanvasGeometry.designSize)
         scaleMode = .resizeFill
         backgroundColor = .black
+        configureLetterbox()
         addChild(contentRoot)
         contentRoot.addChild(themeArtworkRoot)
         configureBackground()
@@ -203,7 +205,8 @@ final class OfficeRealtimeScene: SKScene {
         }
 
         currentTheme = theme
-        backgroundColor = letterboxColor(for: theme)
+        backgroundColor = theme.edgeBackdropColor
+        letterboxNode.texture = letterboxTexture(for: theme)
         let texture = SKTexture(image: PixelOfficeAsset.image(for: theme))
         texture.filteringMode = .linear
         backgroundNode.texture = texture
@@ -259,6 +262,31 @@ final class OfficeRealtimeScene: SKScene {
         backgroundNode.size = size
         backgroundNode.zPosition = 0
         themeArtworkRoot.addChild(backgroundNode)
+    }
+
+    private func configureLetterbox() {
+        letterboxNode.anchorPoint = .zero
+        letterboxNode.position = .zero
+        letterboxNode.zPosition = -100
+        addChild(letterboxNode)
+    }
+
+    private func letterboxTexture(for theme: OfficeTheme) -> SKTexture {
+        let image = NSImage(
+            size: CGSize(width: 2, height: 256),
+            flipped: false
+        ) { rect in
+            guard let gradient = NSGradient(
+                colors: theme.edgeBackdropColors
+            ) else {
+                return false
+            }
+            gradient.draw(in: rect, angle: -90)
+            return true
+        }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .linear
+        return texture
     }
 
     private func configureCharacterMotions() {
@@ -811,22 +839,12 @@ final class OfficeRealtimeScene: SKScene {
         }
     }
 
-    private func letterboxColor(for theme: OfficeTheme) -> NSColor {
-        switch theme {
-        case .modernDay, .woodDay:
-            NSColor(calibratedRed: 0.965, green: 0.925, blue: 0.895, alpha: 1)
-        case .modernNight:
-            NSColor(calibratedRed: 0.095, green: 0.135, blue: 0.205, alpha: 1)
-        case .woodNight:
-            NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.17, alpha: 1)
-        }
-    }
-
     private func artworkVerticalOffset(for theme: OfficeTheme) -> CGFloat {
         theme == .modernDay ? 7 : 0
     }
 
     private func layoutContent() {
+        letterboxNode.size = size
         let fittedFrame = OfficeCanvasGeometry.fittedFrame(in: size)
         let scale =
             fittedFrame.width / OfficeCanvasGeometry.designSize.width

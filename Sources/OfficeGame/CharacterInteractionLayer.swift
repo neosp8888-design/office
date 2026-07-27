@@ -137,6 +137,14 @@ struct CharacterInteractionLayer: View {
                                     ? .leading
                                     : .bottom
                             )
+                            .id(message)
+                            .transition(
+                                .asymmetric(
+                                    insertion: .scale(scale: 0.88)
+                                        .combined(with: .opacity),
+                                    removal: .opacity
+                                )
+                            )
                         }
                         .buttonStyle(.plain)
                         .position(
@@ -146,7 +154,9 @@ struct CharacterInteractionLayer: View {
                                 + character.bubble.y * scale
                         )
                         .allowsHitTesting(!isThinking)
-                        .transition(.opacity)
+                        .transition(
+                            .scale(scale: 0.88).combined(with: .opacity)
+                        )
                         .accessibilityLabel(
                             isQuestion
                                 ? "\(director.displayName(for: character.id)) 질문에 답변하기"
@@ -168,7 +178,10 @@ struct CharacterInteractionLayer: View {
                     }
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: director.bubbles)
+            .animation(
+                .spring(response: 0.30, dampingFraction: 0.72),
+                value: director.bubbles
+            )
         }
     }
 }
@@ -217,7 +230,8 @@ private struct CharacterSpeechBubble: View {
             Text(message)
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(Color.black.opacity(0.86))
-                .lineLimit(5)
+                .lineLimit(isThinking ? 1 : 5)
+                .minimumScaleFactor(isThinking ? 0.78 : 1)
                 .multilineTextAlignment(.leading)
         }
         .padding(.horizontal, 7)

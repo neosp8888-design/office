@@ -11,7 +11,7 @@ enum OfficeDetailSelection: String {
     var title: String {
         switch self {
         case .archive:
-            "대화 책꽂이"
+            "대화 보관함"
         case .usage:
             "화이트보드"
         }
@@ -20,7 +20,7 @@ enum OfficeDetailSelection: String {
     var subtitle: String {
         switch self {
         case .archive:
-            "직원들이 남긴 최근 업무 기록"
+            "검색하고 빠르게 여는 직원 업무 기록"
         case .usage:
             "Codex와 Claude의 현재 사용 가능량"
         }
@@ -87,36 +87,111 @@ struct OfficeDetailPanel: View {
 private struct ArchiveShelfContent: View {
     let turns: [LiveFeedTurn]
     @State private var searchText = ""
+    @State private var selectedTurnID: String?
+    @State private var displayedTurns: [LiveFeedTurn]
+    @State private var visibleTurnCount = Self.pageSize
+
+    private static let pageSize = 12
+
+    init(turns: [LiveFeedTurn]) {
+        self.turns = turns
+        _displayedTurns = State(initialValue: turns)
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-
-            Divider()
-                .opacity(0.45)
-
-            if turns.isEmpty {
-                ContentUnavailableView(
-                    "아직 꽂힌 기록이 없습니다",
-                    systemImage: "books.vertical",
-                    description: Text("직원에게 업무를 보내면 여기에 쌓입니다.")
-                )
-            } else if filteredTurns.isEmpty {
-                ContentUnavailableView(
-                    "검색 결과가 없습니다",
-                    systemImage: "magnifyingglass",
-                    description: Text("다른 이름이나 대화 내용으로 검색해보세요.")
+        Group {
+            if let selectedTurn {
+                ArchiveOpenBook(turn: selectedTurn) {
+                    withAnimation(
+                        .spring(response: 0.3, dampingFraction: 0.88)
+                    ) {
+                        selectedTurnID = nil
+                    }
+                }
+                .transition(
+                    .scale(scale: 0.97).combined(with: .opacity)
                 )
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(filteredTurns) { turn in
-                            ArchiveShelfRow(turn: turn)
+                VStack(spacing: 0) {
+                    searchBar
+
+                    if displayedTurns.isEmpty {
+                        ContentUnavailableView(
+                            "아직 저장된 기록이 없습니다",
+                            systemImage: "tray",
+                            description: Text(
+                                "직원에게 업무를 보내면 여기에 쌓입니다."
+                            )
+                        )
+                    } else if filteredTurns.isEmpty {
+                        ContentUnavailableView(
+                            "검색 결과가 없습니다",
+                            systemImage: "text.magnifyingglass",
+                            description: Text(
+                                "다른 이름이나 대화 내용으로 검색해보세요."
+                            )
+                        )
+                    } else if isSearching {
+                        VStack(spacing: 0) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "magnifyingglass")
+                                Text("검색 결과")
+                                Text("\(filteredTurns.count)건")
+                                    .foregroundStyle(.tertiary)
+                                Spacer()
+                            }
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 6)
+
+                            ScrollView {
+                                LazyVStack(spacing: 7) {
+                                    ForEach(visibleTurns) { turn in
+                                        ArchiveShelfRow(turn: turn)
+                                    }
+
+                                    if hasMoreTurns {
+                                        loadMoreButton
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 12)
+                            }
+                        }
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 10) {
+                                ArchiveRecordGrid(
+                                    turns: visibleTurns
+                                ) { turn in
+                                    withAnimation(
+                                        .easeInOut(duration: 0.16)
+                                    ) {
+                                        selectedTurnID = turn.id
+                                    }
+                                }
+
+                                if hasMoreTurns {
+                                    loadMoreButton
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 12)
                         }
                     }
-                    .padding(12)
                 }
             }
+        }
+        .animation(.easeInOut(duration: 0.18), value: isSearching)
+        .onChange(of: turnsRefreshToken) {
+            _, _ in
+            displayedTurns = turns
+            visibleTurnCount = Self.pageSize
+        }
+        .onChange(of: normalizedSearchText) {
+            _, _ in
+            visibleTurnCount = Self.pageSize
         }
     }
 
@@ -127,11 +202,11 @@ private struct ArchiveShelfContent: View {
                 .foregroundStyle(.secondary)
 
             TextField(
-                "직원, 업무, 응답, 세션, 모델 검색",
+                "기록 검색 · 업무, 응답, 세션, 모델",
                 text: $searchText
             )
             .textFieldStyle(.plain)
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: 11, weight: .semibold))
 
             if !searchText.isEmpty {
                 Button {
@@ -146,21 +221,35 @@ private struct ArchiveShelfContent: View {
 
             Text("\(filteredTurns.count)건")
                 .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(DashboardPalette.accent)
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(
+                    DashboardPalette.accent.opacity(0.09),
+                    in: Capsule()
+                )
+        }
+        .padding(.horizontal, 11)
+        .frame(height: 38)
+        .background(
+            Color.primary.opacity(0.025),
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.primary.opacity(0.055))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
     }
 
     private var filteredTurns: [LiveFeedTurn] {
-        let query = searchText.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
+        let query = normalizedSearchText
         guard !query.isEmpty else {
-            return turns
+            return displayedTurns
         }
 
-        return turns.filter { turn in
+        return displayedTurns.filter { turn in
             var fields = [
                 turn.characterName,
                 turn.prompt,
@@ -177,6 +266,67 @@ private struct ArchiveShelfContent: View {
                 $0.localizedCaseInsensitiveContains(query)
             }
         }
+    }
+
+    private var visibleTurns: [LiveFeedTurn] {
+        Array(filteredTurns.prefix(visibleTurnCount))
+    }
+
+    private var hasMoreTurns: Bool {
+        visibleTurnCount < filteredTurns.count
+    }
+
+    private var loadMoreButton: some View {
+        Button {
+            visibleTurnCount = min(
+                visibleTurnCount + Self.pageSize,
+                filteredTurns.count
+            )
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "chevron.down")
+                Text("다음 12건 보기")
+                Text(
+                    "\(visibleTurns.count)/\(filteredTurns.count)"
+                )
+                .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(DashboardPalette.accent)
+            .frame(maxWidth: .infinity)
+            .frame(height: 32)
+            .background(
+                DashboardPalette.accent.opacity(0.07),
+                in: RoundedRectangle(
+                    cornerRadius: 9,
+                    style: .continuous
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("다음 12개 기록 보기")
+    }
+
+    private var normalizedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearching: Bool {
+        !normalizedSearchText.isEmpty
+    }
+
+    private var selectedTurn: LiveFeedTurn? {
+        guard let selectedTurnID else {
+            return nil
+        }
+        return displayedTurns.first { $0.id == selectedTurnID }
+    }
+
+    private var turnsRefreshToken: String {
+        turns.map {
+            "\($0.id)|\($0.status.rawValue)"
+        }
+        .joined(separator: ";")
     }
 }
 
@@ -242,7 +392,7 @@ private struct ArchiveShelfRow: View {
                                 time: .shortened
                             )
                         )
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 10, weight: .regular))
                         .foregroundStyle(.tertiary)
                     }
                     Text(turn.prompt)
@@ -401,34 +551,47 @@ private struct UsageBoardContent: View {
         Group {
             if let snapshot {
                 VStack(spacing: 12) {
-                    UsageProviderCard(
-                        name: "Codex",
-                        icon: "terminal.fill",
-                        fiveHour: snapshot.codexFiveHour,
-                        weekly: snapshot.codexWeekly,
-                        tint: DashboardPalette.accent
-                    )
-                    UsageProviderCard(
-                        name: "Claude",
-                        icon: "sparkles",
-                        fiveHour: snapshot.claudeFiveHour,
-                        weekly: snapshot.claudeWeekly,
-                        tint: Color(red: 0.77, green: 0.43, blue: 0.25)
-                    )
-                    HStack {
+                    HStack(alignment: .top, spacing: 12) {
+                        UsageProviderColumn(
+                            name: "Claude",
+                            icon: "sparkles",
+                            fiveHour: snapshot.claudeFiveHour,
+                            weekly: snapshot.claudeWeekly,
+                            plan: snapshot.claudePlan,
+                            activity: snapshot.claudeActivity,
+                            tint: Color(
+                                red: 0.77,
+                                green: 0.43,
+                                blue: 0.25
+                            )
+                        )
+                        UsageProviderColumn(
+                            name: "Codex",
+                            icon: "terminal.fill",
+                            fiveHour: snapshot.codexFiveHour,
+                            weekly: snapshot.codexWeekly,
+                            plan: snapshot.codexPlan,
+                            activity: snapshot.codexActivity,
+                            tint: DashboardPalette.accent
+                        )
+                    }
+                    HStack(spacing: 5) {
+                        Spacer()
+
                         Label(
                             "마지막 갱신",
                             systemImage: "clock"
                         )
-                        Spacer()
+                        .font(.system(size: 10, weight: .medium))
+
                         Text(
                             snapshot.fetchedAt.formatted(
                                 date: .omitted,
                                 time: .standard
                             )
                         )
+                        .font(.system(size: 10, weight: .medium))
                     }
-                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
                 }
                 .padding(14)
@@ -458,20 +621,61 @@ private struct UsageBoardContent: View {
     }
 }
 
+private struct UsageProviderColumn: View {
+    let name: String
+    let icon: String
+    let fiveHour: Int?
+    let weekly: Int?
+    let plan: String?
+    let activity: AIUsageActivitySnapshot?
+    let tint: Color
+
+    var body: some View {
+        VStack(spacing: 10) {
+            UsageProviderCard(
+                name: name,
+                icon: icon,
+                fiveHour: fiveHour,
+                weekly: weekly,
+                plan: plan,
+                tint: tint
+            )
+            UsageActivityCard(
+                activity: activity,
+                tint: tint
+            )
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 private struct UsageProviderCard: View {
     let name: String
     let icon: String
     let fiveHour: Int?
     let weekly: Int?
+    let plan: String?
     let tint: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
-            HStack {
+            HStack(spacing: 6) {
                 Label(name, systemImage: icon)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(tint)
+
+                if let plan, !plan.isEmpty {
+                    Text(plan)
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(tint)
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(tint.opacity(0.10), in: Capsule())
+                }
+
                 Spacer()
+
                 Text(availabilityText)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
@@ -496,6 +700,110 @@ private struct UsageProviderCard: View {
             return "정보 없음"
         }
         return lowest > 25 ? "사용 가능" : "잔여량 낮음"
+    }
+}
+
+private struct UsageActivityCard: View {
+    let activity: AIUsageActivitySnapshot?
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                "사용 통계(API 요금 추정 환산)",
+                systemImage: "chart.bar.xaxis"
+            )
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+
+            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                GridRow {
+                    UsageMetricCell(
+                        label: "오늘",
+                        value: costText(activity?.todayCostUSD),
+                        tint: tint
+                    )
+                    UsageMetricCell(
+                        label: "30일 비용",
+                        value: costText(activity?.last30DaysCostUSD),
+                        tint: tint
+                    )
+                }
+                GridRow {
+                    UsageMetricCell(
+                        label: "최근 토큰",
+                        value: tokenText(activity?.recentTokens),
+                        tint: tint
+                    )
+                    UsageMetricCell(
+                        label: "30일 토큰",
+                        value: tokenText(activity?.last30DaysTokens),
+                        tint: tint
+                    )
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            Color.primary.opacity(0.022),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(tint.opacity(0.10))
+        }
+    }
+
+    private func costText(_ value: Double?) -> String {
+        guard let value else {
+            return "–"
+        }
+        return String(format: "$%.2f", value)
+    }
+
+    private func tokenText(_ value: Int64?) -> String {
+        guard let value else {
+            return "–"
+        }
+
+        let count = Double(value)
+        if value >= 1_000_000_000 {
+            return String(format: "%.1fB", count / 1_000_000_000)
+        }
+        if value >= 1_000_000 {
+            let format = value >= 100_000_000 ? "%.0fM" : "%.1fM"
+            return String(format: format, count / 1_000_000)
+        }
+        if value >= 1_000 {
+            return String(format: "%.0fK", count / 1_000)
+        }
+        return "\(value)"
+    }
+}
+
+private struct UsageMetricCell: View {
+    let label: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .background(
+            tint.opacity(0.055),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
     }
 }
 
@@ -537,8 +845,10 @@ struct LiveWorkspaceFeed: View {
     @State private var isFollowingLatest = true
     @State private var bottomMarkerOffset = CGFloat.zero
     @State private var scrollViewportHeight = CGFloat.zero
+    @State private var visibleTurnAnchorID: String?
 
     private static let followDistance = CGFloat(400)
+    private static let bottomMarkerID = "live-workspace-feed-bottom"
 
     private var displayTurns: [LiveFeedTurn] {
         Array(director.liveTurns.reversed())
@@ -566,11 +876,26 @@ struct LiveWorkspaceFeed: View {
                                 ForEach(displayTurns) { turn in
                                     LiveTurnCard(turn: turn)
                                         .id(turn.id)
+                                        .background {
+                                            GeometryReader { geometry in
+                                                Color.clear.preference(
+                                                    key: LiveWorkspaceFeedTurnFrameKey.self,
+                                                    value: [
+                                                        turn.id: geometry.frame(
+                                                            in: .named(
+                                                                LiveWorkspaceFeedScrollSpace.name
+                                                            )
+                                                        ),
+                                                    ]
+                                                )
+                                            }
+                                        }
                                 }
                             }
 
                             LiveWorkspaceFeedBottomMarker()
                                 .frame(height: 16)
+                                .id(Self.bottomMarkerID)
                         }
                         .padding(.horizontal, 18)
                         .padding(.top, 16)
@@ -583,10 +908,23 @@ struct LiveWorkspaceFeed: View {
                                     scrollViewportHeight = geometry.size.height
                                     updateFollowingLatest()
                                 }
-                                .onChange(of: geometry.size.height) {
-                                    _, height in
-                                    scrollViewportHeight = height
-                                    updateFollowingLatest()
+                                .onChange(of: geometry.size) {
+                                    _, size in
+                                    let wasFollowingLatest =
+                                        isFollowingLatest
+                                    let readingAnchorID = visibleTurnAnchorID
+                                    scrollViewportHeight = size.height
+                                    if wasFollowingLatest {
+                                        scrollToLatest(
+                                            proxy,
+                                            animated: false
+                                        )
+                                    } else if let readingAnchorID {
+                                        restoreReadingPosition(
+                                            readingAnchorID,
+                                            proxy: proxy
+                                        )
+                                    }
                                 }
                         }
                     }
@@ -596,25 +934,29 @@ struct LiveWorkspaceFeed: View {
                         bottomMarkerOffset = bottomOffset
                         updateFollowingLatest()
                     }
+                    .onPreferenceChange(
+                        LiveWorkspaceFeedTurnFrameKey.self
+                    ) { frames in
+                        visibleTurnAnchorID = readingAnchorID(in: frames)
+                            ?? visibleTurnAnchorID
+                    }
                     .onAppear {
-                        DispatchQueue.main.async {
-                            scrollToLatest(proxy)
-                        }
+                        scrollToLatest(proxy)
                     }
                     .onChange(of: latestActivityUpdate) {
                         _, _ in
                         guard isFollowingLatest else {
                             return
                         }
-                        withAnimation(.easeOut(duration: 0.20)) {
-                            scrollToLatest(proxy)
-                        }
+                        scrollToLatest(proxy)
                     }
                     .onChange(of: director.latestSubmittedCommandID) {
                         _, _ in
-                        withAnimation(.easeOut(duration: 0.20)) {
-                            scrollToLatest(proxy)
-                        }
+                        scrollToLatest(proxy)
+                    }
+                    .onChange(of: director.latestStartedCommandID) {
+                        _, _ in
+                        scrollToLatest(proxy)
                     }
                     .onChange(of: director.latestCompletedTurnID) {
                         _, turnID in
@@ -646,11 +988,37 @@ struct LiveWorkspaceFeed: View {
         }
     }
 
-    private func scrollToLatest(_ proxy: ScrollViewProxy) {
-        guard let latest = displayTurns.last else {
-            return
+    private func scrollToLatest(
+        _ proxy: ScrollViewProxy,
+        animated: Bool = true
+    ) {
+        DispatchQueue.main.async {
+            guard animated else {
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+                return
+            }
+            withAnimation(.easeOut(duration: 0.20)) {
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+            }
         }
-        proxy.scrollTo(latest.id, anchor: .bottom)
+    }
+
+    private func restoreReadingPosition(
+        _ turnID: String,
+        proxy: ScrollViewProxy
+    ) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(turnID, anchor: .top)
+        }
+    }
+
+    private func readingAnchorID(in frames: [String: CGRect]) -> String? {
+        displayTurns.first { turn in
+            guard let frame = frames[turn.id] else {
+                return false
+            }
+            return frame.maxY > 0
+        }?.id
     }
 
     private func latestTurnID(for character: OfficeCharacter) -> String? {
@@ -703,6 +1071,17 @@ private struct LiveWorkspaceFeedBottomOffsetKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private struct LiveWorkspaceFeedTurnFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+
+    static func reduce(
+        value: inout [String: CGRect],
+        nextValue: () -> [String: CGRect]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
     }
 }
 
@@ -1010,6 +1389,8 @@ private struct LiveTypingResponseView: View {
     let animates: Bool
     let isStreaming: Bool
 
+    private static let responseFontSize = CGFloat(14)
+
     @State private var displayedSource: String
     @State private var isTyping: Bool
 
@@ -1027,13 +1408,17 @@ private struct LiveTypingResponseView: View {
                 ZStack(alignment: .topLeading) {
                     ConversationMarkdownView(
                         source: source,
-                        fontSize: 14
+                        fontSize: Self.responseFontSize
                     )
                     .hidden()
                     .accessibilityHidden(true)
 
                     Text(displayedSource)
-                        .font(.system(size: 14))
+                        .font(
+                            .system(
+                                size: Self.responseFontSize
+                            )
+                        )
                         .lineSpacing(3)
                         .textSelection(.enabled)
                         .frame(
@@ -1042,7 +1427,10 @@ private struct LiveTypingResponseView: View {
                         )
                 }
             } else {
-                ConversationMarkdownView(source: source, fontSize: 14)
+                ConversationMarkdownView(
+                    source: source,
+                    fontSize: Self.responseFontSize
+                )
                     .textSelection(.enabled)
             }
         }

@@ -55,6 +55,99 @@ public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
             false
         }
     }
+
+    public var edgeBackdropColors: [NSColor] {
+        switch self {
+        case .modernDay:
+            [
+                NSColor(
+                    srgbRed: 0.941,
+                    green: 0.864,
+                    blue: 0.827,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.934,
+                    green: 0.854,
+                    blue: 0.817,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.918,
+                    green: 0.837,
+                    blue: 0.801,
+                    alpha: 1
+                )
+            ]
+        case .modernNight:
+            [
+                NSColor(
+                    srgbRed: 0.183,
+                    green: 0.227,
+                    blue: 0.313,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.227,
+                    green: 0.257,
+                    blue: 0.337,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.224,
+                    green: 0.247,
+                    blue: 0.324,
+                    alpha: 1
+                )
+            ]
+        case .woodDay:
+            [
+                NSColor(
+                    srgbRed: 0.951,
+                    green: 0.894,
+                    blue: 0.861,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.949,
+                    green: 0.897,
+                    blue: 0.864,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.948,
+                    green: 0.895,
+                    blue: 0.864,
+                    alpha: 1
+                )
+            ]
+        case .woodNight:
+            [
+                NSColor(
+                    srgbRed: 0.523,
+                    green: 0.555,
+                    blue: 0.643,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.523,
+                    green: 0.556,
+                    blue: 0.646,
+                    alpha: 1
+                ),
+                NSColor(
+                    srgbRed: 0.522,
+                    green: 0.555,
+                    blue: 0.644,
+                    alpha: 1
+                )
+            ]
+        }
+    }
+
+    public var edgeBackdropColor: NSColor {
+        edgeBackdropColors[1]
+    }
 }
 
 public enum OfficeCharacter:

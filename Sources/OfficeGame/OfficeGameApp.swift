@@ -9,7 +9,7 @@ struct OfficeGameApp: App {
     @StateObject private var director = AgentDirector()
 
     var body: some Scene {
-        WindowGroup("OfficeLLM") {
+        WindowGroup("OFFICESTRA") {
             OfficeGameView(director: director)
         }
         .defaultSize(width: 1_440, height: 900)
@@ -113,7 +113,7 @@ private struct OfficeGameView: View {
 
     private var officePanel: some View {
         ZStack {
-            letterboxColor
+            letterboxBackground
                 .animation(.easeInOut(duration: 0.18), value: theme)
 
             OfficeRealtimeView(
@@ -278,15 +278,14 @@ private struct OfficeGameView: View {
         OfficeTheme(rawValue: selectedThemeRawValue) ?? .modernDay
     }
 
-    private var letterboxColor: Color {
-        switch theme {
-        case .modernDay, .woodDay:
-            Color(red: 0.965, green: 0.925, blue: 0.895)
-        case .modernNight:
-            Color(red: 0.095, green: 0.135, blue: 0.205)
-        case .woodNight:
-            Color(red: 0.11, green: 0.12, blue: 0.17)
-        }
+    private var letterboxBackground: LinearGradient {
+        LinearGradient(
+            colors: theme.edgeBackdropColors.map {
+                Color(nsColor: $0)
+            },
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
     private var themeToggle: some View {

@@ -38,6 +38,7 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var settingsStatus: String?
     @Published private(set) var liveTurns: [LiveFeedTurn] = []
     @Published private(set) var latestSubmittedCommandID: UUID?
+    @Published private(set) var latestStartedCommandID: UUID?
     @Published private(set) var latestCompletedTurnID: String?
     @Published private(set) var isRealtimeConnected = false
     @Published private(set) var realtimeConnectionError: String?
@@ -50,10 +51,68 @@ final class AgentDirector: ObservableObject {
     private var observedTurnStatuses: [String: LiveTurnStatus] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
+    private var workingBubbleTask: Task<Void, Never>?
     private var lastIdleChatterCharacter: OfficeCharacter?
+    private var workingBubbleStep = 0
+    private var lastRealtimeFeedRefreshAt = Date.distantPast
     private static let bubbleLifetime = Duration.seconds(10)
     private static let sessionRestoreRetryDelay = Duration.seconds(2)
+    private static let minimumRealtimeFeedRefreshInterval = 0.45
     private static let idleChatterQuietDelaySeconds = 5 ... 12
+    private static let workingBubbleRotationDelay =
+        Duration.milliseconds(1_400)
+    private static let workingBubbleMessages = [
+        "🔥 열일 중",
+        "⚡ 풀가동",
+        "🚀 진도 쭉쭉",
+        "🎯 핵심 공략",
+        "🧠 집중 모드",
+        "🛠️ 해결 중",
+        "📈 진척 상승",
+        "💪 끝까지",
+        "🔍 빈틈 제거",
+        "⚙️ 착착 진행",
+        "🏃 속도 낸다",
+        "✅ 하나씩 완료",
+        "🚧 막힘 돌파",
+        "✨ 완성도 상승",
+        "🔨 정면 돌파",
+        "📌 핵심 처리",
+        "💡 답 찾는 중",
+        "⏱️ 집중 질주",
+        "🌋 몰입 최고",
+        "⌨️ 손이 바쁘다",
+        "🧩 문제 해체",
+        "🎯 빠르고 정확히",
+        "🧪 검증 또 검증",
+        "🌊 흐름 탔다",
+        "🏆 결과 만든다",
+        "💻 코드 질주",
+        "📚 자료 정복",
+        "🧠 논리 장착",
+        "🛰️ 해답 추적",
+        "📋 우선순위 완료",
+        "⚡ 집중력 MAX",
+        "🌟 오늘도 해낸다",
+        "🏁 마무리 간다",
+        "💎 품질 상승",
+        "🐞 오류 잡는 중",
+        "🧭 목표 직진",
+        "📊 생산성 폭발",
+        "🔭 끝이 보인다",
+        "🪄 척척 해결",
+        "🧱 정답 조립",
+        "⛵ 작업 순항",
+        "🔬 디테일 점검",
+        "📚 성과 쌓는 중",
+        "🚄 업무 가속",
+        "🧰 딱 맞게 처리",
+        "🦾 한계를 넘는다",
+        "🎧 집중 또 집중",
+        "🏗️ 완성 직전",
+        "📐 제대로 간다",
+        "🏅 결과로 증명",
+    ]
     private static let idleChatterMessages = [
         "☕ 커피가 저를 부르네요.",
         "🧠 뇌 업데이트 대기 중!",
@@ -139,6 +198,7 @@ final class AgentDirector: ObservableObject {
             startRealtimeUpdates()
         }
         startIdleChatter()
+        startWorkingBubbleRotation()
     }
 
     var selectedCharacter: CharacterConfiguration? {
@@ -250,8 +310,9 @@ final class AgentDirector: ObservableObject {
             latestQuestion = nil
         }
         runningCharacters.insert(character.id)
-        showBubble("생각 중...", for: character.id, autoDismiss: false)
-        latestSubmittedCommandID = UUID()
+        showWorkingBubble(for: character.id)
+        let commandID = UUID()
+        latestSubmittedCommandID = commandID
 
         Task {
             do {
@@ -263,6 +324,7 @@ final class AgentDirector: ObservableObject {
                 )
                 conversationIDs[character.id] = started.conversationId
                 await refreshLiveFeed(announcingTransitions: true)
+                latestStartedCommandID = commandID
             } catch {
                 runningCharacters.remove(character.id)
                 let message = error.localizedDescription
@@ -545,6 +607,52 @@ final class AgentDirector: ObservableObject {
         return true
     }
 
+    private func startWorkingBubbleRotation() {
+        workingBubbleTask?.cancel()
+        workingBubbleTask = Task { [weak self] in
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(
+                        for: Self.workingBubbleRotationDelay
+                    )
+                    self?.rotateWorkingBubbles()
+                }
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func rotateWorkingBubbles() {
+        guard !runningCharacters.isEmpty else {
+            return
+        }
+        workingBubbleStep =
+            (workingBubbleStep + 1) % Self.workingBubbleMessages.count
+        for character in runningCharacters {
+            showWorkingBubble(for: character)
+        }
+    }
+
+    private func showWorkingBubble(for character: OfficeCharacter) {
+        guard
+            runningCharacters.contains(character),
+            !cancellingCharacters.contains(character)
+        else {
+            return
+        }
+        let characterOffset =
+            (OfficeCharacter.allCases.firstIndex(of: character) ?? 0) * 3
+        let messageIndex =
+            (workingBubbleStep + characterOffset)
+            % Self.workingBubbleMessages.count
+        showBubble(
+            Self.workingBubbleMessages[messageIndex],
+            for: character,
+            autoDismiss: false
+        )
+    }
+
     private func restorePersistentState() async {
         isReadyForSubmissions = false
         sessionRestoreError = nil
@@ -635,6 +743,27 @@ final class AgentDirector: ObservableObject {
                         _ = try await socket.receive()
                         self.isRealtimeConnected = true
                         self.realtimeConnectionError = nil
+                        let elapsed = Date().timeIntervalSince(
+                            self.lastRealtimeFeedRefreshAt
+                        )
+                        if
+                            elapsed
+                                < Self.minimumRealtimeFeedRefreshInterval
+                        {
+                            let waitMilliseconds = Int64(
+                                ceil(
+                                    (
+                                        Self
+                                            .minimumRealtimeFeedRefreshInterval
+                                            - elapsed
+                                    ) * 1_000
+                                )
+                            )
+                            try await Task.sleep(
+                                for: .milliseconds(waitMilliseconds)
+                            )
+                        }
+                        self.lastRealtimeFeedRefreshAt = Date()
                         await self.refreshLiveFeed(
                             announcingTransitions: true
                         )
@@ -675,6 +804,7 @@ final class AgentDirector: ObservableObject {
         announcingTransitions: Bool
     ) {
         let previousStatuses = observedTurnStatuses
+        let previousRunningCharacters = runningCharacters
         liveTurns = turns
         observedTurnStatuses = Dictionary(
             uniqueKeysWithValues: turns.map { ($0.id, $0.status) }
@@ -686,26 +816,12 @@ final class AgentDirector: ObservableObject {
                 OfficeCharacter(rawValue: $0.characterId)
             }
         )
-        for turn in runningTurns {
-            guard
-                let character = OfficeCharacter(
-                    rawValue: turn.characterId
-                )
-            else {
-                continue
-            }
-            let progress =
-                turn.activities.last?.text
-                ?? (!turn.response.isEmpty
-                    ? turn.response
-                    : "생각 중...")
-            if bubbles[character] != progress {
-                showBubble(
-                    progress,
-                    for: character,
-                    autoDismiss: false
-                )
-            }
+        for character in runningCharacters
+        where
+            !previousRunningCharacters.contains(character)
+                || bubbles[character] == nil
+        {
+            showWorkingBubble(for: character)
         }
 
         var latestTurns:

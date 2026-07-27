@@ -289,7 +289,18 @@ struct AIUsageSnapshot: Equatable, Sendable {
     let codexWeekly: Int?
     let claudeFiveHour: Int?
     let claudeWeekly: Int?
+    let codexPlan: String?
+    let claudePlan: String?
+    let codexActivity: AIUsageActivitySnapshot?
+    let claudeActivity: AIUsageActivitySnapshot?
     let fetchedAt: Date
+}
+
+struct AIUsageActivitySnapshot: Equatable, Sendable {
+    let todayCostUSD: Double?
+    let recentTokens: Int64?
+    let last30DaysCostUSD: Double?
+    let last30DaysTokens: Int64?
 }
 
 enum CodexBarUsageReader {
@@ -328,6 +339,9 @@ enum CodexBarUsageReader {
             [UsageProviderPayload].self,
             from: data
         )
+        let costProviders = try? fetchCostProviders(
+            executable: executable
+        )
 
         guard
             let codex = providers.first(where: { $0.provider == "codex" }),
@@ -343,7 +357,35 @@ enum CodexBarUsageReader {
             codexWeekly: codexUsage.remaining(windowMinutes: 10_080),
             claudeFiveHour: claudeUsage.remaining(windowMinutes: 300),
             claudeWeekly: claudeUsage.remaining(windowMinutes: 10_080),
+            codexPlan: codex.plan,
+            claudePlan: claude.plan,
+            codexActivity: costProviders?
+                .first(where: { $0.provider == "codex" })?
+                .activitySnapshot,
+            claudeActivity: costProviders?
+                .first(where: { $0.provider == "claude" })?
+                .activitySnapshot,
             fetchedAt: Date()
+        )
+    }
+
+    private static func fetchCostProviders(
+        executable: URL
+    ) throws -> [CostProviderPayload] {
+        let data = try run(
+            executable: executable,
+            arguments: [
+                "cost",
+                "--provider",
+                "both",
+                "--days",
+                "30",
+                "--json-only",
+            ]
+        )
+        return try JSONDecoder().decode(
+            [CostProviderPayload].self,
+            from: data
         )
     }
 
@@ -392,12 +434,25 @@ enum CodexBarUsageReader {
 private struct UsageProviderPayload: Decodable {
     let provider: String
     let usage: UsagePayload?
+    let openaiDashboard: UsageDashboardPayload?
+
+    var plan: String? {
+        openaiDashboard?.accountPlan
+            ?? usage?.loginMethod
+            ?? usage?.identity?.loginMethod
+    }
+}
+
+private struct UsageDashboardPayload: Decodable {
+    let accountPlan: String?
 }
 
 private struct UsagePayload: Decodable {
     let primary: UsageWindow?
     let secondary: UsageWindow?
     let tertiary: UsageWindow?
+    let loginMethod: String?
+    let identity: UsageIdentityPayload?
 
     func remaining(windowMinutes: Int) -> Int? {
         let window = [primary, secondary, tertiary]
@@ -412,9 +467,30 @@ private struct UsagePayload: Decodable {
     }
 }
 
+private struct UsageIdentityPayload: Decodable {
+    let loginMethod: String?
+}
+
 private struct UsageWindow: Decodable {
     let usedPercent: Double
     let windowMinutes: Int
+}
+
+private struct CostProviderPayload: Decodable {
+    let provider: String
+    let sessionCostUSD: Double?
+    let sessionTokens: Int64?
+    let last30DaysCostUSD: Double?
+    let last30DaysTokens: Int64?
+
+    var activitySnapshot: AIUsageActivitySnapshot {
+        AIUsageActivitySnapshot(
+            todayCostUSD: sessionCostUSD,
+            recentTokens: sessionTokens,
+            last30DaysCostUSD: last30DaysCostUSD,
+            last30DaysTokens: last30DaysTokens
+        )
+    }
 }
 
 private enum UsageReaderError: LocalizedError {
