@@ -206,9 +206,7 @@ private struct TurnDisclosure: View {
             Text(title)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
-            Text(text.isEmpty ? "내용 없음" : text)
-                .font(.system(size: 12))
-                .textSelection(.enabled)
+            ConversationMarkdownView(source: text)
         }
     }
 }
@@ -443,9 +441,7 @@ private struct ArchiveTurnCard: View {
             Text(title)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
-            Text(text.isEmpty ? "내용 없음" : text)
-                .font(.system(size: 12))
-                .textSelection(.enabled)
+            ConversationMarkdownView(source: text)
         }
     }
 }

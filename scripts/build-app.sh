@@ -4,22 +4,22 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_BUNDLE="$PROJECT_DIR/dist/OfficeGame.app"
+APP_BUNDLE="$PROJECT_DIR/dist/OfficeLLM.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$PROJECT_DIR"
-swift build -c release --product OfficeGame
+swift build -c release --product OfficeLLM
 BIN_DIR="$(swift build -c release --show-bin-path)"
-RESOURCE_STAGE_DIR="$(mktemp -d /tmp/officegame-resources.XXXXXX)"
-RESOURCE_STAGE_BUNDLE="$RESOURCE_STAGE_DIR/OfficeGame_OfficeCore.bundle"
+RESOURCE_STAGE_DIR="$(mktemp -d /tmp/officellm-resources.XXXXXX)"
+RESOURCE_STAGE_BUNDLE="$RESOURCE_STAGE_DIR/OfficeLLM_OfficeCore.bundle"
 
 trap 'rm -rf "$RESOURCE_STAGE_DIR"' EXIT
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 mkdir -p "$RESOURCE_STAGE_BUNDLE"
-cp "$BIN_DIR/OfficeGame" "$MACOS_DIR/OfficeGame"
+cp "$BIN_DIR/OfficeLLM" "$MACOS_DIR/OfficeLLM"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 for resource_name in \
@@ -46,8 +46,8 @@ mkdir -p "$RESOURCE_STAGE_BUNDLE/office-3d-motion-v1"
     -a \
     --delete \
     "$RESOURCE_STAGE_BUNDLE/" \
-    "$RESOURCES_DIR/OfficeGame_OfficeCore.bundle/"
-chmod 755 "$MACOS_DIR/OfficeGame"
+    "$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/"
+chmod 755 "$MACOS_DIR/OfficeLLM"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "$APP_BUNDLE"

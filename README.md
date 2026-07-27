@@ -1,4 +1,4 @@
-# 사무실 CLI 에이전트 앱
+# OfficeLLM
 
 SwiftUI·SpriteKit 사무실에서 캐릭터를 선택해 Codex CLI와 Claude Code CLI에
 업무를 전달하는 macOS 앱이다.
@@ -55,7 +55,7 @@ PostgreSQL에 저장되며 입력바와 전체 설정 메뉴가 같은 값을 �
 ## 실행
 
 ```sh
-swift run OfficeGame
+swift run OfficeLLM
 ```
 
 ## 테스트
@@ -68,7 +68,7 @@ swift test -Xswiftc -warnings-as-errors
 
 ```sh
 ./scripts/build-app.sh
-open dist/OfficeGame.app
+open dist/OfficeLLM.app
 ```
 
 현재 앱 메뉴에는 모던 낮·밤만 노출한다. CLI 호출은 앱에서 직접 수행하며

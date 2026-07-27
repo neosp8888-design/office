@@ -3,13 +3,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "OfficeGame",
+    name: "OfficeLLM",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .library(name: "OfficeCore", targets: ["OfficeCore"]),
-        .executable(name: "OfficeGame", targets: ["OfficeGame"])
+        .executable(name: "OfficeLLM", targets: ["OfficeGame"])
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/gonzalezreal/swift-markdown-ui",
+            exact: "2.4.1"
+        )
     ],
     targets: [
         .target(
@@ -29,7 +35,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "OfficeGame",
-            dependencies: ["OfficeCore"],
+            dependencies: [
+                "OfficeCore",
+                .product(
+                    name: "MarkdownUI",
+                    package: "swift-markdown-ui"
+                )
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SpriteKit")

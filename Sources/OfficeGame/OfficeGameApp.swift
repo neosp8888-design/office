@@ -8,7 +8,7 @@ struct OfficeGameApp: App {
     @StateObject private var director = AgentDirector()
 
     var body: some Scene {
-        WindowGroup("사무실") {
+        WindowGroup("OfficeLLM") {
             OfficeGameView(director: director)
         }
         .defaultSize(width: 1_200, height: 800)
@@ -428,9 +428,7 @@ private struct BubbleDetailView: View {
             Divider()
 
             ScrollView {
-                Text(message)
-                    .font(.system(size: 13))
-                    .textSelection(.enabled)
+                ConversationMarkdownView(source: message, fontSize: 13)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
             }

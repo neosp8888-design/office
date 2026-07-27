@@ -205,7 +205,20 @@ final class AgentDirector: ObservableObject {
                     character: characterWithCurrentName(character),
                     workdir: configuration.workdir,
                     previousSessionID: sessionIDs[character.id]
-                )
+                ) { [weak self] progress in
+                    guard
+                        let self,
+                        self.runningCharacters.contains(character.id),
+                        self.bubbles[character.id] != progress
+                    else {
+                        return
+                    }
+                    self.showBubble(
+                        progress,
+                        for: character.id,
+                        autoDismiss: false
+                    )
+                }
                 if let sessionID = response.sessionID {
                     sessionIDs[character.id] = sessionID
                 }

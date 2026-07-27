@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>ko</string>
     <key>CFBundleDisplayName</key>
-    <string>사무실</string>
+    <string>OfficeLLM</string>
     <key>CFBundleExecutable</key>
-    <string>OfficeGame</string>
+    <string>OfficeLLM</string>
     <key>CFBundleIdentifier</key>
     <string>com.neo.office-game</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>OfficeGame</string>
+    <string>OfficeLLM</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

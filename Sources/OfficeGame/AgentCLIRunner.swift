@@ -14,7 +14,8 @@ actor AgentCLIRunner {
         prompt: String,
         character: CharacterConfiguration,
         workdir: String,
-        previousSessionID: String?
+        previousSessionID: String?,
+        onProgress: (@MainActor @Sendable (String) -> Void)? = nil
     ) async throws -> AgentCLIResponse {
         let executable = try ExecutableLocator.locate(
             backend: character.backend,
@@ -28,7 +29,9 @@ actor AgentCLIRunner {
         let result = try await launch(
             executable: executable,
             arguments: arguments,
-            workdir: workdir
+            workdir: workdir,
+            backend: character.backend,
+            onProgress: onProgress
         )
         let output = String(decoding: result.stdout, as: UTF8.self)
 
@@ -151,7 +154,9 @@ actor AgentCLIRunner {
     private func launch(
         executable: URL,
         arguments: [String],
-        workdir: String
+        workdir: String,
+        backend: AgentBackend,
+        onProgress: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> ProcessResult {
         let workingDirectory = URL(fileURLWithPath: workdir)
         guard FileManager.default.fileExists(atPath: workingDirectory.path)
@@ -170,7 +175,20 @@ actor AgentCLIRunner {
         process.standardInput = FileHandle.nullDevice
 
         let outputTask = Task.detached {
-            stdout.fileHandleForReading.readDataToEndOfFile()
+            await StreamingOutputReader.read(
+                from: stdout.fileHandleForReading
+            ) { line in
+                guard
+                    let onProgress,
+                    let message = AgentProgressEventParser.message(
+                        fromJSONLine: line,
+                        backend: backend
+                    )
+                else {
+                    return
+                }
+                await onProgress(message)
+            }
         }
         let errorTask = Task.detached {
             stderr.fileHandleForReading.readDataToEndOfFile()
@@ -358,6 +376,52 @@ private struct ProcessResult: Sendable {
     let stdout: Data
     let stderr: Data
     let status: Int32
+}
+
+private enum StreamingOutputReader {
+    static func read(
+        from handle: FileHandle,
+        onLine: @escaping @Sendable (String) async -> Void
+    ) async -> Data {
+        var output = Data()
+        var pending = Data()
+
+        while true {
+            let chunk = handle.readData(ofLength: 4_096)
+            guard !chunk.isEmpty else {
+                break
+            }
+            output.append(chunk)
+            pending.append(chunk)
+
+            while let newlineIndex = pending.firstIndex(of: 0x0A) {
+                let lineData = Data(pending[..<newlineIndex])
+                pending.removeSubrange(
+                    pending.startIndex ... newlineIndex
+                )
+                await emit(lineData, to: onLine)
+            }
+        }
+
+        if !pending.isEmpty {
+            await emit(pending, to: onLine)
+        }
+        return output
+    }
+
+    private static func emit(
+        _ data: Data,
+        to onLine: @escaping @Sendable (String) async -> Void
+    ) async {
+        var line = String(decoding: data, as: UTF8.self)
+        if line.last == "\r" {
+            line.removeLast()
+        }
+        guard !line.isEmpty else {
+            return
+        }
+        await onLine(line)
+    }
 }
 
 private enum ExecutableLocator {
