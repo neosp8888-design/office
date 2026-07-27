@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import {
   AgentBusyError,
+  AgentJobNotFoundError,
   AgentRuntime,
   CharacterNotFoundError,
 } from "./agent-runtime.mjs";
@@ -71,6 +72,11 @@ function routeCharacterIdentityPrompt(pathname) {
 
 function routeCharacterHistory(pathname) {
   const match = pathname.match(/^\/api\/characters\/([^/]+)\/history$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function routeAgentJob(pathname) {
+  const match = pathname.match(/^\/api\/agent-jobs\/([^/]+)$/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
@@ -493,6 +499,7 @@ async function startAgentJob(response, body) {
       characterID: String(body.characterId ?? ""),
       prompt: body.prompt,
       conversationID: body.conversationId,
+      attachmentPaths: body.attachmentPaths,
     });
     send(response, 202, job);
   } catch (error) {
@@ -502,6 +509,23 @@ async function startAgentJob(response, body) {
     }
     if (error instanceof AgentBusyError) {
       send(response, 409, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function cancelAgentJob(response, characterID) {
+  if (!runtime) {
+    send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
+    return;
+  }
+
+  try {
+    send(response, 200, await runtime.cancel(characterID));
+  } catch (error) {
+    if (error instanceof AgentJobNotFoundError) {
+      send(response, 404, { error: error.message });
       return;
     }
     throw error;
@@ -886,6 +910,7 @@ const server = createServer(async (request, response) => {
       url.pathname,
     );
     const historyCharacterID = routeCharacterHistory(url.pathname);
+    const jobCharacterID = routeAgentJob(url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
       await pool.query("SELECT 1");
@@ -940,6 +965,11 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/agent-jobs"
     ) {
       await startAgentJob(response, await readJSON(request));
+    } else if (
+      request.method === "DELETE" &&
+      jobCharacterID
+    ) {
+      await cancelAgentJob(response, jobCharacterID);
     } else if (
       request.method === "POST" &&
       url.pathname === "/api/rag/documents"

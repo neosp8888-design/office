@@ -1,5 +1,6 @@
 // 이 파일은 네 가지 V4 도트 오피스 테마와 명령 입력창을 네이티브 macOS 창에 표시한다.
 
+import AppKit
 import OfficeCore
 import SwiftUI
 
@@ -19,10 +20,12 @@ struct OfficeGameApp: App {
 private struct OfficeGameView: View {
     @ObservedObject var director: AgentDirector
     @State private var command = ""
+    @State private var attachments: [URL] = []
     @State private var showsCharacterSettings = false
     @State private var historyTarget: ConversationHistoryTarget?
     @State private var bubbleDetail: BubbleDetail?
     @State private var detailSelection = OfficeDetailSelection.archive
+    @Namespace private var characterSelectionAnimation
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -344,6 +347,42 @@ private struct OfficeGameView: View {
                 }
             }
 
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        ForEach(attachments, id: \.path) { attachment in
+                            HStack(spacing: 5) {
+                                Image(systemName: "doc.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(
+                                        DashboardPalette.accent
+                                    )
+                                Text(attachment.lastPathComponent)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                                Button {
+                                    removeAttachment(attachment)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(
+                                    "\(attachment.lastPathComponent) 첨부 제거"
+                                )
+                            }
+                            .padding(.horizontal, 9)
+                            .frame(height: 27)
+                            .background(
+                                Color.primary.opacity(0.055),
+                                in: Capsule()
+                            )
+                        }
+                    }
+                }
+            }
+
             HStack(spacing: 9) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 15, weight: .bold))
@@ -359,6 +398,7 @@ private struct OfficeGameView: View {
                     )
 
                 Button {
+                    chooseAttachments()
                 } label: {
                     Image(systemName: "paperclip")
                         .font(.system(size: 15, weight: .semibold))
@@ -367,24 +407,50 @@ private struct OfficeGameView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("파일 첨부")
+                .help("파일 첨부 · 한 번에 최대 20개")
+                .disabled(attachmentSelectionIsDisabled)
+                .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
 
-                Button(action: submitCommand) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            DashboardPalette.accent,
-                            in: RoundedRectangle(
-                                cornerRadius: 11,
-                                style: .continuous
+                if director.isSelectedCharacterRunning {
+                    Button(action: director.cancelSelectedJob) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                Color.red.opacity(0.88),
+                                in: RoundedRectangle(
+                                    cornerRadius: 11,
+                                    style: .continuous
+                                )
                             )
-                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("대화 중단")
+                    .help("현재 직원의 업무 중단")
+                    .disabled(director.isCancellingSelectedCharacter)
+                    .opacity(
+                        director.isCancellingSelectedCharacter ? 0.42 : 1
+                    )
+                } else {
+                    Button(action: submitCommand) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                DashboardPalette.accent,
+                                in: RoundedRectangle(
+                                    cornerRadius: 11,
+                                    style: .continuous
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("보내기")
+                    .disabled(commandIsDisabled)
+                    .opacity(commandIsDisabled ? 0.42 : 1)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("보내기")
-                .disabled(commandIsDisabled)
-                .opacity(commandIsDisabled ? 0.42 : 1)
             }
             .padding(.leading, 13)
             .padding(.trailing, 7)
@@ -402,45 +468,114 @@ private struct OfficeGameView: View {
     }
 
     private var characterSelector: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 3) {
             ForEach(director.characters) { character in
                 let isSelected =
                     director.selectedCharacterID == character.id
+                let isRunning =
+                    director.runningCharacters.contains(character.id)
                 let name = director.displayName(for: character.id)
+                let badgeColor = DashboardPalette.characterAccent(
+                    for: character.id.rawValue
+                )
+                let isCompleted =
+                    director.unreviewedCompletedCharacters.contains(
+                        character.id
+                    )
 
                 Button {
-                    director.select(character)
+                    withAnimation(
+                        .spring(
+                            response: 0.28,
+                            dampingFraction: 0.84
+                        )
+                    ) {
+                        director.select(character)
+                    }
                 } label: {
-                    Text(name)
-                        .font(
-                            .system(
-                                size: 11,
-                                weight: isSelected ? .bold : .semibold
-                            )
-                        )
-                        .foregroundStyle(
-                            isSelected
-                                ? Color.white
-                                : Color.primary.opacity(0.72)
-                        )
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 28)
-                        .background(
-                            isSelected
-                                ? DashboardPalette.accent
-                                : Color.primary.opacity(0.045),
-                            in: Capsule()
-                        )
-                        .overlay {
-                            Capsule()
-                                .stroke(
-                                    isSelected
-                                        ? DashboardPalette.accent
-                                        : Color.primary.opacity(0.08)
+                    HStack(spacing: 7) {
+                        Text(String(name.prefix(1)))
+                            .font(
+                                .system(
+                                    size: 13,
+                                    weight: .heavy,
+                                    design: .rounded
                                 )
+                            )
+                            .foregroundStyle(
+                                isSelected
+                                    ? Color.white
+                                    : badgeColor
+                            )
+                            .frame(width: 24, height: 24)
+                            .background(
+                                isSelected
+                                    ? badgeColor
+                                    : badgeColor.opacity(0.12),
+                                in: Circle()
+                            )
+
+                        Text(name)
+                            .font(
+                                .system(
+                                    size: 13,
+                                    weight: isSelected
+                                        ? .bold
+                                        : .semibold
+                                )
+                            )
+                            .foregroundStyle(
+                                Color.primary.opacity(
+                                    isSelected ? 0.88 : 0.56
+                                )
+                            )
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if isRunning || isCompleted {
+                            CharacterTaskStatusIndicator(
+                                isRunning: isRunning,
+                                isCompleted: isCompleted,
+                                reduceMotion: reduceMotion
+                            )
                         }
+                    }
+                    .padding(.horizontal, 7)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 38)
+                    .contentShape(
+                        RoundedRectangle(
+                            cornerRadius: 10,
+                            style: .continuous
+                        )
+                    )
+                    .background {
+                        if isSelected {
+                            RoundedRectangle(
+                                cornerRadius: 10,
+                                style: .continuous
+                            )
+                            .fill(Color.white.opacity(0.94))
+                            .overlay {
+                                RoundedRectangle(
+                                    cornerRadius: 10,
+                                    style: .continuous
+                                )
+                                .stroke(
+                                    DashboardPalette.accent.opacity(0.18)
+                                )
+                            }
+                            .matchedGeometryEffect(
+                                id: "selectedCharacter",
+                                in: characterSelectionAnimation
+                            )
+                            .shadow(
+                                color: .black.opacity(0.10),
+                                radius: 6,
+                                y: 2
+                            )
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
                 .help("\(name) 선택")
@@ -452,6 +587,27 @@ private struct OfficeGameView: View {
                     "commandCharacter-\(character.id.rawValue)"
                 )
             }
+        }
+        .padding(4)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.primary.opacity(0.055),
+                            Color.primary.opacity(0.025),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: 14,
+                        style: .continuous
+                    )
+                    .stroke(Color.primary.opacity(0.055))
+                }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("직원 선택")
@@ -500,6 +656,20 @@ private struct OfficeGameView: View {
             || director.isUpdatingConfiguration
             || director.selectedCharacter == nil
             || director.isSelectedCharacterRunning
+            || (
+                command.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty
+                    && attachments.isEmpty
+            )
+    }
+
+    private var attachmentSelectionIsDisabled: Bool {
+        !director.isReadyForSubmissions
+            || director.isUpdatingConfiguration
+            || director.selectedCharacter == nil
+            || director.isSelectedCharacterRunning
+            || attachments.count >= 20
     }
 
     private var characterSettingsButton: some View {
@@ -548,19 +718,123 @@ private struct OfficeGameView: View {
     }
 
     private func submitCommand() {
-        let prompt = command.trimmingCharacters(
+        let enteredPrompt = command.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
         guard
             !commandIsDisabled,
-            !prompt.isEmpty,
             director.selectedCharacter != nil
         else {
             return
         }
 
+        let prompt = enteredPrompt.isEmpty
+            ? "첨부 파일을 확인해줘."
+            : enteredPrompt
+        let attachmentPaths = attachments.map(\.path)
         command = ""
-        director.submit(prompt)
+        attachments = []
+        director.submit(
+            prompt,
+            attachmentPaths: attachmentPaths
+        )
+    }
+
+    private func chooseAttachments() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "첨부"
+        panel.message =
+            "Codex 또는 Claude Code가 확인할 파일을 선택하세요."
+
+        guard panel.runModal() == .OK else {
+            return
+        }
+        let existingPaths = Set(attachments.map(\.standardizedFileURL.path))
+        let newAttachments = panel.urls.filter {
+            !existingPaths.contains($0.standardizedFileURL.path)
+        }
+        attachments.append(
+            contentsOf: newAttachments.prefix(20 - attachments.count)
+        )
+    }
+
+    private func removeAttachment(_ attachment: URL) {
+        attachments.removeAll {
+            $0.standardizedFileURL == attachment.standardizedFileURL
+        }
+    }
+    }
+
+private struct CharacterTaskStatusIndicator: View {
+    let isRunning: Bool
+    let isCompleted: Bool
+    let reduceMotion: Bool
+
+    private let runningColor = Color(
+        red: 0.18,
+        green: 0.73,
+        blue: 0.42
+    )
+    private let completedColor = Color(
+        red: 0.94,
+        green: 0.52,
+        blue: 0.16
+    )
+
+    var body: some View {
+        Group {
+            if isRunning {
+                if reduceMotion {
+                    runningIndicator(isExpanded: false)
+                } else {
+                    PhaseAnimator([false, true]) { isExpanded in
+                        runningIndicator(isExpanded: isExpanded)
+                    } animation: { _ in
+                        .easeInOut(duration: 0.62)
+                    }
+                }
+            } else if isCompleted {
+                Image(systemName: "exclamationmark")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 19, height: 19)
+                    .background(completedColor, in: Circle())
+                    .shadow(
+                        color: completedColor.opacity(0.28),
+                        radius: 4,
+                        y: 2
+                    )
+                    .accessibilityLabel("업무 완료")
+            }
+        }
+        .frame(width: 24, height: 24)
+    }
+
+    private func runningIndicator(isExpanded: Bool) -> some View {
+        ZStack {
+            Circle()
+                .stroke(
+                    runningColor.opacity(isExpanded ? 0.06 : 0.58),
+                    lineWidth: 1.6
+                )
+                .frame(width: 18, height: 18)
+                .scaleEffect(isExpanded ? 1.26 : 0.76)
+
+            Circle()
+                .fill(runningColor)
+                .frame(width: 12, height: 12)
+                .scaleEffect(isExpanded ? 1 : 0.84)
+                .opacity(isExpanded ? 0.72 : 1)
+                .shadow(
+                    color: runningColor.opacity(0.42),
+                    radius: 4
+                )
+        }
+        .accessibilityLabel("업무 중")
     }
 }
 

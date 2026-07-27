@@ -538,7 +538,7 @@ struct LiveWorkspaceFeed: View {
     @State private var bottomMarkerOffset = CGFloat.zero
     @State private var scrollViewportHeight = CGFloat.zero
 
-    private static let followDistance = CGFloat(100)
+    private static let followDistance = CGFloat(400)
 
     private var displayTurns: [LiveFeedTurn] {
         Array(director.liveTurns.reversed())
@@ -610,6 +610,37 @@ struct LiveWorkspaceFeed: View {
                             scrollToLatest(proxy)
                         }
                     }
+                    .onChange(of: director.latestSubmittedCommandID) {
+                        _, _ in
+                        withAnimation(.easeOut(duration: 0.20)) {
+                            scrollToLatest(proxy)
+                        }
+                    }
+                    .onChange(of: director.latestCompletedTurnID) {
+                        _, turnID in
+                        guard let turnID else {
+                            return
+                        }
+                        scrollToTurn(
+                            turnID,
+                            proxy: proxy,
+                            anchor: .bottom
+                        )
+                    }
+                    .onChange(of: director.selectedCharacterID) {
+                        _, character in
+                        guard
+                            let character,
+                            let turnID = latestTurnID(for: character)
+                        else {
+                            return
+                        }
+                        scrollToTurn(
+                            turnID,
+                            proxy: proxy,
+                            anchor: .bottom
+                        )
+                    }
                 }
             }
         }
@@ -620,6 +651,25 @@ struct LiveWorkspaceFeed: View {
             return
         }
         proxy.scrollTo(latest.id, anchor: .bottom)
+    }
+
+    private func latestTurnID(for character: OfficeCharacter) -> String? {
+        director.liveTurns.first {
+            $0.characterId == character.rawValue
+        }?.id
+    }
+
+    private func scrollToTurn(
+        _ turnID: String,
+        proxy: ScrollViewProxy,
+        anchor: UnitPoint
+    ) {
+        isFollowingLatest = false
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.24)) {
+                proxy.scrollTo(turnID, anchor: anchor)
+            }
+        }
     }
 
     private func updateFollowingLatest() {
@@ -659,10 +709,12 @@ private struct LiveWorkspaceFeedBottomOffsetKey: PreferenceKey {
 private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     @State private var activitiesExpanded: Bool
+    @State private var animatesResponse: Bool
 
     init(turn: LiveFeedTurn) {
         self.turn = turn
         _activitiesExpanded = State(initialValue: false)
+        _animatesResponse = State(initialValue: turn.status.isRunning)
     }
 
     var body: some View {
@@ -822,8 +874,11 @@ private struct LiveTurnCard: View {
                     ? Color.orange
                     : DashboardPalette.accent
             )
-            ConversationMarkdownView(source: turn.response, fontSize: 14)
-                .textSelection(.enabled)
+            LiveTypingResponseView(
+                source: turn.response,
+                animates: animatesResponse,
+                isStreaming: turn.status.isRunning
+            )
         }
         .padding(.top, 2)
     }
@@ -905,6 +960,123 @@ private struct LiveTurnCard: View {
     }
 }
 
+private struct LiveTypingResponseView: View {
+    let source: String
+    let animates: Bool
+    let isStreaming: Bool
+
+    @State private var displayedSource: String
+    @State private var isTyping: Bool
+
+    init(source: String, animates: Bool, isStreaming: Bool) {
+        self.source = source
+        self.animates = animates
+        self.isStreaming = isStreaming
+        _displayedSource = State(initialValue: animates ? "" : source)
+        _isTyping = State(initialValue: animates)
+    }
+
+    var body: some View {
+        Group {
+            if isTyping {
+                ZStack(alignment: .topLeading) {
+                    ConversationMarkdownView(
+                        source: source,
+                        fontSize: 14
+                    )
+                    .hidden()
+                    .accessibilityHidden(true)
+
+                    Text(displayedSource)
+                        .font(.system(size: 14))
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(
+                            maxWidth: .infinity,
+                            alignment: .leading
+                        )
+                }
+            } else {
+                ConversationMarkdownView(source: source, fontSize: 14)
+                    .textSelection(.enabled)
+            }
+        }
+        .task(
+            id: LiveTypingTarget(
+                source: source,
+                animates: animates,
+                isStreaming: isStreaming
+            )
+        ) {
+            await updateDisplayedSource()
+        }
+    }
+
+    private func updateDisplayedSource() async {
+        guard animates else {
+            displayedSource = source
+            isTyping = false
+            return
+        }
+
+        let target = Array(source)
+        var displayed = Array(displayedSource)
+        if !target.starts(with: displayed) {
+            displayed = Array(displayed.prefix(sharedPrefixCount(
+                displayed,
+                target
+            )))
+            displayedSource = String(displayed)
+        }
+
+        isTyping = true
+        var rendered = String(displayed)
+        while displayed.count < target.count, !Task.isCancelled {
+            let nextCharacter = target[displayed.count]
+            displayed.append(nextCharacter)
+            rendered.append(nextCharacter)
+            displayedSource = rendered
+
+            if displayed.count < target.count {
+                try? await Task.sleep(for: .milliseconds(14))
+            }
+        }
+
+        guard
+            !Task.isCancelled,
+            !isStreaming,
+            displayedSource == source
+        else {
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(60))
+        if !Task.isCancelled {
+            isTyping = false
+        }
+    }
+
+    private func sharedPrefixCount(
+        _ current: [Character],
+        _ target: [Character]
+    ) -> Int {
+        var index = 0
+        while
+            index < current.count,
+            index < target.count,
+            current[index] == target[index]
+        {
+            index += 1
+        }
+        return index
+    }
+}
+
+private struct LiveTypingTarget: Equatable {
+    let source: String
+    let animates: Bool
+    let isStreaming: Bool
+}
+
 struct CharacterBadge: View {
     let name: String
     let characterID: String
@@ -915,15 +1087,29 @@ struct CharacterBadge: View {
             .font(.system(size: size * 0.38, weight: .bold, design: .rounded))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(characterColor, in: Circle())
+            .background(
+                DashboardPalette.characterAccent(for: characterID),
+                in: Circle()
+            )
             .overlay {
                 Circle()
                     .stroke(.white.opacity(0.72), lineWidth: 2)
             }
-            .shadow(color: characterColor.opacity(0.20), radius: 5, y: 2)
+            .shadow(
+                color: DashboardPalette.characterAccent(
+                    for: characterID
+                ).opacity(0.20),
+                radius: 5,
+                y: 2
+            )
     }
+}
 
-    private var characterColor: Color {
+enum DashboardPalette {
+    static let accent = Color(red: 0.13, green: 0.55, blue: 0.52)
+    static let canvas = Color(red: 0.94, green: 0.945, blue: 0.955)
+
+    static func characterAccent(for characterID: String) -> Color {
         switch characterID {
         case "boss":
             Color(red: 0.34, green: 0.29, blue: 0.52)
@@ -937,11 +1123,6 @@ struct CharacterBadge: View {
             Color(red: 0.78, green: 0.57, blue: 0.22)
         }
     }
-}
-
-enum DashboardPalette {
-    static let accent = Color(red: 0.13, green: 0.55, blue: 0.52)
-    static let canvas = Color(red: 0.94, green: 0.945, blue: 0.955)
 }
 
 extension View {

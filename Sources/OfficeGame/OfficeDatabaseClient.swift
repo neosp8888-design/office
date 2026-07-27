@@ -177,7 +177,8 @@ struct OfficeDatabaseClient: Sendable {
     func startAgentJob(
         character: OfficeCharacter,
         prompt: String,
-        conversationID: UUID
+        conversationID: UUID,
+        attachmentPaths: [String]
     ) async throws -> StartedAgentJob {
         let url = baseURL
             .appending(path: "api")
@@ -192,12 +193,27 @@ struct OfficeDatabaseClient: Sendable {
             StartAgentJobRequest(
                 characterId: character.rawValue,
                 prompt: prompt,
-                conversationId: conversationID
+                conversationId: conversationID,
+                attachmentPaths: attachmentPaths
             )
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response, data: data)
         return try JSONDecoder().decode(StartedAgentJob.self, from: data)
+    }
+
+    func cancelAgentJob(
+        character: OfficeCharacter
+    ) async throws -> CancelledAgentJob {
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "agent-jobs")
+            .appending(path: character.rawValue)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(CancelledAgentJob.self, from: data)
     }
 
     var realtimeWebSocketURL: URL {
@@ -417,11 +433,17 @@ private struct StartAgentJobRequest: Encodable {
     let characterId: String
     let prompt: String
     let conversationId: UUID
+    let attachmentPaths: [String]
 }
 
 struct StartedAgentJob: Decodable, Sendable {
     let turnId: String
     let conversationId: UUID
+    let status: String
+}
+
+struct CancelledAgentJob: Decodable, Sendable {
+    let turnId: String
     let status: String
 }
 

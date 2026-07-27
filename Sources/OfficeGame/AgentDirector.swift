@@ -21,6 +21,10 @@ final class AgentDirector: ObservableObject {
         [OfficeCharacter: String] = [:]
     @Published private(set) var latestQuestion: PendingAgentQuestion?
     @Published private(set) var runningCharacters: Set<OfficeCharacter> = []
+    @Published private(set) var unreviewedCompletedCharacters:
+        Set<OfficeCharacter> = []
+    @Published private(set) var cancellingCharacters:
+        Set<OfficeCharacter> = []
     @Published private(set) var failedCharacters:
         [OfficeCharacter: String] = [:]
     @Published private(set) var offDutyCharacters:
@@ -33,6 +37,8 @@ final class AgentDirector: ObservableObject {
     @Published var selectedCharacterID: OfficeCharacter?
     @Published private(set) var settingsStatus: String?
     @Published private(set) var liveTurns: [LiveFeedTurn] = []
+    @Published private(set) var latestSubmittedCommandID: UUID?
+    @Published private(set) var latestCompletedTurnID: String?
     @Published private(set) var isRealtimeConnected = false
     @Published private(set) var realtimeConnectionError: String?
 
@@ -160,6 +166,13 @@ final class AgentDirector: ObservableObject {
         return runningCharacters.contains(selectedCharacterID)
     }
 
+    var isCancellingSelectedCharacter: Bool {
+        guard let selectedCharacterID else {
+            return false
+        }
+        return cancellingCharacters.contains(selectedCharacterID)
+    }
+
     func displayName(for character: OfficeCharacter) -> String {
         names[character] ?? character.rawValue
     }
@@ -185,6 +198,10 @@ final class AgentDirector: ObservableObject {
     }
 
     func select(_ character: CharacterConfiguration) {
+        if let selectedCharacterID {
+            unreviewedCompletedCharacters.remove(selectedCharacterID)
+        }
+        unreviewedCompletedCharacters.remove(character.id)
         selectedCharacterID = character.id
         clearTransientBubbles()
         if
@@ -199,6 +216,7 @@ final class AgentDirector: ObservableObject {
 
     func submit(
         _ prompt: String,
+        attachmentPaths: [String] = [],
         to requestedCharacter: OfficeCharacter? = nil
     ) {
         let character: CharacterConfiguration?
@@ -225,6 +243,7 @@ final class AgentDirector: ObservableObject {
         pendingQuestions[character.id] = nil
         questionSubmissionErrors[character.id] = nil
         turnPersistenceErrors[character.id] = nil
+        unreviewedCompletedCharacters.remove(character.id)
         failedCharacters[character.id] = nil
         offDutyCharacters[character.id] = nil
         if latestQuestion?.character == character.id {
@@ -232,13 +251,15 @@ final class AgentDirector: ObservableObject {
         }
         runningCharacters.insert(character.id)
         showBubble("생각 중...", for: character.id, autoDismiss: false)
+        latestSubmittedCommandID = UUID()
 
         Task {
             do {
                 let started = try await database.startAgentJob(
                     character: character.id,
                     prompt: prompt,
-                    conversationID: conversationID
+                    conversationID: conversationID,
+                    attachmentPaths: attachmentPaths
                 )
                 conversationIDs[character.id] = started.conversationId
                 await refreshLiveFeed(announcingTransitions: true)
@@ -279,6 +300,39 @@ final class AgentDirector: ObservableObject {
                         autoDismiss: false
                     )
                 }
+            }
+        }
+    }
+
+    func cancelSelectedJob() {
+        guard
+            let character = selectedCharacterID,
+            runningCharacters.contains(character),
+            !cancellingCharacters.contains(character)
+        else {
+            return
+        }
+
+        cancellingCharacters.insert(character)
+        showBubble(
+            "업무를 중단하는 중...",
+            for: character,
+            autoDismiss: false
+        )
+
+        Task {
+            defer {
+                cancellingCharacters.remove(character)
+            }
+            do {
+                _ = try await database.cancelAgentJob(
+                    character: character
+                )
+                await refreshLiveFeed(announcingTransitions: true)
+            } catch {
+                turnPersistenceErrors[character] =
+                    "업무 중단 요청 실패 · \(error.localizedDescription)"
+                await refreshLiveFeed(announcingTransitions: false)
             }
         }
     }
@@ -702,6 +756,10 @@ final class AgentDirector: ObservableObject {
                 !turn.status.isRunning
             else {
                 continue
+            }
+            if turn.status == .completed {
+                unreviewedCompletedCharacters.insert(character)
+                latestCompletedTurnID = turn.id
             }
             applyTerminalTurn(turn, for: character)
         }

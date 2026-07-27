@@ -2,9 +2,17 @@
 
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readdirSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 
@@ -25,6 +33,7 @@ const RESPONSE_INSTRUCTION = `
 `.trim();
 
 export class AgentBusyError extends Error {}
+export class AgentJobNotFoundError extends Error {}
 export class CharacterNotFoundError extends Error {}
 
 export class AgentRuntime {
@@ -53,21 +62,43 @@ export class AgentRuntime {
     return result.rowCount;
   }
 
-  async start({ characterID, prompt, conversationID }) {
+  async start({
+    characterID,
+    prompt,
+    conversationID,
+    attachmentPaths = [],
+  }) {
     const cleanPrompt = String(prompt ?? "").trim();
-    if (!cleanPrompt) {
+    if (!cleanPrompt && attachmentPaths.length === 0) {
       throw new Error("업무 내용을 입력하세요.");
     }
 
-    const prepared = await this.prepareTurn({
-      characterID,
-      prompt: cleanPrompt,
-      conversationID: conversationID || randomUUID(),
+    const attachments = stageAttachments({
+      attachmentPaths,
+      workdir: this.workdir,
     });
+    const effectivePrompt = promptWithAttachments(
+      cleanPrompt || "첨부 파일을 확인해줘.",
+      attachments,
+    );
+
+    let prepared;
+    try {
+      prepared = await this.prepareTurn({
+        characterID,
+        prompt: effectivePrompt,
+        conversationID: conversationID || randomUUID(),
+      });
+    } catch (error) {
+      removeStagedAttachments(attachments);
+      throw error;
+    }
 
     const state = {
       ...prepared,
       process: null,
+      attachments,
+      cancelRequested: false,
       initialGeneratedImages: new Set(
         listGeneratedImages(prepared.externalSessionID),
       ),
@@ -90,6 +121,46 @@ export class AgentRuntime {
       turnId: state.turnID,
       conversationId: state.conversationID,
       status: "running",
+    };
+  }
+
+  async cancel(characterID) {
+    const state = this.running.get(characterID);
+    if (!state) {
+      throw new AgentJobNotFoundError(
+        "실행 중인 업무를 찾을 수 없습니다.",
+      );
+    }
+
+    state.cancelRequested = true;
+    terminateProcessGroup(state.process);
+    const message = "사용자가 업무를 중단했습니다.";
+    try {
+      await this.pool.query(
+        `
+          UPDATE turns
+          SET
+            status = 'interrupted',
+            needs_input = false,
+            error_message = $2,
+            ended_at = now(),
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [state.turnID, message],
+      );
+    } finally {
+      this.running.delete(characterID);
+      this.broadcast({
+        type: "feed.changed",
+        turnId: state.turnID,
+        characterId: characterID,
+      });
+    }
+
+    return {
+      turnId: state.turnID,
+      status: "interrupted",
     };
   }
 
@@ -259,12 +330,14 @@ export class AgentRuntime {
       character: state.character,
       prompt: state.prompt,
       previousSessionID: state.externalSessionID,
+      attachments: state.attachments,
     });
     const child = spawn(executable, cliArguments, {
       cwd: this.workdir,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
+      detached: process.platform !== "win32",
     });
     state.process = child;
 
@@ -274,6 +347,9 @@ export class AgentRuntime {
     await outputTask;
     const stderr = (await errorTask).trim();
 
+    if (state.cancelRequested) {
+      return;
+    }
     if (state.failure) {
       throw new Error(state.failure);
     }
@@ -442,6 +518,9 @@ export class AgentRuntime {
   }
 
   async complete(state, decoded) {
+    if (state.cancelRequested) {
+      return;
+    }
     const generatedImages = listGeneratedImages(
       state.externalSessionID,
     ).filter((path) => !state.initialGeneratedImages.has(path));
@@ -521,9 +600,19 @@ export class AgentRuntime {
   }
 }
 
-function buildArguments({ character, prompt, previousSessionID }) {
+export function buildArguments({
+  character,
+  prompt,
+  previousSessionID,
+  attachments = [],
+}) {
   return character.backend === "codex"
-    ? codexArguments(character, prompt, previousSessionID)
+    ? codexArguments(
+      character,
+      prompt,
+      previousSessionID,
+      attachments,
+    )
     : claudeArguments(character, prompt, previousSessionID);
 }
 
@@ -555,7 +644,12 @@ function locateExecutable(character) {
   return candidates.find(existsSync) ?? character.backend;
 }
 
-function codexArguments(character, prompt, previousSessionID) {
+function codexArguments(
+  character,
+  prompt,
+  previousSessionID,
+  attachments,
+) {
   const argumentsList = ["exec"];
   let effectivePrompt = prompt;
   if (previousSessionID) {
@@ -573,6 +667,11 @@ function codexArguments(character, prompt, previousSessionID) {
   );
   if (!previousSessionID) {
     argumentsList.push("-s", character.permission);
+  }
+  for (const attachment of attachments) {
+    if (attachment.isCodexImage) {
+      argumentsList.push("-i", attachment.path);
+    }
   }
   argumentsList.push(effectivePrompt);
   return argumentsList;
@@ -614,6 +713,114 @@ ${character.identityPrompt}
 ${RESPONSE_INSTRUCTION}
   `.trim();
   return prompt ? `${identity}\n\n사용자 업무\n${prompt}` : identity;
+}
+
+export function promptWithAttachments(prompt, attachments) {
+  if (attachments.length === 0) {
+    return prompt;
+  }
+  const references = attachments.map(
+    (attachment) =>
+      `- ${JSON.stringify(attachment.name)}: ` +
+      JSON.stringify(attachment.path),
+  );
+  return [
+    prompt,
+    "",
+    "첨부 파일",
+    "다음 로컬 파일을 업무 자료로 사용하세요.",
+    ...references,
+  ].join("\n");
+}
+
+export function stageAttachments({ attachmentPaths, workdir }) {
+  if (!Array.isArray(attachmentPaths)) {
+    throw new Error("첨부 파일 목록이 올바르지 않습니다.");
+  }
+  const uniquePaths = [
+    ...new Set(
+      attachmentPaths.map((path) => String(path ?? "").trim()),
+    ),
+  ].filter(Boolean);
+  if (uniquePaths.length > 20) {
+    throw new Error("첨부 파일은 한 번에 20개까지 선택할 수 있습니다.");
+  }
+  if (uniquePaths.length === 0) {
+    return [];
+  }
+
+  const directory = join(
+    workdir,
+    ".office-attachments",
+    randomUUID(),
+  );
+  mkdirSync(directory, { recursive: true });
+
+  try {
+    return uniquePaths.map((path, index) => {
+      const sourcePath = realpathSync(path);
+      if (!statSync(sourcePath).isFile()) {
+        throw new Error(`파일만 첨부할 수 있습니다. ${path}`);
+      }
+      const name = basename(sourcePath);
+      const stagedPath = join(
+        directory,
+        `${String(index + 1).padStart(2, "0")}-${name}`,
+      );
+      copyFileSync(sourcePath, stagedPath);
+      return {
+        name,
+        path: stagedPath,
+        directory,
+        isCodexImage: [".png", ".jpg", ".jpeg"].includes(
+          extname(name).toLowerCase(),
+        ),
+      };
+    });
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function removeStagedAttachments(attachments) {
+  const directory = attachments[0]?.directory;
+  if (directory) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function terminateProcessGroup(child) {
+  if (!child || child.exitCode !== null || !child.pid) {
+    return;
+  }
+  const processID =
+    process.platform === "win32" ? child.pid : -child.pid;
+  try {
+    if (process.platform === "win32") {
+      child.kill("SIGTERM");
+    } else {
+      process.kill(processID, "SIGTERM");
+    }
+  } catch {
+    return;
+  }
+
+  const forceTermination = setTimeout(() => {
+    if (child.exitCode !== null) {
+      return;
+    }
+    try {
+      if (process.platform === "win32") {
+        child.kill("SIGKILL");
+      } else {
+        process.kill(processID, "SIGKILL");
+      }
+    } catch {
+      // 이미 종료된 프로세스는 추가 조치가 필요 없다.
+    }
+  }, 1_500);
+  forceTermination.unref();
 }
 
 async function collectStream(stream) {
