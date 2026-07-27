@@ -32,12 +32,16 @@ final class AgentDirector: ObservableObject {
         [OfficeCharacter: String] = [:]
     @Published var selectedCharacterID: OfficeCharacter?
     @Published private(set) var settingsStatus: String?
+    @Published private(set) var liveTurns: [LiveFeedTurn] = []
+    @Published private(set) var isRealtimeConnected = false
+    @Published private(set) var realtimeConnectionError: String?
 
     private let configuration: OfficeAgentConfiguration
-    private let runner = AgentCLIRunner()
     private let database: OfficeDatabaseClient
     private var conversationIDs: [OfficeCharacter: UUID] = [:]
     private var sessionIDs: [OfficeCharacter: String] = [:]
+    private var realtimeTask: Task<Void, Never>?
+    private var observedTurnStatuses: [String: LiveTurnStatus] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
     private var lastIdleChatterCharacter: OfficeCharacter?
@@ -74,7 +78,37 @@ final class AgentDirector: ObservableObject {
         "🛰️ 다른 관점에서 문제를 내려다보는 중.",
         "🧹 머릿속 탭을 정리하는 중.",
         "🔄 반대로 생각하면 답이 보일지도요.",
-        "💡 불편한 점 하나가 개선의 시작이죠."
+        "💡 불편한 점 하나가 개선의 시작이죠.",
+        "📩 읽지 않은 메일이 저를 보고 있어요.",
+        "🔔 알림 하나에 집중력이 로그아웃됐어요.",
+        "🗓️ 회의가 다음 회의를 낳고 있어요.",
+        "⏰ 퇴근 5분 전 요청은 왜 정확할까요?",
+        "🧾 수정 요청이 또 새 버전으로 왔어요.",
+        "📎 최종_진짜최종 파일을 찾는 중.",
+        "🫥 방금 한 일을 다시 설명하는 중.",
+        "☕ 커피는 식고 일은 뜨거워지네요.",
+        "🖨️ 프린터는 급할 때만 삐걱대네요.",
+        "💬 간단한 부탁이 간단했던 적이 없네요.",
+        "📊 숫자는 같은데 표가 자꾸 달라져요.",
+        "🧠 멀티태스킹하다 탭만 늘었어요.",
+        "🚇 출근길에 오늘 체력을 다 썼어요.",
+        "🍱 점심 메뉴가 오늘의 큰 결정이에요.",
+        "🪫 배터리보다 제가 먼저 충전이 필요해요.",
+        "🧑‍💻 저장했는지 기억이 안 나 또 저장!",
+        "🕔 퇴근 시간만 유난히 천천히 오네요.",
+        "📝 할 일 적다가 할 일이 하나 늘었어요.",
+        "🔁 같은 설명을 세 번째 정리하는 중.",
+        "📞 전화 끊자마자 내용을 잊었어요.",
+        "🧯 급한 일 위에 더 급한 일이 왔어요.",
+        "🗂️ 파일 찾다가 폴더 정리만 했어요.",
+        "🪑 회의는 끝났는데 숙제가 남았어요.",
+        "🫠 네, 가능합니다를 너무 빨리 말했어요.",
+        "😶 의견 냈더니 담당자가 되었어요.",
+        "🧩 요구사항이 또 살짝 움직였네요.",
+        "🌙 야근할수록 오타가 자신감을 얻어요.",
+        "🧘 답장 쓰고 보내기 전 세 번 심호흡.",
+        "🏃 일정이 저보다 빨리 달리고 있어요.",
+        "🛌 오늘의 목표는 무사히 퇴근하기."
     ]
 
     init() {
@@ -95,6 +129,8 @@ final class AgentDirector: ObservableObject {
 
         Task {
             await restorePersistentState()
+            await refreshLiveFeed(announcingTransitions: false)
+            startRealtimeUpdates()
         }
         startIdleChatter()
     }
@@ -194,71 +230,18 @@ final class AgentDirector: ObservableObject {
         if latestQuestion?.character == character.id {
             latestQuestion = nil
         }
-        let startedAt = Date()
         runningCharacters.insert(character.id)
         showBubble("생각 중...", for: character.id, autoDismiss: false)
 
         Task {
             do {
-                let response = try await runner.run(
+                let started = try await database.startAgentJob(
+                    character: character.id,
                     prompt: prompt,
-                    character: characterWithCurrentName(character),
-                    workdir: configuration.workdir,
-                    previousSessionID: sessionIDs[character.id]
-                ) { [weak self] progress in
-                    guard
-                        let self,
-                        self.runningCharacters.contains(character.id),
-                        self.bubbles[character.id] != progress
-                    else {
-                        return
-                    }
-                    self.showBubble(
-                        progress,
-                        for: character.id,
-                        autoDismiss: false
-                    )
-                }
-                if let sessionID = response.sessionID {
-                    sessionIDs[character.id] = sessionID
-                }
-                let activeSessionID =
-                    response.sessionID ?? sessionIDs[character.id]
-                if response.needsInput {
-                    pendingQuestions[character.id] = response.text
-                    latestQuestion = PendingAgentQuestion(
-                        character: character.id,
-                        text: response.text
-                    )
-                    showBubble(
-                        response.text,
-                        for: character.id,
-                        autoDismiss: false
-                    )
-                } else {
-                    pendingQuestions[character.id] = nil
-                    showBubble(response.text, for: character.id)
-                }
-
-                await persistTurn(
-                    DatabaseTurn(
-                        turnId: UUID(),
-                        conversationId: conversationID,
-                        characterId: character.id.rawValue,
-                        externalSessionId: activeSessionID,
-                        backend: character.backend,
-                        model: character.model,
-                        effort: character.effort,
-                        prompt: prompt,
-                        response: response.text,
-                        title: String(prompt.prefix(60)),
-                        workdir: configuration.workdir,
-                        startedAt: startedAt,
-                        finishedAt: Date()
-                    ),
-                    for: character.id
+                    conversationID: conversationID
                 )
-                runningCharacters.remove(character.id)
+                conversationIDs[character.id] = started.conversationId
+                await refreshLiveFeed(announcingTransitions: true)
             } catch {
                 runningCharacters.remove(character.id)
                 let message = error.localizedDescription
@@ -579,6 +562,198 @@ final class AgentDirector: ObservableObject {
                     return
                 }
             }
+        }
+    }
+
+    private func startRealtimeUpdates() {
+        realtimeTask?.cancel()
+        realtimeTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            while !Task.isCancelled {
+                let socket = URLSession.shared.webSocketTask(
+                    with: self.database.realtimeWebSocketURL
+                )
+                socket.resume()
+                do {
+                    while !Task.isCancelled {
+                        _ = try await socket.receive()
+                        self.isRealtimeConnected = true
+                        self.realtimeConnectionError = nil
+                        await self.refreshLiveFeed(
+                            announcingTransitions: true
+                        )
+                    }
+                } catch {
+                    self.isRealtimeConnected = false
+                    if !Task.isCancelled {
+                        self.realtimeConnectionError =
+                            error.localizedDescription
+                    }
+                }
+                socket.cancel(with: .goingAway, reason: nil)
+                if Task.isCancelled {
+                    return
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private func refreshLiveFeed(
+        announcingTransitions: Bool
+    ) async {
+        do {
+            let turns = try await database.fetchLiveFeed()
+            applyLiveFeed(
+                turns,
+                announcingTransitions: announcingTransitions
+            )
+            realtimeConnectionError = nil
+        } catch {
+            realtimeConnectionError = error.localizedDescription
+        }
+    }
+
+    private func applyLiveFeed(
+        _ turns: [LiveFeedTurn],
+        announcingTransitions: Bool
+    ) {
+        let previousStatuses = observedTurnStatuses
+        liveTurns = turns
+        observedTurnStatuses = Dictionary(
+            uniqueKeysWithValues: turns.map { ($0.id, $0.status) }
+        )
+
+        let runningTurns = turns.filter { $0.status.isRunning }
+        runningCharacters = Set(
+            runningTurns.compactMap {
+                OfficeCharacter(rawValue: $0.characterId)
+            }
+        )
+        for turn in runningTurns {
+            guard
+                let character = OfficeCharacter(
+                    rawValue: turn.characterId
+                )
+            else {
+                continue
+            }
+            let progress =
+                turn.activities.last?.text
+                ?? (!turn.response.isEmpty
+                    ? turn.response
+                    : "생각 중...")
+            if bubbles[character] != progress {
+                showBubble(
+                    progress,
+                    for: character,
+                    autoDismiss: false
+                )
+            }
+        }
+
+        var latestTurns:
+            [OfficeCharacter: LiveFeedTurn] = [:]
+        for turn in turns {
+            guard
+                let character = OfficeCharacter(
+                    rawValue: turn.characterId
+                ),
+                latestTurns[character] == nil
+            else {
+                continue
+            }
+            latestTurns[character] = turn
+        }
+
+        for (character, turn) in latestTurns {
+            if turn.status == .completed, turn.needsInput {
+                if pendingQuestions[character] != turn.response {
+                    pendingQuestions[character] = turn.response
+                    latestQuestion = PendingAgentQuestion(
+                        character: character,
+                        text: turn.response
+                    )
+                    showBubble(
+                        turn.response,
+                        for: character,
+                        autoDismiss: false
+                    )
+                }
+            } else if !turn.status.isRunning {
+                pendingQuestions[character] = nil
+            }
+
+            if
+                !announcingTransitions,
+                turn.status == .failed || turn.status == .interrupted
+            {
+                applyTerminalTurn(turn, for: character)
+            } else if turn.status == .completed, !turn.needsInput {
+                failedCharacters[character] = nil
+                offDutyCharacters[character] = nil
+            }
+
+            guard
+                announcingTransitions,
+                previousStatuses[turn.id]?.isRunning == true,
+                !turn.status.isRunning
+            else {
+                continue
+            }
+            applyTerminalTurn(turn, for: character)
+        }
+    }
+
+    private func applyTerminalTurn(
+        _ turn: LiveFeedTurn,
+        for character: OfficeCharacter
+    ) {
+        switch turn.status {
+        case .completed:
+            failedCharacters[character] = nil
+            offDutyCharacters[character] = nil
+            if turn.needsInput {
+                if pendingQuestions[character] != turn.response {
+                    pendingQuestions[character] = turn.response
+                    latestQuestion = PendingAgentQuestion(
+                        character: character,
+                        text: turn.response
+                    )
+                    showBubble(
+                        turn.response,
+                        for: character,
+                        autoDismiss: false
+                    )
+                }
+            } else {
+                pendingQuestions[character] = nil
+                showBubble(turn.response, for: character)
+            }
+        case .failed, .interrupted:
+            let message =
+                turn.errorMessage ?? "업무가 중단되었습니다."
+            if AgentUsageLimitClassifier.isLimitReached(message) {
+                failedCharacters[character] = nil
+                offDutyCharacters[character] = message
+                showBubble(
+                    "퇴근",
+                    for: character,
+                    autoDismiss: false
+                )
+            } else {
+                offDutyCharacters[character] = nil
+                failedCharacters[character] = message
+                showBubble(
+                    "업무 중단\n\(message)",
+                    for: character,
+                    autoDismiss: false
+                )
+            }
+        case .pending, .running:
+            break
         }
     }
 

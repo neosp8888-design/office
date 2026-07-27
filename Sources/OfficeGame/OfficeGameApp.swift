@@ -11,7 +11,7 @@ struct OfficeGameApp: App {
         WindowGroup("OfficeLLM") {
             OfficeGameView(director: director)
         }
-        .defaultSize(width: 1_200, height: 800)
+        .defaultSize(width: 1_440, height: 900)
         .windowResizability(.contentMinSize)
     }
 }
@@ -22,74 +22,45 @@ private struct OfficeGameView: View {
     @State private var showsCharacterSettings = false
     @State private var historyTarget: ConversationHistoryTarget?
     @State private var bubbleDetail: BubbleDetail?
+    @State private var detailSelection = OfficeDetailSelection.archive
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        ZStack {
-            letterboxColor
-                .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.18), value: theme)
-
-            OfficeRealtimeView(
-                theme: theme,
-                isActive: scenePhase == .active,
-                reduceMotion: reduceMotion,
-                bossActivity: director.runningCharacters.contains(.boss)
-                    ? .speaking
-                    : .working
+        GeometryReader { geometry in
+            let outerPadding: CGFloat = 14
+            let gap: CGFloat = 14
+            let columnWidth = max(
+                0,
+                (geometry.size.width - outerPadding * 2 - gap) / 2
             )
-            .ignoresSafeArea()
-            .accessibilityHidden(true)
-
-            WhiteboardUsageLayer(
-                isActive: scenePhase == .active
+            let rowHeight = max(
+                0,
+                (geometry.size.height - outerPadding * 2 - gap) / 2
             )
-            .ignoresSafeArea()
 
-            CharacterInteractionLayer(
-                director: director,
-                onMonitorTapped: {
-                    historyTarget = .character($0)
-                },
-                onArchiveCabinetTapped: {
-                    historyTarget = .archive
-                },
-                onBubbleTapped: { character, message in
-                    let offDutyReason = director.offDutyReason(
-                        for: character
+            HStack(spacing: gap) {
+                VStack(spacing: gap) {
+                    officePanel
+                        .frame(height: rowHeight)
+                    OfficeDetailPanel(
+                        director: director,
+                        selection: detailSelection
                     )
-                    bubbleDetail = BubbleDetail(
-                        character: character,
-                        name: director.displayName(for: character),
-                        message: offDutyReason ?? message,
-                        isQuestion:
-                            director.pendingQuestion(for: character) != nil,
-                        isFailure:
-                            director.failureMessage(for: character) != nil,
-                        isOffDuty: offDutyReason != nil
-                    )
+                    .frame(height: rowHeight)
                 }
-            )
-                .ignoresSafeArea()
+                .frame(width: columnWidth)
 
-            VStack {
-                Spacer()
-                commandBar
+                liveWorkspacePanel
+                    .frame(width: columnWidth)
+                    .frame(height: rowHeight * 2 + gap)
             }
+            .padding(outerPadding)
         }
-        .frame(minWidth: 900, minHeight: 600)
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
-                themeToggle
-                characterSettingsButton
-            }
-                .padding(.top, 12)
-                .padding(.trailing, 14)
-                .zIndex(100)
-        }
+        .background(DashboardPalette.canvas.ignoresSafeArea())
+        .frame(minWidth: 1_180, minHeight: 760)
         .sheet(item: $historyTarget) { target in
             switch target {
             case .character(let character):
@@ -135,6 +106,169 @@ private struct OfficeGameView: View {
                 isOffDuty: false
             )
         }
+    }
+
+    private var officePanel: some View {
+        ZStack {
+            letterboxColor
+                .animation(.easeInOut(duration: 0.18), value: theme)
+
+            OfficeRealtimeView(
+                theme: theme,
+                isActive: scenePhase == .active,
+                reduceMotion: reduceMotion,
+                bossActivity: director.runningCharacters.contains(.boss)
+                    ? .speaking
+                    : .working
+            )
+            .accessibilityHidden(true)
+
+            WhiteboardUsageLayer(
+                isActive: scenePhase == .active
+            )
+
+            CharacterInteractionLayer(
+                director: director,
+                onMonitorTapped: {
+                    historyTarget = .character($0)
+                },
+                onArchiveCabinetTapped: {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        detailSelection = .archive
+                    }
+                },
+                onWhiteboardTapped: {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        detailSelection = .usage
+                    }
+                },
+                onBubbleTapped: { character, message in
+                    let offDutyReason = director.offDutyReason(
+                        for: character
+                    )
+                    bubbleDetail = BubbleDetail(
+                        character: character,
+                        name: director.displayName(for: character),
+                        message: offDutyReason ?? message,
+                        isQuestion:
+                            director.pendingQuestion(for: character) != nil,
+                        isFailure:
+                            director.failureMessage(for: character) != nil,
+                        isOffDuty: offDutyReason != nil
+                    )
+                }
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .overlay(alignment: .topLeading) {
+            Label("OFFICE", systemImage: "building.2.fill")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .tracking(0.8)
+                .foregroundStyle(
+                    theme.isNight
+                        ? Color.white.opacity(0.80)
+                        : Color.black.opacity(0.62)
+                )
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(
+                    theme.isNight
+                        ? Color.black.opacity(0.52)
+                        : Color.white.opacity(0.78),
+                    in: Capsule()
+                )
+                .padding(12)
+        }
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 7) {
+                themeToggle
+                characterSettingsButton
+            }
+            .padding(12)
+        }
+        .officePanelStyle()
+    }
+
+    private var liveWorkspacePanel: some View {
+        VStack(spacing: 0) {
+            liveWorkspaceHeader
+
+            Divider()
+                .opacity(0.55)
+
+            LiveWorkspaceFeed(director: director)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+                .opacity(0.55)
+
+            commandBar
+        }
+        .officePanelStyle()
+    }
+
+    private var liveWorkspaceHeader: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DashboardPalette.accent)
+                .frame(width: 36, height: 36)
+                .background(
+                    DashboardPalette.accent.opacity(0.10),
+                    in: RoundedRectangle(
+                        cornerRadius: 11,
+                        style: .continuous
+                    )
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("실시간 업무실")
+                    .font(.system(size: 17, weight: .bold))
+                Text("모든 직원의 대화와 진행 기록")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if !director.runningCharacters.isEmpty {
+                Text("\(director.runningCharacters.count)명 업무 중")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(DashboardPalette.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        DashboardPalette.accent.opacity(0.10),
+                        in: Capsule()
+                    )
+            }
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(
+                        director.isRealtimeConnected
+                            ? Color.green
+                            : Color.orange
+                    )
+                    .frame(width: 7, height: 7)
+                Text(
+                    director.isRealtimeConnected
+                        ? "LIVE"
+                        : "연결 중"
+                )
+            }
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .help(
+                director.realtimeConnectionError
+                    ?? "백엔드 WebSocket 실시간 연결"
+            )
+        }
+        .padding(.horizontal, 17)
+        .padding(.vertical, 13)
     }
 
     private var theme: OfficeTheme {
@@ -196,78 +330,131 @@ private struct OfficeGameView: View {
     }
 
     private var commandBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Color(red: 0.46, green: 0.40, blue: 0.34))
-
-            if let selectedName = director.selectedName {
-                Text(selectedName)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(
-                        Color(red: 0.18, green: 0.58, blue: 0.53),
-                        in: Capsule()
-                    )
-            }
+        VStack(alignment: .leading, spacing: 9) {
+            characterSelector
 
             if let character = director.selectedCharacter {
-                AgentQuickSettingsView(
-                    director: director,
-                    character: character
-                )
-            }
-
-            TextField(commandPlaceholder, text: $command)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .medium))
-                .onSubmit(submitCommand)
-                .disabled(
-                    !director.isReadyForSubmissions
-                        || director.isUpdatingConfiguration
-                )
-
-            Button {
-            } label: {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .foregroundStyle(Color(red: 0.44, green: 0.39, blue: 0.34))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("파일 첨부")
-
-            Button(action: submitCommand) {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(
-                        Color(red: 0.18, green: 0.58, blue: 0.53),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                HStack {
+                    AgentQuickSettingsView(
+                        director: director,
+                        character: character
                     )
+
+                    Spacer(minLength: 0)
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("보내기")
-            .disabled(commandIsDisabled)
-            .opacity(commandIsDisabled ? 0.45 : 1)
+
+            HStack(spacing: 9) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(DashboardPalette.accent)
+
+                TextField(commandPlaceholder, text: $command)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .medium))
+                    .onSubmit(submitCommand)
+                    .disabled(
+                        !director.isReadyForSubmissions
+                            || director.isUpdatingConfiguration
+                    )
+
+                Button {
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("파일 첨부")
+
+                Button(action: submitCommand) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            DashboardPalette.accent,
+                            in: RoundedRectangle(
+                                cornerRadius: 11,
+                                style: .continuous
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("보내기")
+                .disabled(commandIsDisabled)
+                .opacity(commandIsDisabled ? 0.42 : 1)
+            }
+            .padding(.leading, 13)
+            .padding(.trailing, 7)
+            .padding(.vertical, 6)
+            .background(
+                Color.primary.opacity(0.045),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.07))
+            }
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.white.opacity(0.94))
-                .shadow(color: .black.opacity(0.15), radius: 18, y: 7)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.white.opacity(0.90), lineWidth: 1)
+        .padding(14)
+    }
+
+    private var characterSelector: some View {
+        HStack(spacing: 6) {
+            ForEach(director.characters) { character in
+                let isSelected =
+                    director.selectedCharacterID == character.id
+                let name = director.displayName(for: character.id)
+
+                Button {
+                    director.select(character)
+                } label: {
+                    Text(name)
+                        .font(
+                            .system(
+                                size: 11,
+                                weight: isSelected ? .bold : .semibold
+                            )
+                        )
+                        .foregroundStyle(
+                            isSelected
+                                ? Color.white
+                                : Color.primary.opacity(0.72)
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 28)
+                        .background(
+                            isSelected
+                                ? DashboardPalette.accent
+                                : Color.primary.opacity(0.045),
+                            in: Capsule()
+                        )
+                        .overlay {
+                            Capsule()
+                                .stroke(
+                                    isSelected
+                                        ? DashboardPalette.accent
+                                        : Color.primary.opacity(0.08)
+                                )
+                        }
+                }
+                .buttonStyle(.plain)
+                .help("\(name) 선택")
+                .accessibilityLabel("\(name) 선택")
+                .accessibilityValue(
+                    isSelected ? "선택됨" : "선택되지 않음"
+                )
+                .accessibilityIdentifier(
+                    "commandCharacter-\(character.id.rawValue)"
+                )
+            }
         }
-        .padding(.horizontal, 28)
-        .padding(.bottom, 22)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("직원 선택")
     }
 
     private var commandPlaceholder: String {

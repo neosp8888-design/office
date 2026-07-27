@@ -5,6 +5,32 @@ import XCTest
 @testable import OfficeCore
 
 final class PixelOfficeAssetTests: XCTestCase {
+    func testSpeechBubbleAnchorsStayClearOfCharacterFaces() throws {
+        let configuration = try CharacterConfigurationAsset.load()
+        let boss = try XCTUnwrap(
+            configuration.characters.first { $0.id == .boss }
+        )
+
+        XCTAssertGreaterThan(
+            boss.bubble.x,
+            boss.hitbox.rect.maxX,
+            "부장 말풍선은 얼굴 오른쪽에 있어야 합니다."
+        )
+        XCTAssertLessThanOrEqual(
+            boss.bubble.y,
+            boss.hitbox.rect.minY + 16,
+            "부장 말풍선은 머리 높이 가까이에 있어야 합니다."
+        )
+
+        for character in configuration.characters where character.id != .boss {
+            XCTAssertLessThanOrEqual(
+                character.bubble.y,
+                character.hitbox.rect.minY - 36,
+                "\(character.id.rawValue) 말풍선은 머리 위에 있어야 합니다."
+            )
+        }
+    }
+
     func testAllFourThemesLoadFromBundle() {
         XCTAssertEqual(OfficeTheme.allCases.count, 4)
 

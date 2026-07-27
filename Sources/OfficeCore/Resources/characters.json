@@ -20,7 +20,7 @@
       "executablePath": null,
       "hitbox": { "x": 716, "y": 174, "width": 130, "height": 174 },
       "monitorHitbox": { "x": 758, "y": 264, "width": 118, "height": 104 },
-      "bubble": { "x": 780, "y": 160 }
+      "bubble": { "x": 900, "y": 190 }
     },
     {
       "id": "left-man",
@@ -34,7 +34,7 @@
       "executablePath": null,
       "hitbox": { "x": 284, "y": 494, "width": 142, "height": 188 },
       "monitorHitbox": { "x": 358, "y": 568, "width": 96, "height": 112 },
-      "bubble": { "x": 350, "y": 478 }
+      "bubble": { "x": 350, "y": 420 }
     },
     {
       "id": "left-woman",
@@ -48,7 +48,7 @@
       "executablePath": null,
       "hitbox": { "x": 438, "y": 436, "width": 142, "height": 184 },
       "monitorHitbox": { "x": 508, "y": 498, "width": 94, "height": 112 },
-      "bubble": { "x": 506, "y": 420 }
+      "bubble": { "x": 506, "y": 360 }
     },
     {
       "id": "right-woman",
@@ -62,7 +62,7 @@
       "executablePath": null,
       "hitbox": { "x": 1038, "y": 438, "width": 154, "height": 190 },
       "monitorHitbox": { "x": 1008, "y": 510, "width": 98, "height": 116 },
-      "bubble": { "x": 1112, "y": 420 }
+      "bubble": { "x": 1112, "y": 362 }
     },
     {
       "id": "right-man",
@@ -76,7 +76,7 @@
       "executablePath": null,
       "hitbox": { "x": 1170, "y": 518, "width": 150, "height": 190 },
       "monitorHitbox": { "x": 1148, "y": 598, "width": 108, "height": 122 },
-      "bubble": { "x": 1244, "y": 504 }
+      "bubble": { "x": 1244, "y": 452 }
     }
   ]
 }

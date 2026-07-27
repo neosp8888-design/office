@@ -284,7 +284,7 @@ struct WhiteboardUsageLayer: View {
     }
 }
 
-private struct AIUsageSnapshot: Equatable, Sendable {
+struct AIUsageSnapshot: Equatable, Sendable {
     let codexFiveHour: Int?
     let codexWeekly: Int?
     let claudeFiveHour: Int?
@@ -292,7 +292,7 @@ private struct AIUsageSnapshot: Equatable, Sendable {
     let fetchedAt: Date
 }
 
-private enum CodexBarUsageReader {
+enum CodexBarUsageReader {
     private static let executablePaths = [
         "/opt/homebrew/bin/codexbar",
         "/usr/local/bin/codexbar",

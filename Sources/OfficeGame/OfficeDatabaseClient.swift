@@ -161,6 +161,56 @@ struct OfficeDatabaseClient: Sendable {
         .turns
     }
 
+    func fetchLiveFeed() async throws -> [LiveFeedTurn] {
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "live-feed")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response)
+        return try historyDecoder().decode(
+            LiveFeedResponse.self,
+            from: data
+        )
+        .turns
+    }
+
+    func startAgentJob(
+        character: OfficeCharacter,
+        prompt: String,
+        conversationID: UUID
+    ) async throws -> StartedAgentJob {
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "agent-jobs")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            StartAgentJobRequest(
+                characterId: character.rawValue,
+                prompt: prompt,
+                conversationId: conversationID
+            )
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(StartedAgentJob.self, from: data)
+    }
+
+    var realtimeWebSocketURL: URL {
+        var components = URLComponents(
+            url: baseURL,
+            resolvingAgainstBaseURL: false
+        )
+        components?.scheme = baseURL.scheme == "https" ? "wss" : "ws"
+        components?.path = "/ws"
+        components?.query = nil
+        return components?.url ?? baseURL
+    }
+
     func recordTurn(_ turn: DatabaseTurn) async throws {
         let url = baseURL.appending(path: "api/turns")
         var request = URLRequest(url: url)
@@ -182,6 +232,21 @@ struct OfficeDatabaseClient: Sendable {
             (200..<300).contains(response.statusCode)
         else {
             throw OfficeDatabaseError.requestFailed
+        }
+    }
+
+    private func validate(_ response: URLResponse, data: Data) throws {
+        guard
+            let response = response as? HTTPURLResponse,
+            (200..<300).contains(response.statusCode)
+        else {
+            let payload = try? JSONDecoder().decode(
+                BackendErrorResponse.self,
+                from: data
+            )
+            throw OfficeDatabaseError.backend(
+                payload?.error ?? "백엔드 요청에 실패했습니다."
+            )
         }
     }
 
@@ -301,8 +366,63 @@ struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
     let endedAt: Date?
 }
 
+enum LiveTurnStatus: String, Decodable, Sendable {
+    case pending
+    case running
+    case completed
+    case failed
+    case interrupted
+
+    var isRunning: Bool {
+        self == .pending || self == .running
+    }
+}
+
+struct LiveFeedActivity: Decodable, Identifiable, Sendable {
+    let id: String
+    let kind: String
+    let text: String
+    let occurredAt: Date
+}
+
+struct LiveFeedTurn: Decodable, Identifiable, Sendable {
+    let id: String
+    let characterId: String
+    let characterName: String
+    let characterBackend: AgentBackend
+    let backend: AgentBackend?
+    let model: String?
+    let effort: String?
+    let externalSessionId: String?
+    let prompt: String
+    let response: String
+    let status: LiveTurnStatus
+    let needsInput: Bool
+    let errorMessage: String?
+    let startedAt: Date
+    let endedAt: Date?
+    let updatedAt: Date
+    let activities: [LiveFeedActivity]
+}
+
 private struct GlobalHistoryResponse: Decodable {
     let turns: [GlobalHistoryTurn]
+}
+
+private struct LiveFeedResponse: Decodable {
+    let turns: [LiveFeedTurn]
+}
+
+private struct StartAgentJobRequest: Encodable {
+    let characterId: String
+    let prompt: String
+    let conversationId: UUID
+}
+
+struct StartedAgentJob: Decodable, Sendable {
+    let turnId: String
+    let conversationId: UUID
+    let status: String
 }
 
 private struct NameRequest: Encodable {
@@ -322,8 +442,18 @@ private struct IdentityPromptRequest: Encodable {
 
 enum OfficeDatabaseError: LocalizedError {
     case requestFailed
+    case backend(String)
 
     var errorDescription: String? {
-        "PostgreSQL 백엔드에 연결할 수 없습니다."
+        switch self {
+        case .requestFailed:
+            "PostgreSQL 백엔드에 연결할 수 없습니다."
+        case .backend(let message):
+            message
+        }
     }
+}
+
+private struct BackendErrorResponse: Decodable {
+    let error: String
 }
