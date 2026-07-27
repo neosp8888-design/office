@@ -710,11 +710,13 @@ private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     @State private var activitiesExpanded: Bool
     @State private var animatesResponse: Bool
+    @State private var responseCopied: Bool
 
     init(turn: LiveFeedTurn) {
         self.turn = turn
         _activitiesExpanded = State(initialValue: false)
         _animatesResponse = State(initialValue: turn.status.isRunning)
+        _responseCopied = State(initialValue: false)
     }
 
     var body: some View {
@@ -867,6 +869,35 @@ private struct LiveTurnCard: View {
                         ? "답변 필요"
                         : "응답"
                 )
+
+                Spacer()
+
+                Button {
+                    copyResponse()
+                } label: {
+                    Label(
+                        responseCopied ? "복사됨" : "복사",
+                        systemImage:
+                            responseCopied
+                            ? "checkmark"
+                            : "doc.on.doc"
+                    )
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(
+                        responseCopied
+                            ? DashboardPalette.accent
+                            : Color.secondary
+                    )
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(
+                        Color.primary.opacity(0.055),
+                        in: Capsule()
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(responseCopied ? "응답 복사됨" : "응답 복사")
+                .accessibilityIdentifier("copyResponse-\(turn.id)")
             }
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(
@@ -881,6 +912,20 @@ private struct LiveTurnCard: View {
             )
         }
         .padding(.top, 2)
+    }
+
+    private func copyResponse() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(turn.response, forType: .string)
+        responseCopied = true
+
+        Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            if !Task.isCancelled {
+                responseCopied = false
+            }
+        }
     }
 
     private func errorBlock(_ error: String) -> some View {
