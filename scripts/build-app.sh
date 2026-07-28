@@ -42,6 +42,13 @@ mkdir -p "$RESOURCE_STAGE_BUNDLE/office-3d-motion-v1"
     "$PROJECT_DIR/Sources/OfficeCore/Resources/office-3d-motion-v1/" \
     "$RESOURCE_STAGE_BUNDLE/office-3d-motion-v1/"
 
+mkdir -p "$RESOURCE_STAGE_BUNDLE/avatars"
+/usr/bin/rsync \
+    -a \
+    --delete \
+    "$PROJECT_DIR/Sources/OfficeCore/Resources/avatars/" \
+    "$RESOURCE_STAGE_BUNDLE/avatars/"
+
 /usr/bin/rsync \
     -a \
     --delete \

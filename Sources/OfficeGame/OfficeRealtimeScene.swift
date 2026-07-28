@@ -24,7 +24,7 @@ struct OfficeRealtimeView: NSViewRepresentable {
         let view = PassiveSKView()
         view.allowsTransparency = false
         view.ignoresSiblingOrder = true
-        view.preferredFramesPerSecond = reduceMotion ? 1 : 60
+        view.preferredFramesPerSecond = 10
 
         context.coordinator.scene.apply(
             theme: theme,
@@ -42,7 +42,7 @@ struct OfficeRealtimeView: NSViewRepresentable {
             reduceMotion: reduceMotion,
             bossActivity: bossActivity
         )
-        view.preferredFramesPerSecond = reduceMotion ? 1 : 60
+        view.preferredFramesPerSecond = 10
         view.isPaused = !isActive
     }
 

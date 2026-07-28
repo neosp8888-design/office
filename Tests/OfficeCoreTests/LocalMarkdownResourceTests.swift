@@ -53,4 +53,40 @@ final class LocalMarkdownResourceTests: XCTestCase {
             rendered
         )
     }
+
+    func testBareLocalImagePathAddsInlinePreview() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let imageURL = directory.appending(path: "Claude preview.png")
+        try Data([0]).write(to: imageURL)
+        let markdown = """
+        절대경로입니다.
+
+        ```
+        \(imageURL.path)
+        ```
+        """
+        let rendered = LocalMarkdownResource.addingLinkedImagePreviews(
+            to: markdown
+        )
+
+        XCTAssertTrue(rendered.contains(markdown))
+        XCTAssertTrue(
+            rendered.contains(
+                "[![생성 이미지 1](<\(imageURL.absoluteString)>)]"
+            )
+        )
+        XCTAssertEqual(
+            LocalMarkdownResource.addingLinkedImagePreviews(to: rendered),
+            rendered
+        )
+    }
 }

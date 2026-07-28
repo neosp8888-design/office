@@ -493,26 +493,20 @@ private struct OfficeGameView: View {
                     }
                 } label: {
                     HStack(spacing: 7) {
-                        Text(String(name.prefix(1)))
-                            .font(
-                                .system(
-                                    size: 13,
-                                    weight: .heavy,
-                                    design: .rounded
+                        CharacterAvatar(
+                            name: name,
+                            characterID: character.id.rawValue,
+                            size: 24
+                        )
+                        .overlay {
+                            Circle()
+                                .stroke(
+                                    isSelected
+                                        ? badgeColor
+                                        : .clear,
+                                    lineWidth: 2
                                 )
-                            )
-                            .foregroundStyle(
-                                isSelected
-                                    ? Color.white
-                                    : badgeColor
-                            )
-                            .frame(width: 24, height: 24)
-                            .background(
-                                isSelected
-                                    ? badgeColor
-                                    : badgeColor.opacity(0.12),
-                                in: Circle()
-                            )
+                        }
 
                         Text(name)
                             .font(

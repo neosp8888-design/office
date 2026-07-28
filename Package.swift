@@ -27,6 +27,7 @@ let package = Package(
                 .copy("Resources/office-theme-wood-night-v4.png"),
                 .copy("Resources/office-background-3d-v4.png"),
                 .copy("Resources/office-3d-motion-v1"),
+                .copy("Resources/avatars"),
                 .copy("Resources/characters.json")
             ],
             linkerSettings: [

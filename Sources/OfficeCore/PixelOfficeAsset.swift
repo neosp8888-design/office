@@ -190,6 +190,14 @@ public enum PixelOfficeAsset {
         return url
     }
 
+    public static func avatarURL(for character: OfficeCharacter) -> URL? {
+        Bundle.module.url(
+            forResource: "avatar-\(character.rawValue)",
+            withExtension: "png",
+            subdirectory: "avatars"
+        )
+    }
+
     public static func image(for theme: OfficeTheme) -> NSImage {
         switch theme {
         case .modernDay:

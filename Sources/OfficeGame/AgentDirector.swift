@@ -40,6 +40,7 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var latestSubmittedCommandID: UUID?
     @Published private(set) var latestStartedCommandID: UUID?
     @Published private(set) var latestCompletedTurnID: String?
+    @Published private(set) var latestTerminalTurnID: String?
     @Published private(set) var isRealtimeConnected = false
     @Published private(set) var realtimeConnectionError: String?
 
@@ -48,6 +49,10 @@ final class AgentDirector: ObservableObject {
     private var conversationIDs: [OfficeCharacter: UUID] = [:]
     private var sessionIDs: [OfficeCharacter: String] = [:]
     private var realtimeTask: Task<Void, Never>?
+    private var realtimeRefreshTask: Task<Void, Never>?
+    private var realtimeRefreshPending = false
+    private var nextLiveFeedRequestSequence = 0
+    private var lastAppliedLiveFeedRequestSequence = 0
     private var observedTurnStatuses: [String: LiveTurnStatus] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
@@ -729,6 +734,9 @@ final class AgentDirector: ObservableObject {
 
     private func startRealtimeUpdates() {
         realtimeTask?.cancel()
+        realtimeRefreshTask?.cancel()
+        realtimeRefreshTask = nil
+        realtimeRefreshPending = false
         realtimeTask = Task { [weak self] in
             guard let self else {
                 return
@@ -741,38 +749,23 @@ final class AgentDirector: ObservableObject {
                 do {
                     while !Task.isCancelled {
                         _ = try await socket.receive()
-                        self.isRealtimeConnected = true
-                        self.realtimeConnectionError = nil
-                        let elapsed = Date().timeIntervalSince(
-                            self.lastRealtimeFeedRefreshAt
-                        )
-                        if
-                            elapsed
-                                < Self.minimumRealtimeFeedRefreshInterval
-                        {
-                            let waitMilliseconds = Int64(
-                                ceil(
-                                    (
-                                        Self
-                                            .minimumRealtimeFeedRefreshInterval
-                                            - elapsed
-                                    ) * 1_000
-                                )
-                            )
-                            try await Task.sleep(
-                                for: .milliseconds(waitMilliseconds)
-                            )
+                        if !self.isRealtimeConnected {
+                            self.isRealtimeConnected = true
                         }
-                        self.lastRealtimeFeedRefreshAt = Date()
-                        await self.refreshLiveFeed(
-                            announcingTransitions: true
-                        )
+                        if self.realtimeConnectionError != nil {
+                            self.realtimeConnectionError = nil
+                        }
+                        self.scheduleRealtimeFeedRefresh()
                     }
                 } catch {
-                    self.isRealtimeConnected = false
+                    if self.isRealtimeConnected {
+                        self.isRealtimeConnected = false
+                    }
                     if !Task.isCancelled {
-                        self.realtimeConnectionError =
-                            error.localizedDescription
+                        let message = error.localizedDescription
+                        if self.realtimeConnectionError != message {
+                            self.realtimeConnectionError = message
+                        }
                     }
                 }
                 socket.cancel(with: .goingAway, reason: nil)
@@ -784,18 +777,84 @@ final class AgentDirector: ObservableObject {
         }
     }
 
+    private func scheduleRealtimeFeedRefresh() {
+        realtimeRefreshPending = true
+        guard realtimeRefreshTask == nil else {
+            return
+        }
+
+        realtimeRefreshTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.realtimeRefreshTask = nil
+            }
+
+            while self.realtimeRefreshPending, !Task.isCancelled {
+                let elapsed = Date().timeIntervalSince(
+                    self.lastRealtimeFeedRefreshAt
+                )
+                if elapsed < Self.minimumRealtimeFeedRefreshInterval {
+                    let waitMilliseconds = Int64(
+                        ceil(
+                            (
+                                Self.minimumRealtimeFeedRefreshInterval
+                                    - elapsed
+                            ) * 1_000
+                        )
+                    )
+                    try? await Task.sleep(
+                        for: .milliseconds(waitMilliseconds)
+                    )
+                }
+                guard !Task.isCancelled else {
+                    return
+                }
+                self.realtimeRefreshPending = false
+                self.lastRealtimeFeedRefreshAt = Date()
+                let refreshed = await self.refreshLiveFeed(
+                    announcingTransitions: true
+                )
+                if !refreshed, !Task.isCancelled {
+                    self.realtimeRefreshPending = true
+                    do {
+                        try await Task.sleep(for: .seconds(1))
+                    } catch {
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    @discardableResult
     private func refreshLiveFeed(
         announcingTransitions: Bool
-    ) async {
+    ) async -> Bool {
+        nextLiveFeedRequestSequence += 1
+        let requestSequence = nextLiveFeedRequestSequence
+
         do {
             let turns = try await database.fetchLiveFeed()
+            guard requestSequence > lastAppliedLiveFeedRequestSequence else {
+                return true
+            }
+            lastAppliedLiveFeedRequestSequence = requestSequence
             applyLiveFeed(
                 turns,
                 announcingTransitions: announcingTransitions
             )
-            realtimeConnectionError = nil
+            if realtimeConnectionError != nil {
+                realtimeConnectionError = nil
+            }
+            return true
         } catch {
-            realtimeConnectionError = error.localizedDescription
+            let message = error.localizedDescription
+            if realtimeConnectionError != message {
+                realtimeConnectionError = message
+            }
+            return false
         }
     }
 
@@ -803,6 +862,10 @@ final class AgentDirector: ObservableObject {
         _ turns: [LiveFeedTurn],
         announcingTransitions: Bool
     ) {
+        guard hasFeedRevisionChanged(turns) else {
+            return
+        }
+
         let previousStatuses = observedTurnStatuses
         let previousRunningCharacters = runningCharacters
         liveTurns = turns
@@ -873,12 +936,23 @@ final class AgentDirector: ObservableObject {
             else {
                 continue
             }
+            latestTerminalTurnID = turn.id
             if turn.status == .completed {
                 unreviewedCompletedCharacters.insert(character)
                 latestCompletedTurnID = turn.id
             }
             applyTerminalTurn(turn, for: character)
         }
+    }
+
+    private func hasFeedRevisionChanged(
+        _ turns: [LiveFeedTurn]
+    ) -> Bool {
+        guard liveTurns.count == turns.count else {
+            return true
+        }
+
+        return zip(liveTurns, turns).contains { $0 != $1 }
     }
 
     private func applyTerminalTurn(

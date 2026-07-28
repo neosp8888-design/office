@@ -849,9 +849,23 @@ struct LiveWorkspaceFeed: View {
 
     private static let followDistance = CGFloat(400)
     private static let bottomMarkerID = "live-workspace-feed-bottom"
+    private static let visibleTurnLimit = 30
 
     private var displayTurns: [LiveFeedTurn] {
-        Array(director.liveTurns.reversed())
+        Array(
+            director.liveTurns.enumerated().compactMap { index, turn in
+                index < Self.visibleTurnLimit
+                    || turn.status.isRunning
+                    || turn.id == director.latestTerminalTurnID
+                    ? turn
+                    : nil
+            }
+            .reversed()
+        )
+    }
+
+    private var hiddenTurnCount: Int {
+        max(0, director.liveTurns.count - displayTurns.count)
     }
 
     private var latestActivityUpdate: Date? {
@@ -873,25 +887,17 @@ struct LiveWorkspaceFeed: View {
                     ScrollView {
                         VStack(spacing: 0) {
                             LazyVStack(spacing: 14) {
+                                if hiddenTurnCount > 0 {
+                                    archivedTurnsNotice
+                                }
+
                                 ForEach(displayTurns) { turn in
-                                    LiveTurnCard(turn: turn)
+                                    EquatableLiveTurnCard(turn: turn)
+                                        .equatable()
                                         .id(turn.id)
-                                        .background {
-                                            GeometryReader { geometry in
-                                                Color.clear.preference(
-                                                    key: LiveWorkspaceFeedTurnFrameKey.self,
-                                                    value: [
-                                                        turn.id: geometry.frame(
-                                                            in: .named(
-                                                                LiveWorkspaceFeedScrollSpace.name
-                                                            )
-                                                        ),
-                                                    ]
-                                                )
-                                            }
-                                        }
                                 }
                             }
+                            .scrollTargetLayout()
 
                             LiveWorkspaceFeedBottomMarker()
                                 .frame(height: 16)
@@ -901,6 +907,10 @@ struct LiveWorkspaceFeed: View {
                         .padding(.top, 16)
                     }
                     .coordinateSpace(name: LiveWorkspaceFeedScrollSpace.name)
+                    .scrollPosition(
+                        id: $visibleTurnAnchorID,
+                        anchor: .top
+                    )
                     .background {
                         GeometryReader { geometry in
                             Color.clear
@@ -934,12 +944,6 @@ struct LiveWorkspaceFeed: View {
                         bottomMarkerOffset = bottomOffset
                         updateFollowingLatest()
                     }
-                    .onPreferenceChange(
-                        LiveWorkspaceFeedTurnFrameKey.self
-                    ) { frames in
-                        visibleTurnAnchorID = readingAnchorID(in: frames)
-                            ?? visibleTurnAnchorID
-                    }
                     .onAppear {
                         scrollToLatest(proxy)
                     }
@@ -948,7 +952,7 @@ struct LiveWorkspaceFeed: View {
                         guard isFollowingLatest else {
                             return
                         }
-                        scrollToLatest(proxy)
+                        scrollToLatest(proxy, animated: false)
                     }
                     .onChange(of: director.latestSubmittedCommandID) {
                         _, _ in
@@ -958,7 +962,7 @@ struct LiveWorkspaceFeed: View {
                         _, _ in
                         scrollToLatest(proxy)
                     }
-                    .onChange(of: director.latestCompletedTurnID) {
+                    .onChange(of: director.latestTerminalTurnID) {
                         _, turnID in
                         guard let turnID else {
                             return
@@ -1012,17 +1016,25 @@ struct LiveWorkspaceFeed: View {
         }
     }
 
-    private func readingAnchorID(in frames: [String: CGRect]) -> String? {
-        displayTurns.first { turn in
-            guard let frame = frames[turn.id] else {
-                return false
-            }
-            return frame.maxY > 0
-        }?.id
+    private var archivedTurnsNotice: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "books.vertical")
+            Text(
+                "이전 \(hiddenTurnCount)건은 대화 책꽂이에서 확인"
+            )
+        }
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 30)
+        .background(
+            Color.primary.opacity(0.035),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
     }
 
     private func latestTurnID(for character: OfficeCharacter) -> String? {
-        director.liveTurns.first {
+        displayTurns.last {
             $0.characterId == character.rawValue
         }?.id
     }
@@ -1074,27 +1086,29 @@ private struct LiveWorkspaceFeedBottomOffsetKey: PreferenceKey {
     }
 }
 
-private struct LiveWorkspaceFeedTurnFrameKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
+private struct EquatableLiveTurnCard: View, Equatable {
+    let turn: LiveFeedTurn
 
-    static func reduce(
-        value: inout [String: CGRect],
-        nextValue: () -> [String: CGRect]
-    ) {
-        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    static func == (
+        lhs: EquatableLiveTurnCard,
+        rhs: EquatableLiveTurnCard
+    ) -> Bool {
+        lhs.turn == rhs.turn
+    }
+
+    var body: some View {
+        LiveTurnCard(turn: turn)
     }
 }
 
 private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     @State private var activitiesExpanded: Bool
-    @State private var animatesResponse: Bool
     @State private var responseCopied: Bool
 
     init(turn: LiveFeedTurn) {
         self.turn = turn
         _activitiesExpanded = State(initialValue: false)
-        _animatesResponse = State(initialValue: turn.status.isRunning)
         _responseCopied = State(initialValue: false)
     }
 
@@ -1285,8 +1299,9 @@ private struct LiveTurnCard: View {
                     : DashboardPalette.accent
             )
             LiveTypingResponseView(
+                turnID: turn.id,
                 source: turn.response,
-                animates: animatesResponse,
+                animates: turn.status.isRunning,
                 isStreaming: turn.status.isRunning
             )
         }
@@ -1385,57 +1400,64 @@ private struct LiveTurnCard: View {
 }
 
 private struct LiveTypingResponseView: View {
+    let turnID: String
     let source: String
     let animates: Bool
     let isStreaming: Bool
 
     private static let responseFontSize = CGFloat(14)
-
     @State private var displayedSource: String
     @State private var isTyping: Bool
 
-    init(source: String, animates: Bool, isStreaming: Bool) {
+    init(
+        turnID: String,
+        source: String,
+        animates: Bool,
+        isStreaming: Bool
+    ) {
+        self.turnID = turnID
         self.source = source
         self.animates = animates
         self.isStreaming = isStreaming
-        _displayedSource = State(initialValue: animates ? "" : source)
+        let shouldAnimateInitialSource =
+            animates
+                && LiveTypingAppearanceCache.shared
+                    .shouldAnimateInitialSource(for: turnID)
+        _displayedSource = State(
+            initialValue: shouldAnimateInitialSource ? "" : source
+        )
         _isTyping = State(initialValue: animates)
     }
 
     var body: some View {
         Group {
-            if isTyping {
+            if isStreaming {
+                ZStack(alignment: .topLeading) {
+                    plainText(source)
+                        .hidden()
+                        .accessibilityHidden(true)
+                    plainText(displayedSource)
+                }
+            } else {
                 ZStack(alignment: .topLeading) {
                     ConversationMarkdownView(
                         source: source,
                         fontSize: Self.responseFontSize
                     )
-                    .hidden()
-                    .accessibilityHidden(true)
-
-                    Text(displayedSource)
-                        .font(
-                            .system(
-                                size: Self.responseFontSize
-                            )
-                        )
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: .leading
-                        )
-                }
-            } else {
-                ConversationMarkdownView(
-                    source: source,
-                    fontSize: Self.responseFontSize
-                )
                     .textSelection(.enabled)
+                    .opacity(isTyping ? 0 : 1)
+                    .allowsHitTesting(!isTyping)
+                    .accessibilityHidden(isTyping)
+
+                    if isTyping {
+                        plainText(displayedSource)
+                    }
+                }
             }
         }
         .task(
             id: LiveTypingTarget(
+                turnID: turnID,
                 source: source,
                 animates: animates,
                 isStreaming: isStreaming
@@ -1445,33 +1467,58 @@ private struct LiveTypingResponseView: View {
         }
     }
 
+    private func plainText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Self.responseFontSize))
+            .lineSpacing(3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func updateDisplayedSource() async {
         guard animates else {
             displayedSource = source
+            if isTyping, !isStreaming {
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            guard !Task.isCancelled else {
+                return
+            }
             isTyping = false
             return
         }
 
-        let target = Array(source)
-        var displayed = Array(displayedSource)
-        if !target.starts(with: displayed) {
-            displayed = Array(displayed.prefix(sharedPrefixCount(
-                displayed,
-                target
-            )))
-            displayedSource = String(displayed)
+        if !source.hasPrefix(displayedSource) {
+            displayedSource = sharedPrefix(
+                displayedSource,
+                source
+            )
         }
 
         isTyping = true
-        var rendered = String(displayed)
-        while displayed.count < target.count, !Task.isCancelled {
-            let nextCharacter = target[displayed.count]
-            displayed.append(nextCharacter)
-            rendered.append(nextCharacter)
-            displayedSource = rendered
+        var rendered = displayedSource
+        var sourceIndex = source.index(
+            source.startIndex,
+            offsetBy: rendered.count
+        )
+        var remaining = source[sourceIndex...].count
+        let charactersPerFrame =
+            StreamingTextPacer.charactersPerFrame(
+                remainingCharacterCount: remaining
+            )
 
-            if displayed.count < target.count {
-                try? await Task.sleep(for: .milliseconds(14))
+        while remaining > 0, !Task.isCancelled {
+            let count = min(charactersPerFrame, remaining)
+            let nextIndex = source.index(
+                sourceIndex,
+                offsetBy: count
+            )
+            rendered.append(contentsOf: source[sourceIndex ..< nextIndex])
+            displayedSource = rendered
+            sourceIndex = nextIndex
+            remaining -= count
+
+            if remaining > 0 {
+                try? await Task.sleep(for: .milliseconds(16))
             }
         }
 
@@ -1488,26 +1535,51 @@ private struct LiveTypingResponseView: View {
         }
     }
 
-    private func sharedPrefixCount(
-        _ current: [Character],
-        _ target: [Character]
-    ) -> Int {
-        var index = 0
+    private func sharedPrefix(
+        _ current: String,
+        _ target: String
+    ) -> String {
+        var currentIndex = current.startIndex
+        var targetIndex = target.startIndex
+
         while
-            index < current.count,
-            index < target.count,
-            current[index] == target[index]
+            currentIndex < current.endIndex,
+            targetIndex < target.endIndex,
+            current[currentIndex] == target[targetIndex]
         {
-            index += 1
+            current.formIndex(after: &currentIndex)
+            target.formIndex(after: &targetIndex)
         }
-        return index
+
+        return String(current[..<currentIndex])
     }
 }
 
 private struct LiveTypingTarget: Equatable {
+    let turnID: String
     let source: String
     let animates: Bool
     let isStreaming: Bool
+}
+
+@MainActor
+private final class LiveTypingAppearanceCache {
+    static let shared = LiveTypingAppearanceCache()
+
+    private let storage = NSCache<NSString, NSNumber>()
+
+    private init() {
+        storage.countLimit = 256
+    }
+
+    func shouldAnimateInitialSource(for turnID: String) -> Bool {
+        let key = turnID as NSString
+        guard storage.object(forKey: key) == nil else {
+            return false
+        }
+        storage.setObject(NSNumber(value: true), forKey: key)
+        return true
+    }
 }
 
 struct CharacterBadge: View {
@@ -1516,25 +1588,118 @@ struct CharacterBadge: View {
     let size: CGFloat
 
     var body: some View {
-        Text(String(name.prefix(1)))
-            .font(.system(size: size * 0.38, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(
-                DashboardPalette.characterAccent(for: characterID),
-                in: Circle()
-            )
-            .overlay {
-                Circle()
-                    .stroke(.white.opacity(0.72), lineWidth: 2)
+        CharacterAvatar(
+            name: name,
+            characterID: characterID,
+            size: size
+        )
+    }
+}
+
+struct CharacterAvatar: View {
+    let name: String
+    let characterID: String
+    let size: CGFloat
+
+    private var avatarImage: NSImage? {
+        CharacterAvatarImageCache.image(for: characterID)
+    }
+
+    private var framing: CharacterAvatarFraming {
+        CharacterAvatarFraming.forCharacter(characterID)
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    DashboardPalette.characterAccent(for: characterID)
+                        .opacity(0.15)
+                )
+
+            if let avatarImage {
+                Image(nsImage: avatarImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .scaleEffect(framing.scale)
+                    .offset(
+                        y: size * (
+                            framing.verticalOffset + 5.0 / 38.0
+                        )
+                    )
+            } else {
+                Text(String(name.prefix(1)))
+                    .font(
+                        .system(
+                            size: size * 0.38,
+                            weight: .bold,
+                            design: .rounded
+                        )
+                    )
+                    .foregroundStyle(.white)
             }
-            .shadow(
-                color: DashboardPalette.characterAccent(
-                    for: characterID
-                ).opacity(0.20),
-                radius: 5,
-                y: 2
-            )
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay {
+            Circle()
+                .stroke(.white.opacity(0.82), lineWidth: 2)
+        }
+        .shadow(
+            color: DashboardPalette.characterAccent(for: characterID)
+                .opacity(0.20),
+            radius: 5,
+            y: 2
+        )
+    }
+}
+
+private struct CharacterAvatarFraming {
+    let scale: CGFloat
+    let verticalOffset: CGFloat
+
+    static func forCharacter(
+        _ characterID: String
+    ) -> CharacterAvatarFraming {
+        switch OfficeCharacter(rawValue: characterID) {
+        case .boss:
+            .init(scale: 1.764, verticalOffset: 0.182)
+        case .leftMan:
+            .init(scale: 1.557, verticalOffset: 0.108)
+        case .leftWoman:
+            .init(scale: 1.620, verticalOffset: 0.080)
+        case .rightWoman:
+            .init(scale: 1.791, verticalOffset: 0.199)
+        case .rightMan:
+            .init(scale: 1.674, verticalOffset: 0.136)
+        case nil:
+            .init(scale: 1, verticalOffset: 0)
+        }
+    }
+}
+
+@MainActor
+private enum CharacterAvatarImageCache {
+    private static let images: [OfficeCharacter: NSImage] = Dictionary(
+        uniqueKeysWithValues: OfficeCharacter.allCases.compactMap {
+            character in
+            guard
+                let url = PixelOfficeAsset.avatarURL(for: character),
+                let image = NSImage(contentsOf: url)
+            else {
+                return nil
+            }
+            return (character, image)
+        }
+    )
+
+    static func image(for characterID: String) -> NSImage? {
+        guard let character = OfficeCharacter(rawValue: characterID) else {
+            return nil
+        }
+        return images[character]
     }
 }
 

@@ -15,11 +15,41 @@ struct ConversationMarkdownView: View {
     }
 
     var body: some View {
-        Markdown(renderedSource)
+        ConversationMarkdownContent(
+            source: source,
+            fontSize: fontSize
+        )
+        .equatable()
+    }
+}
+
+private struct ConversationMarkdownContent: View, Equatable {
+    let source: String
+    let fontSize: CGFloat
+
+    var body: some View {
+        Markdown(
+            ConversationMarkdownCache.shared.content(for: source)
+        )
             .markdownImageProvider(LocalMarkdownImageProvider())
             .markdownInlineImageProvider(.asset)
             .markdownTextStyle(\.text) {
                 FontSize(fontSize)
+            }
+            .markdownTextStyle(\.code) {
+                FontFamily(.system())
+                FontFamilyVariant(.normal)
+                FontSize(fontSize)
+                BackgroundColor(Color.primary.opacity(0.055))
+            }
+            .markdownCodeSyntaxHighlighter(
+                ConversationCodeSyntaxHighlighter()
+            )
+            .markdownBlockStyle(\.codeBlock) { configuration in
+                ConversationCodeBlockView(
+                    configuration: configuration,
+                    fontSize: fontSize
+                )
             }
             .markdownBlockStyle(\.image) { configuration in
                 configuration.label
@@ -72,16 +102,48 @@ struct ConversationMarkdownView: View {
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private var renderedSource: String {
+@MainActor
+private final class ConversationMarkdownCache {
+    private final class Entry {
+        let content: MarkdownContent
+
+        init(content: MarkdownContent) {
+            self.content = content
+        }
+    }
+
+    static let shared = ConversationMarkdownCache()
+
+    private let storage = NSCache<NSString, Entry>()
+
+    private init() {
+        storage.countLimit = 64
+        storage.totalCostLimit = 4 * 1_024 * 1_024
+    }
+
+    func content(for source: String) -> MarkdownContent {
         let trimmed = source.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        return trimmed.isEmpty
+        let rendered = trimmed.isEmpty
             ? "내용 없음"
             : LocalMarkdownResource.addingLinkedImagePreviews(
                 to: trimmed
             )
+        let key = rendered as NSString
+        if let entry = storage.object(forKey: key) {
+            return entry.content
+        }
+
+        let content = MarkdownContent(rendered)
+        storage.setObject(
+            Entry(content: content),
+            forKey: key,
+            cost: max(1, rendered.utf8.count)
+        )
+        return content
     }
 }
 
@@ -90,10 +152,9 @@ private struct LocalMarkdownImageProvider: ImageProvider {
     func makeImage(url: URL?) -> some View {
         if
             let url,
-            let fileURL = LocalMarkdownResource.imageFileURL(from: url),
-            let image = NSImage(contentsOf: fileURL)
+            let fileURL = LocalMarkdownResource.imageFileURL(from: url)
         {
-            LocalMarkdownThumbnail(image: image)
+            LocalMarkdownFileImage(url: fileURL)
         } else if
             let url,
             url.scheme == nil,
@@ -102,6 +163,104 @@ private struct LocalMarkdownImageProvider: ImageProvider {
         {
             LocalMarkdownThumbnail(image: image)
         }
+    }
+}
+
+private struct LocalMarkdownFileImage: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    init(url: URL) {
+        self.url = url
+        _image = State(initialValue: nil)
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                LocalMarkdownThumbnail(image: image)
+            } else {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(0.035))
+                    .frame(width: 240, height: 160)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+            }
+        }
+        .task(id: url) {
+            await loadImage()
+        }
+    }
+
+    @MainActor
+    private func loadImage() async {
+        if let cached = LocalMarkdownImageCache.shared.image(at: url) {
+            image = cached
+            return
+        }
+
+        let data = await Task.detached(priority: .utility) {
+            try? Data(contentsOf: url, options: .mappedIfSafe)
+        }.value
+        guard
+            !Task.isCancelled,
+            let data,
+            let loadedImage = NSImage(data: data)
+        else {
+            return
+        }
+        LocalMarkdownImageCache.shared.store(loadedImage, at: url)
+        image = loadedImage
+    }
+}
+
+@MainActor
+private final class LocalMarkdownImageCache {
+    static let shared = LocalMarkdownImageCache()
+
+    private let storage = NSCache<NSString, NSImage>()
+
+    private init() {
+        storage.countLimit = 32
+        storage.totalCostLimit = 64 * 1_024 * 1_024
+    }
+
+    func image(at url: URL) -> NSImage? {
+        storage.object(forKey: cacheKey(for: url))
+    }
+
+    func store(_ image: NSImage, at url: URL) {
+        let estimatedCost = max(
+            1,
+            image.representations.reduce(0) { current, representation in
+                max(
+                    current,
+                    representation.pixelsWide
+                        * representation.pixelsHigh
+                        * 4
+                )
+            }
+        )
+        storage.setObject(
+            image,
+            forKey: cacheKey(for: url),
+            cost: estimatedCost
+        )
+    }
+
+    private func cacheKey(for url: URL) -> NSString {
+        let values = try? url.resourceValues(
+            forKeys: [
+                .contentModificationDateKey,
+                .fileSizeKey,
+            ]
+        )
+        let modifiedAt =
+            values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let fileSize = values?.fileSize ?? 0
+        return "\(url.path)|\(modifiedAt)|\(fileSize)" as NSString
     }
 }
 

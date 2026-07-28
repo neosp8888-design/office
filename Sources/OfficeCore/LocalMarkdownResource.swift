@@ -3,6 +3,16 @@
 import Foundation
 
 public enum LocalMarkdownResource {
+    private static let existingImageExpression = try? NSRegularExpression(
+        pattern: #"!\[[^\]\n]*\]\((?:<([^>\n]+)>|([^\s)\n]+))\)"#
+    )
+    private static let linkedImageExpression = try? NSRegularExpression(
+        pattern: #"(?<!!)\[(?!\!)[^\]\n]*\]\((?:<([^>\n]+)>|([^\s)\n]+))\)"#
+    )
+    private static let bareImageExpression = try? NSRegularExpression(
+        pattern: #"((?:file://)?/[^\n`<>]*?\.(?:bmp|gif|heic|jpe?g|png|tiff?|webp))(?=$|[\s`>)\]},;:])"#,
+        options: [.caseInsensitive]
+    )
     private static let imageExtensions: Set<String> = [
         "bmp",
         "gif",
@@ -42,19 +52,25 @@ public enum LocalMarkdownResource {
     ) -> String {
         let existingImages = destinations(
             in: markdown,
-            pattern: #"!\[[^\]\n]*\]\((?:<([^>\n]+)>|([^\s)\n]+))\)"#
+            expression: existingImageExpression
         )
         let linkedImages = destinations(
             in: markdown,
-            pattern: #"(?<!!)\[(?!\!)[^\]\n]*\]\((?:<([^>\n]+)>|([^\s)\n]+))\)"#
+            expression: linkedImageExpression
+        )
+        let bareImages = destinations(
+            in: markdown,
+            expression: bareImageExpression
         )
 
         var previewedPaths = Set(
             existingImages.compactMap(imagePath(for:))
         )
-        let paths = linkedImages.compactMap(imagePath(for:)).filter {
-            previewedPaths.insert($0).inserted
-        }
+        let paths = (linkedImages + bareImages)
+            .compactMap(imagePath(for:))
+            .filter {
+                previewedPaths.insert($0).inserted
+            }
         guard !paths.isEmpty else {
             return markdown
         }
@@ -68,17 +84,17 @@ public enum LocalMarkdownResource {
 
     private static func destinations(
         in markdown: String,
-        pattern: String
+        expression: NSRegularExpression?
     ) -> [String] {
-        guard let expression = try? NSRegularExpression(pattern: pattern)
-        else {
+        guard let expression else {
             return []
         }
 
         let range = NSRange(markdown.startIndex..., in: markdown)
         return expression.matches(in: markdown, range: range).compactMap {
             match in
-            for index in 1 ... 2 where match.range(at: index).location != NSNotFound {
+            for index in 1 ..< match.numberOfRanges
+            where match.range(at: index).location != NSNotFound {
                 if let range = Range(match.range(at: index), in: markdown) {
                     return String(markdown[range])
                 }

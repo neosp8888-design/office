@@ -394,14 +394,14 @@ enum LiveTurnStatus: String, Decodable, Sendable {
     }
 }
 
-struct LiveFeedActivity: Decodable, Identifiable, Sendable {
+struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let kind: String
     let text: String
     let occurredAt: Date
 }
 
-struct LiveFeedTurn: Decodable, Identifiable, Sendable {
+struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let characterId: String
     let characterName: String
