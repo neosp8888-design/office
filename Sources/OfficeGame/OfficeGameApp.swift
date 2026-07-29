@@ -528,7 +528,8 @@ private struct OfficeGameView: View {
                         if isRunning || isCompleted {
                             CharacterTaskStatusIndicator(
                                 isRunning: isRunning,
-                                isCompleted: isCompleted
+                                isCompleted: isCompleted,
+                                reduceMotion: reduceMotion
                             )
                         }
                     }
@@ -764,12 +765,8 @@ private struct OfficeGameView: View {
 private struct CharacterTaskStatusIndicator: View {
     let isRunning: Bool
     let isCompleted: Bool
+    let reduceMotion: Bool
 
-    private let runningColor = Color(
-        red: 0.18,
-        green: 0.73,
-        blue: 0.42
-    )
     private let completedColor = Color(
         red: 0.94,
         green: 0.52,
@@ -779,7 +776,11 @@ private struct CharacterTaskStatusIndicator: View {
     var body: some View {
         Group {
             if isRunning {
-                runningIndicator(isExpanded: false)
+                CoreAnimationRunningIndicator(
+                    isAnimated: !reduceMotion
+                )
+                .frame(width: 24, height: 24)
+                .accessibilityLabel("업무 중")
             } else if isCompleted {
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 11, weight: .black))
@@ -795,29 +796,6 @@ private struct CharacterTaskStatusIndicator: View {
             }
         }
         .frame(width: 24, height: 24)
-    }
-
-    private func runningIndicator(isExpanded: Bool) -> some View {
-        ZStack {
-            Circle()
-                .stroke(
-                    runningColor.opacity(isExpanded ? 0.06 : 0.58),
-                    lineWidth: 1.6
-                )
-                .frame(width: 18, height: 18)
-                .scaleEffect(isExpanded ? 1.26 : 0.76)
-
-            Circle()
-                .fill(runningColor)
-                .frame(width: 12, height: 12)
-                .scaleEffect(isExpanded ? 1 : 0.84)
-                .opacity(isExpanded ? 0.72 : 1)
-                .shadow(
-                    color: runningColor.opacity(0.42),
-                    radius: 4
-                )
-        }
-        .accessibilityLabel("업무 중")
     }
 }
 

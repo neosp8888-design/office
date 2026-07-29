@@ -16,13 +16,13 @@ final class StreamingTextPacerTests: XCTestCase {
     func testShortBacklogKeepsOnlyAnimatedTail() {
         XCTAssertEqual(
             StreamingTextPacer.immediatelyVisibleCharacterCount(
-                remainingCharacterCount: 12
+                remainingCharacterCount: 180
             ),
             0
         )
         XCTAssertEqual(
             StreamingTextPacer.immediatelyVisibleCharacterCount(
-                remainingCharacterCount: 13
+                remainingCharacterCount: 181
             ),
             1
         )
@@ -33,13 +33,13 @@ final class StreamingTextPacerTests: XCTestCase {
             StreamingTextPacer.immediatelyVisibleCharacterCount(
                 remainingCharacterCount: 1_920
             ),
-            1_908
+            1_740
         )
         XCTAssertEqual(
             StreamingTextPacer.immediatelyVisibleCharacterCount(
                 remainingCharacterCount: 20_000
             ),
-            19_988
+            19_820
         )
     }
 
@@ -81,5 +81,37 @@ final class StreamingTextPacerTests: XCTestCase {
             animatedFrameCount,
             StreamingTextPacer.animatedTailCharacterCount
         )
+    }
+
+    func testUpdatePlanAnimatesOnlyNewUnicodeSuffix() {
+        let plan = StreamingTextPacer.updatePlan(
+            current: "한글🙂",
+            target: "한글🙂 문장이 이어집니다.",
+            animates: true
+        )
+
+        XCTAssertEqual(plan.immediateText, "한글🙂")
+        XCTAssertEqual(
+            String(plan.animatedCharacters),
+            " 문장이 이어집니다."
+        )
+    }
+
+    func testUpdatePlanHandlesReplacementAndDisabledAnimation() {
+        let replacement = StreamingTextPacer.updatePlan(
+            current: "이전 응답",
+            target: "새 응답",
+            animates: true
+        )
+        XCTAssertEqual(replacement.immediateText, "")
+        XCTAssertEqual(String(replacement.animatedCharacters), "새 응답")
+
+        let immediate = StreamingTextPacer.updatePlan(
+            current: "이전 응답",
+            target: "새 응답",
+            animates: false
+        )
+        XCTAssertEqual(immediate.immediateText, "새 응답")
+        XCTAssertTrue(immediate.animatedCharacters.isEmpty)
     }
 }

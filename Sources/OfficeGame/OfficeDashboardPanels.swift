@@ -1322,14 +1322,21 @@ struct LiveWorkspaceFeed: View {
 }
 
 private struct LiveWorkspacePreparingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        HStack(spacing: 2.5) {
-            ForEach(0..<3, id: \.self) { _ in
-                Circle()
-                    .fill(DashboardPalette.accent)
-                    .frame(width: 4, height: 4)
-            }
-        }
+        CoreAnimationDotsView(
+            dotSize: 4,
+            spacing: 2.5,
+            travel: 2.5,
+            color: NSColor(
+                calibratedRed: 0.13,
+                green: 0.55,
+                blue: 0.52,
+                alpha: 1
+            ),
+            isAnimated: !reduceMotion
+        )
         .frame(width: 20, height: 14)
     }
 }
@@ -1392,6 +1399,7 @@ private struct EquatableLiveTurnCard: View, Equatable {
 
 private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activitiesExpanded: Bool
     @State private var responseCopied: Bool
 
@@ -1523,7 +1531,15 @@ private struct LiveTurnCard: View {
         } label: {
             HStack(spacing: 6) {
                 if turn.status.isRunning {
-                    Image(systemName: "brain.head.profile.fill")
+                    CoreAnimationDotsView(
+                        dotSize: 2.5,
+                        spacing: 1.4,
+                        travel: 1.5,
+                        color: .secondaryLabelColor,
+                        isAnimated: !reduceMotion
+                    )
+                    .frame(width: 15, height: 10)
+                    .accessibilityLabel("추론 중")
                 } else {
                     Image(systemName: "list.bullet.indent")
                 }
@@ -1694,7 +1710,8 @@ private struct LiveTypingResponseView: View {
     let isStreaming: Bool
 
     private static let responseFontSize = CGFloat(14)
-    @State private var displayedSource: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let animatesInitialSource: Bool
 
     init(
         turnID: String,
@@ -1706,19 +1723,25 @@ private struct LiveTypingResponseView: View {
         self.source = source
         self.animates = animates
         self.isStreaming = isStreaming
-        let shouldAnimateInitialSource =
+        animatesInitialSource =
             animates
                 && LiveTypingAppearanceCache.shared
                     .shouldAnimateInitialSource(for: turnID)
-        _displayedSource = State(
-            initialValue: shouldAnimateInitialSource ? "" : source
-        )
     }
 
     var body: some View {
         Group {
             if isStreaming {
-                plainText(displayedSource)
+                StreamingPlainTextView(
+                    source: source,
+                    animates: animates && !reduceMotion,
+                    animatesInitialSource:
+                        animatesInitialSource && !reduceMotion,
+                    fontSize: Self.responseFontSize,
+                    lineSpacing: 3
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ConversationMarkdownView(
                     source: source,
@@ -1737,105 +1760,7 @@ private struct LiveTypingResponseView: View {
                 }
             }
         }
-        .task(
-            id: LiveTypingTarget(
-                turnID: turnID,
-                source: source,
-                animates: animates,
-                isStreaming: isStreaming
-            )
-        ) {
-            await updateDisplayedSource()
-        }
     }
-
-    private func plainText(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Self.responseFontSize))
-            .lineSpacing(3)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func updateDisplayedSource() async {
-        guard animates else {
-            displayedSource = source
-            return
-        }
-
-        if !source.hasPrefix(displayedSource) {
-            displayedSource = sharedPrefix(
-                displayedSource,
-                source
-            )
-        }
-
-        var rendered = displayedSource
-        var sourceIndex = source.index(
-            source.startIndex,
-            offsetBy: rendered.count
-        )
-        var remaining = source[sourceIndex...].count
-        let immediatelyVisibleCount =
-            StreamingTextPacer.immediatelyVisibleCharacterCount(
-                remainingCharacterCount: remaining
-            )
-
-        if immediatelyVisibleCount > 0 {
-            let immediateEndIndex = source.index(
-                sourceIndex,
-                offsetBy: immediatelyVisibleCount
-            )
-            rendered.append(
-                contentsOf: source[sourceIndex ..< immediateEndIndex]
-            )
-            displayedSource = rendered
-            sourceIndex = immediateEndIndex
-            remaining -= immediatelyVisibleCount
-        }
-
-        while remaining > 0, !Task.isCancelled {
-            let nextIndex = source.index(
-                sourceIndex,
-                offsetBy: 1
-            )
-            rendered.append(contentsOf: source[sourceIndex ..< nextIndex])
-            displayedSource = rendered
-            sourceIndex = nextIndex
-            remaining -= 1
-
-            if remaining > 0 {
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-        }
-    }
-
-    private func sharedPrefix(
-        _ current: String,
-        _ target: String
-    ) -> String {
-        var currentIndex = current.startIndex
-        var targetIndex = target.startIndex
-
-        while
-            currentIndex < current.endIndex,
-            targetIndex < target.endIndex,
-            current[currentIndex] == target[targetIndex]
-        {
-            current.formIndex(after: &currentIndex)
-            target.formIndex(after: &targetIndex)
-        }
-
-        return String(current[..<currentIndex])
-    }
-}
-
-private struct LiveTypingTarget: Equatable {
-    let turnID: String
-    let source: String
-    let animates: Bool
-    let isStreaming: Bool
 }
 
 @MainActor
