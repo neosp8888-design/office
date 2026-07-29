@@ -869,15 +869,11 @@ private struct UsageMeter: View {
 struct LiveWorkspaceFeed: View {
     @ObservedObject var director: AgentDirector
     @State private var isAtBottom = false
-    @State private var bottomMarkerOffset = CGFloat.zero
-    @State private var scrollViewportHeight = CGFloat.zero
-    @State private var visibleTurnAnchorID: String?
+    @State private var hasContentBelow = false
+    @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
     @State private var visibleTurnLimit = Self.pageSize
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
-    @State private var bottomExitTask: Task<Void, Never>?
-    @State private var initialScrollTask: Task<Void, Never>?
-    @State private var streamingResponseHeight = CGFloat.zero
 
     private static let bottomTolerance = CGFloat(20)
     private static let bottomMarkerID = "live-workspace-feed-bottom"
@@ -913,14 +909,6 @@ struct LiveWorkspaceFeed: View {
         director.liveTurns.map(\.updatedAt).max()
     }
 
-    private var hasContentBelow: Bool {
-        guard scrollViewportHeight > 0 else {
-            return false
-        }
-        return bottomMarkerOffset - scrollViewportHeight
-            > Self.bottomTolerance
-    }
-
     private var isResponsePreparing: Bool {
         displayTurns.contains { $0.status.isRunning }
     }
@@ -943,9 +931,12 @@ struct LiveWorkspaceFeed: View {
                                 if hiddenTurnCount > 0 {
                                     archivedTurnsNotice
                                         .onAppear {
-                                            loadMoreTurnsIfNeeded(
-                                                proxy: proxy
-                                            )
+                                            guard
+                                                didPerformInitialScroll
+                                            else {
+                                                return
+                                            }
+                                            loadMoreTurnsIfNeeded(proxy: proxy)
                                         }
                                 }
 
@@ -955,7 +946,6 @@ struct LiveWorkspaceFeed: View {
                                         .id(turn.id)
                                 }
                             }
-                            .scrollTargetLayout()
 
                             LiveWorkspaceFeedBottomMarker()
                                 .frame(height: 16)
@@ -966,10 +956,6 @@ struct LiveWorkspaceFeed: View {
                     }
                     .defaultScrollAnchor(.bottom)
                     .coordinateSpace(name: LiveWorkspaceFeedScrollSpace.name)
-                    .scrollPosition(
-                        id: $visibleTurnAnchorID,
-                        anchor: .top
-                    )
                     .onAppear {
                         performInitialScrollIfNeeded(proxy: proxy)
                     }
@@ -977,7 +963,8 @@ struct LiveWorkspaceFeed: View {
                         GeometryReader { geometry in
                             Color.clear
                                 .onAppear {
-                                    scrollViewportHeight = geometry.size.height
+                                    scrollMetrics.viewportHeight =
+                                        geometry.size.height
                                     if didPerformInitialScroll {
                                         updateBottomState()
                                     } else {
@@ -988,8 +975,7 @@ struct LiveWorkspaceFeed: View {
                                 }
                                 .onChange(of: geometry.size) {
                                     _, size in
-                                    let readingAnchorID = visibleTurnAnchorID
-                                    scrollViewportHeight = size.height
+                                    scrollMetrics.viewportHeight = size.height
                                     if !didPerformInitialScroll {
                                         performInitialScrollIfNeeded(
                                             proxy: proxy
@@ -999,11 +985,6 @@ struct LiveWorkspaceFeed: View {
                                             proxy,
                                             animated: false
                                         )
-                                    } else if let readingAnchorID {
-                                        restoreReadingPosition(
-                                            readingAnchorID,
-                                            proxy: proxy
-                                        )
                                     }
                                 }
                         }
@@ -1011,7 +992,7 @@ struct LiveWorkspaceFeed: View {
                     .onPreferenceChange(
                         LiveWorkspaceFeedBottomOffsetKey.self
                     ) { bottomOffset in
-                        bottomMarkerOffset = bottomOffset
+                        scrollMetrics.bottomMarkerOffset = bottomOffset
                         if didPerformInitialScroll {
                             updateBottomState()
                         } else {
@@ -1024,8 +1005,10 @@ struct LiveWorkspaceFeed: View {
                         LiveWorkspaceFeedStreamingHeightKey.self
                     ) { height in
                         let didGrow =
-                            height > streamingResponseHeight + 0.5
-                        streamingResponseHeight = height
+                            height
+                                > scrollMetrics.streamingResponseHeight
+                                    + 0.5
+                        scrollMetrics.streamingResponseHeight = height
                         guard
                             didGrow,
                             didPerformInitialScroll,
@@ -1042,39 +1025,41 @@ struct LiveWorkspaceFeed: View {
                         }
                         scrollToLatest(proxy, animated: false)
                     }
-                    .onChange(of: director.selectedCharacterID) {
-                        _, character in
-                        guard
-                            let character,
-                            let turnID = latestTurnID(for: character)
-                        else {
+                    .onChange(of: director.latestSubmittedCommandID) {
+                        _, commandID in
+                        guard commandID != nil else {
                             return
                         }
-                        scrollToTurn(
-                            turnID,
-                            proxy: proxy,
-                            anchor: .bottom
-                        )
+                        scrollToLatest(proxy, animated: false)
+                    }
+                    .onChange(of: director.latestStartedCommandID) {
+                        _, commandID in
+                        guard commandID != nil else {
+                            return
+                        }
+                        scrollToLatest(proxy, animated: false)
                     }
                     .overlay(alignment: .bottom) {
-                        if hasContentBelow {
-                            jumpToLatestButton(proxy: proxy)
-                                .padding(.bottom, 12)
-                                .transition(
-                                    .scale(scale: 0.82)
-                                        .combined(with: .opacity)
-                                )
+                        Group {
+                            if hasContentBelow {
+                                jumpToLatestButton(proxy: proxy)
+                                    .padding(.bottom, 12)
+                                    .transition(
+                                        .scale(scale: 0.82)
+                                            .combined(with: .opacity)
+                                    )
+                            }
                         }
+                        .animation(
+                            .easeInOut(duration: 0.16),
+                            value: hasContentBelow
+                        )
                     }
-                    .animation(
-                        .easeInOut(duration: 0.16),
-                        value: hasContentBelow
-                    )
                     .onDisappear {
-                        bottomExitTask?.cancel()
-                        bottomExitTask = nil
-                        initialScrollTask?.cancel()
-                        initialScrollTask = nil
+                        scrollMetrics.bottomExitTask?.cancel()
+                        scrollMetrics.bottomExitTask = nil
+                        scrollMetrics.initialScrollTask?.cancel()
+                        scrollMetrics.initialScrollTask = nil
                     }
                 }
             }
@@ -1102,28 +1087,42 @@ struct LiveWorkspaceFeed: View {
     ) {
         guard
             !didPerformInitialScroll,
-            initialScrollTask == nil,
-            scrollViewportHeight > 0,
-            bottomMarkerOffset > 0
+            scrollMetrics.initialScrollTask == nil,
+            scrollMetrics.viewportHeight > 0,
+            scrollMetrics.bottomMarkerOffset > 0
         else {
             return
         }
 
         markAtBottom()
-        initialScrollTask = Task { @MainActor in
-            for _ in 0..<20 {
+        scrollMetrics.initialScrollTask = Task { @MainActor in
+            var stablePassCount = 0
+            for _ in 0..<8 {
                 guard !Task.isCancelled else {
                     return
                 }
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
                 try? await Task.sleep(for: .milliseconds(100))
+                let distanceFromBottom = max(
+                    0,
+                    scrollMetrics.bottomMarkerOffset
+                        - scrollMetrics.viewportHeight
+                )
+                if distanceFromBottom <= Self.bottomTolerance {
+                    stablePassCount += 1
+                    if stablePassCount >= 4 {
+                        break
+                    }
+                } else {
+                    stablePassCount = 0
+                }
             }
             guard !Task.isCancelled else {
                 return
             }
             markAtBottom()
             didPerformInitialScroll = true
-            initialScrollTask = nil
+            scrollMetrics.initialScrollTask = nil
         }
     }
 
@@ -1138,8 +1137,7 @@ struct LiveWorkspaceFeed: View {
             return
         }
 
-        let readingAnchorID =
-            visibleTurnAnchorID ?? displayTurns.first?.id
+        let readingAnchorID = displayTurns.first?.id
         let nextLimit = min(
             visibleTurnLimit + Self.pageSize,
             Self.maximumVisibleTurnCount,
@@ -1208,15 +1206,6 @@ struct LiveWorkspaceFeed: View {
         )
     }
 
-    private func restoreReadingPosition(
-        _ turnID: String,
-        proxy: ScrollViewProxy
-    ) {
-        DispatchQueue.main.async {
-            proxy.scrollTo(turnID, anchor: .top)
-        }
-    }
-
     private var archivedTurnsNotice: some View {
         HStack(spacing: 7) {
             Image(systemName: "books.vertical")
@@ -1241,65 +1230,56 @@ struct LiveWorkspaceFeed: View {
         )
     }
 
-    private func latestTurnID(for character: OfficeCharacter) -> String? {
-        displayTurns.last {
-            $0.characterId == character.rawValue
-        }?.id
-    }
-
-    private func scrollToTurn(
-        _ turnID: String,
-        proxy: ScrollViewProxy,
-        anchor: UnitPoint
-    ) {
-        if turnID == displayTurns.last?.id {
-            scrollToLatest(proxy)
-            return
-        }
-
-        bottomExitTask?.cancel()
-        bottomExitTask = nil
-        isAtBottom = false
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.24)) {
-                proxy.scrollTo(turnID, anchor: anchor)
-            }
-        }
-    }
-
     private func updateBottomState() {
         let distanceFromBottom = max(
             0,
-            bottomMarkerOffset - scrollViewportHeight
+            scrollMetrics.bottomMarkerOffset
+                - scrollMetrics.viewportHeight
         )
-        if distanceFromBottom <= Self.bottomTolerance {
+        let contentRemainsBelow =
+            distanceFromBottom > Self.bottomTolerance
+        if hasContentBelow != contentRemainsBelow {
+            hasContentBelow = contentRemainsBelow
+        }
+        if !contentRemainsBelow {
             markAtBottom()
             return
         }
 
-        guard isAtBottom, bottomExitTask == nil else {
+        guard
+            isAtBottom,
+            scrollMetrics.bottomExitTask == nil
+        else {
             return
         }
-        bottomExitTask = Task { @MainActor in
+        scrollMetrics.bottomExitTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else {
                 return
             }
-            bottomExitTask = nil
+            scrollMetrics.bottomExitTask = nil
             let currentDistance = max(
                 0,
-                bottomMarkerOffset - scrollViewportHeight
+                scrollMetrics.bottomMarkerOffset
+                    - scrollMetrics.viewportHeight
             )
             if currentDistance > Self.bottomTolerance {
-                isAtBottom = false
+                if isAtBottom {
+                    isAtBottom = false
+                }
             }
         }
     }
 
     private func markAtBottom() {
-        bottomExitTask?.cancel()
-        bottomExitTask = nil
-        isAtBottom = true
+        scrollMetrics.bottomExitTask?.cancel()
+        scrollMetrics.bottomExitTask = nil
+        if hasContentBelow {
+            hasContentBelow = false
+        }
+        if !isAtBottom {
+            isAtBottom = true
+        }
     }
 }
 
@@ -1346,6 +1326,14 @@ private struct LiveWorkspacePreparingDots: View {
 
 private enum LiveWorkspaceFeedScrollSpace {
     static let name = "live-workspace-feed"
+}
+
+private final class LiveWorkspaceFeedScrollMetrics {
+    var bottomMarkerOffset = CGFloat.zero
+    var viewportHeight = CGFloat.zero
+    var streamingResponseHeight = CGFloat.zero
+    var bottomExitTask: Task<Void, Never>?
+    var initialScrollTask: Task<Void, Never>?
 }
 
 private struct LiveWorkspaceFeedBottomMarker: View {
