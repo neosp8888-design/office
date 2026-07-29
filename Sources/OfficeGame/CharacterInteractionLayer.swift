@@ -5,10 +5,28 @@ import SwiftUI
 
 struct CharacterInteractionLayer: View {
     @ObservedObject var director: AgentDirector
+    @ObservedObject private var speechBubbleStore: SpeechBubbleStore
     let onMonitorTapped: (OfficeCharacter) -> Void
     let onArchiveCabinetTapped: () -> Void
     let onWhiteboardTapped: () -> Void
     let onBubbleTapped: (OfficeCharacter, String) -> Void
+
+    init(
+        director: AgentDirector,
+        onMonitorTapped: @escaping (OfficeCharacter) -> Void,
+        onArchiveCabinetTapped: @escaping () -> Void,
+        onWhiteboardTapped: @escaping () -> Void,
+        onBubbleTapped: @escaping (OfficeCharacter, String) -> Void
+    ) {
+        self.director = director
+        _speechBubbleStore = ObservedObject(
+            wrappedValue: director.speechBubbleStore
+        )
+        self.onMonitorTapped = onMonitorTapped
+        self.onArchiveCabinetTapped = onArchiveCabinetTapped
+        self.onWhiteboardTapped = onWhiteboardTapped
+        self.onBubbleTapped = onBubbleTapped
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -111,7 +129,9 @@ struct CharacterInteractionLayer: View {
                 }
 
                 ForEach(director.characters) { character in
-                    if let message = director.bubbles[character.id] {
+                    if let message =
+                        speechBubbleStore.bubbles[character.id]
+                    {
                         let isThinking = director.runningCharacters.contains(
                             character.id
                         )
@@ -180,7 +200,7 @@ struct CharacterInteractionLayer: View {
             }
             .animation(
                 .spring(response: 0.30, dampingFraction: 0.72),
-                value: director.bubbles
+                value: speechBubbleStore.bubbles
             )
         }
     }

@@ -37,8 +37,18 @@ enum OfficeDetailSelection: String {
 }
 
 struct OfficeDetailPanel: View {
-    @ObservedObject var director: AgentDirector
+    @ObservedObject private var archiveFeedStore: ArchiveFeedStore
     let selection: OfficeDetailSelection
+
+    init(
+        director: AgentDirector,
+        selection: OfficeDetailSelection
+    ) {
+        _archiveFeedStore = ObservedObject(
+            wrappedValue: director.archiveFeedStore
+        )
+        self.selection = selection
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,7 +83,7 @@ struct OfficeDetailPanel: View {
             Group {
                 switch selection {
                 case .archive:
-                    ArchiveShelfContent(turns: director.liveTurns)
+                    ArchiveShelfContent(turns: archiveFeedStore.turns)
                 case .usage:
                     UsageBoardContent()
                 }
@@ -868,6 +878,7 @@ private struct UsageMeter: View {
 
 struct LiveWorkspaceFeed: View {
     @ObservedObject var director: AgentDirector
+    @ObservedObject private var liveFeedStore: LiveFeedStore
     @State private var isAtBottom = false
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
@@ -880,9 +891,16 @@ struct LiveWorkspaceFeed: View {
     private static let pageSize = 10
     private static let maximumVisibleTurnCount = 30
 
+    init(director: AgentDirector) {
+        self.director = director
+        _liveFeedStore = ObservedObject(
+            wrappedValue: director.liveFeedStore
+        )
+    }
+
     private var displayTurns: [LiveFeedTurn] {
         Array(
-            director.liveTurns.enumerated().compactMap { index, turn in
+            liveFeedStore.turns.enumerated().compactMap { index, turn in
                 index < visibleTurnLimit
                     || turn.status.isRunning
                     || turn.id == director.latestTerminalTurnID
@@ -894,19 +912,19 @@ struct LiveWorkspaceFeed: View {
     }
 
     private var hiddenTurnCount: Int {
-        max(0, director.liveTurns.count - displayTurns.count)
+        max(0, liveFeedStore.turns.count - displayTurns.count)
     }
 
     private var canLoadOlderTurns: Bool {
         visibleTurnLimit
             < min(
                 Self.maximumVisibleTurnCount,
-                director.liveTurns.count
+                liveFeedStore.turns.count
             )
     }
 
     private var latestActivityUpdate: Date? {
-        director.liveTurns.map(\.updatedAt).max()
+        liveFeedStore.turns.map(\.updatedAt).max()
     }
 
     private var isResponsePreparing: Bool {
@@ -917,13 +935,33 @@ struct LiveWorkspaceFeed: View {
         ScrollViewReader { proxy in
             Group {
                 if displayTurns.isEmpty {
-                    ContentUnavailableView(
-                        "아직 업무 대화가 없습니다",
-                        systemImage: "bubble.left.and.text.bubble.right",
-                        description: Text(
-                            "오피스에서 직원을 선택하고 첫 업무를 보내보세요."
+                    if liveFeedStore.isLoadingInitialFeed {
+                        VStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("대화를 불러오는 중")
+                                .font(
+                                    .system(
+                                        size: 12,
+                                        weight: .semibold,
+                                        design: .rounded
+                                    )
+                                )
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("대화를 불러오는 중")
+                    } else {
+                        ContentUnavailableView(
+                            "아직 업무 대화가 없습니다",
+                            systemImage:
+                                "bubble.left.and.text.bubble.right",
+                            description: Text(
+                                "오피스에서 직원을 선택하고 첫 업무를 보내보세요."
+                            )
                         )
-                    )
+                    }
                 } else {
                     ScrollView {
                         VStack(spacing: 0) {
@@ -1141,7 +1179,7 @@ struct LiveWorkspaceFeed: View {
         let nextLimit = min(
             visibleTurnLimit + Self.pageSize,
             Self.maximumVisibleTurnCount,
-            director.liveTurns.count
+            liveFeedStore.turns.count
         )
         guard nextLimit > visibleTurnLimit else {
             return
@@ -1284,40 +1322,12 @@ struct LiveWorkspaceFeed: View {
 }
 
 private struct LiveWorkspacePreparingDots: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        if reduceMotion {
-            dots(activeIndex: nil)
-        } else {
-            TimelineView(
-                .periodic(from: .now, by: 0.22)
-            ) { context in
-                let activeIndex = Int(
-                    context.date.timeIntervalSinceReferenceDate / 0.22
-                ) % 3
-                dots(activeIndex: activeIndex)
-            }
-        }
-    }
-
-    private func dots(activeIndex: Int?) -> some View {
         HStack(spacing: 2.5) {
-            ForEach(0..<3, id: \.self) { index in
-                let isActive = activeIndex == index
+            ForEach(0..<3, id: \.self) { _ in
                 Circle()
                     .fill(DashboardPalette.accent)
                     .frame(width: 4, height: 4)
-                    .offset(y: isActive ? -2.5 : 0)
-                    .opacity(
-                        activeIndex == nil || isActive
-                            ? 1
-                            : 0.42
-                    )
-                    .animation(
-                        .easeInOut(duration: 0.17),
-                        value: activeIndex
-                    )
             }
         }
         .frame(width: 20, height: 14)
@@ -1513,8 +1523,7 @@ private struct LiveTurnCard: View {
         } label: {
             HStack(spacing: 6) {
                 if turn.status.isRunning {
-                    ProgressView()
-                        .controlSize(.mini)
+                    Image(systemName: "brain.head.profile.fill")
                 } else {
                     Image(systemName: "list.bullet.indent")
                 }

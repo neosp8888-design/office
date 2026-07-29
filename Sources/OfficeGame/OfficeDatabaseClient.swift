@@ -161,10 +161,22 @@ struct OfficeDatabaseClient: Sendable {
         .turns
     }
 
-    func fetchLiveFeed() async throws -> [LiveFeedTurn] {
-        let url = baseURL
+    func fetchLiveFeed(limit: Int) async throws -> [LiveFeedTurn] {
+        let endpoint = baseURL
             .appending(path: "api")
             .appending(path: "live-feed")
+        guard var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OfficeDatabaseError.requestFailed
+        }
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+        guard let url = components.url else {
+            throw OfficeDatabaseError.requestFailed
+        }
         let (data, response) = try await URLSession.shared.data(from: url)
         try validate(response)
         return try historyDecoder().decode(
@@ -172,6 +184,20 @@ struct OfficeDatabaseClient: Sendable {
             from: data
         )
         .turns
+    }
+
+    func fetchLiveFeedTurn(id: String) async throws -> LiveFeedTurn {
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "live-feed")
+            .appending(path: id)
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response)
+        return try historyDecoder().decode(
+            LiveFeedTurnResponse.self,
+            from: data
+        )
+        .turn
     }
 
     func startAgentJob(
@@ -268,21 +294,21 @@ struct OfficeDatabaseClient: Sendable {
 
     private func historyDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [
+            .withInternetDateTime,
+            .withFractionalSeconds,
+        ]
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
 
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [
-                .withInternetDateTime,
-                .withFractionalSeconds,
-            ]
             if let date = fractional.date(from: value) {
                 return date
             }
 
-            let standard = ISO8601DateFormatter()
-            standard.formatOptions = [.withInternetDateTime]
             if let date = standard.date(from: value) {
                 return date
             }
@@ -427,6 +453,10 @@ private struct GlobalHistoryResponse: Decodable {
 
 private struct LiveFeedResponse: Decodable {
     let turns: [LiveFeedTurn]
+}
+
+private struct LiveFeedTurnResponse: Decodable {
+    let turn: LiveFeedTurn
 }
 
 private struct StartAgentJobRequest: Encodable {

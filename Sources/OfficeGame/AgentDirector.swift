@@ -10,11 +10,78 @@ struct PendingAgentQuestion: Identifiable, Equatable {
     let text: String
 }
 
+private struct RealtimeFeedEvent: Decodable {
+    let type: String
+    let turnId: String?
+}
+
+@MainActor
+final class LiveFeedStore: ObservableObject {
+    @Published private(set) var turns: [LiveFeedTurn] = []
+    @Published private(set) var isLoadingInitialFeed = true
+
+    func replace(with turns: [LiveFeedTurn]) {
+        guard self.turns != turns else {
+            return
+        }
+        self.turns = turns
+    }
+
+    func finishInitialLoading() {
+        guard isLoadingInitialFeed else {
+            return
+        }
+        isLoadingInitialFeed = false
+    }
+}
+
+@MainActor
+final class ArchiveFeedStore: ObservableObject {
+    @Published private(set) var turns: [LiveFeedTurn] = []
+    private var revision: [String] = []
+
+    func replaceIfNeeded(with turns: [LiveFeedTurn]) {
+        let updatedRevision = turns.map {
+            "\($0.id)|\($0.status.rawValue)"
+        }
+        guard revision != updatedRevision else {
+            return
+        }
+        revision = updatedRevision
+        self.turns = turns
+    }
+}
+
+@MainActor
+final class SpeechBubbleStore: ObservableObject {
+    @Published private(set) var bubbles: [OfficeCharacter: String] = [:]
+
+    func set(_ text: String, for character: OfficeCharacter) {
+        guard bubbles[character] != text else {
+            return
+        }
+        bubbles[character] = text
+    }
+
+    func remove(for character: OfficeCharacter) {
+        guard bubbles[character] != nil else {
+            return
+        }
+        bubbles[character] = nil
+    }
+
+    func replace(with bubbles: [OfficeCharacter: String]) {
+        guard self.bubbles != bubbles else {
+            return
+        }
+        self.bubbles = bubbles
+    }
+}
+
 @MainActor
 final class AgentDirector: ObservableObject {
     @Published private(set) var characters: [CharacterConfiguration]
     @Published private(set) var names: [OfficeCharacter: String]
-    @Published private(set) var bubbles: [OfficeCharacter: String] = [:]
     @Published private(set) var pendingQuestions:
         [OfficeCharacter: String] = [:]
     @Published private(set) var questionSubmissionErrors:
@@ -36,7 +103,6 @@ final class AgentDirector: ObservableObject {
         [OfficeCharacter: String] = [:]
     @Published var selectedCharacterID: OfficeCharacter?
     @Published private(set) var settingsStatus: String?
-    @Published private(set) var liveTurns: [LiveFeedTurn] = []
     @Published private(set) var latestSubmittedCommandID: UUID?
     @Published private(set) var latestStartedCommandID: UUID?
     @Published private(set) var latestCompletedTurnID: String?
@@ -44,13 +110,20 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var isRealtimeConnected = false
     @Published private(set) var realtimeConnectionError: String?
 
+    let liveFeedStore = LiveFeedStore()
+    let archiveFeedStore = ArchiveFeedStore()
+    let speechBubbleStore = SpeechBubbleStore()
+
     private let configuration: OfficeAgentConfiguration
     private let database: OfficeDatabaseClient
     private var conversationIDs: [OfficeCharacter: UUID] = [:]
     private var sessionIDs: [OfficeCharacter: String] = [:]
     private var realtimeTask: Task<Void, Never>?
     private var realtimeRefreshTask: Task<Void, Never>?
-    private var realtimeRefreshPending = false
+    private var realtimeSnapshotRefreshPending = false
+    private var pendingRealtimeTurnIDs: Set<String> = []
+    private var hasLoadedLiveFeedSnapshot = false
+    private var hasReceivedRealtimeReady = false
     private var nextLiveFeedRequestSequence = 0
     private var lastAppliedLiveFeedRequestSequence = 0
     private var observedTurnStatuses: [String: LiveTurnStatus] = [:]
@@ -59,10 +132,11 @@ final class AgentDirector: ObservableObject {
     private var workingBubbleTask: Task<Void, Never>?
     private var lastIdleChatterCharacter: OfficeCharacter?
     private var workingBubbleStep = 0
-    private var lastRealtimeFeedRefreshAt = Date.distantPast
+    private static let liveFeedSnapshotLimit = 120
     private static let bubbleLifetime = Duration.seconds(10)
     private static let sessionRestoreRetryDelay = Duration.seconds(2)
-    private static let minimumRealtimeFeedRefreshInterval = 0.45
+    private static let realtimeTurnBatchDelay = Duration.milliseconds(250)
+    private static let realtimeRefreshRetryDelay = Duration.seconds(1)
     private static let idleChatterQuietDelaySeconds = 5 ... 12
     private static let workingBubbleRotationDelay =
         Duration.milliseconds(1_400)
@@ -213,6 +287,14 @@ final class AgentDirector: ObservableObject {
         return characters.first { $0.id == selectedCharacterID }
     }
 
+    var liveTurns: [LiveFeedTurn] {
+        liveFeedStore.turns
+    }
+
+    var bubbles: [OfficeCharacter: String] {
+        speechBubbleStore.bubbles
+    }
+
     var archiveCabinetHitbox: CharacterHitbox {
         configuration.archiveCabinetHitbox
     }
@@ -328,7 +410,7 @@ final class AgentDirector: ObservableObject {
                     attachmentPaths: attachmentPaths
                 )
                 conversationIDs[character.id] = started.conversationId
-                await refreshLiveFeed(announcingTransitions: true)
+                scheduleRealtimeFeedRefresh(turnID: started.turnId)
                 latestStartedCommandID = commandID
             } catch {
                 runningCharacters.remove(character.id)
@@ -392,14 +474,14 @@ final class AgentDirector: ObservableObject {
                 cancellingCharacters.remove(character)
             }
             do {
-                _ = try await database.cancelAgentJob(
+                let cancelled = try await database.cancelAgentJob(
                     character: character
                 )
-                await refreshLiveFeed(announcingTransitions: true)
+                scheduleRealtimeFeedRefresh(turnID: cancelled.turnId)
             } catch {
                 turnPersistenceErrors[character] =
                     "업무 중단 요청 실패 · \(error.localizedDescription)"
-                await refreshLiveFeed(announcingTransitions: false)
+                scheduleRealtimeFeedRefresh(turnID: nil)
             }
         }
     }
@@ -542,7 +624,7 @@ final class AgentDirector: ObservableObject {
         autoDismiss: Bool = true
     ) {
         bubbleDismissTasks.removeValue(forKey: character)?.cancel()
-        bubbles[character] = text
+        speechBubbleStore.set(text, for: character)
 
         guard autoDismiss else {
             return
@@ -553,7 +635,7 @@ final class AgentDirector: ObservableObject {
             guard !Task.isCancelled else {
                 return
             }
-            self?.bubbles[character] = nil
+            self?.speechBubbleStore.remove(for: character)
             self?.bubbleDismissTasks[character] = nil
         }
     }
@@ -563,12 +645,14 @@ final class AgentDirector: ObservableObject {
             task.cancel()
         }
         bubbleDismissTasks = [:]
-        bubbles = bubbles.filter {
-            pendingQuestions[$0.key] != nil
-                || runningCharacters.contains($0.key)
-                || failedCharacters[$0.key] != nil
-                || offDutyCharacters[$0.key] != nil
-        }
+        speechBubbleStore.replace(
+            with: bubbles.filter {
+                pendingQuestions[$0.key] != nil
+                    || runningCharacters.contains($0.key)
+                    || failedCharacters[$0.key] != nil
+                    || offDutyCharacters[$0.key] != nil
+            }
+        )
     }
 
     private func startIdleChatter() {
@@ -736,7 +820,8 @@ final class AgentDirector: ObservableObject {
         realtimeTask?.cancel()
         realtimeRefreshTask?.cancel()
         realtimeRefreshTask = nil
-        realtimeRefreshPending = false
+        realtimeSnapshotRefreshPending = false
+        pendingRealtimeTurnIDs.removeAll()
         realtimeTask = Task { [weak self] in
             guard let self else {
                 return
@@ -748,14 +833,27 @@ final class AgentDirector: ObservableObject {
                 socket.resume()
                 do {
                     while !Task.isCancelled {
-                        _ = try await socket.receive()
+                        let message = try await socket.receive()
                         if !self.isRealtimeConnected {
                             self.isRealtimeConnected = true
                         }
                         if self.realtimeConnectionError != nil {
                             self.realtimeConnectionError = nil
                         }
-                        self.scheduleRealtimeFeedRefresh()
+                        let event = self.realtimeEvent(from: message)
+                        if event?.type == "ready" {
+                            let shouldRefreshSnapshot =
+                                self.hasReceivedRealtimeReady
+                                    || !self.hasLoadedLiveFeedSnapshot
+                            self.hasReceivedRealtimeReady = true
+                            if shouldRefreshSnapshot {
+                                self.scheduleRealtimeFeedRefresh(turnID: nil)
+                            }
+                        } else {
+                            self.scheduleRealtimeFeedRefresh(
+                                turnID: event?.turnId
+                            )
+                        }
                     }
                 } catch {
                     if self.isRealtimeConnected {
@@ -777,8 +875,32 @@ final class AgentDirector: ObservableObject {
         }
     }
 
-    private func scheduleRealtimeFeedRefresh() {
-        realtimeRefreshPending = true
+    private func realtimeEvent(
+        from message: URLSessionWebSocketTask.Message
+    ) -> RealtimeFeedEvent? {
+        let data: Data
+        switch message {
+        case .data(let messageData):
+            data = messageData
+        case .string(let text):
+            data = Data(text.utf8)
+        @unknown default:
+            return nil
+        }
+        return try? JSONDecoder().decode(
+            RealtimeFeedEvent.self,
+            from: data
+        )
+    }
+
+    private func scheduleRealtimeFeedRefresh(turnID: String?) {
+        if let turnID = turnID?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !turnID.isEmpty {
+            pendingRealtimeTurnIDs.insert(turnID)
+        } else {
+            realtimeSnapshotRefreshPending = true
+        }
         guard realtimeRefreshTask == nil else {
             return
         }
@@ -791,35 +913,56 @@ final class AgentDirector: ObservableObject {
                 self.realtimeRefreshTask = nil
             }
 
-            while self.realtimeRefreshPending, !Task.isCancelled {
-                let elapsed = Date().timeIntervalSince(
-                    self.lastRealtimeFeedRefreshAt
-                )
-                if elapsed < Self.minimumRealtimeFeedRefreshInterval {
-                    let waitMilliseconds = Int64(
-                        ceil(
-                            (
-                                Self.minimumRealtimeFeedRefreshInterval
-                                    - elapsed
-                            ) * 1_000
-                        )
-                    )
-                    try? await Task.sleep(
-                        for: .milliseconds(waitMilliseconds)
-                    )
-                }
+            while
+                self.realtimeSnapshotRefreshPending
+                    || !self.pendingRealtimeTurnIDs.isEmpty
+            {
                 guard !Task.isCancelled else {
                     return
                 }
-                self.realtimeRefreshPending = false
-                self.lastRealtimeFeedRefreshAt = Date()
-                let refreshed = await self.refreshLiveFeed(
-                    announcingTransitions: true
-                )
-                if !refreshed, !Task.isCancelled {
-                    self.realtimeRefreshPending = true
+
+                if self.realtimeSnapshotRefreshPending {
+                    self.realtimeSnapshotRefreshPending = false
+                    let refreshed = await self.refreshLiveFeed(
+                        announcingTransitions: true
+                    )
+                    if !refreshed, !Task.isCancelled {
+                        self.realtimeSnapshotRefreshPending = true
+                        do {
+                            try await Task.sleep(
+                                for: Self.realtimeRefreshRetryDelay
+                            )
+                        } catch {
+                            return
+                        }
+                    }
+                    continue
+                }
+
+                do {
+                    try await Task.sleep(
+                        for: Self.realtimeTurnBatchDelay
+                    )
+                } catch {
+                    return
+                }
+                let turnIDs = self.pendingRealtimeTurnIDs
+                self.pendingRealtimeTurnIDs.removeAll()
+                for turnID in turnIDs {
+                    let refreshed = await self.refreshLiveFeedTurn(
+                        turnID,
+                        announcingTransitions: true
+                    )
+                    if !refreshed {
+                        self.realtimeSnapshotRefreshPending = true
+                        break
+                    }
+                }
+                if self.realtimeSnapshotRefreshPending, !Task.isCancelled {
                     do {
-                        try await Task.sleep(for: .seconds(1))
+                        try await Task.sleep(
+                            for: Self.realtimeRefreshRetryDelay
+                        )
                     } catch {
                         return
                     }
@@ -836,13 +979,49 @@ final class AgentDirector: ObservableObject {
         let requestSequence = nextLiveFeedRequestSequence
 
         do {
-            let turns = try await database.fetchLiveFeed()
+            let turns = try await database.fetchLiveFeed(
+                limit: Self.liveFeedSnapshotLimit
+            )
             guard requestSequence > lastAppliedLiveFeedRequestSequence else {
                 return true
             }
             lastAppliedLiveFeedRequestSequence = requestSequence
             applyLiveFeed(
                 turns,
+                announcingTransitions: announcingTransitions
+            )
+            hasLoadedLiveFeedSnapshot = true
+            liveFeedStore.finishInitialLoading()
+            if realtimeConnectionError != nil {
+                realtimeConnectionError = nil
+            }
+            return true
+        } catch {
+            let message = error.localizedDescription
+            if realtimeConnectionError != message {
+                realtimeConnectionError = message
+            }
+            return false
+        }
+    }
+
+    @discardableResult
+    private func refreshLiveFeedTurn(
+        _ turnID: String,
+        announcingTransitions: Bool
+    ) async -> Bool {
+        do {
+            let turn = try await database.fetchLiveFeedTurn(id: turnID)
+            var turns = liveTurns.filter { $0.id != turn.id }
+            turns.append(turn)
+            turns.sort {
+                if $0.startedAt == $1.startedAt {
+                    return $0.id > $1.id
+                }
+                return $0.startedAt > $1.startedAt
+            }
+            applyLiveFeed(
+                Array(turns.prefix(Self.liveFeedSnapshotLimit)),
                 announcingTransitions: announcingTransitions
             )
             if realtimeConnectionError != nil {
@@ -868,17 +1047,21 @@ final class AgentDirector: ObservableObject {
 
         let previousStatuses = observedTurnStatuses
         let previousRunningCharacters = runningCharacters
-        liveTurns = turns
+        liveFeedStore.replace(with: turns)
+        archiveFeedStore.replaceIfNeeded(with: turns)
         observedTurnStatuses = Dictionary(
             uniqueKeysWithValues: turns.map { ($0.id, $0.status) }
         )
 
         let runningTurns = turns.filter { $0.status.isRunning }
-        runningCharacters = Set(
+        let updatedRunningCharacters = Set(
             runningTurns.compactMap {
                 OfficeCharacter(rawValue: $0.characterId)
             }
         )
+        if runningCharacters != updatedRunningCharacters {
+            runningCharacters = updatedRunningCharacters
+        }
         for character in runningCharacters
         where
             !previousRunningCharacters.contains(character)
@@ -915,7 +1098,10 @@ final class AgentDirector: ObservableObject {
                         autoDismiss: false
                     )
                 }
-            } else if !turn.status.isRunning {
+            } else if
+                !turn.status.isRunning,
+                pendingQuestions[character] != nil
+            {
                 pendingQuestions[character] = nil
             }
 
@@ -925,8 +1111,12 @@ final class AgentDirector: ObservableObject {
             {
                 applyTerminalTurn(turn, for: character)
             } else if turn.status == .completed, !turn.needsInput {
-                failedCharacters[character] = nil
-                offDutyCharacters[character] = nil
+                if failedCharacters[character] != nil {
+                    failedCharacters[character] = nil
+                }
+                if offDutyCharacters[character] != nil {
+                    offDutyCharacters[character] = nil
+                }
             }
 
             guard
@@ -961,8 +1151,12 @@ final class AgentDirector: ObservableObject {
     ) {
         switch turn.status {
         case .completed:
-            failedCharacters[character] = nil
-            offDutyCharacters[character] = nil
+            if failedCharacters[character] != nil {
+                failedCharacters[character] = nil
+            }
+            if offDutyCharacters[character] != nil {
+                offDutyCharacters[character] = nil
+            }
             if turn.needsInput {
                 if pendingQuestions[character] != turn.response {
                     pendingQuestions[character] = turn.response
@@ -977,23 +1171,33 @@ final class AgentDirector: ObservableObject {
                     )
                 }
             } else {
-                pendingQuestions[character] = nil
+                if pendingQuestions[character] != nil {
+                    pendingQuestions[character] = nil
+                }
                 showBubble(turn.response, for: character)
             }
         case .failed, .interrupted:
             let message =
                 turn.errorMessage ?? "업무가 중단되었습니다."
             if AgentUsageLimitClassifier.isLimitReached(message) {
-                failedCharacters[character] = nil
-                offDutyCharacters[character] = message
+                if failedCharacters[character] != nil {
+                    failedCharacters[character] = nil
+                }
+                if offDutyCharacters[character] != message {
+                    offDutyCharacters[character] = message
+                }
                 showBubble(
                     "퇴근",
                     for: character,
                     autoDismiss: false
                 )
             } else {
-                offDutyCharacters[character] = nil
-                failedCharacters[character] = message
+                if offDutyCharacters[character] != nil {
+                    offDutyCharacters[character] = nil
+                }
+                if failedCharacters[character] != message {
+                    failedCharacters[character] = message
+                }
                 showBubble(
                     "업무 중단\n\(message)",
                     for: character,
@@ -1067,7 +1271,7 @@ final class AgentDirector: ObservableObject {
         failedCharacters[character] = nil
         offDutyCharacters[character] = nil
         bubbleDismissTasks.removeValue(forKey: character)?.cancel()
-        bubbles[character] = nil
+        speechBubbleStore.remove(for: character)
         if latestQuestion?.character == character {
             latestQuestion = nil
         }

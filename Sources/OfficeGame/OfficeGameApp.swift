@@ -528,8 +528,7 @@ private struct OfficeGameView: View {
                         if isRunning || isCompleted {
                             CharacterTaskStatusIndicator(
                                 isRunning: isRunning,
-                                isCompleted: isCompleted,
-                                reduceMotion: reduceMotion
+                                isCompleted: isCompleted
                             )
                         }
                     }
@@ -765,7 +764,6 @@ private struct OfficeGameView: View {
 private struct CharacterTaskStatusIndicator: View {
     let isRunning: Bool
     let isCompleted: Bool
-    let reduceMotion: Bool
 
     private let runningColor = Color(
         red: 0.18,
@@ -781,15 +779,7 @@ private struct CharacterTaskStatusIndicator: View {
     var body: some View {
         Group {
             if isRunning {
-                if reduceMotion {
-                    runningIndicator(isExpanded: false)
-                } else {
-                    PhaseAnimator([false, true]) { isExpanded in
-                        runningIndicator(isExpanded: isExpanded)
-                    } animation: { _ in
-                        .easeInOut(duration: 0.62)
-                    }
-                }
+                runningIndicator(isExpanded: false)
             } else if isCompleted {
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 11, weight: .black))
