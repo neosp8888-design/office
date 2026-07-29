@@ -21,6 +21,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 mkdir -p "$RESOURCE_STAGE_BUNDLE"
 cp "$BIN_DIR/OfficeLLM" "$MACOS_DIR/OfficeLLM"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
 
 for resource_name in \
     office-theme-modern-day-v4.png \

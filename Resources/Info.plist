@@ -8,6 +8,8 @@
     <string>OFFICESTRA</string>
     <key>CFBundleExecutable</key>
     <string>OfficeLLM</string>
+    <key>CFBundleIconFile</key>
+    <string>OFFICESTRA</string>
     <key>CFBundleIdentifier</key>
     <string>com.neo.office-game</string>
     <key>CFBundleInfoDictionaryVersion</key>
