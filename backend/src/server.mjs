@@ -80,6 +80,11 @@ function routeAgentJob(pathname) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function routeLiveFeedTurn(pathname) {
+  const match = pathname.match(/^\/api\/live-feed\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function endActiveSession(client, characterID) {
   await client.query(
     `
@@ -410,9 +415,7 @@ async function globalHistory(response, url) {
   });
 }
 
-async function liveFeed(response, url) {
-  const requestedLimit = Number(url.searchParams.get("limit") ?? 120);
-  const limit = Math.max(20, Math.min(requestedLimit, 300));
+async function queryLiveFeed({ turnID = null, limit }) {
   const result = await pool.query(
     `
       SELECT
@@ -463,14 +466,30 @@ async function liveFeed(response, url) {
         ON s.id = t.cli_session_id
       JOIN characters AS c
         ON c.id = s.character_id
+      WHERE ($1::uuid IS NULL OR t.id = $1::uuid)
       ORDER BY t.started_at DESC
-      LIMIT $1
+      LIMIT $2
     `,
-    [limit],
+    [turnID, limit],
   );
+  return result.rows.map((turn) => withArtifactPreviews(turn));
+}
+
+async function liveFeed(response, url) {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? 120);
+  const limit = Math.max(20, Math.min(requestedLimit, 300));
   send(response, 200, {
-    turns: result.rows.map((turn) => withArtifactPreviews(turn)),
+    turns: await queryLiveFeed({ limit }),
   });
+}
+
+async function liveFeedTurn(response, turnID) {
+  const turns = await queryLiveFeed({ turnID, limit: 1 });
+  if (turns.length === 0) {
+    send(response, 404, { error: "대화를 찾을 수 없습니다." });
+    return;
+  }
+  send(response, 200, { turn: turns[0] });
 }
 
 function withArtifactPreviews(turn, sessionID = turn.externalSessionId) {
@@ -911,6 +930,7 @@ const server = createServer(async (request, response) => {
     );
     const historyCharacterID = routeCharacterHistory(url.pathname);
     const jobCharacterID = routeAgentJob(url.pathname);
+    const liveFeedTurnID = routeLiveFeedTurn(url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
       await pool.query("SELECT 1");
@@ -937,6 +957,8 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/live-feed"
     ) {
       await liveFeed(response, url);
+    } else if (request.method === "GET" && liveFeedTurnID) {
+      await liveFeedTurn(response, liveFeedTurnID);
     } else if (request.method === "PUT" && characterID) {
       await updateCharacterName(
         response,
