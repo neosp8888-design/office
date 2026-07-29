@@ -4,46 +4,46 @@ import XCTest
 @testable import OfficeCore
 
 final class StreamingTextPacerTests: XCTestCase {
-    func testEmptyBacklogDoesNotAdvance() {
+    func testEmptyBacklogHasNoImmediatePrefix() {
         XCTAssertEqual(
-            StreamingTextPacer.charactersPerFrame(
+            StreamingTextPacer.immediatelyVisibleCharacterCount(
                 remainingCharacterCount: 0
             ),
             0
         )
     }
 
-    func testShortBacklogKeepsSingleCharacterFrames() {
+    func testShortBacklogKeepsOnlyAnimatedTail() {
         XCTAssertEqual(
-            StreamingTextPacer.charactersPerFrame(
-                remainingCharacterCount: 30
+            StreamingTextPacer.immediatelyVisibleCharacterCount(
+                remainingCharacterCount: 12
+            ),
+            0
+        )
+        XCTAssertEqual(
+            StreamingTextPacer.immediatelyVisibleCharacterCount(
+                remainingCharacterCount: 13
             ),
             1
         )
-        XCTAssertEqual(
-            StreamingTextPacer.charactersPerFrame(
-                remainingCharacterCount: 31
-            ),
-            2
-        )
     }
 
-    func testLargeBacklogUsesBoundedBatches() {
+    func testLargeBacklogAppearsImmediatelyExceptForTail() {
         XCTAssertEqual(
-            StreamingTextPacer.charactersPerFrame(
+            StreamingTextPacer.immediatelyVisibleCharacterCount(
                 remainingCharacterCount: 1_920
             ),
-            64
+            1_908
         )
         XCTAssertEqual(
-            StreamingTextPacer.charactersPerFrame(
+            StreamingTextPacer.immediatelyVisibleCharacterCount(
                 remainingCharacterCount: 20_000
             ),
-            64
+            19_988
         )
     }
 
-    func testBatchesPreserveUnicodeAndMarkdownText() {
+    func testTailAnimationPreservesUnicodeAndMarkdownText() {
         let target = String(
             repeating: "한글🙂 **굵게**\n| 열 | 값 |\n",
             count: 80
@@ -51,20 +51,35 @@ final class StreamingTextPacerTests: XCTestCase {
         var rendered = ""
         var index = target.startIndex
         var remaining = target.count
-
-        while remaining > 0 {
-            let batch = StreamingTextPacer.charactersPerFrame(
+        let immediatelyVisibleCount =
+            StreamingTextPacer.immediatelyVisibleCharacterCount(
                 remainingCharacterCount: remaining
             )
-            let count = min(batch, remaining)
-            let nextIndex = target.index(index, offsetBy: count)
+
+        if immediatelyVisibleCount > 0 {
+            let nextIndex = target.index(
+                index,
+                offsetBy: immediatelyVisibleCount
+            )
             rendered.append(contentsOf: target[index ..< nextIndex])
             index = nextIndex
-            remaining -= count
+            remaining -= immediatelyVisibleCount
+        }
 
+        var animatedFrameCount = 0
+        while remaining > 0 {
+            let nextIndex = target.index(after: index)
+            rendered.append(contentsOf: target[index ..< nextIndex])
+            index = nextIndex
+            remaining -= 1
+            animatedFrameCount += 1
             XCTAssertTrue(target.hasPrefix(rendered))
         }
 
         XCTAssertEqual(rendered, target)
+        XCTAssertLessThanOrEqual(
+            animatedFrameCount,
+            StreamingTextPacer.animatedTailCharacterCount
+        )
     }
 }
