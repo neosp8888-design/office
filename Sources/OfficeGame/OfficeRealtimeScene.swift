@@ -97,11 +97,17 @@ final class OfficeRealtimeScene: SKScene {
         let core: SKSpriteNode
     }
 
+    private struct RooftopBeacon {
+        let halo: SKSpriteNode
+        let core: SKSpriteNode
+    }
+
     private let contentRoot = SKNode()
     private let themeArtworkRoot = SKNode()
     private let letterboxNode = SKSpriteNode()
     private let backgroundNode = SKSpriteNode()
     private let windowLightRoot = SKNode()
+    private let rooftopBeaconRoot = SKNode()
     private let monitorGlowRoot = SKNode()
     private let stageGlowWide = SKShapeNode()
     private let stageGlowCore = SKShapeNode()
@@ -115,6 +121,7 @@ final class OfficeRealtimeScene: SKScene {
     private let bossCharacter = SKSpriteNode()
     private let bossForeground = SKSpriteNode()
     private var windowLights: [WindowLight] = []
+    private var rooftopBeacons: [RooftopBeacon] = []
     private var monitorGlows: [SKShapeNode] = []
     private var bossTextures: [BossCharacterFrame: SKTexture] = [:]
     private var currentTheme: OfficeTheme?
@@ -173,10 +180,12 @@ final class OfficeRealtimeScene: SKScene {
         configureBackground()
         configureCharacterMotions()
         configureWindowLights()
+        configureRooftopBeacons()
         configureMonitorGlows()
         configureStageGlow()
         configureAnalogClock()
         windowLightRoot.isHidden = true
+        rooftopBeaconRoot.isHidden = true
         monitorGlowRoot.isHidden = true
         stageGlowWide.isHidden = true
         stageGlowCore.isHidden = true
@@ -218,6 +227,7 @@ final class OfficeRealtimeScene: SKScene {
 
         let nightEffectsEnabled = theme == .modernNight
         windowLightRoot.isHidden = !nightEffectsEnabled
+        rooftopBeaconRoot.isHidden = !nightEffectsEnabled
         monitorGlowRoot.isHidden = !nightEffectsEnabled
         stageGlowWide.isHidden = !nightEffectsEnabled
         stageGlowCore.isHidden = !nightEffectsEnabled
@@ -247,6 +257,7 @@ final class OfficeRealtimeScene: SKScene {
         if theme == .modernNight {
             updateStageGlow(phase: phase)
             updateWindowLights(phase: phase)
+            updateRooftopBeacons(phase: phase)
             updateMonitorGlows(phase: phase)
         }
 
@@ -499,6 +510,45 @@ final class OfficeRealtimeScene: SKScene {
             windowLights.append(
                 WindowLight(shade: shade, halo: halo, core: core)
             )
+        }
+    }
+
+    private func configureRooftopBeacons() {
+        let positions = [
+            CGPoint(x: 507, y: 737),
+            CGPoint(x: 478, y: 707),
+            CGPoint(x: 449, y: 693)
+        ]
+        let beaconLight = NSColor(
+            calibratedRed: 1.00,
+            green: 1.00,
+            blue: 0.96,
+            alpha: 1
+        )
+
+        rooftopBeaconRoot.zPosition = 21
+        contentRoot.addChild(rooftopBeaconRoot)
+
+        for position in positions {
+            let halo = SKSpriteNode(
+                color: beaconLight,
+                size: CGSize(width: 7, height: 7)
+            )
+            let core = SKSpriteNode(
+                color: beaconLight,
+                size: CGSize(width: 2, height: 2)
+            )
+
+            halo.position = position
+            core.position = position
+            halo.zPosition = 0
+            core.zPosition = 1
+            halo.blendMode = .add
+            core.blendMode = .add
+
+            rooftopBeaconRoot.addChild(halo)
+            rooftopBeaconRoot.addChild(core)
+            rooftopBeacons.append(RooftopBeacon(halo: halo, core: core))
         }
     }
 
@@ -809,6 +859,16 @@ final class OfficeRealtimeScene: SKScene {
             light.core.alpha = 0.04 + level * 0.28
             light.halo.setScale(scale)
             light.core.setScale(scale)
+        }
+    }
+
+    private func updateRooftopBeacons(phase: OfficeAnimationPhase) {
+        for (index, beacon) in rooftopBeacons.enumerated() {
+            let level = CGFloat(phase.rooftopBeaconOpacity(at: index))
+
+            beacon.halo.alpha = 0.015 + level * 0.16
+            beacon.core.alpha = 0.08 + level * 0.72
+            beacon.halo.setScale(0.85 + level * 0.35)
         }
     }
 

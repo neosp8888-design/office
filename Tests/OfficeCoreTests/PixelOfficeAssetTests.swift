@@ -161,7 +161,54 @@ final class PixelOfficeAssetTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(opacity, 0)
                 XCTAssertLessThanOrEqual(opacity, 1)
             }
+
+            for beaconIndex in 0 ..< 3 {
+                let opacity = phase.rooftopBeaconOpacity(at: beaconIndex)
+                XCTAssertGreaterThanOrEqual(opacity, 0)
+                XCTAssertLessThanOrEqual(opacity, 1)
+            }
         }
+    }
+
+    func testWindowLightsHoldSteadyBetweenSwitches() {
+        let first = OfficeAnimationPhase(
+            date: Date(timeIntervalSince1970: 4_000),
+            reduceMotion: false
+        )
+        let shortlyAfter = OfficeAnimationPhase(
+            date: Date(timeIntervalSince1970: 4_000.4),
+            reduceMotion: false
+        )
+
+        // 창문 불빛은 프레임마다 흔들리지 않고 한동안 같은 밝기를 유지한다.
+        XCTAssertEqual(
+            first.windowLightOpacity(at: 0),
+            shortlyAfter.windowLightOpacity(at: 0)
+        )
+
+        let levels = (0 ..< 400).map { step in
+            OfficeAnimationPhase(
+                date: Date(timeIntervalSince1970: 4_000 + Double(step)),
+                reduceMotion: false
+            )
+            .windowLightOpacity(at: 0)
+        }
+        XCTAssertGreaterThan(Set(levels).count, 1)
+    }
+
+    func testRooftopBeaconFlashesBrieflyThenDims() {
+        let periodStart = 3.8 * 100
+        let flash = OfficeAnimationPhase(
+            date: Date(timeIntervalSince1970: periodStart + 0.22),
+            reduceMotion: false
+        )
+        let betweenFlashes = OfficeAnimationPhase(
+            date: Date(timeIntervalSince1970: periodStart + 2.0),
+            reduceMotion: false
+        )
+
+        XCTAssertGreaterThan(flash.rooftopBeaconOpacity(at: 0), 0.9)
+        XCTAssertLessThan(betweenFlashes.rooftopBeaconOpacity(at: 0), 0.2)
     }
 
     func testRealtimeEffectsChangeAcrossFrames() {
@@ -176,8 +223,8 @@ final class PixelOfficeAssetTests: XCTestCase {
 
         XCTAssertNotEqual(first.stageGlow, next.stageGlow)
         XCTAssertNotEqual(
-            first.windowLightOpacity(at: 0),
-            next.windowLightOpacity(at: 0)
+            first.rooftopBeaconOpacity(at: 0),
+            next.rooftopBeaconOpacity(at: 0)
         )
         XCTAssertNotEqual(
             first.monitorGlowOpacity(at: 0),
