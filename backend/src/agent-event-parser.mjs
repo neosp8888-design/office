@@ -33,12 +33,12 @@ function parseCodexEvent(object) {
   if (type === "thread.started") {
     return {
       sessionID: cleanText(object.thread_id),
-      activity: activity("thinking", "업무 환경을 준비하는 중..."),
+      activity: activity("thinking", "업무 세팅 중 🧳"),
     };
   }
   if (type === "turn.started") {
     return {
-      activity: activity("thinking", "업무 내용을 살펴보는 중..."),
+      activity: activity("thinking", "요청서 정독 중 👀"),
     };
   }
   if (type === "turn.failed") {
@@ -67,7 +67,7 @@ function parseCodexEvent(object) {
   switch (item.type) {
     case "reasoning": {
       const summary = type === "item.started"
-        ? "해결 방법을 검토하는 중..."
+        ? "작전 짜는 중 🧠"
         : concise(item.text);
       return summary
         ? { activity: activity("thinking", summary) }
@@ -82,34 +82,34 @@ function parseCodexEvent(object) {
         activity: activity(
           "command",
           type === "item.completed"
-            ? "명령 결과를 확인했습니다."
-            : "명령을 실행하는 중...",
+            ? "결과 까보는 중 🔎"
+            : "터미널 출동 🧰",
         ),
       };
     case "file_change":
       return type === "item.completed"
-        ? { activity: activity("tool", "파일 변경을 반영했습니다.") }
+        ? { activity: activity("tool", "수정본 반영 중 ✍️") }
         : null;
     case "mcp_tool_call":
       return {
         activity: activity(
           "tool",
           type === "item.completed"
-            ? "연결된 도구의 결과를 확인했습니다."
-            : "연결된 도구를 사용하는 중...",
+            ? "도구 결과 체크 중 👀"
+            : "도구 콜하는 중 📡",
         ),
       };
     case "collab_tool_call":
       return type === "item.started"
-        ? { activity: activity("tool", "동료 에이전트와 협업하는 중...") }
+        ? { activity: activity("tool", "동료 찬스 소환 중 🤝") }
         : null;
     case "web_search":
       return type === "item.started"
-        ? { activity: activity("tool", "필요한 자료를 검색하는 중...") }
+        ? { activity: activity("tool", "자료 서치 중 🔍") }
         : null;
     case "todo_list":
       return type === "item.started"
-        ? { activity: activity("thinking", "작업 순서를 정리하는 중...") }
+        ? { activity: activity("thinking", "할 일 우선순위 픽 중 📌") }
         : null;
     default:
       return null;
@@ -120,7 +120,7 @@ function parseClaudeEvent(object) {
   if (object.type === "system" && object.subtype === "init") {
     return {
       sessionID: cleanText(object.session_id),
-      activity: activity("thinking", "업무 환경을 준비하는 중..."),
+      activity: activity("thinking", "업무 세팅 중 🧳"),
     };
   }
 
@@ -138,7 +138,7 @@ function parseClaudeEvent(object) {
       event.content_block?.type === "thinking"
     ) {
       return {
-        activity: activity("thinking", "문제를 분석하는 중..."),
+        activity: activity("thinking", "각 잡고 분석 중 🧠"),
       };
     }
     if (
@@ -146,7 +146,7 @@ function parseClaudeEvent(object) {
       event.content_block?.type === "tool_use"
     ) {
       return {
-        activity: activity("tool", "도구를 사용해 업무를 처리하는 중..."),
+        activity: activity("tool", "도구로 뚝딱 처리 중 🛠️"),
       };
     }
     return null;
@@ -166,12 +166,12 @@ function parseClaudeEvent(object) {
     }
     if (content.some((item) => item.type === "tool_use")) {
       return {
-        activity: activity("tool", "도구를 사용해 업무를 처리하는 중..."),
+        activity: activity("tool", "도구로 뚝딱 처리 중 🛠️"),
       };
     }
     if (content.some((item) => item.type === "thinking")) {
       return {
-        activity: activity("thinking", "문제를 분석하는 중..."),
+        activity: activity("thinking", "각 잡고 분석 중 🧠"),
       };
     }
     return null;

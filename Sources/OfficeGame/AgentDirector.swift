@@ -19,6 +19,7 @@ private struct RealtimeFeedEvent: Decodable {
 final class LiveFeedStore: ObservableObject {
     @Published private(set) var turns: [LiveFeedTurn] = []
     @Published private(set) var isLoadingInitialFeed = true
+    @Published private var responseAnimationTurnIDs: Set<String> = []
 
     func replace(with turns: [LiveFeedTurn]) {
         guard self.turns != turns else {
@@ -32,6 +33,24 @@ final class LiveFeedStore: ObservableObject {
             return
         }
         isLoadingInitialFeed = false
+    }
+
+    func beginResponseAnimation(for turnID: String) {
+        guard !responseAnimationTurnIDs.contains(turnID) else {
+            return
+        }
+        responseAnimationTurnIDs.insert(turnID)
+    }
+
+    func shouldAnimateResponse(for turn: LiveFeedTurn) -> Bool {
+        turn.status.isRunning || responseAnimationTurnIDs.contains(turn.id)
+    }
+
+    func finishResponseAnimation(for turnID: String) {
+        guard responseAnimationTurnIDs.contains(turnID) else {
+            return
+        }
+        responseAnimationTurnIDs.remove(turnID)
     }
 }
 
@@ -141,118 +160,118 @@ final class AgentDirector: ObservableObject {
     private static let workingBubbleRotationDelay =
         Duration.milliseconds(1_400)
     private static let workingBubbleMessages = [
-        "🔥 열일 중",
-        "⚡ 풀가동",
-        "🚀 진도 쭉쭉",
-        "🎯 핵심 공략",
-        "🧠 집중 모드",
-        "🛠️ 해결 중",
-        "📈 진척 상승",
-        "💪 끝까지",
-        "🔍 빈틈 제거",
-        "⚙️ 착착 진행",
-        "🏃 속도 낸다",
-        "✅ 하나씩 완료",
-        "🚧 막힘 돌파",
-        "✨ 완성도 상승",
-        "🔨 정면 돌파",
-        "📌 핵심 처리",
-        "💡 답 찾는 중",
-        "⏱️ 집중 질주",
-        "🌋 몰입 최고",
-        "⌨️ 손이 바쁘다",
-        "🧩 문제 해체",
-        "🎯 빠르고 정확히",
-        "🧪 검증 또 검증",
-        "🌊 흐름 탔다",
-        "🏆 결과 만든다",
-        "💻 코드 질주",
-        "📚 자료 정복",
-        "🧠 논리 장착",
-        "🛰️ 해답 추적",
-        "📋 우선순위 완료",
-        "⚡ 집중력 MAX",
-        "🌟 오늘도 해낸다",
-        "🏁 마무리 간다",
-        "💎 품질 상승",
-        "🐞 오류 잡는 중",
-        "🧭 목표 직진",
-        "📊 생산성 폭발",
-        "🔭 끝이 보인다",
-        "🪄 척척 해결",
-        "🧱 정답 조립",
-        "⛵ 작업 순항",
-        "🔬 디테일 점검",
-        "📚 성과 쌓는 중",
-        "🚄 업무 가속",
-        "🧰 딱 맞게 처리",
-        "🦾 한계를 넘는다",
-        "🎧 집중 또 집중",
-        "🏗️ 완성 직전",
-        "📐 제대로 간다",
-        "🏅 결과로 증명",
+        "🫡 오더 접수, 바로 갑니다",
+        "🧠 뇌풀가동 ON",
+        "⚡ 속도감 미쳤다",
+        "🧩 퍼즐 맞추는 중",
+        "👀 디테일 감시 중",
+        "🛠️ 손 빠르게 움직이는 중",
+        "🔎 이슈 냄새 맡는 중",
+        "🚀 속도 붙었습니다",
+        "🧪 검증까지 야무지게",
+        "🎯 핵심만 콕콕",
+        "⌨️ 키보드 열일 중",
+        "📌 우선순위부터 픽",
+        "🔥 집중력 만렙",
+        "🧯 불씨 발견, 바로 끔",
+        "🧭 길 잃지 않고 진행 중",
+        "📦 결과물 포장 중",
+        "💻 코드랑 합 맞추는 중",
+        "⚙️ 착착 굴러갑니다",
+        "🧠 뇌내 회의 중",
+        "📈 진척도 쑥쑥",
+        "🪄 막힘, 살짝 치워봄",
+        "🧱 차근차근 쌓는 중",
+        "🔬 디테일 체크 완료각",
+        "🗺️ 다음 수 읽는 중",
+        "🏃 할 일과 레이스 중",
+        "📎 빠진 조건 없는지 확인",
+        "🧰 도구함 오픈",
+        "🧪 마지막까지 테스트",
+        "🎮 이슈 보스전 중",
+        "🌊 흐름 탔습니다",
+        "🕵️ 원인 추적 모드",
+        "📚 자료 폭풍 흡수 중",
+        "⚡ 손가락 가속 중",
+        "🧷 마감선에 딱 맞추는 중",
+        "🧠 생각 정리 완료각",
+        "🔄 한 번 더 크로스체크",
+        "🫧 복잡한 건 가볍게 정리",
+        "💎 퀄리티 반짝이게",
+        "🐞 버그 잡으러 출동",
+        "🧨 리스크는 미리 컷",
+        "📐 각 잡고 마무리 중",
+        "🧹 군더더기 정리 중",
+        "🏁 끝선 보입니다",
+        "🪜 한 단계씩 클리어",
+        "💬 필요한 말만 딱 정리",
+        "🛰️ 해답 좌표 찍는 중",
+        "🥷 조용히 처리 중",
+        "🍀 잘 풀리는 중",
+        "🧋 당충전 상상 중",
+        "✅ 결과물 곧 도착",
     ]
     private static let idleChatterMessages = [
-        "☕ 커피가 저를 부르네요.",
-        "🧠 뇌 업데이트 대기 중!",
-        "🐣 오늘도 무사히 부화 중.",
-        "🕺 키보드와 밀당 중이에요.",
-        "🍪 간식 레이더 가동!",
-        "😎 일은 없어도 폼은 유지 중.",
-        "🫠 의자와 한 몸이 됐어요.",
-        "🌱 아이디어 새싹 대기 중.",
-        "🐙 손은 여덟 개면 좋겠어요.",
-        "🚀 다음 업무 발사 대기!",
-        "📋 우선순위를 조용히 정리 중.",
-        "🔍 놓친 조건이 없는지 살펴보는 중.",
-        "🧭 다음 병목이 어디일지 생각 중.",
-        "🧩 작은 개선점 하나를 찾았어요.",
-        "🛠️ 반복 업무를 줄일 방법 고민 중.",
-        "📈 오늘의 진척을 숫자로 보는 중.",
-        "🤝 동료 의견도 한번 들어보고 싶어요.",
-        "💬 좋은 질문 하나 준비 중.",
-        "🧪 작은 실험부터 해보면 어떨까요?",
-        "📚 새 기술을 짧게 훑어보는 중.",
-        "📝 다음 사람도 알기 쉽게 메모 중.",
-        "🎯 지금 가장 중요한 한 가지는 뭘까요?",
-        "🌤️ 잠깐 먼 곳을 보며 눈 쉬는 중.",
-        "🪴 화분처럼 차분히 성장 중.",
-        "🎧 집중할 리듬을 찾는 중.",
-        "🕰️ 서두르지 않고 정확하게 보는 중.",
-        "🛰️ 다른 관점에서 문제를 내려다보는 중.",
-        "🧹 머릿속 탭을 정리하는 중.",
-        "🔄 반대로 생각하면 답이 보일지도요.",
-        "💡 불편한 점 하나가 개선의 시작이죠.",
-        "📩 읽지 않은 메일이 저를 보고 있어요.",
-        "🔔 알림 하나에 집중력이 로그아웃됐어요.",
-        "🗓️ 회의가 다음 회의를 낳고 있어요.",
-        "⏰ 퇴근 5분 전 요청은 왜 정확할까요?",
-        "🧾 수정 요청이 또 새 버전으로 왔어요.",
-        "📎 최종_진짜최종 파일을 찾는 중.",
-        "🫥 방금 한 일을 다시 설명하는 중.",
-        "☕ 커피는 식고 일은 뜨거워지네요.",
-        "🖨️ 프린터는 급할 때만 삐걱대네요.",
-        "💬 간단한 부탁이 간단했던 적이 없네요.",
-        "📊 숫자는 같은데 표가 자꾸 달라져요.",
-        "🧠 멀티태스킹하다 탭만 늘었어요.",
-        "🚇 출근길에 오늘 체력을 다 썼어요.",
-        "🍱 점심 메뉴가 오늘의 큰 결정이에요.",
-        "🪫 배터리보다 제가 먼저 충전이 필요해요.",
-        "🧑‍💻 저장했는지 기억이 안 나 또 저장!",
-        "🕔 퇴근 시간만 유난히 천천히 오네요.",
-        "📝 할 일 적다가 할 일이 하나 늘었어요.",
-        "🔁 같은 설명을 세 번째 정리하는 중.",
-        "📞 전화 끊자마자 내용을 잊었어요.",
-        "🧯 급한 일 위에 더 급한 일이 왔어요.",
-        "🗂️ 파일 찾다가 폴더 정리만 했어요.",
-        "🪑 회의는 끝났는데 숙제가 남았어요.",
-        "🫠 네, 가능합니다를 너무 빨리 말했어요.",
-        "😶 의견 냈더니 담당자가 되었어요.",
-        "🧩 요구사항이 또 살짝 움직였네요.",
-        "🌙 야근할수록 오타가 자신감을 얻어요.",
-        "🧘 답장 쓰고 보내기 전 세 번 심호흡.",
-        "🏃 일정이 저보다 빨리 달리고 있어요.",
-        "🛌 오늘의 목표는 무사히 퇴근하기."
+        "☕ 카페인 1%로 버티는 중",
+        "👀 새 업무 뜨면 바로 탑승",
+        "🧠 뇌는 이미 출근 완료",
+        "🫠 잠깐 멍도 업무의 일부",
+        "🍪 간식 레이더 이상 무",
+        "😎 할 일 없어도 프로답게",
+        "🪑 의자와 동기화 완료",
+        "🌱 아이디어 새싹 키우는 중",
+        "🎧 집중 플리 고르는 중",
+        "🚀 다음 오더 대기 중",
+        "📌 오늘 할 일 살짝 정리 중",
+        "🔍 누락된 조건 없는지 훑는 중",
+        "🧭 다음 이슈 냄새 맡는 중",
+        "🧩 개선 포인트 줍줍 중",
+        "🛠️ 귀찮은 반복 일단 관찰 중",
+        "📈 오늘의 성장 그래프 상상 중",
+        "🤝 동료 찬스 기다리는 중",
+        "💬 질문 하나 장전 완료",
+        "🧪 작게 해보고 크게 웃자",
+        "📚 새 기능 스캔 중",
+        "📝 미래의 나에게 메모 중",
+        "🎯 제일 중요한 거부터 픽",
+        "🌤️ 눈에도 로딩 타임 필요",
+        "🪴 조용히 레벨업 중",
+        "🎵 집중 버튼 찾는 중",
+        "🕰️ 급할수록 체크 한 번 더",
+        "🛰️ 다른 각도에서 보는 중",
+        "🧹 머릿속 탭 정리 중",
+        "🔄 역발상 한 스푼 넣는 중",
+        "💡 불편함은 개선각",
+        "📩 안 읽은 메일과 눈치 게임 중",
+        "🔔 알림에 집중력 털린 중",
+        "🗓️ 회의가 회의를 낳는 중",
+        "⏰ 퇴근 5분 전은 왜 늘 바쁠까",
+        "🧾 최종본의 최종본 찾는 중",
+        "📎 파일명에 진심인 편",
+        "🫥 방금 뭐 했더라 모드",
+        "☕ 커피 식기 전에 집중",
+        "🖨️ 프린터와 기싸움 중",
+        "💬 간단한 부탁, 진짜 맞죠?",
+        "📊 숫자랑 눈 마주치는 중",
+        "🧠 멀티태스킹은 탭 파티",
+        "🚇 출근으로 체력 선지급",
+        "🍱 점심 메뉴가 최대 난제",
+        "🪫 충전기는 제게도 필요",
+        "🧑‍💻 저장 버튼 한 번 더 꾹",
+        "🕔 시계만 유난히 슬로모션",
+        "📝 할 일 적다 할 일 추가",
+        "🔁 같은 설명 리믹스 중",
+        "📞 통화 종료와 기억 삭제 동시 실행",
+        "🧯 급한 일 위에 긴급 추가",
+        "🗂️ 파일 찾다 폴더 정리 중",
+        "🪑 회의 끝, 숙제 시작",
+        "🫠 네, 가능합니다를 너무 빨리 함",
+        "😶 의견 냈더니 담당자 됨",
+        "🧩 요구사항이 또 춤추는 중",
+        "🌙 야근 오타, 자신감 만렙",
+        "🧘 전송 전 심호흡 세 번",
+        "🏃 일정이 저보다 빠름",
+        "🛌 오늘의 목표, 무사 퇴근"
     ]
 
     init() {
@@ -357,7 +376,7 @@ final class AgentDirector: ObservableObject {
             failedCharacters[character.id] == nil,
             offDutyCharacters[character.id] == nil
         {
-            showBubble("네!", for: character.id)
+            showBubble("🫡 콜! 준비 완료", for: character.id)
         }
     }
 
@@ -410,6 +429,7 @@ final class AgentDirector: ObservableObject {
                     attachmentPaths: attachmentPaths
                 )
                 conversationIDs[character.id] = started.conversationId
+                liveFeedStore.beginResponseAnimation(for: started.turnId)
                 scheduleRealtimeFeedRefresh(turnID: started.turnId)
                 latestStartedCommandID = commandID
             } catch {
@@ -424,7 +444,7 @@ final class AgentDirector: ObservableObject {
                         latestQuestion = nil
                     }
                     showBubble(
-                        "퇴근",
+                        "오늘 할당량 끝, 퇴근 모드 🌙",
                         for: character.id,
                         autoDismiss: false
                     )
@@ -444,7 +464,7 @@ final class AgentDirector: ObservableObject {
                 } else {
                     failedCharacters[character.id] = message
                     showBubble(
-                        "업무 중단\n\(message)",
+                        "앗, 작업 멈춤\n\(message)",
                         for: character.id,
                         autoDismiss: false
                     )
@@ -464,7 +484,7 @@ final class AgentDirector: ObservableObject {
 
         cancellingCharacters.insert(character)
         showBubble(
-            "업무를 중단하는 중...",
+            "작업 정리 중... 🧹",
             for: character,
             autoDismiss: false
         )
@@ -480,7 +500,7 @@ final class AgentDirector: ObservableObject {
                 scheduleRealtimeFeedRefresh(turnID: cancelled.turnId)
             } catch {
                 turnPersistenceErrors[character] =
-                    "업무 중단 요청 실패 · \(error.localizedDescription)"
+                    "중단 요청이 삐끗했어요 · \(error.localizedDescription)"
                 scheduleRealtimeFeedRefresh(turnID: nil)
             }
         }
@@ -1178,7 +1198,7 @@ final class AgentDirector: ObservableObject {
             }
         case .failed, .interrupted:
             let message =
-                turn.errorMessage ?? "업무가 중단되었습니다."
+                turn.errorMessage ?? "작업이 멈췄어요."
             if AgentUsageLimitClassifier.isLimitReached(message) {
                 if failedCharacters[character] != nil {
                     failedCharacters[character] = nil
@@ -1187,7 +1207,7 @@ final class AgentDirector: ObservableObject {
                     offDutyCharacters[character] = message
                 }
                 showBubble(
-                    "퇴근",
+                    "오늘 할당량 끝, 퇴근 모드 🌙",
                     for: character,
                     autoDismiss: false
                 )
@@ -1199,7 +1219,7 @@ final class AgentDirector: ObservableObject {
                     failedCharacters[character] = message
                 }
                 showBubble(
-                    "업무 중단\n\(message)",
+                    "앗, 작업 멈춤\n\(message)",
                     for: character,
                     autoDismiss: false
                 )

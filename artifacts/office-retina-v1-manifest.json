@@ -1,0 +1,14 @@
+{
+  "scale": 2,
+  "canvas": {
+    "width": 1536,
+    "height": 1024
+  },
+  "retina": {
+    "width": 3072,
+    "height": 2048
+  },
+  "backgroundCount": 6,
+  "motionPatchCount": 90,
+  "verifiedMotionPatchCount": 90
+}

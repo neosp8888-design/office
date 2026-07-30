@@ -1,4 +1,4 @@
-// 이 파일은 V4 도트 캔버스를 창 안에 비율대로 맞추는 공통 좌표 변환을 제공한다.
+// 이 파일은 2D·3D 오피스 캔버스의 비율과 상호작용 좌표를 공통으로 제공한다.
 
 import CoreGraphics
 
@@ -27,16 +27,186 @@ public enum OfficeCanvasGeometry {
     }
 }
 
+public enum OfficeInteractionGeometry {
+    public static func characterHitbox(
+        for character: OfficeCharacter,
+        artStyle: OfficeArtStyle,
+        fallback: CGRect
+    ) -> CGRect {
+        guard artStyle == .twoD else {
+            return fallback
+        }
+
+        switch character {
+        case .boss:
+            return CGRect(x: 720, y: 135, width: 155, height: 205)
+        case .leftMan:
+            return CGRect(x: 275, y: 485, width: 150, height: 205)
+        case .leftWoman:
+            return CGRect(x: 445, y: 425, width: 135, height: 180)
+        case .rightWoman:
+            return CGRect(x: 1_075, y: 425, width: 135, height: 190)
+        case .rightMan:
+            return CGRect(x: 1_205, y: 510, width: 145, height: 205)
+        }
+    }
+
+    public static func monitorHitbox(
+        for character: OfficeCharacter,
+        artStyle: OfficeArtStyle,
+        fallback: CGRect
+    ) -> CGRect {
+        guard artStyle == .twoD else {
+            return fallback
+        }
+
+        switch character {
+        case .boss:
+            return CGRect(x: 790, y: 250, width: 105, height: 105)
+        case .leftMan:
+            return CGRect(x: 365, y: 600, width: 105, height: 115)
+        case .leftWoman:
+            return CGRect(x: 525, y: 505, width: 90, height: 110)
+        case .rightWoman:
+            return CGRect(x: 1_015, y: 505, width: 95, height: 115)
+        case .rightMan:
+            return CGRect(x: 1_165, y: 615, width: 95, height: 115)
+        }
+    }
+
+    public static func bubbleAnchor(
+        for character: OfficeCharacter,
+        artStyle: OfficeArtStyle,
+        fallback: CGPoint
+    ) -> CGPoint {
+        guard artStyle == .twoD else {
+            return fallback
+        }
+
+        switch character {
+        case .boss:
+            return CGPoint(x: 900, y: 165)
+        case .leftMan:
+            return CGPoint(x: 340, y: 430)
+        case .leftWoman:
+            return CGPoint(x: 505, y: 380)
+        case .rightWoman:
+            return CGPoint(x: 1_125, y: 380)
+        case .rightMan:
+            return CGPoint(x: 1_275, y: 465)
+        }
+    }
+
+    public static func archiveCabinetHitbox(
+        artStyle: OfficeArtStyle,
+        fallback: CGRect
+    ) -> CGRect {
+        artStyle == .twoD
+            ? CGRect(x: 590, y: 95, width: 140, height: 290)
+            : fallback
+    }
+}
+
 public enum OfficeWhiteboardGeometry {
-    public static let usageOrigin = CGPoint(x: 210, y: 425)
-    public static let usageSize = CGSize(width: 108, height: 69)
-    public static let horizontalShear: CGFloat = -59.0 / 108.0
+    public static let usageOrigin = CGPoint(x: 200, y: 415)
+    public static let usageSize = CGSize(width: 128, height: 78)
+    public static let horizontalShear: CGFloat = -70.0 / 128.0
+    public static let twoDUsageCorners = (
+        topLeft: CGPoint(x: 194, y: 411),
+        topRight: CGPoint(x: 326, y: 342),
+        bottomRight: CGPoint(x: 326, y: 445),
+        bottomLeft: CGPoint(x: 194, y: 514)
+    )
     public static let interactionRect = CGRect(
         x: 188,
         y: 338,
         width: 158,
         height: 170
     )
+
+    public static func usageOrigin(
+        for artStyle: OfficeArtStyle
+    ) -> CGPoint {
+        artStyle == .twoD
+            ? twoDUsageCorners.topLeft
+            : usageOrigin
+    }
+
+    public static func horizontalShear(
+        for artStyle: OfficeArtStyle
+    ) -> CGFloat {
+        artStyle == .twoD ? -69.0 / 132.0 : horizontalShear
+    }
+
+    public static func interactionRect(
+        for artStyle: OfficeArtStyle
+    ) -> CGRect {
+        artStyle == .twoD
+            ? CGRect(x: 168, y: 300, width: 180, height: 250)
+            : interactionRect
+    }
+
+    public static func usagePoint(
+        for artStyle: OfficeArtStyle,
+        x: CGFloat,
+        y: CGFloat
+    ) -> CGPoint {
+        if artStyle == .twoD {
+            let horizontal = x / usageSize.width
+            let vertical = y / usageSize.height
+            let top = interpolatedPoint(
+                from: twoDUsageCorners.topLeft,
+                to: twoDUsageCorners.topRight,
+                amount: horizontal
+            )
+            let bottom = interpolatedPoint(
+                from: twoDUsageCorners.bottomLeft,
+                to: twoDUsageCorners.bottomRight,
+                amount: horizontal
+            )
+            return interpolatedPoint(
+                from: top,
+                to: bottom,
+                amount: vertical
+            )
+        }
+
+        let origin = usageOrigin(for: artStyle)
+        let shear = horizontalShear(for: artStyle)
+        return CGPoint(
+            x: origin.x + x,
+            y: origin.y + shear * x + y
+        )
+    }
+
+    public static func usageTransform(
+        for artStyle: OfficeArtStyle,
+        at point: CGPoint
+    ) -> CGAffineTransform {
+        let origin = usagePoint(
+            for: artStyle,
+            x: point.x,
+            y: point.y
+        )
+        let xNeighbor = usagePoint(
+            for: artStyle,
+            x: point.x + 1,
+            y: point.y
+        )
+        let yNeighbor = usagePoint(
+            for: artStyle,
+            x: point.x,
+            y: point.y + 1
+        )
+        return CGAffineTransform(
+            a: xNeighbor.x - origin.x,
+            b: xNeighbor.y - origin.y,
+            c: yNeighbor.x - origin.x,
+            d: yNeighbor.y - origin.y,
+            tx: origin.x,
+            ty: origin.y
+        )
+    }
 
     public static func usagePoint(
         x: CGFloat,
@@ -45,6 +215,17 @@ public enum OfficeWhiteboardGeometry {
         CGPoint(
             x: usageOrigin.x + x,
             y: usageOrigin.y + horizontalShear * x + y
+        )
+    }
+
+    private static func interpolatedPoint(
+        from start: CGPoint,
+        to end: CGPoint,
+        amount: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: start.x + (end.x - start.x) * amount,
+            y: start.y + (end.y - start.y) * amount
         )
     }
 }

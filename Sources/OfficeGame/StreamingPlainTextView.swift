@@ -10,12 +10,14 @@ struct StreamingPlainTextView: NSViewRepresentable {
     let animatesInitialSource: Bool
     let fontSize: CGFloat
     let lineSpacing: CGFloat
+    let onFinishedTyping: () -> Void
 
     func makeNSView(context: Context) -> IncrementalStreamingTextView {
         let view = IncrementalStreamingTextView(
             fontSize: fontSize,
             lineSpacing: lineSpacing
         )
+        view.onFinishedTyping = onFinishedTyping
         view.apply(
             source: source,
             animates: animates && animatesInitialSource
@@ -27,6 +29,7 @@ struct StreamingPlainTextView: NSViewRepresentable {
         _ nsView: IncrementalStreamingTextView,
         context: Context
     ) {
+        nsView.onFinishedTyping = onFinishedTyping
         nsView.apply(source: source, animates: animates)
     }
 
@@ -58,6 +61,7 @@ final class IncrementalStreamingTextView: NSView {
     private var typingTimer: Timer?
     private var measuredHeight = CGFloat.zero
     private var measuredWidth = CGFloat.zero
+    var onFinishedTyping: () -> Void = {}
 
     init(fontSize: CGFloat, lineSpacing: CGFloat) {
         self.fontSize = fontSize
@@ -236,6 +240,7 @@ final class IncrementalStreamingTextView: NSView {
             pendingCharacters = []
             pendingIndex = 0
             stopTyping()
+            onFinishedTyping()
         }
     }
 

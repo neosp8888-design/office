@@ -605,7 +605,7 @@ private struct UsageBoardContent: View {
 
                         Button {
                             Task {
-                                await refresh()
+                                await refresh(force: true)
                             }
                         } label: {
                             if isRefreshing {
@@ -624,11 +624,24 @@ private struct UsageBoardContent: View {
                 }
                 .padding(14)
             } else if let errorMessage {
-                ContentUnavailableView(
-                    "한도를 불러오지 못했습니다",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text(errorMessage)
-                )
+                VStack(spacing: 10) {
+                    ContentUnavailableView(
+                        "한도를 불러오지 못했습니다",
+                        systemImage: "wifi.exclamationmark",
+                        description: Text(errorMessage)
+                    )
+                    Button {
+                        Task {
+                            await refresh(force: true)
+                        }
+                    } label: {
+                        Label(
+                            "다시 시도",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .disabled(isRefreshing)
+                }
             } else {
                 ProgressView("CLI 한도를 확인하는 중")
             }
@@ -639,7 +652,9 @@ private struct UsageBoardContent: View {
     }
 
     @MainActor
-    private func refresh() async {
+    private func refresh(
+        force: Bool = false
+    ) async {
         guard !isRefreshing else {
             return
         }
@@ -649,7 +664,7 @@ private struct UsageBoardContent: View {
         }
 
         do {
-            snapshot = try await CodexBarUsageReader.fetch()
+            snapshot = try await CodexBarUsageReader.fetch(force: force)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -979,7 +994,17 @@ struct LiveWorkspaceFeed: View {
                                 }
 
                                 ForEach(displayTurns) { turn in
-                                    EquatableLiveTurnCard(turn: turn)
+                                    EquatableLiveTurnCard(
+                                        turn: turn,
+                                        shouldAnimateResponse:
+                                            liveFeedStore
+                                            .shouldAnimateResponse(for: turn)
+                                    ) {
+                                        liveFeedStore
+                                            .finishResponseAnimation(
+                                                for: turn.id
+                                            )
+                                    }
                                         .equatable()
                                         .id(turn.id)
                                 }
@@ -1077,6 +1102,16 @@ struct LiveWorkspaceFeed: View {
                         }
                         scrollToLatest(proxy, animated: false)
                     }
+                    .onChange(of: director.selectedCharacterID) {
+                        oldCharacterID, newCharacterID in
+                        guard
+                            oldCharacterID == nil,
+                            newCharacterID != nil
+                        else {
+                            return
+                        }
+                        pinToBottomAfterSettingsAppear(proxy: proxy)
+                    }
                     .overlay(alignment: .bottom) {
                         Group {
                             if hasContentBelow {
@@ -1098,6 +1133,8 @@ struct LiveWorkspaceFeed: View {
                         scrollMetrics.bottomExitTask = nil
                         scrollMetrics.initialScrollTask?.cancel()
                         scrollMetrics.initialScrollTask = nil
+                        scrollMetrics.selectionScrollTask?.cancel()
+                        scrollMetrics.selectionScrollTask = nil
                     }
                 }
             }
@@ -1161,6 +1198,28 @@ struct LiveWorkspaceFeed: View {
             markAtBottom()
             didPerformInitialScroll = true
             scrollMetrics.initialScrollTask = nil
+        }
+    }
+
+    private func pinToBottomAfterSettingsAppear(
+        proxy: ScrollViewProxy
+    ) {
+        scrollMetrics.selectionScrollTask?.cancel()
+        markAtBottom()
+        scrollMetrics.selectionScrollTask = Task { @MainActor in
+            // 직원 선택 뒤 나타나는 설정 줄의 높이가 확정될 때까지 끝을 다시 맞춘다.
+            for _ in 0..<5 {
+                guard !Task.isCancelled else {
+                    return
+                }
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            markAtBottom()
+            scrollMetrics.selectionScrollTask = nil
         }
     }
 
@@ -1351,6 +1410,7 @@ private final class LiveWorkspaceFeedScrollMetrics {
     var streamingResponseHeight = CGFloat.zero
     var bottomExitTask: Task<Void, Never>?
     var initialScrollTask: Task<Void, Never>?
+    var selectionScrollTask: Task<Void, Never>?
 }
 
 private struct LiveWorkspaceFeedBottomMarker: View {
@@ -1384,27 +1444,42 @@ private struct LiveWorkspaceFeedStreamingHeightKey: PreferenceKey {
 
 private struct EquatableLiveTurnCard: View, Equatable {
     let turn: LiveFeedTurn
+    let shouldAnimateResponse: Bool
+    let finishResponseAnimation: () -> Void
 
     static func == (
         lhs: EquatableLiveTurnCard,
         rhs: EquatableLiveTurnCard
     ) -> Bool {
         lhs.turn == rhs.turn
+            && lhs.shouldAnimateResponse == rhs.shouldAnimateResponse
     }
 
     var body: some View {
-        LiveTurnCard(turn: turn)
+        LiveTurnCard(
+            turn: turn,
+            shouldAnimateResponse: shouldAnimateResponse,
+            finishResponseAnimation: finishResponseAnimation
+        )
     }
 }
 
 private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
+    let shouldAnimateResponse: Bool
+    let finishResponseAnimation: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activitiesExpanded: Bool
     @State private var responseCopied: Bool
 
-    init(turn: LiveFeedTurn) {
+    init(
+        turn: LiveFeedTurn,
+        shouldAnimateResponse: Bool,
+        finishResponseAnimation: @escaping () -> Void
+    ) {
         self.turn = turn
+        self.shouldAnimateResponse = shouldAnimateResponse
+        self.finishResponseAnimation = finishResponseAnimation
         _activitiesExpanded = State(initialValue: false)
         _responseCopied = State(initialValue: false)
     }
@@ -1604,9 +1679,11 @@ private struct LiveTurnCard: View {
             )
             LiveTypingResponseView(
                 turnID: turn.id,
+                backend: turn.backend ?? turn.characterBackend,
                 source: turn.response,
-                animates: turn.status.isRunning,
-                isStreaming: turn.status.isRunning
+                animates: shouldAnimateResponse,
+                isStreaming: shouldAnimateResponse,
+                onFinishedTyping: finishResponseAnimation
             )
         }
         .padding(.top, 2)
@@ -1705,9 +1782,11 @@ private struct LiveTurnCard: View {
 
 private struct LiveTypingResponseView: View {
     let turnID: String
+    let backend: AgentBackend
     let source: String
     let animates: Bool
     let isStreaming: Bool
+    let onFinishedTyping: () -> Void
 
     private static let responseFontSize = CGFloat(14)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1715,14 +1794,18 @@ private struct LiveTypingResponseView: View {
 
     init(
         turnID: String,
+        backend: AgentBackend,
         source: String,
         animates: Bool,
-        isStreaming: Bool
+        isStreaming: Bool,
+        onFinishedTyping: @escaping () -> Void
     ) {
         self.turnID = turnID
+        self.backend = backend
         self.source = source
         self.animates = animates
         self.isStreaming = isStreaming
+        self.onFinishedTyping = onFinishedTyping
         animatesInitialSource =
             animates
                 && LiveTypingAppearanceCache.shared
@@ -1731,16 +1814,62 @@ private struct LiveTypingResponseView: View {
 
     var body: some View {
         Group {
-            if isStreaming {
-                StreamingPlainTextView(
-                    source: source,
-                    animates: animates && !reduceMotion,
-                    animatesInitialSource:
-                        animatesInitialSource && !reduceMotion,
-                    fontSize: Self.responseFontSize,
-                    lineSpacing: 3
-                )
-                .fixedSize(horizontal: false, vertical: true)
+            if isStreaming, backend == .codex {
+                if reduceMotion {
+                    ConversationMarkdownView(
+                        source: source,
+                        fontSize: Self.responseFontSize
+                    )
+                    .textSelection(.enabled)
+                    .task { onFinishedTyping() }
+                } else {
+                    WaterfallResponseRevealView(
+                        source: source,
+                        fontSize: Self.responseFontSize,
+                        onFinished: onFinishedTyping
+                    )
+                }
+            } else if isStreaming {
+                let segments = StreamingMarkdownSplitter.split(source)
+
+                VStack(alignment: .leading, spacing: 9) {
+                    // 더 바뀌지 않는 앞부분은 한 번만 렌더링한다.
+                    if !segments.settledMarkdown.isEmpty {
+                        ConversationMarkdownView(
+                            source: segments.settledMarkdown,
+                            fontSize: Self.responseFontSize
+                        )
+                        .textSelection(.enabled)
+                    }
+
+                    // 작성 중 블록은 줄이 완성될 때마다 Markdown으로 갱신한다.
+                    if !segments.activeMarkdown.isEmpty {
+                        ConversationMarkdownView(
+                            source: segments.activeMarkdown,
+                            fontSize: Self.responseFontSize
+                        )
+                        .textSelection(.enabled)
+                    }
+
+                    // 개행 전 마지막 조각만 평문으로 타자 출력한다.
+                    if segments.openLine.isEmpty {
+                        // 타자로 출력할 조각이 없으면 곧바로 완료로 알린다.
+                        Color.clear
+                            .frame(height: 0)
+                            .task { onFinishedTyping() }
+                    } else {
+                        StreamingPlainTextView(
+                            source: segments.openLine,
+                            animates: animates && !reduceMotion,
+                            animatesInitialSource:
+                                animatesInitialSource && !reduceMotion,
+                            fontSize: Self.responseFontSize,
+                            lineSpacing: 3,
+                            onFinishedTyping: onFinishedTyping
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ConversationMarkdownView(
@@ -1760,6 +1889,149 @@ private struct LiveTypingResponseView: View {
                 }
             }
         }
+    }
+}
+
+private struct WaterfallResponseRevealView: View {
+    let source: String
+    let fontSize: CGFloat
+    let onFinished: () -> Void
+
+    @State private var measuredHeight = CGFloat.zero
+    @State private var revealHeight = CGFloat(1)
+    @State private var revealingSource = ""
+    @State private var isRevealing = true
+    @State private var completionTask: Task<Void, Never>?
+
+    var body: some View {
+        ConversationMarkdownView(
+            source: source,
+            fontSize: fontSize
+        )
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: WaterfallResponseFullHeightKey.self,
+                    value: geometry.size.height
+                )
+            }
+        }
+        .frame(
+            height: isRevealing ? revealHeight : nil,
+            alignment: .top
+        )
+        .clipped()
+        .mask {
+            if isRevealing {
+                WaterfallResponseMask()
+            } else {
+                Rectangle().fill(.white)
+            }
+        }
+        .onPreferenceChange(
+            WaterfallResponseFullHeightKey.self
+        ) { height in
+            guard height > 0 else {
+                return
+            }
+            measuredHeight = height
+            beginRevealIfNeeded(height: height)
+        }
+        .onChange(of: source) {
+            _, _ in
+            completionTask?.cancel()
+            revealingSource = ""
+            isRevealing = true
+            revealHeight = 1
+            if measuredHeight > 0 {
+                beginRevealIfNeeded(height: measuredHeight)
+            }
+        }
+        .onDisappear {
+            completionTask?.cancel()
+            completionTask = nil
+            onFinished()
+        }
+    }
+
+    private func beginRevealIfNeeded(height: CGFloat) {
+        guard revealingSource != source else {
+            if
+                isRevealing,
+                abs(revealHeight - height) > 0.5
+            {
+                withAnimation(.easeOut(duration: 0.24)) {
+                    revealHeight = height
+                }
+            }
+            return
+        }
+
+        completionTask?.cancel()
+        revealingSource = source
+        isRevealing = true
+        revealHeight = min(12, height)
+
+        let duration = revealDuration(for: height)
+        withAnimation(
+            .timingCurve(
+                0.18,
+                0.72,
+                0.24,
+                1,
+                duration: duration
+            )
+        ) {
+            revealHeight = height
+        }
+
+        completionTask = Task { @MainActor in
+            do {
+                try await Task.sleep(
+                    for: .milliseconds(Int(duration * 1_000))
+                )
+            } catch {
+                return
+            }
+            isRevealing = false
+            revealHeight = measuredHeight
+            onFinished()
+        }
+    }
+
+    private func revealDuration(for height: CGFloat) -> TimeInterval {
+        min(1.8, max(0.72, TimeInterval(height / 520)))
+    }
+}
+
+private struct WaterfallResponseMask: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.white
+            LinearGradient(
+                colors: [
+                    .white,
+                    .white.opacity(0.72),
+                    .clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 24)
+        }
+    }
+}
+
+private struct WaterfallResponseFullHeightKey: PreferenceKey {
+    static var defaultValue = CGFloat.zero
+
+    static func reduce(
+        value: inout CGFloat,
+        nextValue: () -> CGFloat
+    ) {
+        value = max(value, nextValue())
     }
 }
 

@@ -43,17 +43,17 @@ public struct OfficeAnimationPhase: Equatable, Sendable {
         return current + (next - current) * Self.smoothStep(progress)
     }
 
-    /// 옥상 헬기 경고등은 약한 잔광 위에서 짧게 한 번씩 밝아진다.
+    /// 옥상 항공 경고등은 거의 꺼진 상태에서 짧게 흰색 섬광을 낸다.
     public func rooftopBeaconOpacity(at index: Int) -> Double {
-        let periods = [3.8, 4.6, 5.4]
-        let phaseOffsets = [0.0, 1.7, 3.1]
+        let periods = [2.6, 3.2, 3.8]
+        let phaseOffsets = [0.0, 1.1, 2.0]
         let safeIndex = ((index % periods.count) + periods.count) % periods.count
 
         guard !reduceMotion else {
             return 0.72
         }
 
-        let flash = 0.45
+        let flash = 0.38
         let elapsed = (animationTime + phaseOffsets[safeIndex])
             .truncatingRemainder(dividingBy: periods[safeIndex])
 
@@ -79,12 +79,12 @@ public struct OfficeAnimationPhase: Equatable, Sendable {
         )
     }
 
-    private static let windowLightFade = 2.4
-    private static let beaconAfterglow = 0.14
+    private static let windowLightFade = 0.85
+    private static let beaconAfterglow = 0.05
 
-    /// 창문 하나가 같은 밝기를 유지하는 12~26초 구간.
+    /// 창문 하나가 같은 밝기를 유지하는 3~7초 구간.
     private static func windowLightHold(index: Int) -> Double {
-        12 + Double(hash(index, -1) % 15)
+        3 + Double(hash(index, -1) % 5)
     }
 
     private static func windowLightLevel(index: Int, slot: Int) -> Double {

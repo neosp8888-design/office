@@ -28,7 +28,7 @@ final class AgentProgressEventParserTests: XCTestCase {
             backend: .codex
         )
 
-        XCTAssertEqual(message, "명령을 실행하는 중...")
+        XCTAssertEqual(message, "터미널 출동 🧰")
         XCTAssertFalse(message?.contains("secret-value") == true)
     }
 
@@ -56,7 +56,7 @@ final class AgentProgressEventParserTests: XCTestCase {
             backend: .claude
         )
 
-        XCTAssertEqual(message, "문제를 분석하는 중...")
+        XCTAssertEqual(message, "각 잡고 분석 중 🧠")
         XCTAssertFalse(message?.contains("internal details") == true)
     }
 
@@ -70,7 +70,7 @@ final class AgentProgressEventParserTests: XCTestCase {
             backend: .claude
         )
 
-        XCTAssertEqual(message, "도구를 사용해 업무를 처리하는 중...")
+        XCTAssertEqual(message, "도구로 뚝딱 처리 중 🛠️")
         XCTAssertFalse(message?.contains("secret-command") == true)
     }
 

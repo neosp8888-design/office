@@ -1,0 +1,122 @@
+[
+  {
+    "character": "boss",
+    "kind": "blink",
+    "x": 749,
+    "y": 190,
+    "width": 77,
+    "height": 42
+  },
+  {
+    "character": "boss",
+    "kind": "mouth",
+    "x": 779,
+    "y": 218,
+    "width": 26,
+    "height": 20
+  },
+  {
+    "character": "boss",
+    "kind": "typing",
+    "x": 758,
+    "y": 267,
+    "width": 43,
+    "height": 34
+  },
+  {
+    "character": "left-man",
+    "kind": "blink",
+    "x": 320,
+    "y": 524,
+    "width": 91,
+    "height": 55
+  },
+  {
+    "character": "left-man",
+    "kind": "mouth",
+    "x": 344,
+    "y": 558,
+    "width": 25,
+    "height": 22
+  },
+  {
+    "character": "left-man",
+    "kind": "typing",
+    "x": 329,
+    "y": 628,
+    "width": 53,
+    "height": 46
+  },
+  {
+    "character": "left-woman",
+    "kind": "blink",
+    "x": 484,
+    "y": 467,
+    "width": 84,
+    "height": 51
+  },
+  {
+    "character": "left-woman",
+    "kind": "mouth",
+    "x": 504,
+    "y": 486,
+    "width": 31,
+    "height": 28
+  },
+  {
+    "character": "left-woman",
+    "kind": "typing",
+    "x": 493,
+    "y": 550,
+    "width": 65,
+    "height": 42
+  },
+  {
+    "character": "right-woman",
+    "kind": "blink",
+    "x": 1087,
+    "y": 460,
+    "width": 86,
+    "height": 51
+  },
+  {
+    "character": "right-woman",
+    "kind": "mouth",
+    "x": 1106,
+    "y": 486,
+    "width": 29,
+    "height": 28
+  },
+  {
+    "character": "right-woman",
+    "kind": "typing",
+    "x": 1099,
+    "y": 548,
+    "width": 66,
+    "height": 41
+  },
+  {
+    "character": "right-man",
+    "kind": "blink",
+    "x": 1215,
+    "y": 540,
+    "width": 88,
+    "height": 54
+  },
+  {
+    "character": "right-man",
+    "kind": "mouth",
+    "x": 1227,
+    "y": 581,
+    "width": 30,
+    "height": 29
+  },
+  {
+    "character": "right-man",
+    "kind": "typing",
+    "x": 1232,
+    "y": 660,
+    "width": 59,
+    "height": 41
+  }
+]

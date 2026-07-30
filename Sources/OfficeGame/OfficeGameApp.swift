@@ -1,4 +1,4 @@
-// 이 파일은 네 가지 V4 도트 오피스 테마와 명령 입력창을 네이티브 macOS 창에 표시한다.
+// 이 파일은 2D·3D 오피스와 명령 입력창을 네이티브 macOS 창에 표시한다.
 
 import AppKit
 import OfficeCore
@@ -25,9 +25,13 @@ private struct OfficeGameView: View {
     @State private var historyTarget: ConversationHistoryTarget?
     @State private var bubbleDetail: BubbleDetail?
     @State private var detailSelection = OfficeDetailSelection.archive
+    @State private var outgoingArtStyle: OfficeArtStyle?
+    @State private var artStyleRevealProgress: CGFloat = 1
     @Namespace private var characterSelectionAnimation
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
+    @AppStorage("officeArtStyle") private var selectedArtStyleRawValue =
+        OfficeArtStyle.threeD.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
@@ -113,25 +117,25 @@ private struct OfficeGameView: View {
 
     private var officePanel: some View {
         ZStack {
-            letterboxBackground
-                .animation(.easeInOut(duration: 0.18), value: theme)
+            if let outgoingArtStyle {
+                officeArtwork(artStyle: outgoingArtStyle)
+                    .id("style-\(outgoingArtStyle.rawValue)")
 
-            OfficeRealtimeView(
-                theme: theme,
-                isActive: scenePhase == .active,
-                reduceMotion: reduceMotion,
-                bossActivity: director.runningCharacters.contains(.boss)
-                    ? .speaking
-                    : .working
-            )
-            .accessibilityHidden(true)
-
-            WhiteboardUsageLayer(
-                isActive: scenePhase == .active
-            )
+                officeArtwork(artStyle: artStyle)
+                    .id("style-\(artStyle.rawValue)")
+                    .mask {
+                        OfficeArtStyleRevealMask(
+                            progress: artStyleRevealProgress
+                        )
+                    }
+            } else {
+                officeArtwork(artStyle: artStyle)
+                    .id("style-\(artStyle.rawValue)")
+            }
 
             CharacterInteractionLayer(
                 director: director,
+                artStyle: artStyle,
                 onMonitorTapped: {
                     historyTarget = .character($0)
                 },
@@ -188,6 +192,7 @@ private struct OfficeGameView: View {
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 7) {
                 themeToggle
+                artStyleToggle
                 characterSettingsButton
             }
             .padding(12)
@@ -275,14 +280,91 @@ private struct OfficeGameView: View {
     }
 
     private var theme: OfficeTheme {
-        OfficeTheme(rawValue: selectedThemeRawValue) ?? .modernDay
+        let storedTheme =
+            OfficeTheme(rawValue: selectedThemeRawValue)
+            ?? .modernDay
+        return storedTheme.isNight ? .modernNight : .modernDay
     }
 
-    private var letterboxBackground: LinearGradient {
-        LinearGradient(
-            colors: theme.edgeBackdropColors.map {
+    private var artStyle: OfficeArtStyle {
+        OfficeArtStyle(rawValue: selectedArtStyleRawValue)
+            ?? .threeD
+    }
+
+    @ViewBuilder
+    private func officeArtwork(
+        artStyle: OfficeArtStyle
+    ) -> some View {
+        ZStack {
+            letterboxBackground(for: artStyle)
+                .animation(.easeInOut(duration: 0.18), value: theme)
+
+            OfficeRealtimeView(
+                theme: theme,
+                style: artStyle,
+                isActive: scenePhase == .active,
+                reduceMotion: reduceMotion,
+                bossActivity: director.runningCharacters.contains(.boss)
+                    ? .speaking
+                    : .working
+            )
+            .accessibilityHidden(true)
+
+            WhiteboardUsageLayer(
+                isActive: scenePhase == .active,
+                artStyle: artStyle
+            )
+        }
+    }
+
+    private func letterboxBackground(
+        for artStyle: OfficeArtStyle
+    ) -> LinearGradient {
+        let colors: [Color]
+        if artStyle == .twoD {
+            colors = theme.isNight
+                ? [
+                    Color(
+                        red: 87 / 255,
+                        green: 106 / 255,
+                        blue: 154 / 255
+                    ),
+                    Color(
+                        red: 87 / 255,
+                        green: 106 / 255,
+                        blue: 153 / 255
+                    ),
+                    Color(
+                        red: 86 / 255,
+                        green: 105 / 255,
+                        blue: 151 / 255
+                    ),
+                ]
+                : [
+                    Color(
+                        red: 239 / 255,
+                        green: 219 / 255,
+                        blue: 205 / 255
+                    ),
+                    Color(
+                        red: 240 / 255,
+                        green: 220 / 255,
+                        blue: 204 / 255
+                    ),
+                    Color(
+                        red: 238 / 255,
+                        green: 218 / 255,
+                        blue: 202 / 255
+                    ),
+                ]
+        } else {
+            colors = theme.edgeBackdropColors.map {
                 Color(nsColor: $0)
-            },
+            }
+        }
+
+        return LinearGradient(
+            colors: colors,
             startPoint: .top,
             endPoint: .bottom
         )
@@ -329,6 +411,108 @@ private struct OfficeGameView: View {
         .accessibilityValue(theme.title)
         .accessibilityIdentifier("officeThemeMenu")
         .help(theme.isNight ? "낮 테마로 전환" : "밤 테마로 전환")
+    }
+
+    private var artStyleToggle: some View {
+        Button {
+            toggleArtStyle()
+        } label: {
+            HStack(spacing: 2) {
+                artStyleSegment(
+                    title: "2D",
+                    isSelected: artStyle == .twoD
+                )
+                artStyleSegment(
+                    title: "3D",
+                    isSelected: artStyle == .threeD
+                )
+            }
+            .padding(2)
+        }
+        .buttonStyle(.plain)
+        .disabled(outgoingArtStyle != nil)
+        .environment(\.colorScheme, theme.isNight ? .dark : .light)
+        .frame(height: 32)
+        .background(
+            theme.isNight
+                ? Color.black.opacity(0.72)
+                : Color.white.opacity(0.92),
+            in: Capsule()
+        )
+        .overlay {
+            Capsule()
+                .stroke(
+                    theme.isNight
+                        ? Color.white.opacity(0.25)
+                        : Color.black.opacity(0.08)
+                )
+        }
+        .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
+        .fixedSize()
+        .accessibilityLabel("오피스 표현 방식")
+        .accessibilityValue(artStyle.title)
+        .accessibilityIdentifier("officeArtStyleToggle")
+        .help(
+            artStyle == .twoD
+                ? "3D 오피스로 전환"
+                : "2D 오피스로 전환"
+        )
+    }
+
+    private func toggleArtStyle() {
+        guard outgoingArtStyle == nil else {
+            return
+        }
+
+        let previousStyle = artStyle
+        let nextStyle: OfficeArtStyle =
+            previousStyle == .twoD ? .threeD : .twoD
+
+        guard !reduceMotion else {
+            selectedArtStyleRawValue = nextStyle.rawValue
+            return
+        }
+
+        outgoingArtStyle = previousStyle
+        artStyleRevealProgress = 0
+        selectedArtStyleRawValue = nextStyle.rawValue
+
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(.easeInOut(duration: 1.55)) {
+                artStyleRevealProgress = 1
+            }
+            try? await Task.sleep(for: .seconds(1.6))
+            guard artStyle == nextStyle else {
+                return
+            }
+            outgoingArtStyle = nil
+            artStyleRevealProgress = 1
+        }
+    }
+
+    private func artStyleSegment(
+        title: String,
+        isSelected: Bool
+    ) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(
+                isSelected
+                    ? DashboardPalette.accent
+                    : theme.isNight
+                    ? Color.white.opacity(0.52)
+                    : Color.black.opacity(0.42)
+            )
+            .frame(width: 25, height: 26)
+            .background(
+                isSelected
+                    ? DashboardPalette.accent.opacity(
+                        theme.isNight ? 0.25 : 0.13
+                    )
+                    : Color.clear,
+                in: Capsule()
+            )
     }
 
     private var commandBar: some View {
@@ -796,6 +980,47 @@ private struct CharacterTaskStatusIndicator: View {
             }
         }
         .frame(width: 24, height: 24)
+    }
+}
+
+private struct OfficeArtStyleRevealMask: View, Animatable {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let feather = min(72, width * 0.13)
+            let clampedProgress = min(max(progress, 0), 1)
+            let sweep = clampedProgress * (width + feather)
+            let solidWidth = min(width, max(0, sweep - feather))
+            let softWidth = min(feather, max(0, sweep - solidWidth))
+
+            HStack(spacing: 0) {
+                Color.white
+                    .frame(width: solidWidth)
+
+                if softWidth > 0 {
+                    LinearGradient(
+                        colors: [.white, .clear],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .frame(width: softWidth)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: .leading
+            )
+        }
     }
 }
 

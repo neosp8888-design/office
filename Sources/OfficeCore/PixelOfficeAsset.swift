@@ -150,6 +150,46 @@ public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+public enum OfficeArtStyle:
+    String,
+    CaseIterable,
+    Codable,
+    Identifiable,
+    Hashable,
+    Sendable
+{
+    case twoD = "2d"
+    case threeD = "3d"
+
+    public static let defaultValue: OfficeArtStyle = .threeD
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .twoD:
+            "2D"
+        case .threeD:
+            "3D"
+        }
+    }
+
+    public var supportedThemes: [OfficeTheme] {
+        switch self {
+        case .twoD:
+            [.modernDay, .modernNight]
+        case .threeD:
+            OfficeTheme.allCases
+        }
+    }
+
+    public func supports(_ theme: OfficeTheme) -> Bool {
+        supportedThemes.contains(theme)
+    }
+}
+
 public enum OfficeCharacter:
     String,
     CaseIterable,
@@ -176,16 +216,26 @@ public enum OfficeCharacterMotionKind: String, CaseIterable, Hashable, Sendable 
 }
 
 public enum PixelOfficeAsset {
-    public static let renderedV4 = loadResource(
-        named: "office-background-3d-v4"
-    )
+    public static let renderedV4 = load(.modernDay, style: .threeD)
 
-    public static func resourceURL(for theme: OfficeTheme) -> URL {
+    public static func resourceURL(
+        for theme: OfficeTheme,
+        style: OfficeArtStyle = .defaultValue
+    ) -> URL {
+        requireSupport(for: theme, style: style)
+
+        let resource = (
+            name: theme.rawValue,
+            subdirectory: "office-retina-v1/backgrounds/\(style.rawValue)"
+        )
+
         guard let url = Bundle.module.url(
-            forResource: theme.filename,
-            withExtension: "png"
+            forResource: resource.name,
+            withExtension: "png",
+            subdirectory: resource.subdirectory
         ) else {
-            fatalError("\(theme.filename).png 리소스를 찾을 수 없습니다.")
+            let path = "\(resource.subdirectory)/\(resource.name).png"
+            fatalError("\(path) 리소스를 찾을 수 없습니다.")
         }
         return url
     }
@@ -198,26 +248,28 @@ public enum PixelOfficeAsset {
         )
     }
 
-    public static func image(for theme: OfficeTheme) -> NSImage {
-        switch theme {
-        case .modernDay:
-            modernDay
-        case .modernNight:
-            modernNight
-        case .woodDay:
-            woodDay
-        case .woodNight:
-            woodNight
-        }
+    public static func image(
+        for theme: OfficeTheme,
+        style: OfficeArtStyle = .defaultValue
+    ) -> NSImage {
+        load(theme, style: style)
     }
 
     public static func motionResourceURL(
         for character: OfficeCharacter,
         kind: OfficeCharacterMotionKind,
-        theme: OfficeTheme
+        theme: OfficeTheme,
+        style: OfficeArtStyle = .defaultValue
     ) -> URL {
+        requireSupport(for: theme, style: style)
+
         let filename = "\(character.rawValue)-\(kind.rawValue)"
-        let subdirectory = "office-3d-motion-v1/\(theme.rawValue)"
+        let subdirectory = [
+            "office-retina-v1",
+            "motion",
+            style.rawValue,
+            theme.rawValue
+        ].joined(separator: "/")
         guard let url = Bundle.module.url(
             forResource: filename,
             withExtension: "png",
@@ -233,13 +285,15 @@ public enum PixelOfficeAsset {
     public static func motionImage(
         for character: OfficeCharacter,
         kind: OfficeCharacterMotionKind,
-        theme: OfficeTheme
+        theme: OfficeTheme,
+        style: OfficeArtStyle = .defaultValue
     ) -> NSImage {
         guard let image = NSImage(
             contentsOf: motionResourceURL(
                 for: character,
                 kind: kind,
-                theme: theme
+                theme: theme,
+                style: style
             )
         ) else {
             fatalError(
@@ -249,27 +303,29 @@ public enum PixelOfficeAsset {
         return image
     }
 
-    private static let modernDay = load(.modernDay)
-    private static let modernNight = load(.modernNight)
-    private static let woodDay = load(.woodDay)
-    private static let woodNight = load(.woodNight)
-
-    private static func load(_ theme: OfficeTheme) -> NSImage {
-        loadResource(named: theme.filename)
+    private static func requireSupport(
+        for theme: OfficeTheme,
+        style: OfficeArtStyle
+    ) {
+        guard style.supports(theme) else {
+            fatalError(
+                "\(style.title) 표시 방식은 \(theme.title) 테마를 지원하지 않습니다."
+            )
+        }
     }
 
-    private static func loadResource(
-        named filename: String
+    private static func load(
+        _ theme: OfficeTheme,
+        style: OfficeArtStyle
     ) -> NSImage {
-        guard let url = Bundle.module.url(
-            forResource: filename,
-            withExtension: "png"
+        guard let image = NSImage(
+            contentsOf: resourceURL(for: theme, style: style)
         ) else {
-            fatalError("\(filename).png 리소스를 찾을 수 없습니다.")
-        }
-        guard let image = NSImage(contentsOf: url) else {
-            fatalError("\(filename).png 이미지를 불러오지 못했습니다.")
+            fatalError(
+                "\(style.title) \(theme.title) 이미지를 불러오지 못했습니다."
+            )
         }
         return image
     }
+
 }

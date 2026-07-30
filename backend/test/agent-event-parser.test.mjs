@@ -38,7 +38,7 @@ test("Codex 명령 인수는 진행 이벤트에 포함하지 않는다", () => 
     "codex",
   );
 
-  assert.equal(event.activity.text, "명령을 실행하는 중...");
+  assert.equal(event.activity.text, "터미널 출동 🧰");
   assert.equal(event.activity.text.includes("secret-value"), false);
 });
 
@@ -75,7 +75,7 @@ test("Claude 내부 생각 원문은 노출하지 않는다", () => {
     "claude",
   );
 
-  assert.equal(event.activity.text, "문제를 분석하는 중...");
+  assert.equal(event.activity.text, "각 잡고 분석 중 🧠");
   assert.equal(event.activity.text.includes("private"), false);
 });
 

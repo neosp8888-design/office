@@ -1,4 +1,4 @@
-// 이 파일은 화이트보드 원근에 맞춰 Codex와 Claude의 잔여 한도를 실시간 표시한다.
+// 이 파일은 2D·3D 화이트보드에 Codex와 Claude의 잔여 한도를 실시간 표시한다.
 
 import Foundation
 import OfficeCore
@@ -6,8 +6,11 @@ import SwiftUI
 
 struct WhiteboardUsageLayer: View {
     let isActive: Bool
+    let artStyle: OfficeArtStyle
 
-    private let textVerticalScale: CGFloat = 1.3
+    private var textVerticalScale: CGFloat {
+        artStyle == .twoD ? 1 : 1.3
+    }
 
     @State private var snapshot: AIUsageSnapshot?
     @State private var isLoading = true
@@ -81,93 +84,59 @@ struct WhiteboardUsageLayer: View {
 
         let scale =
             fittedFrame.width / OfficeCanvasGeometry.designSize.width
-        let origin = OfficeWhiteboardGeometry.usageOrigin
         let transform = CGAffineTransform(
             a: scale,
-            b: OfficeWhiteboardGeometry.horizontalShear * scale,
+            b: 0,
             c: 0,
             d: scale,
-            tx: fittedFrame.minX + origin.x * scale,
-            ty: fittedFrame.minY + origin.y * scale
+            tx: fittedFrame.minX,
+            ty: fittedFrame.minY
         )
         context.concatenate(transform)
 
         let ink = Color(
-            red: 0.12,
-            green: 0.23,
-            blue: 0.29
+            red: 0.08,
+            green: 0.18,
+            blue: 0.22
         )
-        let mutedInk = ink.opacity(0.55)
-
-        drawText(
-            "AI LIMIT · LEFT",
-            in: &context,
-            at: CGPoint(x: 0, y: 0),
-            size: 7.4,
-            weight: .bold,
-            color: ink
-        )
-        drawText(
-            "5H",
-            in: &context,
-            at: CGPoint(x: 77, y: 11),
-            anchor: .topTrailing,
-            size: 6.2,
-            weight: .semibold,
-            color: mutedInk
-        )
-        drawText(
-            "7D",
-            in: &context,
-            at: CGPoint(x: 108, y: 11),
-            anchor: .topTrailing,
-            size: 6.2,
-            weight: .semibold,
-            color: mutedInk
-        )
-
-        let divider = Path(
-            CGRect(x: 0, y: 19, width: 108, height: 0.65)
-        )
-        context.fill(divider, with: .color(ink.opacity(0.20)))
+        let mutedInk = ink.opacity(0.84)
 
         if let snapshot {
-            drawUsageRow(
+            drawUsageGroup(
                 provider: "CODEX",
                 fiveHour: snapshot.codexFiveHour,
                 weekly: snapshot.codexWeekly,
-                y: 23,
+                providerY: 2,
+                usageY: 19,
                 context: &context,
-                ink: ink
+                ink: ink,
+                mutedInk: mutedInk
             )
-            drawUsageRow(
+            drawUsageGroup(
                 provider: "CLAUDE",
                 fiveHour: snapshot.claudeFiveHour,
                 weekly: snapshot.claudeWeekly,
-                y: 42,
+                providerY: 41,
+                usageY: 58,
                 context: &context,
-                ink: ink
-            )
-
-            drawText(
-                snapshot.fetchedAt.formatted(
-                    date: .omitted,
-                    time: .shortened
-                ),
-                in: &context,
-                at: CGPoint(x: 108, y: 60),
-                anchor: .topTrailing,
-                size: 5.5,
-                weight: .medium,
-                color: mutedInk
+                ink: ink,
+                mutedInk: mutedInk
             )
         } else {
             drawText(
+                "AI LIMIT",
+                in: &context,
+                at: CGPoint(x: 0, y: 11),
+                size: 12.5,
+                weight: .bold,
+                color: ink
+            )
+            drawText(
                 isLoading ? "CHECKING…" : "LIMIT OFF",
                 in: &context,
-                at: CGPoint(x: 0, y: 30),
-                size: 9,
-                weight: .semibold,
+                at: CGPoint(x: 0, y: 44),
+                size: 13,
+                weight: .bold,
                 color: mutedInk
             )
         }
@@ -176,7 +145,8 @@ struct WhiteboardUsageLayer: View {
             drawText(
                 "!",
                 in: &context,
-                at: CGPoint(x: 0, y: 59),
+                at: CGPoint(x: 128, y: 1),
+                anchor: .topTrailing,
                 size: 7,
                 weight: .bold,
                 color: Color(red: 0.77, green: 0.38, blue: 0.08)
@@ -184,50 +154,32 @@ struct WhiteboardUsageLayer: View {
         }
     }
 
-    private func drawUsageRow(
+    private func drawUsageGroup(
         provider: String,
         fiveHour: Int?,
         weekly: Int?,
-        y: CGFloat,
+        providerY: CGFloat,
+        usageY: CGFloat,
         context: inout GraphicsContext,
-        ink: Color
+        ink: Color,
+        mutedInk: Color
     ) {
         drawText(
             provider,
             in: &context,
-            at: CGPoint(x: 0, y: y + 1),
-            size: 8,
+            at: CGPoint(x: 0, y: providerY),
+            size: 12.5,
             weight: .bold,
             color: ink
         )
-        drawValue(
-            fiveHour,
-            in: &context,
-            x: 78,
-            y: y
-        )
-        drawValue(
-            weekly,
-            in: &context,
-            x: 108,
-            y: y
-        )
-    }
-
-    private func drawValue(
-        _ value: Int?,
-        in context: inout GraphicsContext,
-        x: CGFloat,
-        y: CGFloat
-    ) {
         drawText(
-            value.map { "\($0)%" } ?? "–",
+            "5H \(compactPercentText(fiveHour))"
+                + "  ·  7D \(compactPercentText(weekly))",
             in: &context,
-            at: CGPoint(x: x, y: y),
-            anchor: .topTrailing,
-            size: 10.5,
-            weight: .bold,
-            color: remainingColor(value)
+            at: CGPoint(x: 0, y: usageY),
+            size: 11.5,
+            weight: .semibold,
+            color: mutedInk
         )
     }
 
@@ -242,13 +194,19 @@ struct WhiteboardUsageLayer: View {
     ) {
         var textContext = context
         textContext.concatenate(
+            OfficeWhiteboardGeometry.usageTransform(
+                for: artStyle,
+                at: point
+            )
+        )
+        textContext.concatenate(
             CGAffineTransform(
                 a: 1,
                 b: 0,
                 c: 0,
                 d: textVerticalScale,
-                tx: point.x,
-                ty: point.y
+                tx: 0,
+                ty: 0
             )
         )
         textContext.draw(
@@ -260,23 +218,15 @@ struct WhiteboardUsageLayer: View {
                         design: .rounded
                     )
                 )
+                .fontWidth(.condensed)
                 .foregroundStyle(color),
             at: .zero,
             anchor: anchor
         )
     }
 
-    private func remainingColor(_ remaining: Int?) -> Color {
-        guard let remaining else {
-            return Color.gray.opacity(0.65)
-        }
-        if remaining > 50 {
-            return Color(red: 0.06, green: 0.46, blue: 0.42)
-        }
-        if remaining > 25 {
-            return Color(red: 0.72, green: 0.43, blue: 0.06)
-        }
-        return Color(red: 0.76, green: 0.20, blue: 0.17)
+    private func compactPercentText(_ value: Int?) -> String {
+        value.map { "\($0)%" } ?? "–"
     }
 
     private func percentText(_ value: Int?) -> String {
@@ -308,28 +258,106 @@ enum CodexBarUsageReader {
         "/opt/homebrew/bin/codexbar",
         "/usr/local/bin/codexbar",
     ]
+    private static let coordinator = UsageFetchCoordinator()
 
-    static func fetch() async throws -> AIUsageSnapshot {
-        try await Task.detached(priority: .utility) {
-            do {
-                return try fetch(source: "oauth")
-            } catch {
-                return try fetch(source: "auto")
-            }
-        }
-        .value
+    static func fetch(
+        force: Bool = false
+    ) async throws -> AIUsageSnapshot {
+        try await coordinator.fetch(force: force)
     }
 
-    private static func fetch(
-        source: String
+    fileprivate static func fetchUncoordinated(
     ) throws -> AIUsageSnapshot {
         let executable = try locateExecutable()
+        let codexResult: Result<UsageProviderPayload, Error> = Result {
+            try fetchProviderWithFallback(
+                executable: executable,
+                provider: "codex"
+            )
+        }
+        let claudeResult: Result<UsageProviderPayload, Error> = Result {
+            try fetchProviderWithFallback(
+                executable: executable,
+                provider: "claude"
+            )
+        }
+        let codex = try? codexResult.get()
+        let claude = try? claudeResult.get()
+
+        guard codex?.usage != nil || claude?.usage != nil else {
+            let messages = [codexResult, claudeResult]
+                .compactMap { result -> String? in
+                    guard case .failure(let error) = result else {
+                        return nil
+                    }
+                    return error.localizedDescription
+                }
+                .filter { !$0.isEmpty }
+            throw UsageReaderError.failed(
+                messages.first
+                    ?? UsageReaderError.providerUnavailable
+                    .localizedDescription
+            )
+        }
+
+        let costProviders = try? fetchCostProviders(
+            executable: executable
+        )
+        let codexUsage = codex?.usage
+        let claudeUsage = claude?.usage
+
+        return AIUsageSnapshot(
+            codexFiveHour: codexUsage?.remaining(windowMinutes: 300),
+            codexWeekly: codexUsage?.remaining(windowMinutes: 10_080),
+            claudeFiveHour: claudeUsage?.remaining(windowMinutes: 300),
+            claudeWeekly: claudeUsage?.remaining(windowMinutes: 10_080),
+            codexPlan: codex?.plan,
+            claudePlan: claude?.plan,
+            codexActivity: costProviders?
+                .first(where: { $0.provider == "codex" })?
+                .activitySnapshot,
+            claudeActivity: costProviders?
+                .first(where: { $0.provider == "claude" })?
+                .activitySnapshot,
+            fetchedAt: Date()
+        )
+    }
+
+    private static func fetchProviderWithFallback(
+        executable: URL,
+        provider: String
+    ) throws -> UsageProviderPayload {
+        do {
+            return try fetchProvider(
+                executable: executable,
+                provider: provider,
+                source: "oauth"
+            )
+        } catch {
+            if error.localizedDescription.localizedCaseInsensitiveContains(
+                "rate limit"
+            ) {
+                throw error
+            }
+            return try fetchProvider(
+                executable: executable,
+                provider: provider,
+                source: "auto"
+            )
+        }
+    }
+
+    private static func fetchProvider(
+        executable: URL,
+        provider: String,
+        source: String
+    ) throws -> UsageProviderPayload {
         let data = try run(
             executable: executable,
             arguments: [
                 "usage",
                 "--provider",
-                "both",
+                provider,
                 "--source",
                 source,
                 "--json-only",
@@ -339,34 +367,21 @@ enum CodexBarUsageReader {
             [UsageProviderPayload].self,
             from: data
         )
-        let costProviders = try? fetchCostProviders(
-            executable: executable
-        )
-
         guard
-            let codex = providers.first(where: { $0.provider == "codex" }),
-            let codexUsage = codex.usage,
-            let claude = providers.first(where: { $0.provider == "claude" }),
-            let claudeUsage = claude.usage
+            let payload = providers.first(
+                where: { $0.provider == provider }
+            )
         else {
             throw UsageReaderError.providerUnavailable
         }
-
-        return AIUsageSnapshot(
-            codexFiveHour: codexUsage.remaining(windowMinutes: 300),
-            codexWeekly: codexUsage.remaining(windowMinutes: 10_080),
-            claudeFiveHour: claudeUsage.remaining(windowMinutes: 300),
-            claudeWeekly: claudeUsage.remaining(windowMinutes: 10_080),
-            codexPlan: codex.plan,
-            claudePlan: claude.plan,
-            codexActivity: costProviders?
-                .first(where: { $0.provider == "codex" })?
-                .activitySnapshot,
-            claudeActivity: costProviders?
-                .first(where: { $0.provider == "claude" })?
-                .activitySnapshot,
-            fetchedAt: Date()
-        )
+        guard payload.usage != nil else {
+            throw UsageReaderError.failed(
+                payload.error?.message
+                    ?? UsageReaderError.providerUnavailable
+                    .localizedDescription
+            )
+        }
+        return payload
     }
 
     private static func fetchCostProviders(
@@ -423,6 +438,9 @@ enum CodexBarUsageReader {
         let output = stdout.fileHandleForReading.readDataToEndOfFile()
         let error = stderr.fileHandleForReading.readDataToEndOfFile()
         guard process.terminationStatus == 0 else {
+            if !output.isEmpty {
+                return output
+            }
             let message = String(decoding: error, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw UsageReaderError.failed(message)
@@ -431,16 +449,61 @@ enum CodexBarUsageReader {
     }
 }
 
+private actor UsageFetchCoordinator {
+    private let cacheLifetime = TimeInterval(30)
+    private var cachedSnapshot: AIUsageSnapshot?
+    private var inFlight: Task<AIUsageSnapshot, Error>?
+
+    func fetch(
+        force: Bool
+    ) async throws -> AIUsageSnapshot {
+        if
+            !force,
+            let cachedSnapshot,
+            Date().timeIntervalSince(cachedSnapshot.fetchedAt)
+                < cacheLifetime
+        {
+            return cachedSnapshot
+        }
+        if let inFlight {
+            return try await inFlight.value
+        }
+
+        let task = Task.detached(priority: .utility) {
+            try CodexBarUsageReader.fetchUncoordinated()
+        }
+        inFlight = task
+
+        do {
+            let snapshot = try await task.value
+            cachedSnapshot = snapshot
+            inFlight = nil
+            return snapshot
+        } catch {
+            inFlight = nil
+            if let cachedSnapshot {
+                return cachedSnapshot
+            }
+            throw error
+        }
+    }
+}
+
 private struct UsageProviderPayload: Decodable {
     let provider: String
     let usage: UsagePayload?
     let openaiDashboard: UsageDashboardPayload?
+    let error: UsageProviderErrorPayload?
 
     var plan: String? {
         openaiDashboard?.accountPlan
             ?? usage?.loginMethod
             ?? usage?.identity?.loginMethod
     }
+}
+
+private struct UsageProviderErrorPayload: Decodable {
+    let message: String?
 }
 
 private struct UsageDashboardPayload: Decodable {

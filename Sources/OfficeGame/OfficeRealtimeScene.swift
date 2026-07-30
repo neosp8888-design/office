@@ -12,6 +12,7 @@ enum BossActivity: Equatable, Sendable {
 
 struct OfficeRealtimeView: NSViewRepresentable {
     let theme: OfficeTheme
+    let style: OfficeArtStyle
     let isActive: Bool
     let reduceMotion: Bool
     let bossActivity: BossActivity
@@ -28,6 +29,7 @@ struct OfficeRealtimeView: NSViewRepresentable {
 
         context.coordinator.scene.apply(
             theme: theme,
+            style: style,
             reduceMotion: reduceMotion,
             bossActivity: bossActivity
         )
@@ -39,6 +41,7 @@ struct OfficeRealtimeView: NSViewRepresentable {
     func updateNSView(_ view: SKView, context: Context) {
         context.coordinator.scene.apply(
             theme: theme,
+            style: style,
             reduceMotion: reduceMotion,
             bossActivity: bossActivity
         )
@@ -113,6 +116,7 @@ final class OfficeRealtimeScene: SKScene {
     private let stageGlowCore = SKShapeNode()
     private let analogClockDial = SKNode()
     private let analogClockFaceCover = SKShapeNode()
+    private let analogClockTicks = SKShapeNode()
     private let analogClockHourHand = SKShapeNode()
     private let analogClockMinuteHand = SKShapeNode()
     private let analogClockSecondHand = SKShapeNode()
@@ -125,6 +129,7 @@ final class OfficeRealtimeScene: SKScene {
     private var monitorGlows: [SKShapeNode] = []
     private var bossTextures: [BossCharacterFrame: SKTexture] = [:]
     private var currentTheme: OfficeTheme?
+    private var currentStyle: OfficeArtStyle?
     private var currentBossActivity: BossActivity?
     private var currentBossReduceMotion: Bool?
     private var currentCharacterReduceMotion: Bool?
@@ -132,7 +137,7 @@ final class OfficeRealtimeScene: SKScene {
     private var lastClockSecond = -1
     private var motionNodes: [MotionKey: SKSpriteNode] = [:]
 
-    private let characterMotionSpecs = [
+    private let threeDCharacterMotionSpecs = [
         CharacterMotionSpec(
             character: .boss,
             blinkRect: CGRect(x: 744, y: 202, width: 62, height: 37),
@@ -170,6 +175,44 @@ final class OfficeRealtimeScene: SKScene {
         )
     ]
 
+    private let twoDCharacterMotionSpecs = [
+        CharacterMotionSpec(
+            character: .boss,
+            blinkRect: CGRect(x: 749, y: 190, width: 77, height: 42),
+            mouthRect: CGRect(x: 779, y: 218, width: 26, height: 20),
+            typingRect: CGRect(x: 758, y: 267, width: 43, height: 34),
+            phase: 0.2
+        ),
+        CharacterMotionSpec(
+            character: .leftMan,
+            blinkRect: CGRect(x: 320, y: 524, width: 91, height: 55),
+            mouthRect: CGRect(x: 344, y: 558, width: 25, height: 22),
+            typingRect: CGRect(x: 329, y: 628, width: 53, height: 46),
+            phase: 0.7
+        ),
+        CharacterMotionSpec(
+            character: .leftWoman,
+            blinkRect: CGRect(x: 484, y: 467, width: 84, height: 51),
+            mouthRect: CGRect(x: 504, y: 486, width: 31, height: 28),
+            typingRect: CGRect(x: 493, y: 550, width: 65, height: 42),
+            phase: 1.1
+        ),
+        CharacterMotionSpec(
+            character: .rightWoman,
+            blinkRect: CGRect(x: 1_087, y: 460, width: 86, height: 51),
+            mouthRect: CGRect(x: 1_106, y: 486, width: 29, height: 28),
+            typingRect: CGRect(x: 1_099, y: 548, width: 66, height: 41),
+            phase: 1.6
+        ),
+        CharacterMotionSpec(
+            character: .rightMan,
+            blinkRect: CGRect(x: 1_215, y: 540, width: 88, height: 54),
+            mouthRect: CGRect(x: 1_227, y: 581, width: 30, height: 29),
+            typingRect: CGRect(x: 1_232, y: 660, width: 59, height: 41),
+            phase: 2.0
+        )
+    ]
+
     override init() {
         super.init(size: OfficeCanvasGeometry.designSize)
         scaleMode = .resizeFill
@@ -199,6 +242,7 @@ final class OfficeRealtimeScene: SKScene {
 
     func apply(
         theme: OfficeTheme,
+        style: OfficeArtStyle,
         reduceMotion: Bool,
         bossActivity: BossActivity
     ) {
@@ -209,20 +253,40 @@ final class OfficeRealtimeScene: SKScene {
             reduceMotion: reduceMotion
         )
 
-        guard currentTheme != theme else {
+        guard currentTheme != theme || currentStyle != style else {
             return
         }
 
         currentTheme = theme
-        backgroundColor = theme.edgeBackdropColor
-        letterboxNode.texture = letterboxTexture(for: theme)
-        let texture = SKTexture(image: PixelOfficeAsset.image(for: theme))
+        currentStyle = style
+        backgroundColor = edgeBackdropColors(
+            for: theme,
+            style: style
+        )[1]
+        letterboxNode.texture = letterboxTexture(
+            for: theme,
+            style: style
+        )
+        let texture = SKTexture(
+            image: PixelOfficeAsset.image(
+                for: theme,
+                style: style
+            )
+        )
         texture.filteringMode = .linear
         backgroundNode.texture = texture
-        applyCharacterMotionTextures(theme: theme)
+        applyCharacterMotionGeometry(style: style)
+        applyCharacterMotionTextures(
+            theme: theme,
+            style: style
+        )
+        applyEnvironmentGeometry(style: style)
         themeArtworkRoot.position = CGPoint(
             x: 0,
-            y: artworkVerticalOffset(for: theme)
+            y: artworkVerticalOffset(
+                for: theme,
+                style: style
+            )
         )
 
         let nightEffectsEnabled = theme == .modernNight
@@ -234,7 +298,10 @@ final class OfficeRealtimeScene: SKScene {
         let stageColor = stageLightColor(for: theme)
         stageGlowWide.strokeColor = stageColor
         stageGlowCore.strokeColor = stageColor
-        applyAnalogClockStyle(theme: theme)
+        applyAnalogClockStyle(
+            theme: theme,
+            style: style
+        )
 
         bossCropNode.isHidden = true
         bossForeground.isHidden = true
@@ -282,13 +349,19 @@ final class OfficeRealtimeScene: SKScene {
         addChild(letterboxNode)
     }
 
-    private func letterboxTexture(for theme: OfficeTheme) -> SKTexture {
+    private func letterboxTexture(
+        for theme: OfficeTheme,
+        style: OfficeArtStyle
+    ) -> SKTexture {
         let image = NSImage(
             size: CGSize(width: 2, height: 256),
             flipped: false
         ) { rect in
             guard let gradient = NSGradient(
-                colors: theme.edgeBackdropColors
+                colors: self.edgeBackdropColors(
+                    for: theme,
+                    style: style
+                )
             ) else {
                 return false
             }
@@ -300,8 +373,40 @@ final class OfficeRealtimeScene: SKScene {
         return texture
     }
 
+    private func edgeBackdropColors(
+        for theme: OfficeTheme,
+        style: OfficeArtStyle
+    ) -> [NSColor] {
+        guard style == .twoD else {
+            return theme.edgeBackdropColors
+        }
+
+        let samples: [(CGFloat, CGFloat, CGFloat)]
+        if theme.isNight {
+            samples = [
+                (56, 51, 50),
+                (72, 62, 57),
+                (60, 54, 52)
+            ]
+        } else {
+            samples = [
+                (239, 219, 205),
+                (240, 220, 204),
+                (238, 218, 202)
+            ]
+        }
+        return samples.map { sample in
+            NSColor(
+                srgbRed: sample.0 / 255,
+                green: sample.1 / 255,
+                blue: sample.2 / 255,
+                alpha: 1
+            )
+        }
+    }
+
     private func configureCharacterMotions() {
-        for spec in characterMotionSpecs {
+        for spec in threeDCharacterMotionSpecs {
             for kind in OfficeCharacterMotionKind.allCases {
                 let key = MotionKey(character: spec.character, kind: kind)
                 let rect = spec.rect(for: kind)
@@ -320,13 +425,34 @@ final class OfficeRealtimeScene: SKScene {
         }
     }
 
-    private func applyCharacterMotionTextures(theme: OfficeTheme) {
+    private func applyCharacterMotionGeometry(style: OfficeArtStyle) {
+        for spec in characterMotionSpecs(for: style) {
+            for kind in OfficeCharacterMotionKind.allCases {
+                let key = MotionKey(character: spec.character, kind: kind)
+                let rect = spec.rect(for: kind)
+                guard let node = motionNodes[key] else {
+                    continue
+                }
+                node.position = CGPoint(
+                    x: rect.minX,
+                    y: OfficeCanvasGeometry.designSize.height - rect.maxY
+                )
+                node.size = rect.size
+            }
+        }
+    }
+
+    private func applyCharacterMotionTextures(
+        theme: OfficeTheme,
+        style: OfficeArtStyle
+    ) {
         for key in motionNodes.keys {
             let texture = SKTexture(
                 image: PixelOfficeAsset.motionImage(
                     for: key.character,
                     kind: key.kind,
-                    theme: theme
+                    theme: theme,
+                    style: style
                 )
             )
             texture.filteringMode = .linear
@@ -340,7 +466,7 @@ final class OfficeRealtimeScene: SKScene {
         }
         currentCharacterReduceMotion = reduceMotion
 
-        for spec in characterMotionSpecs {
+        for spec in threeDCharacterMotionSpecs {
             for kind in OfficeCharacterMotionKind.allCases {
                 let key = MotionKey(character: spec.character, kind: kind)
                 guard let node = motionNodes[key] else {
@@ -366,6 +492,17 @@ final class OfficeRealtimeScene: SKScene {
         }
     }
 
+    private func characterMotionSpecs(
+        for style: OfficeArtStyle
+    ) -> [CharacterMotionSpec] {
+        switch style {
+        case .twoD:
+            twoDCharacterMotionSpecs
+        case .threeD:
+            threeDCharacterMotionSpecs
+        }
+    }
+
     private func blinkAction(phase: TimeInterval) -> SKAction {
         let blink = SKAction.sequence([
             .fadeAlpha(to: 1, duration: 0.025),
@@ -388,22 +525,22 @@ final class OfficeRealtimeScene: SKScene {
 
     private func mouthAction(phase: TimeInterval) -> SKAction {
         let syllable = SKAction.sequence([
-            .fadeAlpha(to: 1, duration: 0.03),
-            .wait(forDuration: 0.13 + phase * 0.012),
-            .fadeAlpha(to: 0, duration: 0.03),
-            .wait(forDuration: 0.15)
+            .fadeAlpha(to: 1, duration: 0.035),
+            .wait(forDuration: 0.18 + phase * 0.008),
+            .fadeAlpha(to: 0, duration: 0.035),
+            .wait(forDuration: 0.09)
         ])
         let phrase = SKAction.repeat(
             syllable,
-            count: 2 + Int(phase.rounded())
+            count: 3 + Int((phase * 1.5).rounded())
         )
         return .sequence([
-            .wait(forDuration: 2.2 + phase),
+            .wait(forDuration: 1.0 + phase * 0.45),
             .repeatForever(
                 .sequence([
                     .wait(
-                        forDuration: 6.5 + phase * 0.5,
-                        withRange: 5.0
+                        forDuration: 3.0 + phase * 0.25,
+                        withRange: 2.0
                     ),
                     phrase
                 ])
@@ -612,6 +749,200 @@ final class OfficeRealtimeScene: SKScene {
         }
     }
 
+    private func applyEnvironmentGeometry(style: OfficeArtStyle) {
+        let windowGeometry = windowLightGeometry(for: style)
+        for (index, light) in windowLights.enumerated() {
+            guard index < windowGeometry.positions.count,
+                  index < windowGeometry.sizes.count else {
+                light.shade.isHidden = true
+                light.halo.isHidden = true
+                light.core.isHidden = true
+                continue
+            }
+            let position = windowGeometry.positions[index]
+            let lightSize = windowGeometry.sizes[index]
+            light.shade.isHidden = false
+            light.halo.isHidden = false
+            light.core.isHidden = false
+            light.shade.position = position
+            light.halo.position = position
+            light.core.position = position
+            light.shade.size = CGSize(
+                width: lightSize + 3,
+                height: lightSize + 3
+            )
+            light.halo.size = CGSize(
+                width: lightSize * 3,
+                height: lightSize * 3
+            )
+            light.core.size = CGSize(
+                width: lightSize,
+                height: lightSize
+            )
+        }
+
+        let beaconPositions = rooftopBeaconPositions(for: style)
+        for (index, beacon) in rooftopBeacons.enumerated() {
+            guard index < beaconPositions.count else {
+                beacon.halo.isHidden = true
+                beacon.core.isHidden = true
+                continue
+            }
+            let position = beaconPositions[index]
+            beacon.halo.isHidden = false
+            beacon.core.isHidden = false
+            beacon.halo.position = position
+            beacon.core.position = position
+        }
+
+        let monitorGeometry = monitorGlowGeometry(for: style)
+        for (index, glow) in monitorGlows.enumerated() {
+            guard index < monitorGeometry.positions.count else {
+                glow.isHidden = true
+                continue
+            }
+            glow.isHidden = false
+            glow.position = monitorGeometry.positions[index]
+            glow.path = CGPath(
+                ellipseIn: CGRect(
+                    x: -monitorGeometry.size.width / 2,
+                    y: -monitorGeometry.size.height / 2,
+                    width: monitorGeometry.size.width,
+                    height: monitorGeometry.size.height
+                ),
+                transform: nil
+            )
+            glow.glowWidth = monitorGeometry.glowWidth
+        }
+
+        let stagePath = stageGlowPath(for: style)
+        stageGlowWide.path = stagePath
+        stageGlowCore.path = stagePath
+    }
+
+    private func windowLightGeometry(
+        for style: OfficeArtStyle
+    ) -> (positions: [CGPoint], sizes: [CGFloat]) {
+        switch style {
+        case .threeD:
+            (
+                [
+                    CGPoint(x: 508, y: 721),
+                    CGPoint(x: 497, y: 714),
+                    CGPoint(x: 487, y: 704),
+                    CGPoint(x: 476, y: 697),
+                    CGPoint(x: 476, y: 689),
+                    CGPoint(x: 443, y: 683),
+                    CGPoint(x: 449, y: 673),
+                    CGPoint(x: 443, y: 665),
+                    CGPoint(x: 432, y: 661),
+                    CGPoint(x: 390, y: 653),
+                    CGPoint(x: 373, y: 628)
+                ],
+                [4, 5, 4, 4, 5, 4, 4, 5, 4, 5, 4]
+            )
+        case .twoD:
+            (
+                [
+                    CGPoint(x: 501, y: 726),
+                    CGPoint(x: 514, y: 722),
+                    CGPoint(x: 527, y: 718),
+                    CGPoint(x: 504, y: 697),
+                    CGPoint(x: 520, y: 692),
+                    CGPoint(x: 438, y: 693),
+                    CGPoint(x: 452, y: 689),
+                    CGPoint(x: 465, y: 681),
+                    CGPoint(x: 442, y: 659),
+                    CGPoint(x: 387, y: 658),
+                    CGPoint(x: 400, y: 655)
+                ],
+                [4, 5, 4, 4, 5, 4, 4, 5, 4, 5, 4]
+            )
+        }
+    }
+
+    private func rooftopBeaconPositions(
+        for style: OfficeArtStyle
+    ) -> [CGPoint] {
+        switch style {
+        case .threeD:
+            [
+                CGPoint(x: 507, y: 737),
+                CGPoint(x: 478, y: 707),
+                CGPoint(x: 449, y: 693)
+            ]
+        case .twoD:
+            [
+                CGPoint(x: 399, y: 684),
+                CGPoint(x: 466, y: 702),
+                CGPoint(x: 525, y: 754)
+            ]
+        }
+    }
+
+    private func monitorGlowGeometry(
+        for style: OfficeArtStyle
+    ) -> (positions: [CGPoint], size: CGSize, glowWidth: CGFloat) {
+        switch style {
+        case .threeD:
+            (
+                [
+                    CGPoint(x: 816, y: 700),
+                    CGPoint(x: 548, y: 448),
+                    CGPoint(x: 406, y: 370),
+                    CGPoint(x: 1_058, y: 444),
+                    CGPoint(x: 1_195, y: 356)
+                ],
+                CGSize(width: 112, height: 44),
+                18
+            )
+        case .twoD:
+            (
+                [
+                    CGPoint(x: 835, y: 740),
+                    CGPoint(x: 558, y: 464),
+                    CGPoint(x: 414, y: 373),
+                    CGPoint(x: 1_061, y: 464),
+                    CGPoint(x: 1_208, y: 353)
+                ],
+                CGSize(width: 96, height: 34),
+                15
+            )
+        }
+    }
+
+    private func stageGlowPath(
+        for style: OfficeArtStyle
+    ) -> CGPath {
+        let points: [CGPoint]
+        switch style {
+        case .threeD:
+            points = [
+                CGPoint(x: 560, y: 606),
+                CGPoint(x: 677, y: 548),
+                CGPoint(x: 909, y: 548),
+                CGPoint(x: 1_004, y: 595)
+            ]
+        case .twoD:
+            points = [
+                CGPoint(x: 574, y: 610),
+                CGPoint(x: 689, y: 548),
+                CGPoint(x: 936, y: 548),
+                CGPoint(x: 1_032, y: 604)
+            ]
+        }
+
+        let path = CGMutablePath()
+        guard let first = points.first else {
+            return path
+        }
+        path.move(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+        return path
+    }
+
     private func configureAnalogClock() {
         analogClockFaceCover.path = CGPath(
             ellipseIn: CGRect(x: -22.5, y: -22.5, width: 45, height: 45),
@@ -619,6 +950,29 @@ final class OfficeRealtimeScene: SKScene {
         )
         analogClockFaceCover.strokeColor = .clear
         analogClockFaceCover.zPosition = 0
+
+        let tickPath = CGMutablePath()
+        for index in 0..<12 {
+            let angle = CGFloat(index) / 12 * 2 * CGFloat.pi
+            let innerRadius: CGFloat = index.isMultiple(of: 3) ? 14.5 : 17
+            let outerRadius: CGFloat = 20
+            tickPath.move(
+                to: CGPoint(
+                    x: sin(angle) * innerRadius,
+                    y: cos(angle) * innerRadius
+                )
+            )
+            tickPath.addLine(
+                to: CGPoint(
+                    x: sin(angle) * outerRadius,
+                    y: cos(angle) * outerRadius
+                )
+            )
+        }
+        analogClockTicks.path = tickPath
+        analogClockTicks.lineWidth = 1.7
+        analogClockTicks.lineCap = .round
+        analogClockTicks.zPosition = 0.5
 
         configureClockHand(
             analogClockHourHand,
@@ -653,6 +1007,7 @@ final class OfficeRealtimeScene: SKScene {
         analogClockDial.xScale = 0.66
         analogClockDial.zPosition = 35
         analogClockDial.addChild(analogClockFaceCover)
+        analogClockDial.addChild(analogClockTicks)
         analogClockDial.addChild(analogClockHourHand)
         analogClockDial.addChild(analogClockMinuteHand)
         analogClockDial.addChild(analogClockSecondHand)
@@ -677,28 +1032,59 @@ final class OfficeRealtimeScene: SKScene {
         hand.zPosition = zPosition
     }
 
-    private func applyAnalogClockStyle(theme: OfficeTheme) {
-        switch theme {
-        case .modernDay:
+    private func applyAnalogClockStyle(
+        theme: OfficeTheme,
+        style: OfficeArtStyle
+    ) {
+        switch style {
+        case .twoD:
             analogClockDial.isHidden = false
-            analogClockDial.position.y = 665
-            analogClockFaceCover.fillColor = NSColor(
-                calibratedRed: 0.92,
-                green: 0.90,
-                blue: 0.88,
-                alpha: 1
-            )
-        case .modernNight:
-            analogClockDial.isHidden = false
-            analogClockDial.position.y = 672
-            analogClockFaceCover.fillColor = NSColor(
-                calibratedRed: 0.76,
-                green: 0.67,
-                blue: 0.60,
-                alpha: 1
-            )
-        case .woodDay, .woodNight:
-            analogClockDial.isHidden = true
+            analogClockTicks.isHidden = false
+            analogClockDial.position = CGPoint(x: 1_194, y: 687)
+            analogClockDial.xScale = 1.05
+            analogClockDial.yScale = 1.36
+            analogClockDial.zRotation = 0.27
+            analogClockFaceCover.fillColor = theme.isNight
+                ? NSColor(
+                    calibratedRed: 0.84,
+                    green: 0.66,
+                    blue: 0.49,
+                    alpha: 1
+                )
+                : NSColor(
+                    calibratedRed: 0.97,
+                    green: 0.91,
+                    blue: 0.85,
+                    alpha: 1
+                )
+        case .threeD:
+            analogClockTicks.isHidden = true
+            analogClockDial.position.x = 1_191.5
+            analogClockDial.xScale = 0.66
+            analogClockDial.yScale = 1
+            analogClockDial.zRotation = 0
+            switch theme {
+            case .modernDay:
+                analogClockDial.isHidden = false
+                analogClockDial.position.y = 665
+                analogClockFaceCover.fillColor = NSColor(
+                    calibratedRed: 0.92,
+                    green: 0.90,
+                    blue: 0.88,
+                    alpha: 1
+                )
+            case .modernNight:
+                analogClockDial.isHidden = false
+                analogClockDial.position.y = 672
+                analogClockFaceCover.fillColor = NSColor(
+                    calibratedRed: 0.76,
+                    green: 0.67,
+                    blue: 0.60,
+                    alpha: 1
+                )
+            case .woodDay, .woodNight:
+                analogClockDial.isHidden = true
+            }
         }
 
         let handColor = NSColor(
@@ -709,6 +1095,7 @@ final class OfficeRealtimeScene: SKScene {
         )
         analogClockHourHand.strokeColor = handColor
         analogClockMinuteHand.strokeColor = handColor
+        analogClockTicks.strokeColor = handColor.withAlphaComponent(0.72)
         analogClockSecondHand.strokeColor = NSColor(
             calibratedRed: 0.78,
             green: 0.13,
@@ -854,9 +1241,15 @@ final class OfficeRealtimeScene: SKScene {
             let level = CGFloat(phase.windowLightOpacity(at: index))
             let scale = 0.92 + level * 0.16
 
-            light.shade.alpha = (1 - level) * 0.16
-            light.halo.alpha = 0.01 + level * 0.08
-            light.core.alpha = 0.04 + level * 0.28
+            if currentStyle == .twoD {
+                light.shade.alpha = (1 - level) * 0.16
+                light.halo.alpha = 0.012 + level * 0.09
+                light.core.alpha = 0.035 + level * 0.36
+            } else {
+                light.shade.alpha = (1 - level) * 0.16
+                light.halo.alpha = 0.01 + level * 0.08
+                light.core.alpha = 0.04 + level * 0.28
+            }
             light.halo.setScale(scale)
             light.core.setScale(scale)
         }
@@ -866,24 +1259,37 @@ final class OfficeRealtimeScene: SKScene {
         for (index, beacon) in rooftopBeacons.enumerated() {
             let level = CGFloat(phase.rooftopBeaconOpacity(at: index))
 
-            beacon.halo.alpha = 0.015 + level * 0.16
-            beacon.core.alpha = 0.08 + level * 0.72
-            beacon.halo.setScale(0.85 + level * 0.35)
+            if currentStyle == .twoD {
+                beacon.halo.alpha = 0.015 + level * 0.28
+                beacon.core.alpha = 0.03 + level * 0.92
+            } else {
+                beacon.halo.alpha = 0.015 + level * 0.16
+                beacon.core.alpha = 0.08 + level * 0.72
+            }
+            beacon.halo.setScale(0.65 + level * 0.90)
+            beacon.core.setScale(0.90 + level * 0.65)
         }
     }
 
     private func updateMonitorGlows(phase: OfficeAnimationPhase) {
         for (index, glow) in monitorGlows.enumerated() {
             let level = CGFloat(phase.monitorGlowOpacity(at: index))
-            glow.alpha = 0.012 + level * 0.032
+            glow.alpha = currentStyle == .twoD
+                ? 0.004 + level * 0.016
+                : 0.012 + level * 0.032
             glow.setScale(0.98 + level * 0.04)
         }
     }
 
     private func updateStageGlow(phase: OfficeAnimationPhase) {
         let level = CGFloat(phase.stageGlow)
-        stageGlowWide.alpha = 0.025 + level * 0.055
-        stageGlowCore.alpha = 0.06 + level * 0.10
+        if currentStyle == .twoD {
+            stageGlowWide.alpha = 0.008 + level * 0.015
+            stageGlowCore.alpha = 0.015 + level * 0.035
+        } else {
+            stageGlowWide.alpha = 0.025 + level * 0.055
+            stageGlowCore.alpha = 0.06 + level * 0.10
+        }
     }
 
     private func stageLightColor(for theme: OfficeTheme) -> NSColor {
@@ -899,8 +1305,11 @@ final class OfficeRealtimeScene: SKScene {
         }
     }
 
-    private func artworkVerticalOffset(for theme: OfficeTheme) -> CGFloat {
-        theme == .modernDay ? 7 : 0
+    private func artworkVerticalOffset(
+        for theme: OfficeTheme,
+        style: OfficeArtStyle
+    ) -> CGFloat {
+        style == .threeD && theme == .modernDay ? 7 : 0
     }
 
     private func layoutContent() {

@@ -20,13 +20,19 @@ let package = Package(
     targets: [
         .target(
             name: "OfficeCore",
+            exclude: [
+                "Resources/character-faces",
+                "Resources/office-2d-motion-v1",
+                "Resources/office-2d-themes-v1",
+                "Resources/office-3d-motion-v1",
+                "Resources/office-background-3d-v4.png",
+                "Resources/office-theme-modern-day-v4.png",
+                "Resources/office-theme-modern-night-v4.png",
+                "Resources/office-theme-wood-day-v4.png",
+                "Resources/office-theme-wood-night-v4.png"
+            ],
             resources: [
-                .copy("Resources/office-theme-modern-day-v4.png"),
-                .copy("Resources/office-theme-modern-night-v4.png"),
-                .copy("Resources/office-theme-wood-day-v4.png"),
-                .copy("Resources/office-theme-wood-night-v4.png"),
-                .copy("Resources/office-background-3d-v4.png"),
-                .copy("Resources/office-3d-motion-v1"),
+                .copy("Resources/office-retina-v1"),
                 .copy("Resources/avatars"),
                 .copy("Resources/characters.json")
             ],

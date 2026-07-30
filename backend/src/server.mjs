@@ -221,7 +221,9 @@ async function updateCharacterIdentityPrompt(response, characterID, body) {
 
 async function updateCharacterSettings(response, characterID, body) {
   const backend = String(body.backend ?? "");
-  const allowedEfforts = ["high", "xhigh", "max"];
+  const allowedEfforts = backend === "codex"
+    ? ["high", "xhigh", "max", "ultra"]
+    : ["high", "xhigh", "max"];
   const effort = String(body.effort ?? "");
 
   if (!["codex", "claude"].includes(backend)) {
@@ -750,7 +752,11 @@ async function recordTurn(response, body) {
   }
   if (
     executionEffort &&
-    !["high", "xhigh", "max"].includes(executionEffort)
+    !(
+      executionBackend === "codex"
+        ? ["high", "xhigh", "max", "ultra"]
+        : ["high", "xhigh", "max"]
+    ).includes(executionEffort)
   ) {
     send(response, 400, { error: "지원하지 않는 실행 추론 레벨입니다." });
     return;

@@ -23,25 +23,16 @@ cp "$BIN_DIR/OfficeLLM" "$MACOS_DIR/OfficeLLM"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
 
-for resource_name in \
-    office-theme-modern-day-v4.png \
-    office-theme-modern-night-v4.png \
-    office-theme-wood-day-v4.png \
-    office-theme-wood-night-v4.png \
-    office-background-3d-v4.png \
-    characters.json
-do
-    cp \
-        "$PROJECT_DIR/Sources/OfficeCore/Resources/$resource_name" \
-        "$RESOURCE_STAGE_BUNDLE/$resource_name"
-done
+cp \
+    "$PROJECT_DIR/Sources/OfficeCore/Resources/characters.json" \
+    "$RESOURCE_STAGE_BUNDLE/characters.json"
 
-mkdir -p "$RESOURCE_STAGE_BUNDLE/office-3d-motion-v1"
+mkdir -p "$RESOURCE_STAGE_BUNDLE/office-retina-v1"
 /usr/bin/rsync \
     -a \
     --delete \
-    "$PROJECT_DIR/Sources/OfficeCore/Resources/office-3d-motion-v1/" \
-    "$RESOURCE_STAGE_BUNDLE/office-3d-motion-v1/"
+    "$PROJECT_DIR/Sources/OfficeCore/Resources/office-retina-v1/" \
+    "$RESOURCE_STAGE_BUNDLE/office-retina-v1/"
 
 mkdir -p "$RESOURCE_STAGE_BUNDLE/avatars"
 /usr/bin/rsync \

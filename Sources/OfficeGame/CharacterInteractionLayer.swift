@@ -1,4 +1,4 @@
-// 이 파일은 캐릭터 클릭 영역과 이름이 포함된 말풍선을 장면 위에 표시한다.
+// 이 파일은 2D·3D 캐릭터 클릭 영역과 이름이 포함된 말풍선을 장면 위에 표시한다.
 
 import OfficeCore
 import SwiftUI
@@ -6,6 +6,7 @@ import SwiftUI
 struct CharacterInteractionLayer: View {
     @ObservedObject var director: AgentDirector
     @ObservedObject private var speechBubbleStore: SpeechBubbleStore
+    let artStyle: OfficeArtStyle
     let onMonitorTapped: (OfficeCharacter) -> Void
     let onArchiveCabinetTapped: () -> Void
     let onWhiteboardTapped: () -> Void
@@ -13,6 +14,7 @@ struct CharacterInteractionLayer: View {
 
     init(
         director: AgentDirector,
+        artStyle: OfficeArtStyle,
         onMonitorTapped: @escaping (OfficeCharacter) -> Void,
         onArchiveCabinetTapped: @escaping () -> Void,
         onWhiteboardTapped: @escaping () -> Void,
@@ -22,6 +24,7 @@ struct CharacterInteractionLayer: View {
         _speechBubbleStore = ObservedObject(
             wrappedValue: director.speechBubbleStore
         )
+        self.artStyle = artStyle
         self.onMonitorTapped = onMonitorTapped
         self.onArchiveCabinetTapped = onArchiveCabinetTapped
         self.onWhiteboardTapped = onWhiteboardTapped
@@ -38,6 +41,13 @@ struct CharacterInteractionLayer: View {
 
             ZStack {
                 ForEach(director.characters) { character in
+                    let hitbox =
+                        OfficeInteractionGeometry.characterHitbox(
+                            for: character.id,
+                            artStyle: artStyle,
+                            fallback: character.hitbox.rect
+                        )
+
                     Button {
                         director.select(character)
                     } label: {
@@ -46,19 +56,25 @@ struct CharacterInteractionLayer: View {
                     }
                     .buttonStyle(.plain)
                     .frame(
-                        width: character.hitbox.width * scale,
-                        height: character.hitbox.height * scale
+                        width: hitbox.width * scale,
+                        height: hitbox.height * scale
                     )
                     .position(
                         x: fittedFrame.minX
-                            + character.hitbox.rect.midX * scale,
+                            + hitbox.midX * scale,
                         y: fittedFrame.minY
-                            + character.hitbox.rect.midY * scale
+                            + hitbox.midY * scale
                     )
                     .accessibilityLabel(
                         "\(director.displayName(for: character.id)) 선택"
                     )
                 }
+
+                let archiveCabinetHitbox =
+                    OfficeInteractionGeometry.archiveCabinetHitbox(
+                        artStyle: artStyle,
+                        fallback: director.archiveCabinetHitbox.rect
+                    )
 
                 Button(action: onArchiveCabinetTapped) {
                     Color.clear
@@ -66,17 +82,22 @@ struct CharacterInteractionLayer: View {
                 }
                 .buttonStyle(.plain)
                 .frame(
-                    width: director.archiveCabinetHitbox.width * scale,
-                    height: director.archiveCabinetHitbox.height * scale
+                    width: archiveCabinetHitbox.width * scale,
+                    height: archiveCabinetHitbox.height * scale
                 )
                 .position(
                     x: fittedFrame.minX
-                        + director.archiveCabinetHitbox.rect.midX * scale,
+                        + archiveCabinetHitbox.midX * scale,
                     y: fittedFrame.minY
-                        + director.archiveCabinetHitbox.rect.midY * scale
+                        + archiveCabinetHitbox.midY * scale
                 )
                 .accessibilityLabel("전체 대화 보관함 열기")
                 .help("전체 대화 보관함")
+
+                let whiteboardHitbox =
+                    OfficeWhiteboardGeometry.interactionRect(
+                        for: artStyle
+                    )
 
                 Button(action: onWhiteboardTapped) {
                     Color.clear
@@ -84,25 +105,26 @@ struct CharacterInteractionLayer: View {
                 }
                 .buttonStyle(.plain)
                 .frame(
-                    width:
-                        OfficeWhiteboardGeometry.interactionRect.width
-                        * scale,
-                    height:
-                        OfficeWhiteboardGeometry.interactionRect.height
-                        * scale
+                    width: whiteboardHitbox.width * scale,
+                    height: whiteboardHitbox.height * scale
                 )
                 .position(
                     x: fittedFrame.minX
-                        + OfficeWhiteboardGeometry.interactionRect.midX
-                        * scale,
+                        + whiteboardHitbox.midX * scale,
                     y: fittedFrame.minY
-                        + OfficeWhiteboardGeometry.interactionRect.midY
-                        * scale
+                        + whiteboardHitbox.midY * scale
                 )
                 .accessibilityLabel("화이트보드 상세 열기")
                 .help("CLI 한도 상세")
 
                 ForEach(director.characters) { character in
+                    let monitorHitbox =
+                        OfficeInteractionGeometry.monitorHitbox(
+                            for: character.id,
+                            artStyle: artStyle,
+                            fallback: character.monitorHitbox.rect
+                        )
+
                     Button {
                         onMonitorTapped(character.id)
                     } label: {
@@ -111,14 +133,14 @@ struct CharacterInteractionLayer: View {
                     }
                     .buttonStyle(.plain)
                     .frame(
-                        width: character.monitorHitbox.width * scale,
-                        height: character.monitorHitbox.height * scale
+                        width: monitorHitbox.width * scale,
+                        height: monitorHitbox.height * scale
                     )
                     .position(
                         x: fittedFrame.minX
-                            + character.monitorHitbox.rect.midX * scale,
+                            + monitorHitbox.midX * scale,
                         y: fittedFrame.minY
-                            + character.monitorHitbox.rect.midY * scale
+                            + monitorHitbox.midY * scale
                     )
                     .accessibilityLabel(
                         "\(director.displayName(for: character.id)) 대화 열기"
@@ -141,6 +163,12 @@ struct CharacterInteractionLayer: View {
                             director.failureMessage(for: character.id) != nil
                         let isOffDuty =
                             director.offDutyReason(for: character.id) != nil
+                        let bubbleAnchor =
+                            OfficeInteractionGeometry.bubbleAnchor(
+                                for: character.id,
+                                artStyle: artStyle,
+                                fallback: character.bubble.point
+                            )
 
                         Button {
                             onBubbleTapped(character.id, message)
@@ -169,9 +197,9 @@ struct CharacterInteractionLayer: View {
                         .buttonStyle(.plain)
                         .position(
                             x: fittedFrame.minX
-                                + character.bubble.x * scale,
+                                + bubbleAnchor.x * scale,
                             y: fittedFrame.minY
-                                + character.bubble.y * scale
+                                + bubbleAnchor.y * scale
                         )
                         .allowsHitTesting(!isThinking)
                         .transition(
@@ -273,19 +301,19 @@ private struct CharacterSpeechBubble: View {
     @ViewBuilder
     private var statusLabel: some View {
         if isQuestion {
-            Label("질문", systemImage: "questionmark.bubble.fill")
+            Label("답장 픽", systemImage: "questionmark.bubble.fill")
                 .font(.system(size: 7, weight: .bold))
                 .foregroundStyle(
                     Color(red: 0.56, green: 0.35, blue: 0.08)
                 )
         } else if isOffDuty {
-            Label("퇴근", systemImage: "moon.zzz.fill")
+            Label("오늘 마감", systemImage: "moon.zzz.fill")
                 .font(.system(size: 7, weight: .bold))
                 .foregroundStyle(
                     Color(red: 0.23, green: 0.32, blue: 0.57)
                 )
         } else if isFailure {
-            Label("중단", systemImage: "exclamationmark.triangle.fill")
+            Label("앗차", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 7, weight: .bold))
                 .foregroundStyle(
                     Color(red: 0.67, green: 0.14, blue: 0.12)

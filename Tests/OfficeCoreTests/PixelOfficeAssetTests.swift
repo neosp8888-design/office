@@ -5,6 +5,45 @@ import XCTest
 @testable import OfficeCore
 
 final class PixelOfficeAssetTests: XCTestCase {
+    func testArtStyleMetadataAndSupportedThemesAreStable() {
+        XCTAssertEqual(OfficeArtStyle.twoD.rawValue, "2d")
+        XCTAssertEqual(OfficeArtStyle.threeD.rawValue, "3d")
+        XCTAssertEqual(OfficeArtStyle.defaultValue, .threeD)
+        XCTAssertEqual(OfficeArtStyle.twoD.title, "2D")
+        XCTAssertEqual(OfficeArtStyle.threeD.title, "3D")
+        XCTAssertEqual(
+            OfficeArtStyle.twoD.supportedThemes,
+            [.modernDay, .modernNight]
+        )
+        XCTAssertEqual(
+            OfficeArtStyle.threeD.supportedThemes,
+            OfficeTheme.allCases
+        )
+        XCTAssertFalse(OfficeArtStyle.twoD.supports(.woodDay))
+        XCTAssertFalse(OfficeArtStyle.twoD.supports(.woodNight))
+    }
+
+    func testTwoDAndThreeDUseDistinctModernBackgrounds() {
+        for theme in [OfficeTheme.modernDay, .modernNight] {
+            let twoDURL = PixelOfficeAsset.resourceURL(
+                for: theme,
+                style: .twoD
+            )
+            let threeDURL = PixelOfficeAsset.resourceURL(
+                for: theme,
+                style: .threeD
+            )
+
+            XCTAssertNotEqual(twoDURL, threeDURL)
+            XCTAssertTrue(
+                twoDURL.path.contains("office-retina-v1/backgrounds/2d")
+            )
+            XCTAssertTrue(
+                threeDURL.path.contains("office-retina-v1/backgrounds/3d")
+            )
+        }
+    }
+
     func testSpeechBubbleAnchorsStayClearOfCharacterFaces() throws {
         let configuration = try CharacterConfigurationAsset.load()
         let boss = try XCTUnwrap(
@@ -40,39 +79,195 @@ final class PixelOfficeAssetTests: XCTestCase {
         }
     }
 
-    func testAllThemesUseTheV4Canvas() throws {
-        for theme in OfficeTheme.allCases {
-            let data = try Data(contentsOf: PixelOfficeAsset.resourceURL(for: theme))
-            let representation = try XCTUnwrap(NSBitmapImageRep(data: data))
+    func testAllThemesUseTheRetinaV4Canvas() throws {
+        for style in OfficeArtStyle.allCases {
+            for theme in style.supportedThemes {
+                let data = try Data(
+                    contentsOf: PixelOfficeAsset.resourceURL(
+                        for: theme,
+                        style: style
+                    )
+                )
+                let representation = try XCTUnwrap(NSBitmapImageRep(data: data))
 
-            XCTAssertEqual(representation.pixelsWide, 1_536, theme.title)
-            XCTAssertEqual(representation.pixelsHigh, 1_024, theme.title)
-            XCTAssertEqual(
-                Double(representation.pixelsWide) / Double(representation.pixelsHigh),
-                1.5,
-                accuracy: 0.0001,
-                theme.title
-            )
+                XCTAssertEqual(
+                    representation.pixelsWide,
+                    3_072,
+                    "\(style.title) \(theme.title)"
+                )
+                XCTAssertEqual(
+                    representation.pixelsHigh,
+                    2_048,
+                    "\(style.title) \(theme.title)"
+                )
+                XCTAssertEqual(
+                    Double(representation.pixelsWide)
+                        / Double(representation.pixelsHigh),
+                    1.5,
+                    accuracy: 0.0001,
+                    "\(style.title) \(theme.title)"
+                )
+            }
         }
     }
 
     func testAllCharacterMotionPatchesLoadForEveryTheme() {
-        for theme in OfficeTheme.allCases {
-            for character in OfficeCharacter.allCases {
-                for kind in OfficeCharacterMotionKind.allCases {
-                    let url = PixelOfficeAsset.motionResourceURL(
-                        for: character,
-                        kind: kind,
-                        theme: theme
-                    )
-                    XCTAssertEqual(url.pathExtension, "png")
-                    XCTAssertFalse(
-                        PixelOfficeAsset.motionImage(
+        for style in OfficeArtStyle.allCases {
+            for theme in style.supportedThemes {
+                for character in OfficeCharacter.allCases {
+                    for kind in OfficeCharacterMotionKind.allCases {
+                        let url = PixelOfficeAsset.motionResourceURL(
                             for: character,
                             kind: kind,
-                            theme: theme
-                        ).representations.isEmpty,
-                        "\(theme.title) \(character.rawValue) \(kind.rawValue)"
+                            theme: theme,
+                            style: style
+                        )
+                        XCTAssertEqual(url.pathExtension, "png")
+                        XCTAssertFalse(
+                            PixelOfficeAsset.motionImage(
+                                for: character,
+                                kind: kind,
+                                theme: theme,
+                                style: style
+                            ).representations.isEmpty,
+                            "\(style.title) \(theme.title) "
+                                + "\(character.rawValue) \(kind.rawValue)"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func testMotionPatchDimensionsMatchDoubleResolutionCanvasBoxes() throws {
+        let expected: [
+            OfficeArtStyle: [
+                OfficeCharacter: [OfficeCharacterMotionKind: CGSize]
+            ]
+        ] = [
+            .twoD: [
+                .boss: [
+                    .blink: CGSize(width: 77, height: 42),
+                    .mouth: CGSize(width: 26, height: 20),
+                    .typing: CGSize(width: 43, height: 34)
+                ],
+                .leftMan: [
+                    .blink: CGSize(width: 91, height: 55),
+                    .mouth: CGSize(width: 25, height: 22),
+                    .typing: CGSize(width: 53, height: 46)
+                ],
+                .leftWoman: [
+                    .blink: CGSize(width: 84, height: 51),
+                    .mouth: CGSize(width: 31, height: 28),
+                    .typing: CGSize(width: 65, height: 42)
+                ],
+                .rightWoman: [
+                    .blink: CGSize(width: 86, height: 51),
+                    .mouth: CGSize(width: 29, height: 28),
+                    .typing: CGSize(width: 66, height: 41)
+                ],
+                .rightMan: [
+                    .blink: CGSize(width: 88, height: 54),
+                    .mouth: CGSize(width: 30, height: 29),
+                    .typing: CGSize(width: 59, height: 41)
+                ]
+            ],
+            .threeD: [
+                .boss: [
+                    .blink: CGSize(width: 62, height: 37),
+                    .mouth: CGSize(width: 39, height: 27),
+                    .typing: CGSize(width: 48, height: 42)
+                ],
+                .leftMan: [
+                    .blink: CGSize(width: 58, height: 42),
+                    .mouth: CGSize(width: 32, height: 24),
+                    .typing: CGSize(width: 94, height: 76)
+                ],
+                .leftWoman: [
+                    .blink: CGSize(width: 51, height: 36),
+                    .mouth: CGSize(width: 38, height: 26),
+                    .typing: CGSize(width: 59, height: 47)
+                ],
+                .rightWoman: [
+                    .blink: CGSize(width: 58, height: 39),
+                    .mouth: CGSize(width: 37, height: 28),
+                    .typing: CGSize(width: 62, height: 50)
+                ],
+                .rightMan: [
+                    .blink: CGSize(width: 64, height: 43),
+                    .mouth: CGSize(width: 41, height: 30),
+                    .typing: CGSize(width: 75, height: 55)
+                ]
+            ]
+        ]
+
+        for style in OfficeArtStyle.allCases {
+            for theme in style.supportedThemes {
+                for character in OfficeCharacter.allCases {
+                    for kind in OfficeCharacterMotionKind.allCases {
+                        let data = try Data(
+                            contentsOf: PixelOfficeAsset.motionResourceURL(
+                                for: character,
+                                kind: kind,
+                                theme: theme,
+                                style: style
+                            )
+                        )
+                        let representation = try XCTUnwrap(
+                            NSBitmapImageRep(data: data)
+                        )
+                        let size = try XCTUnwrap(
+                            expected[style]?[character]?[kind]
+                        )
+
+                        XCTAssertEqual(
+                            representation.pixelsWide,
+                            Int(size.width) * 2,
+                            "\(style.title) \(theme.title) "
+                                + "\(character.rawValue) \(kind.rawValue)"
+                        )
+                        XCTAssertEqual(
+                            representation.pixelsHigh,
+                            Int(size.height) * 2,
+                            "\(style.title) \(theme.title) "
+                                + "\(character.rawValue) \(kind.rawValue)"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func testTwoDMotionPatchesUseTransparentStableEdges() throws {
+        for theme in OfficeArtStyle.twoD.supportedThemes {
+            for character in OfficeCharacter.allCases {
+                for kind in OfficeCharacterMotionKind.allCases {
+                    let data = try Data(
+                        contentsOf: PixelOfficeAsset.motionResourceURL(
+                            for: character,
+                            kind: kind,
+                            theme: theme,
+                            style: .twoD
+                        )
+                    )
+                    let representation = try XCTUnwrap(
+                        NSBitmapImageRep(data: data)
+                    )
+                    let topLeft = try XCTUnwrap(
+                        representation.colorAt(x: 0, y: 0)
+                    )
+
+                    XCTAssertTrue(
+                        representation.hasAlpha,
+                        "\(theme.title) \(character.rawValue) "
+                            + "\(kind.rawValue)"
+                    )
+                    XCTAssertEqual(
+                        topLeft.alphaComponent,
+                        0,
+                        accuracy: 0.001,
+                        "\(theme.title) \(character.rawValue) "
+                            + "\(kind.rawValue)"
                     )
                 }
             }
@@ -196,19 +391,52 @@ final class PixelOfficeAssetTests: XCTestCase {
         XCTAssertGreaterThan(Set(levels).count, 1)
     }
 
+    func testWindowLightsChangeWithinEveryTenSecondWindow() {
+        for windowStart in stride(
+            from: 0.0,
+            through: 40.0,
+            by: 10.0
+        ) {
+            let initial = (0 ..< 11).map { lightIndex in
+                OfficeAnimationPhase(
+                    date: Date(timeIntervalSince1970: windowStart),
+                    reduceMotion: false
+                )
+                .windowLightOpacity(at: lightIndex)
+            }
+            let changed = (1 ... 20).contains { step in
+                let sampleTime = windowStart + Double(step) * 0.5
+                let sample = (0 ..< 11).map { lightIndex in
+                    OfficeAnimationPhase(
+                        date: Date(timeIntervalSince1970: sampleTime),
+                        reduceMotion: false
+                    )
+                    .windowLightOpacity(at: lightIndex)
+                }
+                return sample != initial
+            }
+            XCTAssertTrue(changed, "\(windowStart)초 구간")
+        }
+    }
+
     func testRooftopBeaconFlashesBrieflyThenDims() {
-        let periodStart = 3.8 * 100
+        let periodStart = 2.6 * 100
         let flash = OfficeAnimationPhase(
-            date: Date(timeIntervalSince1970: periodStart + 0.22),
+            date: Date(timeIntervalSince1970: periodStart + 0.19),
             reduceMotion: false
         )
         let betweenFlashes = OfficeAnimationPhase(
-            date: Date(timeIntervalSince1970: periodStart + 2.0),
+            date: Date(timeIntervalSince1970: periodStart + 1.3),
+            reduceMotion: false
+        )
+        let nextFlash = OfficeAnimationPhase(
+            date: Date(timeIntervalSince1970: periodStart + 2.6 + 0.19),
             reduceMotion: false
         )
 
         XCTAssertGreaterThan(flash.rooftopBeaconOpacity(at: 0), 0.9)
-        XCTAssertLessThan(betweenFlashes.rooftopBeaconOpacity(at: 0), 0.2)
+        XCTAssertLessThan(betweenFlashes.rooftopBeaconOpacity(at: 0), 0.1)
+        XCTAssertGreaterThan(nextFlash.rooftopBeaconOpacity(at: 0), 0.9)
     }
 
     func testRealtimeEffectsChangeAcrossFrames() {
@@ -217,7 +445,7 @@ final class PixelOfficeAssetTests: XCTestCase {
             reduceMotion: false
         )
         let next = OfficeAnimationPhase(
-            date: Date(timeIntervalSince1970: 0.4),
+            date: Date(timeIntervalSince1970: 0.19),
             reduceMotion: false
         )
 
@@ -257,19 +485,54 @@ final class PixelOfficeAssetTests: XCTestCase {
     func testWhiteboardUsageAreaMatchesPerspectiveCorners() {
         XCTAssertEqual(
             OfficeWhiteboardGeometry.usagePoint(x: 0, y: 0),
-            CGPoint(x: 210, y: 425)
+            CGPoint(x: 200, y: 415)
         )
         XCTAssertEqual(
-            OfficeWhiteboardGeometry.usagePoint(x: 108, y: 0),
-            CGPoint(x: 318, y: 366)
+            OfficeWhiteboardGeometry.usagePoint(x: 128, y: 0),
+            CGPoint(x: 328, y: 345)
         )
         XCTAssertEqual(
-            OfficeWhiteboardGeometry.usagePoint(x: 108, y: 69),
-            CGPoint(x: 318, y: 435)
+            OfficeWhiteboardGeometry.usagePoint(x: 128, y: 78),
+            CGPoint(x: 328, y: 423)
         )
         XCTAssertEqual(
-            OfficeWhiteboardGeometry.usagePoint(x: 0, y: 69),
-            CGPoint(x: 210, y: 494)
+            OfficeWhiteboardGeometry.usagePoint(x: 0, y: 78),
+            CGPoint(x: 200, y: 493)
+        )
+    }
+
+    func testTwoDWhiteboardUsageAreaMatchesAnimePerspective() {
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(
+                for: .twoD,
+                x: 0,
+                y: 0
+            ),
+            CGPoint(x: 194, y: 411)
+        )
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(
+                for: .twoD,
+                x: 128,
+                y: 0
+            ),
+            CGPoint(x: 326, y: 342)
+        )
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(
+                for: .twoD,
+                x: 128,
+                y: 78
+            ),
+            CGPoint(x: 326, y: 445)
+        )
+        XCTAssertEqual(
+            OfficeWhiteboardGeometry.usagePoint(
+                for: .twoD,
+                x: 0,
+                y: 78
+            ),
+            CGPoint(x: 194, y: 514)
         )
     }
 

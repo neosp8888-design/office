@@ -27,7 +27,12 @@ public enum AgentBackend:
     }
 
     public var effortOptions: [String] {
-        ["high", "xhigh", "max"]
+        switch self {
+        case .codex:
+            ["high", "xhigh", "max", "ultra"]
+        case .claude:
+            ["high", "xhigh", "max"]
+        }
     }
 
     public var modelOptions: [String] {
