@@ -1082,3 +1082,25 @@
 - 세션 유지 `b0c57d8`, Finder 링크 `792941f`, 검증 기록 `e1a04b3`의 세 커밋을 최신 원격 `main` 위로 재배치하고 `agent/session-continuity-finder-links`에 푸시했다
 - PR `#5`를 생성해 병합했으며 공개 `main`의 병합 커밋은 `4c51cf4`다
 - 병합 직전 Swift 테스트 `112개`, 백엔드 테스트 `65개`, 릴리스 빌드와 엄격한 코드 서명을 다시 통과했고 공개 GitHub API에서 저장소 `public`, 기본 브랜치 `main`을 확인했다
+
+## 2026-08-01 작업별 Git worktree 검토·승인·병합
+
+- 직원마다 영구 worktree를 하나씩 두면 서로 다른 업무의 변경과 승인이 섞이므로 활성 CLI 세션 하나를 하나의 작업 단위로 본다
+- 같은 Codex thread 또는 Claude session을 재개하는 동안에는 동일 worktree를 유지하고, 변경이 생긴 턴이 끝나면 해당 작업은 사용자 판단 전까지 검토 대기 상태가 된다
+- Git 저장소가 아닌 공통 작업 폴더는 기존 실행 방식을 유지하고 Git 저장소 업무만 기준 커밋에서 분기한 격리 worktree에서 실행한다
+- 변경 비교는 기준 커밋부터 작업 branch 전체와 미커밋·미추적 파일을 모두 포함해야 하며, 검토 준비 과정의 staging은 격리된 worktree 안에서만 수행한다
+- 검토 대기 중에는 같은 직원에게 다음 업무를 받지 않아 승인 대상이 바뀌지 않게 한다
+- 승인 시 원본 작업 트리가 clean이고 원래 branch에 있는지 확인하고, 최신 head와 작업 branch의 충돌을 검사한 뒤 직렬화해 병합한다
+- 거절은 복구 가능성을 위해 branch와 worktree를 즉시 삭제하지 않고 상태만 거절로 바꾸며, 새 업무는 새 CLI 세션과 새 worktree에서 시작한다
+- Codex ↔ Claude 전환 전에 active worktree를 다시 검사하고, 변경이 있으면 검토 대기로 바꿔 전환을 막으며 변경이 없으면 세션과 빈 worktree를 정리한다
+- 승인 요청은 사용자가 본 `reviewTree`를 함께 보내야 하며 DB의 현재 검토 tree와 다르면 병합을 시작하지 않는다
+- 외부 CLI session ID가 아직 없어도 직원 기준의 미해결 workspace 조회로 후속 업무를 막는다
+- 최근 피드 제한보다 오래된 미해결 검토 턴도 API 결과에 고정해 승인·거절 진입점을 잃지 않게 한다
+- worktree는 프로세스·포트·DB를 격리하지 않으므로 이 기능의 보장 범위는 Git 추적 파일과 작업 폴더에 한정한다
+- 성공 기준은 승인 전 원본 branch가 바뀌지 않고, 승인 뒤에만 정확한 diff가 main에 들어가며, dirty main·병렬 승인·충돌에서 안전하게 중단하고 백엔드·Swift 테스트와 릴리스 빌드를 통과하는 것이다
+- provider 전환, stale review tree, reject 경쟁, 외부 session ID 없는 잠금과 오래된 검토 턴 고정 회귀를 포함한 백엔드 테스트 `105개`와 구문 검사를 통과했다
+- 직원의 중간 커밋 이력은 승인 tree 하나로 squash해 main 조상에서 제외하고, project hook이 승인 tree 또는 merge tree를 바꾸면 원본 ref와 tracked 파일을 복구한다
+- worktree 생성 전 `provisioning`을 DB에 기록하고, 재시작 시 반쪽 worktree·branch와 병합 뒤 남은 worktree를 소유권 검증 후 정리한다
+- Swift 경고 오류 승격 테스트 `119개`, 릴리스 빌드와 엄격한 코드 서명을 통과했다
+- 격리 PostgreSQL과 4324 테스트 백엔드에서 승인 전 main 불변, 후속 업무 409, reviewTree 일치 승인·병합, 거절 보존, 무변경 provider 전환 정리, 원본 절대경로 dirty 감지를 실제 API·Git·DB로 확인했다
+- 통합 검증 DB는 삭제했고 fixture는 `/Users/neo/.Trash/officestra-e2e-final-20260801`에 보존했다

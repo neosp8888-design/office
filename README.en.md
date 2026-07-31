@@ -51,7 +51,7 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Model, Fast or Standard mode, reasoning effort, and read/write permission controls.
 - Separate persistence of selected settings and the settings actually used for each turn.
 - Provider-native session IDs for follow-up work.
-- A new provider-native session after changing a coworker's execution configuration.
+- Model, speed, effort, permission, and role changes within the same provider keep the current session; switching between Codex and Claude starts a new one.
 - In-session replies when an agent needs a user decision.
 - Protection against concurrent tasks for the same coworker, with cancellation for active work.
 - Separate visual states for quota exhaustion and ordinary execution failures.
@@ -107,18 +107,15 @@ As long as the backend remains running, tasks continue after the app window clos
 
 ## Parallel development and Git safety
 
-> [!IMPORTANT]
-> All coworkers currently share one `workdir`. OFFICESTRA does not automatically manage branches, Git worktrees, merges, or file conflicts.
+When `workdir` is a Git repository, OFFICESTRA creates a dedicated branch and worktree for each active CLI session. Resumed Codex threads and Claude sessions keep using the same worktree.
 
-Different coworkers can run concurrently, but simultaneous edits to the same files may overwrite work or mix test and commit scope. For a single shared workspace, the recommended operating model is:
+After a successful task creates changes, the live task card shows the changed files and the diff against the base commit, then blocks additional work for that coworker. Nothing reaches the recorded source branch until the user selects **Approve and merge**. Rejected branches and worktrees are retained for recovery.
 
-- Give write access to one coworker at a time.
-- Run research, review, and other read-heavy tasks in parallel.
-- Check active coworkers and `git status` before assigning new development work.
-- Prepare a dedicated `git worktree` and branch per coworker for true parallel implementation.
-- Let one owner handle final integration, conflict resolution, and the full validation suite.
+When a Codex-to-Claude or Claude-to-Codex switch would end an active session, unreviewed changes move to review and the settings request stops with `409`. An unchanged worktree is cleaned up automatically before the new provider session starts.
 
-Selecting multiple coworkers is safe by itself. Overlapping write scopes are the risk.
+Immediately before merging, OFFICESTRA verifies that the source worktree is still on the recorded branch and clean, invalidates approval if the reviewed task tree changed, serializes merges per repository, and checks for conflicts before touching the source branch. Dirty source state and conflicts stop the merge for user review.
+
+Non-Git workdirs continue to use the existing shared-folder behavior. A Git worktree isolates repository file changes only; it does not isolate processes, ports, databases, or files outside the workdir.
 
 ## Requirements
 
@@ -154,6 +151,8 @@ Update the top-level `workdir` in `Sources/OfficeCore/Resources/characters.json`
   "workdir": "/absolute/path/to/workspace"
 }
 ```
+
+Git task worktrees are created under `~/.officestra/worktrees` by default. Set the backend `OFFICE_WORKTREE_ROOT` environment variable to use a different location.
 
 ### 2. Start PostgreSQL and the backend
 
@@ -213,7 +212,14 @@ The default base URL is `http://127.0.0.1:4317`. This is a local control plane f
 | Role instructions | `PUT /api/characters/:id/identity-prompt` |
 | Start a task | `POST /api/agent-jobs` |
 | Stop a task | `DELETE /api/agent-jobs/:characterId` |
+| Inspect Git changes | `GET /api/workspace-reviews/:turnId` |
+| Approve or reject Git changes | `POST /api/workspace-reviews/:turnId/approve`, `POST /api/workspace-reviews/:turnId/reject` |
 | RAG storage and search | `POST /api/rag/documents`, `POST /api/rag/search` |
+
+Approval and rejection requests use `application/json`. Approval must send the
+`reviewTree` from the reviewed response as `{"reviewTree":"..."}`; rejection
+sends `{}`. A changed tree or stale review value stops with `409`, and the
+latest diff must be reviewed again.
 
 Example task request:
 
@@ -233,6 +239,7 @@ Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. 
 
 - Tasks, responses, sessions, and activity records are stored in a local PostgreSQL Docker volume.
 - Attachments are copied into `.office-attachments/` under the configured workspace. When `workdir` points to another Git repository, add this directory to that repository's `.gitignore` as well.
+- Approved worktrees are cleaned up after merging, while rejected worktrees and branches are retained for recovery and must be removed manually when no longer needed.
 - OFFICESTRA does not store API keys. It uses each CLI's existing local authentication.
 - The backend binds to `127.0.0.1` by default.
 - PostgreSQL is exposed only on `127.0.0.1:54329` by the included Compose configuration.
@@ -292,7 +299,9 @@ See [`APP-DESIGN.md`](APP-DESIGN.md) for the product design background and [`LLM
 - Users must install and authenticate the CLI providers and Docker locally.
 - The model list is currently defined in code rather than discovered dynamically from every CLI model.
 - Claude Code Fast mode is currently limited to Opus 5.
-- OFFICESTRA does not automatically manage branches, worktrees, merges, or file conflicts between coworkers.
+- Git worktrees do not isolate processes, ports, databases, or files outside the repository.
+- A full-access agent can bypass the worktree boundary by committing or pushing through the source repository's absolute path. OFFICESTRA detects a dirty source tree but cannot distinguish a clean direct commit, so production use should pair `workspace-write` or `auto` permissions with protected remote branch rules.
+- Conflict resolution and cleanup of a dirty source worktree require user judgment.
 - There is no orchestrator that automatically decomposes one large task and assigns it across the whole team.
 - RAG embedding generation and automatic retrieval injection require additional integration.
 - The unauthenticated local API must not be used as an externally exposed service.

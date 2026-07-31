@@ -59,7 +59,8 @@ five-person AI team._
 - 모델·Fast 또는 Standard·추론 단계·읽기/쓰기 권한 설정
 - 선택 모드와 실제 실행 모드를 직원 설정과 각 업무 기록에 별도로 저장
 - 직원별 외부 CLI 세션 저장과 후속 업무 재개
-- 설정 변경 시 기존 세션 종료 후 새 실행 세션 시작
+- 같은 CLI의 모델·Fast·추론·권한·역할 변경은 기존 세션을 유지하고,
+  Codex ↔ Claude 전환만 새 실행 세션 시작
 - 사용자 판단이 필요한 질문을 같은 세션에서 이어서 답변
 - 같은 직원의 중복 업무 차단과 실행 중 업무 취소
 - 모델 한도 소진과 일반 실행 실패를 다른 상태로 표시
@@ -116,22 +117,29 @@ flowchart LR
 
 ## 병렬 개발과 Git 안전 수칙
 
-> [!IMPORTANT]
-> 현재 모든 직원은 하나의 `workdir`를 공유한다. OFFICESTRA는 브랜치,
-> Git worktree, 머지와 파일 충돌을 자동 관리하지 않는다.
+Git 저장소를 `workdir`로 지정하면 OFFICESTRA가 활성 CLI 세션마다 전용
+branch와 worktree를 만든다. 같은 Codex thread 또는 Claude session을
+재개하는 동안에는 같은 worktree를 사용한다.
 
-서로 다른 직원은 동시에 실행할 수 있지만 같은 파일을 함께 수정하면 변경을
-덮어쓰거나 테스트·커밋 범위가 섞일 수 있다. 한 작업 폴더에서는 다음 운영을
-권장한다.
+변경이 생긴 업무가 성공하면 우측 업무 카드가 기준 커밋 대비 파일 목록과
+diff를 보여주고 해당 직원의 다음 업무를 잠근다. 사용자가 `승인 후 병합`을
+누른 뒤에만 원본 branch에 병합한다. 거절한 branch와 worktree는 복구할 수
+있도록 보존한다.
 
-- 쓰기 업무는 한 번에 한 직원만 담당한다.
-- 조사·리뷰·테스트처럼 읽기 중심 업무는 병렬로 배정한다.
-- 새 개발 업무를 보내기 전에 실행 중인 직원과 `git status`를 확인한다.
-- 같은 기능을 진짜 병렬 개발하려면 직원별 `git worktree + branch`를 준비한다.
-- 최종 통합·충돌 해결·전체 테스트는 한 명의 담당자가 수행한다.
+Codex ↔ Claude 전환으로 활성 세션을 끝낼 때 변경사항이 남아 있으면 먼저
+검토 대기로 전환하고 설정 저장을 `409`로 중단한다. 변경사항이 없는 빈
+worktree만 자동으로 정리한 뒤 새 provider 세션을 시작한다.
 
-직원을 자유롭게 선택하는 것은 문제가 아니다. 겹치는 쓰기 범위를 동시에
-맡기는 것이 위험하다.
+병합 직전에는 다음 조건을 다시 검사한다.
+
+- 원본 작업 트리가 처음 기록한 branch에 있고 미추적 파일까지 clean인지 확인한다.
+- 검토 뒤 작업 tree가 달라졌으면 기존 승인을 무효화하고 새 diff를 요구한다.
+- 저장소별 병합을 직렬화하고 최신 원본과의 충돌을 원본 변경 전에 검사한다.
+- 충돌이나 dirty 원본을 발견하면 자동 해결하지 않고 병합을 중단한다.
+
+Git 저장소가 아닌 `workdir`는 기존 공유 폴더 방식으로 실행된다. worktree는 Git
+파일 변경만 격리하며 프로세스, 포트, 데이터베이스와 작업 폴더 밖의 파일은
+격리하지 않는다.
 
 ## 요구 사항
 
@@ -168,6 +176,9 @@ cd office
   "workdir": "/absolute/path/to/workspace"
 }
 ```
+
+Git 업무의 격리 worktree는 기본적으로 `~/.officestra/worktrees` 아래에
+생성된다. 백엔드의 `OFFICE_WORKTREE_ROOT` 환경 변수로 다른 경로를 지정할 수 있다.
 
 ### 2. PostgreSQL과 백엔드 실행
 
@@ -237,7 +248,14 @@ Standard로 표시한다.
 | 역할 지침 | `PUT /api/characters/:id/identity-prompt` |
 | 업무 실행 | `POST /api/agent-jobs` |
 | 업무 중단 | `DELETE /api/agent-jobs/:characterId` |
+| Git 변경 검토 | `GET /api/workspace-reviews/:turnId` |
+| Git 승인·거절 | `POST /api/workspace-reviews/:turnId/approve`, `POST /api/workspace-reviews/:turnId/reject` |
 | RAG 문서·검색 | `POST /api/rag/documents`, `POST /api/rag/search` |
+
+Git 승인·거절 요청은 `application/json`으로 보낸다. 승인은 검토 응답에서 받은
+`reviewTree`를 `{"reviewTree":"..."}`로 그대로 보내고 거절은 `{}`를 보낸다.
+그 뒤 변경 tree가 달라졌거나 오래된 검토 값을 보내면 `409`로 중단하고 최신
+diff를 다시 확인해야 한다.
 
 업무 실행 예시는 다음과 같다.
 
@@ -259,6 +277,7 @@ curl -X POST http://127.0.0.1:4317/api/agent-jobs \
 
 - 업무·응답·세션·활동 기록은 로컬 PostgreSQL Docker 볼륨에 저장된다.
 - 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사된다. 다른 Git 저장소를 `workdir`로 사용한다면 해당 저장소의 `.gitignore`에도 이 폴더를 추가해야 한다.
+- 승인된 worktree는 병합 뒤 정리되지만 거절된 worktree와 branch는 복구를 위해 남으므로 필요 없어진 뒤 사용자가 삭제한다.
 - OFFICESTRA는 API 키를 직접 저장하지 않고 각 CLI의 기존 로컬 로그인을 사용한다.
 - 백엔드는 기본적으로 `127.0.0.1`에만 바인딩된다.
 - PostgreSQL의 호스트 포트도 `127.0.0.1:54329`에만 바인딩된다.
@@ -324,7 +343,12 @@ docs/images/              공개 문서용 선별 화면 이미지
 - CLI와 Docker 설치·로그인은 사용자가 로컬에서 준비해야 한다.
 - 모델 목록은 현재 코드에 정의돼 있으며 CLI의 모든 모델을 자동 탐색하지 않는다.
 - Claude Code Fast 모드는 현재 Opus 5에서만 사용할 수 있다.
-- 여러 직원의 브랜치·worktree·머지와 파일 충돌을 자동 관리하지 않는다.
+- Git worktree는 프로세스·포트·DB와 저장소 밖 파일을 격리하지 않는다.
+- 전체 권한 에이전트가 원본 저장소 절대경로에 직접 commit 또는 push하면
+  worktree 경계를 우회할 수 있다. OFFICESTRA는 원본의 dirty 상태는 감지하지만
+  clean commit은 구분할 수 없으므로 업무용에서는 `workspace-write` 또는 `auto`
+  권한과 보호된 원격 branch 규칙을 함께 사용한다.
+- 충돌 해결과 dirty 원본 작업 트리 정리는 사용자가 직접 판단해야 한다.
 - 하나의 큰 업무를 자동 분해해 전 직원에게 배정하는 오케스트레이터는 없다.
 - RAG 임베딩 생성과 검색 결과 자동 주입은 별도 구현이 필요하다.
 - 로컬 API는 인증이 없으므로 외부 네트워크용 서비스로 사용하면 안 된다.
