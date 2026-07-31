@@ -1,4 +1,4 @@
-// 이 파일은 첫 실제 추론의 시작 행과 동일 항목 완료 전환 표시를 검증한다.
+// 이 파일은 Codex 전사 타임라인의 순서와 그룹 펼침 정책을 검증한다.
 
 import Foundation
 import XCTest
@@ -7,19 +7,19 @@ import XCTest
 final class AgentActivityLogPresentationTests: XCTestCase {
     func testCodexOperationExpansionNeverOpensFromStatusChanges() {
         XCTAssertFalse(
-            codexOperationExpansionState(
+            transcriptGroupExpansionState(
                 current: false,
                 isRunning: true
             )
         )
         XCTAssertTrue(
-            codexOperationExpansionState(
+            transcriptGroupExpansionState(
                 current: true,
                 isRunning: true
             )
         )
         XCTAssertFalse(
-            codexOperationExpansionState(
+            transcriptGroupExpansionState(
                 current: true,
                 isRunning: false
             )
@@ -46,80 +46,6 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             group.visibleActivities(showsAll: true, limit: 20).count,
             50
         )
-    }
-
-    func testEmptyActivitiesDoNotCreateSyntheticStartRow() {
-        let presentation = AgentActivityPresentation.make(
-            activities: [],
-            isRunning: true
-        )
-
-        XCTAssertNil(presentation.initialRunningReasoning)
-        XCTAssertTrue(presentation.visible.isEmpty)
-        XCTAssertEqual(presentation.displayedCount, 0)
-    }
-
-    func testInitialRunningReasoningIsVisibleAsStart() throws {
-        let reasoning = try makeActivity(
-            id: "reason-1",
-            kind: "thinking",
-            text: "실제 구조를 확인하고 있습니다.",
-            status: "running"
-        )
-
-        let presentation = AgentActivityPresentation.make(
-            activities: [reasoning],
-            isRunning: true
-        )
-
-        XCTAssertEqual(presentation.initialRunningReasoning?.id, "reason-1")
-        XCTAssertEqual(presentation.visible.map(\.id), ["reason-1"])
-        XCTAssertTrue(presentation.completed.isEmpty)
-        XCTAssertEqual(presentation.displayedCount, 1)
-        XCTAssertEqual(agentActivityStatusTitle(reasoning.status), "시작")
-    }
-
-    func testSameReasoningIDBecomesCompletedRow() throws {
-        let reasoning = try makeActivity(
-            id: "reason-1",
-            kind: "thinking",
-            text: "실제 구조를 확인하고 있습니다.",
-            status: "completed"
-        )
-
-        let presentation = AgentActivityPresentation.make(
-            activities: [reasoning],
-            isRunning: true
-        )
-
-        XCTAssertNil(presentation.initialRunningReasoning)
-        XCTAssertEqual(presentation.visible.map(\.id), ["reason-1"])
-        XCTAssertEqual(presentation.completed.map(\.id), ["reason-1"])
-        XCTAssertEqual(agentActivityStatusTitle(reasoning.status), "완료")
-    }
-
-    func testLaterRunningReasoningIsNotDuplicatedInTimeline() throws {
-        let first = try makeActivity(
-            id: "reason-1",
-            kind: "thinking",
-            text: "첫 추론입니다.",
-            status: "completed"
-        )
-        let second = try makeActivity(
-            id: "reason-2",
-            kind: "thinking",
-            text: "두 번째 추론입니다.",
-            status: "running"
-        )
-
-        let presentation = AgentActivityPresentation.make(
-            activities: [first, second],
-            isRunning: true
-        )
-
-        XCTAssertNil(presentation.initialRunningReasoning)
-        XCTAssertEqual(presentation.visible.map(\.id), ["reason-1"])
-        XCTAssertEqual(presentation.running?.id, "reason-2")
     }
 
     func testCodexTranscriptShowsWaitingImmediatelyWithoutActivities() {

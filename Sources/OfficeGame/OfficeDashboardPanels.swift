@@ -1560,21 +1560,6 @@ private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     let shouldAnimateResponse: Bool
     let finishResponseAnimation: () -> Void
-    @State private var activitiesExpanded: Bool
-    @State private var responseCopied: Bool
-
-    init(
-        turn: LiveFeedTurn,
-        shouldAnimateResponse: Bool,
-        finishResponseAnimation: @escaping () -> Void
-    ) {
-        self.turn = turn
-        self.shouldAnimateResponse = shouldAnimateResponse
-        self.finishResponseAnimation = finishResponseAnimation
-        _activitiesExpanded = State(initialValue: false)
-        _responseCopied = State(initialValue: false)
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             CharacterBadge(
@@ -1587,25 +1572,16 @@ private struct LiveTurnCard: View {
                 metadata
                 promptBlock
 
-                if effectiveBackend == .codex {
-                    if
-                        turn.status.isRunning
-                            || !turn.activities.isEmpty
-                            || !turn.response.isEmpty
-                    {
+                if
+                    turn.status.isRunning
+                        || !turn.activities.isEmpty
+                        || !turn.response.isEmpty
+                {
+                    switch effectiveBackend {
+                    case .codex:
                         codexTranscript
-                    }
-                } else {
-                    if turn.status.isRunning || !turn.activities.isEmpty {
-                        activityDisclosure
-                    }
-
-                    if !turn.response.isEmpty {
-                        responseBlock
-                            .transition(
-                                .move(edge: .bottom)
-                                    .combined(with: .opacity)
-                            )
+                    case .claude:
+                        claudeTranscript
                     }
                 }
 
@@ -1638,11 +1614,6 @@ private struct LiveTurnCard: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 17, style: .continuous)
                     .stroke(Color.primary.opacity(0.07))
-            }
-        }
-        .onChange(of: turn.status) { _, status in
-            if !status.isRunning {
-                activitiesExpanded = false
             }
         }
     }
@@ -1703,12 +1674,17 @@ private struct LiveTurnCard: View {
         LiveTurnPromptBlock(presentation: promptPresentation)
     }
 
-    private var activityDisclosure: some View {
-        AgentActivityLogView(
+    private var claudeTranscript: some View {
+        ClaudeTranscriptView(
+            turnID: turn.id,
             activities: turn.activities,
-            backend: effectiveBackend,
+            response: turn.response,
+            responseUpdatedAt: turn.updatedAt,
             isRunning: turn.status.isRunning,
-            isExpanded: $activitiesExpanded
+            isCompleted: turn.status == .completed,
+            needsInput: turn.needsInput,
+            animatesResponse: shouldAnimateResponse,
+            onResponsePresented: finishResponseAnimation
         )
     }
 
@@ -1731,84 +1707,6 @@ private struct LiveTurnCard: View {
 
     private var promptPresentation: TaskPromptPresentation {
         TaskPromptPresentation(prompt: turn.prompt)
-    }
-
-    private var responseBlock: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Image(
-                    systemName: turn.status.isRunning
-                        ? "text.cursor"
-                        : "checkmark.bubble.fill"
-                )
-                Text(
-                    turn.status.isRunning
-                        ? "작성 중인 응답"
-                        : turn.needsInput
-                        ? "답변 필요"
-                        : "응답"
-                )
-
-                Spacer()
-
-                Button {
-                    copyResponse()
-                } label: {
-                    Label(
-                        responseCopied ? "복사됨" : "복사",
-                        systemImage:
-                            responseCopied
-                            ? "checkmark"
-                            : "doc.on.doc"
-                    )
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(
-                        responseCopied
-                            ? DashboardPalette.accent
-                            : Color.secondary
-                    )
-                    .padding(.horizontal, 8)
-                    .frame(height: 24)
-                    .background(
-                        Color.primary.opacity(0.055),
-                        in: Capsule()
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(responseCopied ? "응답 복사됨" : "응답 복사")
-                .accessibilityIdentifier("copyResponse-\(turn.id)")
-            }
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(
-                turn.needsInput
-                    ? Color.orange
-                    : DashboardPalette.accent
-            )
-            EquatableLiveTypingResponseView(
-                turnID: turn.id,
-                backend: effectiveBackend,
-                source: turn.response,
-                animates: shouldAnimateResponse,
-                isStreaming: shouldAnimateResponse,
-                onFinishedTyping: finishResponseAnimation
-            )
-            .equatable()
-        }
-        .padding(.top, 2)
-    }
-
-    private func copyResponse() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(turn.response, forType: .string)
-        responseCopied = true
-
-        Task {
-            try? await Task.sleep(for: .seconds(1.4))
-            if !Task.isCancelled {
-                responseCopied = false
-            }
-        }
     }
 
     private func errorBlock(_ error: String) -> some View {
@@ -1936,7 +1834,7 @@ private struct LiveTurnElapsedStatusView: View {
     }
 }
 
-private struct EquatableLiveTypingResponseView: View, Equatable {
+struct EquatableLiveTypingResponseView: View, Equatable {
     let turnID: String
     let backend: AgentBackend
     let source: String
@@ -1967,7 +1865,7 @@ private struct EquatableLiveTypingResponseView: View, Equatable {
     }
 }
 
-private struct LiveTypingResponseView: View {
+struct LiveTypingResponseView: View {
     let turnID: String
     let backend: AgentBackend
     let source: String
