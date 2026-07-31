@@ -22,6 +22,10 @@ export async function readCharacterConfiguration() {
   return JSON.parse(source);
 }
 
+export function characterSettingsRequireNewSession(previous, next) {
+  return previous.backend !== next.backend;
+}
+
 export async function syncCharacters(client, configuration) {
   for (const character of configuration.characters) {
     await client.query(

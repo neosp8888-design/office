@@ -16,6 +16,7 @@ import {
 } from "./local-artifacts.mjs";
 import { pool, withTransaction } from "./db.mjs";
 import {
+  characterSettingsRequireNewSession,
   readCharacterConfiguration,
   syncCharacters,
 } from "./configuration.mjs";
@@ -210,7 +211,6 @@ async function updateCharacterIdentityPrompt(response, characterID, body) {
       `,
       [characterID, identityPrompt],
     );
-    await endActiveSession(client, characterID);
     return updated.rows[0];
   });
   if (!character) {
@@ -289,6 +289,10 @@ async function updateCharacterSettings(response, characterID, body) {
     }
 
     const previous = current.rows[0];
+    const requiresNewSession = characterSettingsRequireNewSession(
+      previous,
+      { backend },
+    );
     const changed =
       previous.backend !== backend ||
       previous.model !== model ||
@@ -320,7 +324,9 @@ async function updateCharacterSettings(response, characterID, body) {
       `,
       [characterID, backend, model, effort, fastMode, permission],
     );
-    await endActiveSession(client, characterID);
+    if (requiresNewSession) {
+      await endActiveSession(client, characterID);
+    }
     return updated.rows[0];
   });
   if (!character) {

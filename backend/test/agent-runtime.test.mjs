@@ -104,6 +104,54 @@ test("Codex는 Fast 비활성화도 신규 실행과 재개에 명시한다", ()
   }
 });
 
+test("Codex 재개는 바뀐 모델·추론·Fast·권한을 같은 세션에 전달한다", () => {
+  const argumentsList = buildArguments({
+    character: {
+      ...codexCharacter,
+      model: "gpt-5.6-terra",
+      effort: "xhigh",
+      fastMode: false,
+      permission: "danger-full-access",
+    },
+    prompt: "같은 세션에서 계속해줘.",
+    previousSessionID: "session-1",
+  });
+
+  assert.deepEqual(argumentsList.slice(0, 4), [
+    "exec",
+    "resume",
+    "session-1",
+    "--json",
+  ]);
+  assert.equal(argumentsList.includes('model="gpt-5.6-terra"'), true);
+  assert.equal(
+    argumentsList.includes('model_reasoning_effort="xhigh"'),
+    true,
+  );
+  assert.equal(argumentsList.includes('service_tier="default"'), true);
+  assert.equal(
+    argumentsList.includes('sandbox_mode="danger-full-access"'),
+    true,
+  );
+});
+
+test("Codex 재개는 현재 역할 지침을 같은 세션에 전달한다", () => {
+  const argumentsList = buildArguments({
+    character: {
+      ...codexCharacter,
+      identityPrompt: "업데이트된 역할 지침을 따른다.",
+    },
+    prompt: "계속해줘.",
+    previousSessionID: "session-1",
+  });
+  const instructions = argumentsList.find((value) =>
+    value.startsWith("developer_instructions=")
+  );
+
+  assert.match(instructions, /업데이트된 역할 지침을 따른다/);
+  assert.equal(argumentsList.at(-1), "계속해줘.");
+});
+
 test("Claude는 Fast 설정을 매 실행마다 settings JSON으로 전달한다", () => {
   for (const previousSessionID of [null, "session-1"]) {
     const argumentsList = buildArguments({
@@ -128,6 +176,33 @@ test("Claude는 Fast 설정을 매 실행마다 settings JSON으로 전달한다
       { fastMode: true },
     );
   }
+});
+
+test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달한다", () => {
+  const argumentsList = buildArguments({
+    character: {
+      backend: "claude",
+      model: "claude-opus-5",
+      effort: "high",
+      fastMode: true,
+      permission: "bypassPermissions",
+      name: "클대리",
+      seat: "좌측 아래",
+      identityPrompt: "업데이트된 역할 지침을 따른다.",
+    },
+    prompt: "계속해줘.",
+    previousSessionID: "session-1",
+  });
+  const identityIndex = argumentsList.indexOf("--append-system-prompt");
+  const permissionIndex = argumentsList.indexOf("--permission-mode");
+
+  assert.notEqual(identityIndex, -1);
+  assert.match(
+    argumentsList[identityIndex + 1],
+    /업데이트된 역할 지침을 따른다/,
+  );
+  assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
+  assert.equal(argumentsList.includes("--resume"), true);
 });
 
 test("Claude는 Fast 비활성화를 명시하고 다른 모델의 Fast를 거절한다", () => {

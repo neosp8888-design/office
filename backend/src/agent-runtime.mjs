@@ -1628,7 +1628,14 @@ function codexArguments(
     "-c",
     "show_raw_agent_reasoning=true",
   );
-  if (!previousSessionID) {
+  if (previousSessionID) {
+    argumentsList.push(
+      "-c",
+      `sandbox_mode="${character.permission}"`,
+      "-c",
+      `developer_instructions=${JSON.stringify(identityPrompt(character))}`,
+    );
+  } else {
     argumentsList.push("-s", character.permission);
   }
   for (const attachment of attachments) {
@@ -1661,13 +1668,12 @@ function claudeArguments(character, prompt, previousSessionID) {
   if (character.model) {
     argumentsList.push("--model", character.model);
   }
+  argumentsList.push(
+    "--append-system-prompt",
+    identityPrompt(character),
+  );
   if (previousSessionID) {
     argumentsList.push("--resume", previousSessionID);
-  } else {
-    argumentsList.push(
-      "--append-system-prompt",
-      identityPrompt(character),
-    );
   }
   return argumentsList;
 }
