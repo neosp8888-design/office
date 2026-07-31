@@ -574,7 +574,8 @@ private struct OfficeGameView: View {
                     placeholder: commandPlaceholder,
                     isEnabled:
                         director.isReadyForSubmissions
-                            && !director.isUpdatingConfiguration,
+                            && !director.isUpdatingConfiguration
+                            && !director.selectedCharacterNeedsWorkspaceReview,
                     onSubmit: submitCommand
                 )
                 .frame(height: 40)
@@ -799,6 +800,9 @@ private struct OfficeGameView: View {
         if !director.isReadyForSubmissions {
             return "저장된 세션을 복구하는 중입니다"
         }
+        if director.selectedCharacterNeedsWorkspaceReview {
+            return "변경사항을 승인하거나 거절한 뒤 새 업무를 보내세요"
+        }
         if
             let selectedCharacterID = director.selectedCharacterID,
             let persistenceError =
@@ -835,6 +839,7 @@ private struct OfficeGameView: View {
             || director.isUpdatingConfiguration
             || director.selectedCharacter == nil
             || director.isSelectedCharacterRunning
+            || director.selectedCharacterNeedsWorkspaceReview
             || (
                 command.trimmingCharacters(
                     in: .whitespacesAndNewlines
@@ -848,6 +853,7 @@ private struct OfficeGameView: View {
             || director.isUpdatingConfiguration
             || director.selectedCharacter == nil
             || director.isSelectedCharacterRunning
+            || director.selectedCharacterNeedsWorkspaceReview
             || attachments.count >= 20
     }
 
@@ -1302,6 +1308,9 @@ private struct AgentQuickSettingsView: View {
             !director.isReadyForSubmissions
                 || director.isUpdatingConfiguration
                 || director.runningCharacters.contains(character.id)
+                || director.pendingWorkspaceReviewCharacters.contains(
+                    character.id
+                )
         )
     }
 

@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node src/server.mjs",
     "migrate": "node src/migrate.mjs",
-    "check": "node --check src/server.mjs && node --check src/agent-runtime.mjs && node --check src/agent-event-parser.mjs && node --check src/token-cost-estimator.mjs && node --check src/local-artifacts.mjs && node --check src/db.mjs && node --check src/configuration.mjs",
+    "check": "node --check src/server.mjs && node --check src/agent-runtime.mjs && node --check src/git-workspace.mjs && node --check src/agent-event-parser.mjs && node --check src/token-cost-estimator.mjs && node --check src/local-artifacts.mjs && node --check src/db.mjs && node --check src/configuration.mjs",
     "test": "node --test"
   },
   "dependencies": {

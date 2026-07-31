@@ -201,6 +201,35 @@ struct OfficeDatabaseClient: Sendable {
         .turn
     }
 
+    func fetchWorkspaceReview(
+        turnID: String
+    ) async throws -> TurnWorkspaceReview {
+        try await workspaceReviewRequest(
+            turnID: turnID,
+            action: nil
+        )
+    }
+
+    func approveWorkspaceReview(
+        turnID: String,
+        reviewTree: String
+    ) async throws -> TurnWorkspaceReview {
+        try await workspaceReviewRequest(
+            turnID: turnID,
+            action: "approve",
+            reviewTree: reviewTree
+        )
+    }
+
+    func rejectWorkspaceReview(
+        turnID: String
+    ) async throws -> TurnWorkspaceReview {
+        try await workspaceReviewRequest(
+            turnID: turnID,
+            action: "reject"
+        )
+    }
+
     func startAgentJob(
         character: OfficeCharacter,
         prompt: String,
@@ -291,6 +320,41 @@ struct OfficeDatabaseClient: Sendable {
                 payload?.error ?? "백엔드 요청에 실패했습니다."
             )
         }
+    }
+
+    private func workspaceReviewRequest(
+        turnID: String,
+        action: String?,
+        reviewTree: String? = nil
+    ) async throws -> TurnWorkspaceReview {
+        var url = baseURL
+            .appending(path: "api")
+            .appending(path: "workspace-reviews")
+            .appending(path: turnID)
+        if let action {
+            url = url.appending(path: action)
+        }
+        var request = URLRequest(url: url)
+        if action != nil {
+            request.httpMethod = "POST"
+            request.setValue(
+                "application/json",
+                forHTTPHeaderField: "content-type"
+            )
+            if let reviewTree {
+                request.httpBody = try JSONEncoder().encode(
+                    WorkspaceReviewApprovalRequest(reviewTree: reviewTree)
+                )
+            } else {
+                request.httpBody = Data("{}".utf8)
+            }
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(
+            WorkspaceReviewResponse.self,
+            from: data
+        ).workspace
     }
 
     private func historyDecoder() -> JSONDecoder {
@@ -459,6 +523,94 @@ enum LiveFeedActivityStatus: String, Decodable, Sendable {
     case failed
 }
 
+enum WorkspaceReviewStatus: String, Decodable, Equatable, Sendable {
+    case active
+    case awaitingApproval = "awaiting_approval"
+    case merging
+    case merged
+    case rejected
+    case closed
+    case conflict
+    case failed
+
+    var blocksNewTasks: Bool {
+        switch self {
+        case .awaitingApproval, .merging, .conflict:
+            true
+        case .active, .merged, .rejected, .closed, .failed:
+            false
+        }
+    }
+
+    var showsReviewPanel: Bool {
+        self != .active && self != .closed
+    }
+}
+
+struct WorkspaceChangedFile: Decodable, Equatable, Identifiable, Sendable {
+    let status: String
+    let path: String
+
+    var id: String {
+        "\(status)|\(path)"
+    }
+}
+
+struct TurnWorkspaceReview: Decodable, Equatable, Sendable {
+    let status: WorkspaceReviewStatus
+    let repositoryRoot: String
+    let worktreePath: String
+    let executionWorkdir: String?
+    let branchName: String
+    let baseBranch: String
+    let baseCommit: String
+    let reviewTree: String?
+    let headCommit: String?
+    let changedFiles: [WorkspaceChangedFile]
+    let mergedCommit: String?
+    let errorMessage: String?
+    let diff: String?
+    let diffTruncated: Bool?
+
+    func fileBaseDirectory(fallback: String) -> String {
+        if let executionWorkdir, !executionWorkdir.isEmpty {
+            return executionWorkdir
+        }
+        if status == .merged, !repositoryRoot.isEmpty {
+            return repositoryRoot
+        }
+        if !worktreePath.isEmpty {
+            return worktreePath
+        }
+        if !repositoryRoot.isEmpty {
+            return repositoryRoot
+        }
+        return fallback
+    }
+
+    func reviewFileBaseDirectory(fallback: String) -> String {
+        if status == .merged, !repositoryRoot.isEmpty {
+            return repositoryRoot
+        }
+        if !worktreePath.isEmpty {
+            return worktreePath
+        }
+        if !repositoryRoot.isEmpty {
+            return repositoryRoot
+        }
+        return fallback
+    }
+
+    var hasCompleteDiffForApproval: Bool {
+        status == .awaitingApproval
+            && !(reviewTree?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty ?? true)
+            && diff != nil
+            && diffTruncated == false
+    }
+}
+
 struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let characterId: String
@@ -479,6 +631,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let updatedAt: Date
     let estimatedCostUsd: Double?
     let activities: [LiveFeedActivity]
+    let workspace: TurnWorkspaceReview?
 
     func replacingID(with id: String) -> LiveFeedTurn {
         LiveFeedTurn(
@@ -500,7 +653,8 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             endedAt: endedAt,
             updatedAt: updatedAt,
             estimatedCostUsd: estimatedCostUsd,
-            activities: activities
+            activities: activities,
+            workspace: workspace
         )
     }
 }
@@ -519,6 +673,14 @@ private struct LiveFeedResponse: Decodable {
 
 private struct LiveFeedTurnResponse: Decodable {
     let turn: LiveFeedTurn
+}
+
+private struct WorkspaceReviewResponse: Decodable {
+    let workspace: TurnWorkspaceReview
+}
+
+private struct WorkspaceReviewApprovalRequest: Encodable {
+    let reviewTree: String
 }
 
 private struct StartAgentJobRequest: Encodable {

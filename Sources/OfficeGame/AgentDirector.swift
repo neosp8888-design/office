@@ -10,6 +10,11 @@ struct PendingAgentQuestion: Identifiable, Equatable {
     let text: String
 }
 
+enum WorkspaceReviewDecision {
+    case approve(reviewTree: String)
+    case reject
+}
+
 private struct RealtimeFeedEvent: Decodable {
     let type: String
     let turnId: String?
@@ -22,6 +27,16 @@ final class LiveFeedStore: ObservableObject {
     @Published private var responseAnimationTurnIDs: Set<String> = []
     private(set) var persistedTurns: [LiveFeedTurn] = []
     private var optimisticTurns: [String: LiveFeedTurn] = [:]
+
+    static func snapshotTurns(
+        from sortedTurns: [LiveFeedTurn],
+        recentLimit: Int
+    ) -> [LiveFeedTurn] {
+        Array(sortedTurns.prefix(recentLimit))
+            + sortedTurns.dropFirst(recentLimit).filter {
+                $0.workspace?.status.blocksNewTasks == true
+            }
+    }
 
     func replace(with turns: [LiveFeedTurn]) {
         persistedTurns = turns
@@ -133,7 +148,9 @@ final class ArchiveFeedStore: ObservableObject {
 
     func replaceIfNeeded(with turns: [LiveFeedTurn]) {
         let updatedRevision = turns.map {
-            "\($0.id)|\($0.status.rawValue)"
+            "\($0.id)|\($0.status.rawValue)|"
+                + "\($0.workspace?.status.rawValue ?? "")|"
+                + "\($0.workspace?.mergedCommit ?? "")"
         }
         guard revision != updatedRevision else {
             return
@@ -182,6 +199,8 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var unreviewedCompletedCharacters:
         Set<OfficeCharacter> = []
     @Published private(set) var cancellingCharacters:
+        Set<OfficeCharacter> = []
+    @Published private(set) var pendingWorkspaceReviewCharacters:
         Set<OfficeCharacter> = []
     @Published private(set) var failedCharacters:
         [OfficeCharacter: String] = [:]
@@ -419,6 +438,13 @@ final class AgentDirector: ObservableObject {
         return cancellingCharacters.contains(selectedCharacterID)
     }
 
+    var selectedCharacterNeedsWorkspaceReview: Bool {
+        guard let selectedCharacterID else {
+            return false
+        }
+        return pendingWorkspaceReviewCharacters.contains(selectedCharacterID)
+    }
+
     func selectDefaultCharacterIfNeeded() {
         guard !hasAppliedDefaultSelection else {
             return
@@ -521,7 +547,8 @@ final class AgentDirector: ObservableObject {
             isReadyForSubmissions,
             !isUpdatingConfiguration,
             !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !runningCharacters.contains(character.id)
+            !runningCharacters.contains(character.id),
+            !pendingWorkspaceReviewCharacters.contains(character.id)
         else {
             return
         }
@@ -568,7 +595,8 @@ final class AgentDirector: ObservableObject {
                 endedAt: nil,
                 updatedAt: submittedAt,
                 estimatedCostUsd: nil,
-                activities: []
+                activities: [],
+                workspace: nil
             )
         )
         latestSubmittedTurnID = optimisticTurnID
@@ -666,6 +694,39 @@ final class AgentDirector: ObservableObject {
         }
     }
 
+    func fetchWorkspaceReview(
+        turnID: String
+    ) async throws -> TurnWorkspaceReview {
+        try await database.fetchWorkspaceReview(turnID: turnID)
+    }
+
+    func resolveWorkspaceReview(
+        turnID: String,
+        decision: WorkspaceReviewDecision
+    ) async throws -> TurnWorkspaceReview {
+        let workspace: TurnWorkspaceReview
+        switch decision {
+        case .approve(let reviewTree):
+            workspace = try await database.approveWorkspaceReview(
+                turnID: turnID,
+                reviewTree: reviewTree
+            )
+        case .reject:
+            workspace = try await database.rejectWorkspaceReview(
+                turnID: turnID
+            )
+        }
+
+        let refreshed = await refreshLiveFeedTurn(
+            turnID,
+            announcingTransitions: false
+        )
+        if !refreshed {
+            scheduleRealtimeFeedRefresh(turnID: turnID)
+        }
+        return workspace
+    }
+
     func agentSettings(
         for character: OfficeCharacter
     ) -> CharacterAgentSettings {
@@ -692,6 +753,10 @@ final class AgentDirector: ObservableObject {
         }
         guard runningCharacters.isEmpty else {
             settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
+            return
+        }
+        guard pendingWorkspaceReviewCharacters.isEmpty else {
+            settingsStatus = "변경사항 검토를 마친 뒤 설정할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
@@ -760,6 +825,10 @@ final class AgentDirector: ObservableObject {
         }
         guard !runningCharacters.contains(character) else {
             settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
+            return
+        }
+        guard !pendingWorkspaceReviewCharacters.contains(character) else {
+            settingsStatus = "변경사항 검토를 마친 뒤 설정할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
@@ -1203,7 +1272,10 @@ final class AgentDirector: ObservableObject {
                 return $0.startedAt > $1.startedAt
             }
             applyLiveFeed(
-                Array(turns.prefix(Self.liveFeedSnapshotLimit)),
+                LiveFeedStore.snapshotTurns(
+                    from: turns,
+                    recentLimit: Self.liveFeedSnapshotLimit
+                ),
                 announcingTransitions: announcingTransitions
             )
             if realtimeConnectionError != nil {
@@ -1235,6 +1307,18 @@ final class AgentDirector: ObservableObject {
         observedTurnStatuses = Dictionary(
             uniqueKeysWithValues: turns.map { ($0.id, $0.status) }
         )
+
+        let updatedReviewCharacters = Set(
+            turns.compactMap { turn -> OfficeCharacter? in
+                guard turn.workspace?.status.blocksNewTasks == true else {
+                    return nil
+                }
+                return OfficeCharacter(rawValue: turn.characterId)
+            }
+        )
+        if pendingWorkspaceReviewCharacters != updatedReviewCharacters {
+            pendingWorkspaceReviewCharacters = updatedReviewCharacters
+        }
 
         let runningTurns = turns.filter { $0.status.isRunning }
         let updatedRunningCharacters = Set(
