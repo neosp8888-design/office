@@ -141,34 +141,6 @@ private struct ArchiveShelfContent: View {
                                 "다른 이름이나 대화 내용으로 검색해보세요."
                             )
                         )
-                    } else if isSearching {
-                        VStack(spacing: 0) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "magnifyingglass")
-                                Text("검색 결과")
-                                Text("\(filteredTurns.count)건")
-                                    .foregroundStyle(.tertiary)
-                                Spacer()
-                            }
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 6)
-
-                            ScrollView {
-                                LazyVStack(spacing: 7) {
-                                    ForEach(visibleTurns) { turn in
-                                        ArchiveShelfRow(turn: turn)
-                                    }
-
-                                    if hasMoreTurns {
-                                        loadMoreButton
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.bottom, 12)
-                            }
-                        }
                     } else {
                         ScrollView {
                             VStack(spacing: 10) {
@@ -267,6 +239,7 @@ private struct ArchiveShelfContent: View {
                 turn.externalSessionId ?? "",
                 turn.model ?? "",
                 turn.effort ?? "",
+                agentExecutionModeTitle(turn.fastMode),
                 turn.backend?.title ?? "",
             ]
             if let backend = turn.backend, let model = turn.model {
@@ -337,219 +310,6 @@ private struct ArchiveShelfContent: View {
             "\($0.id)|\($0.status.rawValue)"
         }
         .joined(separator: ";")
-    }
-}
-
-private struct ArchiveShelfRow: View {
-    let turn: LiveFeedTurn
-    @State private var isExpanded = false
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                executionDetails
-
-                transcriptHeader(
-                    title: "업무",
-                    systemImage: "text.quote"
-                )
-                Text(turn.prompt)
-                    .font(.system(size: 10, weight: .medium))
-                    .textSelection(.enabled)
-
-                if !turn.response.isEmpty {
-                    transcriptHeader(
-                        title: "응답",
-                        systemImage: "checkmark.bubble.fill",
-                        copyText: turn.response
-                    )
-                    ConversationMarkdownView(
-                        source: turn.response,
-                        fontSize: 14
-                    )
-                } else if let error = turn.errorMessage {
-                    transcriptHeader(
-                        title: "중단 원인",
-                        systemImage: "exclamationmark.triangle.fill",
-                        copyText: error
-                    )
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.red.opacity(0.86))
-                        .textSelection(.enabled)
-                } else {
-                    Text("업무가 진행 중입니다.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.top, 8)
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                CharacterBadge(
-                    name: turn.characterName,
-                    characterID: turn.characterId,
-                    size: 30
-                )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 5) {
-                        Text(turn.characterName)
-                            .font(.system(size: 11, weight: .bold))
-                        Text(
-                            turn.startedAt.formatted(
-                                date: .omitted,
-                                time: .shortened
-                            )
-                        )
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(.tertiary)
-                    }
-                    Text(turn.prompt)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-
-                    Text(executionSummary)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-
-                    Text(
-                        turn.externalSessionId.map {
-                            "세션 \($0)"
-                        } ?? "세션 ID 기록 없음"
-                    )
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                }
-            }
-        }
-        .tint(.secondary)
-        .padding(10)
-        .background(
-            Color.primary.opacity(0.035),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-    }
-
-    private var executionSummary: String {
-        guard let backend = turn.backend else {
-            return "이전 기록 · 모델/추론 정보 없음"
-        }
-
-        var parts = [backend.title]
-        if let model = turn.model {
-            parts.append(backend.modelTitle(model))
-        } else {
-            parts.append("모델 정보 없음")
-        }
-        parts.append(
-            turn.effort.map { "추론 \($0)" }
-                ?? "추론 정보 없음"
-        )
-        return parts.joined(separator: " · ")
-    }
-
-    private var executionDetails: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            detailRow(
-                label: "세션 ID",
-                value: turn.externalSessionId ?? "기록 없음",
-                monospaced: true,
-                copyText: turn.externalSessionId
-            )
-            detailRow(
-                label: "모델",
-                value: modelTitle
-            )
-            detailRow(
-                label: "추론 레벨",
-                value: turn.effort ?? "기록 없음"
-            )
-        }
-        .padding(9)
-        .background(
-            Color.primary.opacity(0.035),
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
-    }
-
-    private var modelTitle: String {
-        guard let backend = turn.backend, let model = turn.model else {
-            return "기록 없음"
-        }
-        return "\(backend.title) · \(backend.modelTitle(model))"
-    }
-
-    private func detailRow(
-        label: String,
-        value: String,
-        monospaced: Bool = false,
-        copyText: String? = nil
-    ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text(label)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .leading)
-
-            Text(value)
-                .font(
-                    monospaced
-                        ? .system(size: 9, design: .monospaced)
-                        : .system(size: 10, weight: .medium)
-                )
-                .textSelection(.enabled)
-                .lineLimit(monospaced ? 1 : 2)
-                .truncationMode(.middle)
-
-            Spacer(minLength: 4)
-
-            if let copyText {
-                Button {
-                    copyToPasteboard(copyText)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("\(label) 복사")
-                .help("\(label) 복사")
-            }
-        }
-    }
-
-    private func transcriptHeader(
-        title: String,
-        systemImage: String,
-        copyText: String? = nil
-    ) -> some View {
-        HStack(spacing: 6) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            if let copyText {
-                Button {
-                    copyToPasteboard(copyText)
-                } label: {
-                    Label("복사", systemImage: "doc.on.doc")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("\(title) 복사")
-                .help("\(title) 복사")
-            }
-        }
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 
@@ -891,10 +651,32 @@ private struct UsageMeter: View {
     }
 }
 
-struct LiveWorkspaceFeed: View {
-    @ObservedObject var director: AgentDirector
+struct LiveWorkspaceFeedFollowState: Equatable {
+    private(set) var isFollowingLatest = true
+
+    mutating func userWillScroll() {
+        isFollowingLatest = false
+    }
+
+    mutating func userDidScroll(
+        distanceFromBottom: CGFloat,
+        tolerance: CGFloat
+    ) {
+        isFollowingLatest = distanceFromBottom <= tolerance
+    }
+
+    mutating func resume() {
+        isFollowingLatest = true
+    }
+}
+
+struct LiveWorkspaceFeed: View, Equatable {
     @ObservedObject private var liveFeedStore: LiveFeedStore
-    @State private var isAtBottom = false
+    private let selectedCharacterID: OfficeCharacter?
+    private let latestTerminalTurnID: String?
+    private let latestSubmittedTurnID: String?
+    private let latestStartedCommandID: UUID?
+    @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
     @State private var visibleTurnLimit = Self.pageSize
@@ -902,23 +684,47 @@ struct LiveWorkspaceFeed: View {
     @State private var isLoadingOlderTurns = false
 
     private static let bottomTolerance = CGFloat(20)
+    private static let topLoadThreshold = CGFloat(120)
     private static let bottomMarkerID = "live-workspace-feed-bottom"
     private static let pageSize = 10
     private static let maximumVisibleTurnCount = 30
 
     init(director: AgentDirector) {
-        self.director = director
         _liveFeedStore = ObservedObject(
             wrappedValue: director.liveFeedStore
         )
+        selectedCharacterID = director.selectedCharacterID
+        latestTerminalTurnID = director.latestTerminalTurnID
+        latestSubmittedTurnID = director.latestSubmittedTurnID
+        latestStartedCommandID = director.latestStartedCommandID
+    }
+
+    static func == (
+        lhs: LiveWorkspaceFeed,
+        rhs: LiveWorkspaceFeed
+    ) -> Bool {
+        lhs.liveFeedStore === rhs.liveFeedStore
+            && lhs.selectedCharacterID == rhs.selectedCharacterID
+            && lhs.latestTerminalTurnID == rhs.latestTerminalTurnID
+            && lhs.latestSubmittedTurnID == rhs.latestSubmittedTurnID
+            && lhs.latestStartedCommandID == rhs.latestStartedCommandID
+    }
+
+    private var selectedTurns: [LiveFeedTurn] {
+        guard let selectedCharacterID else {
+            return []
+        }
+        return liveFeedStore.turns.filter {
+            $0.characterId == selectedCharacterID.rawValue
+        }
     }
 
     private var displayTurns: [LiveFeedTurn] {
         Array(
-            liveFeedStore.turns.enumerated().compactMap { index, turn in
+            selectedTurns.enumerated().compactMap { index, turn in
                 index < visibleTurnLimit
                     || turn.status.isRunning
-                    || turn.id == director.latestTerminalTurnID
+                    || turn.id == latestTerminalTurnID
                     ? turn
                     : nil
             }
@@ -927,19 +733,33 @@ struct LiveWorkspaceFeed: View {
     }
 
     private var hiddenTurnCount: Int {
-        max(0, liveFeedStore.turns.count - displayTurns.count)
+        max(0, selectedTurns.count - displayTurns.count)
     }
 
     private var canLoadOlderTurns: Bool {
         visibleTurnLimit
             < min(
                 Self.maximumVisibleTurnCount,
-                liveFeedStore.turns.count
+                selectedTurns.count
             )
     }
 
     private var latestActivityUpdate: Date? {
-        liveFeedStore.turns.map(\.updatedAt).max()
+        selectedTurns.first?.updatedAt
+    }
+
+    private var initialLayoutRevision:
+        [LiveWorkspaceFeedTurnRevision]
+    {
+        displayTurns.map { turn in
+            LiveWorkspaceFeedTurnRevision(
+                id: turn.id,
+                updatedAt: turn.updatedAt,
+                status: turn.status,
+                activityCount: turn.activities.count,
+                responseLength: turn.response.count
+            )
+        }
     }
 
     private var isResponsePreparing: Bool {
@@ -980,17 +800,33 @@ struct LiveWorkspaceFeed: View {
                 } else {
                     ScrollView {
                         VStack(spacing: 0) {
-                            LazyVStack(spacing: 14) {
+                            LiveWorkspaceFeedScrollObserver(
+                                onScroll: { distanceFromTop in
+                                    guard
+                                        distanceFromTop
+                                            <= Self.topLoadThreshold
+                                    else {
+                                        return
+                                    }
+                                    loadMoreTurnsIfNeeded(proxy: proxy)
+                                },
+                                onUserScrollStarted: {
+                                    pauseFollowingLatest()
+                                },
+                                onUserScroll: { distanceFromBottom in
+                                    followState.userDidScroll(
+                                        distanceFromBottom:
+                                            distanceFromBottom,
+                                        tolerance: Self.bottomTolerance
+                                    )
+                                    updateBottomState()
+                                }
+                            )
+                            .frame(height: 1)
+
+                            VStack(spacing: 14) {
                                 if hiddenTurnCount > 0 {
                                     archivedTurnsNotice
-                                        .onAppear {
-                                            guard
-                                                didPerformInitialScroll
-                                            else {
-                                                return
-                                            }
-                                            loadMoreTurnsIfNeeded(proxy: proxy)
-                                        }
                                 }
 
                                 ForEach(displayTurns) { turn in
@@ -1022,6 +858,21 @@ struct LiveWorkspaceFeed: View {
                     .onAppear {
                         performInitialScrollIfNeeded(proxy: proxy)
                     }
+                    .onChange(
+                        of: liveFeedStore.isLoadingInitialFeed
+                    ) { _, isLoading in
+                        guard !isLoading else {
+                            return
+                        }
+                        restartInitialScroll(proxy: proxy)
+                    }
+                    .onChange(of: initialLayoutRevision) { _, _ in
+                        if !didPerformInitialScroll {
+                            restartInitialScroll(proxy: proxy)
+                        } else if followState.isFollowingLatest {
+                            scheduleScrollToLatest(proxy)
+                        }
+                    }
                     .background {
                         GeometryReader { geometry in
                             Color.clear
@@ -1043,11 +894,8 @@ struct LiveWorkspaceFeed: View {
                                         performInitialScrollIfNeeded(
                                             proxy: proxy
                                         )
-                                    } else if isAtBottom {
-                                        scrollToLatest(
-                                            proxy,
-                                            animated: false
-                                        )
+                                    } else if followState.isFollowingLatest {
+                                        scheduleScrollToLatest(proxy)
                                     }
                                 }
                         }
@@ -1058,6 +906,13 @@ struct LiveWorkspaceFeed: View {
                         scrollMetrics.bottomMarkerOffset = bottomOffset
                         if didPerformInitialScroll {
                             updateBottomState()
+                            if
+                                followState.isFollowingLatest,
+                                distanceFromBottom
+                                    > Self.bottomTolerance
+                            {
+                                scheduleScrollToLatest(proxy)
+                            }
                         } else {
                             performInitialScrollIfNeeded(
                                 proxy: proxy
@@ -1075,42 +930,39 @@ struct LiveWorkspaceFeed: View {
                         guard
                             didGrow,
                             didPerformInitialScroll,
-                            isAtBottom
+                            followState.isFollowingLatest
                         else {
                             return
                         }
-                        scrollToLatest(proxy, animated: false)
+                        scheduleScrollToLatest(proxy)
                     }
                     .onChange(of: latestActivityUpdate) {
                         _, _ in
-                        guard isAtBottom else {
+                        guard followState.isFollowingLatest else {
                             return
                         }
-                        scrollToLatest(proxy, animated: false)
+                        scheduleScrollToLatest(proxy)
                     }
-                    .onChange(of: director.latestSubmittedCommandID) {
+                    .onChange(of: latestSubmittedTurnID) {
+                        _, turnID in
+                        guard let turnID else {
+                            return
+                        }
+                        revealSubmittedTurn(
+                            turnID: turnID,
+                            proxy: proxy
+                        )
+                    }
+                    .onChange(of: latestStartedCommandID) {
                         _, commandID in
                         guard commandID != nil else {
                             return
                         }
-                        scrollToLatest(proxy, animated: false)
+                        scheduleScrollToLatest(proxy)
                     }
-                    .onChange(of: director.latestStartedCommandID) {
-                        _, commandID in
-                        guard commandID != nil else {
-                            return
-                        }
-                        scrollToLatest(proxy, animated: false)
-                    }
-                    .onChange(of: director.selectedCharacterID) {
-                        oldCharacterID, newCharacterID in
-                        guard
-                            oldCharacterID == nil,
-                            newCharacterID != nil
-                        else {
-                            return
-                        }
-                        pinToBottomAfterSettingsAppear(proxy: proxy)
+                    .onChange(of: selectedCharacterID) {
+                        _, _ in
+                        resetForSelectedCharacter(proxy: proxy)
                     }
                     .overlay(alignment: .bottom) {
                         Group {
@@ -1129,12 +981,12 @@ struct LiveWorkspaceFeed: View {
                         )
                     }
                     .onDisappear {
-                        scrollMetrics.bottomExitTask?.cancel()
-                        scrollMetrics.bottomExitTask = nil
+                        scrollMetrics.followScrollTask?.cancel()
+                        scrollMetrics.followScrollTask = nil
                         scrollMetrics.initialScrollTask?.cancel()
                         scrollMetrics.initialScrollTask = nil
-                        scrollMetrics.selectionScrollTask?.cancel()
-                        scrollMetrics.selectionScrollTask = nil
+                        scrollMetrics.submittedScrollTask?.cancel()
+                        scrollMetrics.submittedScrollTask = nil
                     }
                 }
             }
@@ -1145,6 +997,8 @@ struct LiveWorkspaceFeed: View {
         _ proxy: ScrollViewProxy,
         animated: Bool = true
     ) {
+        scrollMetrics.followScrollTask?.cancel()
+        scrollMetrics.followScrollTask = nil
         markAtBottom()
         DispatchQueue.main.async {
             guard animated else {
@@ -1157,11 +1011,32 @@ struct LiveWorkspaceFeed: View {
         }
     }
 
+    private func scheduleScrollToLatest(
+        _ proxy: ScrollViewProxy
+    ) {
+        guard followState.isFollowingLatest else {
+            return
+        }
+        scrollMetrics.followScrollTask?.cancel()
+        markAtBottom()
+        scrollMetrics.followScrollTask = Task { @MainActor in
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(16))
+            guard !Task.isCancelled else {
+                return
+            }
+            proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+            scrollMetrics.followScrollTask = nil
+        }
+    }
+
     private func performInitialScrollIfNeeded(
         proxy: ScrollViewProxy
     ) {
         guard
             !didPerformInitialScroll,
+            !liveFeedStore.isLoadingInitialFeed,
+            !displayTurns.isEmpty,
             scrollMetrics.initialScrollTask == nil,
             scrollMetrics.viewportHeight > 0,
             scrollMetrics.bottomMarkerOffset > 0
@@ -1172,12 +1047,12 @@ struct LiveWorkspaceFeed: View {
         markAtBottom()
         scrollMetrics.initialScrollTask = Task { @MainActor in
             var stablePassCount = 0
-            for _ in 0..<8 {
+            for pass in 0..<12 {
                 guard !Task.isCancelled else {
                     return
                 }
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(90))
                 let distanceFromBottom = max(
                     0,
                     scrollMetrics.bottomMarkerOffset
@@ -1185,7 +1060,7 @@ struct LiveWorkspaceFeed: View {
                 )
                 if distanceFromBottom <= Self.bottomTolerance {
                     stablePassCount += 1
-                    if stablePassCount >= 4 {
+                    if pass >= 6, stablePassCount >= 4 {
                         break
                     }
                 } else {
@@ -1195,31 +1070,65 @@ struct LiveWorkspaceFeed: View {
             guard !Task.isCancelled else {
                 return
             }
+            proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+            await Task.yield()
             markAtBottom()
             didPerformInitialScroll = true
             scrollMetrics.initialScrollTask = nil
         }
     }
 
-    private func pinToBottomAfterSettingsAppear(
+    private func restartInitialScroll(proxy: ScrollViewProxy) {
+        guard !didPerformInitialScroll else {
+            return
+        }
+        scrollMetrics.initialScrollTask?.cancel()
+        scrollMetrics.initialScrollTask = nil
+        DispatchQueue.main.async {
+            performInitialScrollIfNeeded(proxy: proxy)
+        }
+    }
+
+    private func resetForSelectedCharacter(
         proxy: ScrollViewProxy
     ) {
-        scrollMetrics.selectionScrollTask?.cancel()
+        visibleTurnLimit = Self.pageSize
+        isLoadingOlderTurns = false
+        didPerformInitialScroll = false
+        scrollMetrics.initialScrollTask?.cancel()
+        scrollMetrics.initialScrollTask = nil
+        scrollMetrics.submittedScrollTask?.cancel()
+        scrollMetrics.submittedScrollTask = nil
         markAtBottom()
-        scrollMetrics.selectionScrollTask = Task { @MainActor in
-            // 직원 선택 뒤 나타나는 설정 줄의 높이가 확정될 때까지 끝을 다시 맞춘다.
-            for _ in 0..<5 {
+        DispatchQueue.main.async {
+            performInitialScrollIfNeeded(proxy: proxy)
+        }
+    }
+
+    private func revealSubmittedTurn(
+        turnID: String,
+        proxy: ScrollViewProxy
+    ) {
+        scrollMetrics.followScrollTask?.cancel()
+        scrollMetrics.followScrollTask = nil
+        scrollMetrics.submittedScrollTask?.cancel()
+        markAtBottom()
+        scrollMetrics.submittedScrollTask = Task { @MainActor in
+            for _ in 0..<10 {
                 guard !Task.isCancelled else {
                     return
                 }
+                await Task.yield()
+                proxy.scrollTo(turnID, anchor: .bottom)
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(40))
             }
             guard !Task.isCancelled else {
                 return
             }
+            proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
             markAtBottom()
-            scrollMetrics.selectionScrollTask = nil
+            scrollMetrics.submittedScrollTask = nil
         }
     }
 
@@ -1238,7 +1147,7 @@ struct LiveWorkspaceFeed: View {
         let nextLimit = min(
             visibleTurnLimit + Self.pageSize,
             Self.maximumVisibleTurnCount,
-            liveFeedStore.turns.count
+            selectedTurns.count
         )
         guard nextLimit > visibleTurnLimit else {
             return
@@ -1328,55 +1237,34 @@ struct LiveWorkspaceFeed: View {
     }
 
     private func updateBottomState() {
-        let distanceFromBottom = max(
-            0,
-            scrollMetrics.bottomMarkerOffset
-                - scrollMetrics.viewportHeight
-        )
         let contentRemainsBelow =
             distanceFromBottom > Self.bottomTolerance
         if hasContentBelow != contentRemainsBelow {
             hasContentBelow = contentRemainsBelow
         }
-        if !contentRemainsBelow {
-            markAtBottom()
-            return
-        }
+    }
 
-        guard
-            isAtBottom,
-            scrollMetrics.bottomExitTask == nil
-        else {
-            return
-        }
-        scrollMetrics.bottomExitTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
-            guard !Task.isCancelled else {
-                return
-            }
-            scrollMetrics.bottomExitTask = nil
-            let currentDistance = max(
-                0,
-                scrollMetrics.bottomMarkerOffset
-                    - scrollMetrics.viewportHeight
-            )
-            if currentDistance > Self.bottomTolerance {
-                if isAtBottom {
-                    isAtBottom = false
-                }
-            }
-        }
+    private var distanceFromBottom: CGFloat {
+        max(
+            0,
+            scrollMetrics.bottomMarkerOffset
+                - scrollMetrics.viewportHeight
+        )
     }
 
     private func markAtBottom() {
-        scrollMetrics.bottomExitTask?.cancel()
-        scrollMetrics.bottomExitTask = nil
+        followState.resume()
         if hasContentBelow {
             hasContentBelow = false
         }
-        if !isAtBottom {
-            isAtBottom = true
-        }
+    }
+
+    private func pauseFollowingLatest() {
+        followState.userWillScroll()
+        scrollMetrics.followScrollTask?.cancel()
+        scrollMetrics.followScrollTask = nil
+        scrollMetrics.submittedScrollTask?.cancel()
+        scrollMetrics.submittedScrollTask = nil
     }
 }
 
@@ -1404,13 +1292,21 @@ private enum LiveWorkspaceFeedScrollSpace {
     static let name = "live-workspace-feed"
 }
 
+private struct LiveWorkspaceFeedTurnRevision: Equatable {
+    let id: String
+    let updatedAt: Date
+    let status: LiveTurnStatus
+    let activityCount: Int
+    let responseLength: Int
+}
+
 private final class LiveWorkspaceFeedScrollMetrics {
     var bottomMarkerOffset = CGFloat.zero
     var viewportHeight = CGFloat.zero
     var streamingResponseHeight = CGFloat.zero
-    var bottomExitTask: Task<Void, Never>?
+    var followScrollTask: Task<Void, Never>?
     var initialScrollTask: Task<Void, Never>?
-    var selectionScrollTask: Task<Void, Never>?
+    var submittedScrollTask: Task<Void, Never>?
 }
 
 private struct LiveWorkspaceFeedBottomMarker: View {
@@ -1431,6 +1327,168 @@ private struct LiveWorkspaceFeedBottomOffsetKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
+    let onScroll: (CGFloat) -> Void
+    let onUserScrollStarted: () -> Void
+    let onUserScroll: (CGFloat) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            onScroll: onScroll,
+            onUserScrollStarted: onUserScrollStarted,
+            onUserScroll: onUserScroll
+        )
+    }
+
+    func makeNSView(context: Context) -> AttachmentView {
+        let view = AttachmentView()
+        view.onHierarchyChange = {
+            [weak view, weak coordinator = context.coordinator] in
+            coordinator?.attach(to: view?.enclosingScrollView)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: AttachmentView, context: Context) {
+        context.coordinator.onScroll = onScroll
+        context.coordinator.onUserScrollStarted = onUserScrollStarted
+        context.coordinator.onUserScroll = onUserScroll
+        context.coordinator.attach(to: nsView.enclosingScrollView)
+    }
+
+    static func dismantleNSView(
+        _ nsView: AttachmentView,
+        coordinator: Coordinator
+    ) {
+        nsView.onHierarchyChange = nil
+        coordinator.detach()
+    }
+
+    final class Coordinator {
+        var onScroll: (CGFloat) -> Void
+        var onUserScrollStarted: () -> Void
+        var onUserScroll: (CGFloat) -> Void
+        private weak var scrollView: NSScrollView?
+        private var boundsObserver: NSObjectProtocol?
+        private var liveScrollStartObserver: NSObjectProtocol?
+        private var liveScrollObserver: NSObjectProtocol?
+
+        init(
+            onScroll: @escaping (CGFloat) -> Void,
+            onUserScrollStarted: @escaping () -> Void,
+            onUserScroll: @escaping (CGFloat) -> Void
+        ) {
+            self.onScroll = onScroll
+            self.onUserScrollStarted = onUserScrollStarted
+            self.onUserScroll = onUserScroll
+        }
+
+        func attach(to scrollView: NSScrollView?) {
+            guard self.scrollView !== scrollView else {
+                return
+            }
+            detach()
+            guard let scrollView else {
+                return
+            }
+            self.scrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reportDistanceFromTop()
+            }
+            liveScrollStartObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.onUserScrollStarted()
+            }
+            liveScrollObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reportUserDistanceFromBottom()
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.reportDistanceFromTop()
+            }
+        }
+
+        func detach() {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            if let liveScrollStartObserver {
+                NotificationCenter.default.removeObserver(
+                    liveScrollStartObserver
+                )
+            }
+            if let liveScrollObserver {
+                NotificationCenter.default.removeObserver(liveScrollObserver)
+            }
+            boundsObserver = nil
+            liveScrollStartObserver = nil
+            liveScrollObserver = nil
+            scrollView = nil
+        }
+
+        private func reportDistanceFromTop() {
+            guard
+                let scrollView,
+                let documentView = scrollView.documentView
+            else {
+                return
+            }
+            let scrollableHeight = max(
+                0,
+                documentView.bounds.height
+                    - scrollView.contentView.bounds.height
+            )
+            let scrollFraction = CGFloat(
+                scrollView.verticalScroller?.floatValue ?? 0
+            )
+            onScroll(scrollFraction * scrollableHeight)
+        }
+
+        private func reportUserDistanceFromBottom() {
+            guard
+                let scrollView,
+                let documentView = scrollView.documentView
+            else {
+                return
+            }
+            let scrollableHeight = max(
+                0,
+                documentView.bounds.height
+                    - scrollView.contentView.bounds.height
+            )
+            let scrollFraction = CGFloat(
+                scrollView.verticalScroller?.floatValue ?? 0
+            )
+            onUserScroll((1 - scrollFraction) * scrollableHeight)
+        }
+    }
+
+    final class AttachmentView: NSView {
+        var onHierarchyChange: (() -> Void)?
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            onHierarchyChange?()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onHierarchyChange?()
+        }
     }
 }
 
@@ -1464,11 +1522,44 @@ private struct EquatableLiveTurnCard: View, Equatable {
     }
 }
 
+struct LiveTurnPromptBlock: View {
+    let presentation: TaskPromptPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if !presentation.text.isEmpty {
+                Text(presentation.text)
+                    .font(.system(size: 13, weight: .semibold))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !presentation.attachments.isEmpty {
+                TaskPromptAttachmentList(
+                    attachments: presentation.attachments
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.leading, 11)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(DashboardPalette.accent.opacity(0.75))
+                .frame(width: 3)
+        }
+        .padding(10)
+        .background(
+            DashboardPalette.accent.opacity(0.055),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+}
+
 private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     let shouldAnimateResponse: Bool
     let finishResponseAnimation: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activitiesExpanded: Bool
     @State private var responseCopied: Bool
 
@@ -1496,16 +1587,49 @@ private struct LiveTurnCard: View {
                 metadata
                 promptBlock
 
-                if !turn.activities.isEmpty {
-                    activityDisclosure
+                if effectiveBackend == .codex {
+                    if
+                        turn.status.isRunning
+                            || !turn.activities.isEmpty
+                            || !turn.response.isEmpty
+                    {
+                        codexTranscript
+                    }
+                } else {
+                    if turn.status.isRunning || !turn.activities.isEmpty {
+                        activityDisclosure
+                    }
+
+                    if !turn.response.isEmpty {
+                        responseBlock
+                            .transition(
+                                .move(edge: .bottom)
+                                    .combined(with: .opacity)
+                            )
+                    }
                 }
 
-                if !turn.response.isEmpty {
-                    responseBlock
-                } else if let error = turn.errorMessage {
+                if let error = turn.errorMessage,
+                    turn.response.isEmpty
+                        || turn.status == .failed
+                        || turn.status == .interrupted
+                {
                     errorBlock(error)
                 }
+
+                if turn.status.isRunning || turn.endedAt != nil {
+                    LiveTurnElapsedStatusView(
+                        startedAt: turn.startedAt,
+                        endedAt: turn.endedAt,
+                        status: turn.status
+                    )
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
+            .animation(
+                .easeOut(duration: 0.22),
+                value: turn.response.isEmpty
+            )
             .padding(14)
             .background(
                 Color(nsColor: .controlBackgroundColor).opacity(0.72),
@@ -1514,6 +1638,11 @@ private struct LiveTurnCard: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 17, style: .continuous)
                     .stroke(Color.primary.opacity(0.07))
+            }
+        }
+        .onChange(of: turn.status) { _, status in
+            if !status.isRunning {
+                activitiesExpanded = false
             }
         }
     }
@@ -1545,9 +1674,19 @@ private struct LiveTurnCard: View {
                     .foregroundStyle(.secondary)
             }
 
+            Text(agentExecutionModeTitle(turn.fastMode))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(
+                    turn.fastMode == true
+                        ? DashboardPalette.accent
+                        : Color(nsColor: .secondaryLabelColor)
+                )
+
             Spacer()
 
-            statusBadge
+            if !turn.status.isRunning {
+                statusBadge
+            }
 
             Text(
                 turn.startedAt.formatted(
@@ -1561,69 +1700,37 @@ private struct LiveTurnCard: View {
     }
 
     private var promptBlock: some View {
-        HStack(alignment: .top, spacing: 8) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(DashboardPalette.accent.opacity(0.75))
-                .frame(width: 3)
-            Text(turn.prompt)
-                .font(.system(size: 13, weight: .semibold))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(10)
-        .background(
-            DashboardPalette.accent.opacity(0.055),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
+        LiveTurnPromptBlock(presentation: promptPresentation)
     }
 
     private var activityDisclosure: some View {
-        DisclosureGroup(isExpanded: $activitiesExpanded) {
-            VStack(alignment: .leading, spacing: 7) {
-                ForEach(turn.activities) { activity in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: activityIcon(activity.kind))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(activityColor(activity.kind))
-                            .frame(width: 15)
-                        Text(activity.text)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        Spacer(minLength: 8)
-                        Text(
-                            activity.occurredAt.formatted(
-                                date: .omitted,
-                                time: .standard
-                            )
-                        )
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-            .padding(.top, 8)
-        } label: {
-            HStack(spacing: 6) {
-                if turn.status.isRunning {
-                    CoreAnimationDotsView(
-                        dotSize: 2.5,
-                        spacing: 1.4,
-                        travel: 1.5,
-                        color: .secondaryLabelColor,
-                        isAnimated: !reduceMotion
-                    )
-                    .frame(width: 15, height: 10)
-                    .accessibilityLabel("추론 중")
-                } else {
-                    Image(systemName: "list.bullet.indent")
-                }
-                Text("추론 및 진행 \(turn.activities.count)")
-                    .font(.system(size: 11, weight: .bold))
-            }
-            .foregroundStyle(.secondary)
-        }
-        .tint(.secondary)
+        AgentActivityLogView(
+            activities: turn.activities,
+            backend: effectiveBackend,
+            isRunning: turn.status.isRunning,
+            isExpanded: $activitiesExpanded
+        )
+    }
+
+    private var codexTranscript: some View {
+        CodexTranscriptView(
+            turnID: turn.id,
+            activities: turn.activities,
+            response: turn.response,
+            responseUpdatedAt: turn.updatedAt,
+            isRunning: turn.status.isRunning,
+            isCompleted: turn.status == .completed,
+            needsInput: turn.needsInput,
+            onResponsePresented: finishResponseAnimation
+        )
+    }
+
+    private var effectiveBackend: AgentBackend {
+        turn.backend ?? turn.characterBackend
+    }
+
+    private var promptPresentation: TaskPromptPresentation {
+        TaskPromptPresentation(prompt: turn.prompt)
     }
 
     private var responseBlock: some View {
@@ -1677,14 +1784,15 @@ private struct LiveTurnCard: View {
                     ? Color.orange
                     : DashboardPalette.accent
             )
-            LiveTypingResponseView(
+            EquatableLiveTypingResponseView(
                 turnID: turn.id,
-                backend: turn.backend ?? turn.characterBackend,
+                backend: effectiveBackend,
                 source: turn.response,
                 animates: shouldAnimateResponse,
                 isStreaming: shouldAnimateResponse,
                 onFinishedTyping: finishResponseAnimation
             )
+            .equatable()
         }
         .padding(.top, 2)
     }
@@ -1753,30 +1861,109 @@ private struct LiveTurnCard: View {
         }
     }
 
-    private func activityIcon(_ kind: String) -> String {
-        switch kind {
-        case "command":
-            "terminal"
-        case "tool":
-            "wrench.and.screwdriver"
-        case "message":
-            "text.bubble"
-        default:
-            "brain.head.profile"
+}
+
+private struct LiveTurnElapsedStatusView: View {
+    let startedAt: Date
+    let endedAt: Date?
+    let status: LiveTurnStatus
+
+    @ViewBuilder
+    var body: some View {
+        if status.isRunning {
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                Text("\(elapsedText(at: context.date))째 진행 중")
+                    .font(statusFont)
+                    .foregroundStyle(DashboardPalette.accent)
+                    .accessibilityLabel(
+                        "\(elapsedText(at: context.date))째 진행 중"
+                    )
+            }
+        } else if let endedAt {
+            Text("\(elapsedText(at: endedAt))에 \(terminalTitle)")
+                .font(statusFont)
+                .foregroundStyle(terminalColor)
+                .accessibilityLabel(
+                    "\(elapsedText(at: endedAt))에 \(terminalTitle)"
+                )
         }
     }
 
-    private func activityColor(_ kind: String) -> Color {
-        switch kind {
-        case "command":
-            Color.indigo
-        case "tool":
-            Color.orange
-        case "message":
-            DashboardPalette.accent
-        default:
-            Color.purple
+    private var statusFont: Font {
+        .system(
+            size: 10.5,
+            weight: .bold,
+            design: .monospaced
+        )
+    }
+
+    private var terminalTitle: String {
+        switch status {
+        case .completed:
+            "완료"
+        case .failed:
+            "실패"
+        case .interrupted:
+            "중단"
+        case .pending, .running:
+            "진행 중"
         }
+    }
+
+    private var terminalColor: Color {
+        switch status {
+        case .completed:
+            .green
+        case .failed, .interrupted:
+            .red
+        case .pending, .running:
+            DashboardPalette.accent
+        }
+    }
+
+    private func elapsedText(at date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(startedAt)))
+        if seconds < 60 {
+            return "\(seconds)초"
+        }
+
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)분 \(seconds % 60)초"
+        }
+
+        return "\(minutes / 60)시간 \(minutes % 60)분"
+    }
+}
+
+private struct EquatableLiveTypingResponseView: View, Equatable {
+    let turnID: String
+    let backend: AgentBackend
+    let source: String
+    let animates: Bool
+    let isStreaming: Bool
+    let onFinishedTyping: () -> Void
+
+    static func == (
+        lhs: EquatableLiveTypingResponseView,
+        rhs: EquatableLiveTypingResponseView
+    ) -> Bool {
+        lhs.turnID == rhs.turnID
+            && lhs.backend == rhs.backend
+            && lhs.source == rhs.source
+            && lhs.animates == rhs.animates
+            && lhs.isStreaming == rhs.isStreaming
+    }
+
+    var body: some View {
+        LiveTypingResponseView(
+            turnID: turnID,
+            backend: backend,
+            source: source,
+            animates: animates,
+            isStreaming: isStreaming,
+            onFinishedTyping: onFinishedTyping
+        )
     }
 }
 
@@ -1892,15 +2079,109 @@ private struct LiveTypingResponseView: View {
     }
 }
 
+private struct WaterfallResponseSegment: Identifiable, Equatable {
+    let id = UUID()
+    let source: String
+}
+
 private struct WaterfallResponseRevealView: View {
     let source: String
     let fontSize: CGFloat
     let onFinished: () -> Void
 
+    @State private var segments: [WaterfallResponseSegment]
+    @State private var cumulativeSource: String
+    @State private var revealingSegmentID: UUID?
+
+    init(
+        source: String,
+        fontSize: CGFloat,
+        onFinished: @escaping () -> Void
+    ) {
+        self.source = source
+        self.fontSize = fontSize
+        self.onFinished = onFinished
+
+        let initialSegment = WaterfallResponseSegment(source: source)
+        _segments = State(initialValue: [initialSegment])
+        _cumulativeSource = State(initialValue: source)
+        _revealingSegmentID = State(initialValue: initialSegment.id)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ForEach(segments) { segment in
+                if segment.id == revealingSegmentID {
+                    WaterfallResponseSegmentView(
+                        source: segment.source,
+                        fontSize: fontSize
+                    ) {
+                        finishReveal(for: segment.id)
+                    }
+                } else {
+                    ConversationMarkdownView(
+                        source: segment.source,
+                        fontSize: fontSize
+                    )
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: source) { _, updatedSource in
+            appendNewSource(updatedSource)
+        }
+    }
+
+    private func appendNewSource(_ updatedSource: String) {
+        guard updatedSource != cumulativeSource else {
+            return
+        }
+
+        guard updatedSource.hasPrefix(cumulativeSource) else {
+            let replacement = WaterfallResponseSegment(
+                source: updatedSource
+            )
+            segments = [replacement]
+            cumulativeSource = updatedSource
+            revealingSegmentID = replacement.id
+            return
+        }
+
+        let suffix = String(
+            updatedSource.dropFirst(cumulativeSource.count)
+        )
+        cumulativeSource = updatedSource
+        guard !suffix.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty else {
+            return
+        }
+
+        let segment = WaterfallResponseSegment(source: suffix)
+        segments.append(segment)
+        revealingSegmentID = segment.id
+    }
+
+    private func finishReveal(for segmentID: UUID) {
+        guard revealingSegmentID == segmentID else {
+            return
+        }
+        revealingSegmentID = nil
+        onFinished()
+    }
+}
+
+private struct WaterfallResponseSegmentView: View {
+    let source: String
+    let fontSize: CGFloat
+    let onFinished: () -> Void
+
     @State private var measuredHeight = CGFloat.zero
-    @State private var revealHeight = CGFloat(1)
-    @State private var revealingSource = ""
+    @State private var revealHeight = CGFloat.zero
     @State private var isRevealing = true
+    @State private var hasStarted = false
     @State private var completionTask: Task<Void, Never>?
 
     var body: some View {
@@ -1918,14 +2199,9 @@ private struct WaterfallResponseRevealView: View {
                 )
             }
         }
-        .frame(
-            height: isRevealing ? revealHeight : nil,
-            alignment: .top
-        )
-        .clipped()
         .mask {
             if isRevealing {
-                WaterfallResponseMask()
+                WaterfallResponseMask(revealHeight: revealHeight)
             } else {
                 Rectangle().fill(.white)
             }
@@ -1937,17 +2213,7 @@ private struct WaterfallResponseRevealView: View {
                 return
             }
             measuredHeight = height
-            beginRevealIfNeeded(height: height)
-        }
-        .onChange(of: source) {
-            _, _ in
-            completionTask?.cancel()
-            revealingSource = ""
-            isRevealing = true
-            revealHeight = 1
-            if measuredHeight > 0 {
-                beginRevealIfNeeded(height: measuredHeight)
-            }
+            beginRevealIfNeeded()
         }
         .onDisappear {
             completionTask?.cancel()
@@ -1956,43 +2222,40 @@ private struct WaterfallResponseRevealView: View {
         }
     }
 
-    private func beginRevealIfNeeded(height: CGFloat) {
-        guard revealingSource != source else {
-            if
-                isRevealing,
-                abs(revealHeight - height) > 0.5
-            {
-                withAnimation(.easeOut(duration: 0.24)) {
-                    revealHeight = height
-                }
-            }
+    private func beginRevealIfNeeded() {
+        guard !hasStarted else {
             return
         }
 
         completionTask?.cancel()
-        revealingSource = source
+        hasStarted = true
         isRevealing = true
-        revealHeight = min(12, height)
-
-        let duration = revealDuration(for: height)
-        withAnimation(
-            .timingCurve(
-                0.18,
-                0.72,
-                0.24,
-                1,
-                duration: duration
-            )
-        ) {
-            revealHeight = height
-        }
+        revealHeight = 0
 
         completionTask = Task { @MainActor in
-            do {
-                try await Task.sleep(
-                    for: .milliseconds(Int(duration * 1_000))
+            try? await Task.sleep(for: .milliseconds(240))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            let targetHeight = measuredHeight
+            let duration = revealDuration(for: targetHeight)
+            withAnimation(
+                .timingCurve(
+                    0.18,
+                    0.72,
+                    0.24,
+                    1,
+                    duration: duration
                 )
-            } catch {
+            ) {
+                revealHeight = targetHeight
+            }
+
+            try? await Task.sleep(
+                for: .milliseconds(Int(duration * 1_000))
+            )
+            guard !Task.isCancelled else {
                 return
             }
             isRevealing = false
@@ -2007,19 +2270,31 @@ private struct WaterfallResponseRevealView: View {
 }
 
 private struct WaterfallResponseMask: View {
+    let revealHeight: CGFloat
+
     var body: some View {
-        VStack(spacing: 0) {
-            Color.white
-            LinearGradient(
-                colors: [
-                    .white,
-                    .white.opacity(0.72),
-                    .clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
+        GeometryReader { geometry in
+            let visibleHeight = min(
+                max(0, revealHeight),
+                geometry.size.height
             )
-            .frame(height: 24)
+            let featherHeight = min(24, visibleHeight)
+
+            VStack(spacing: 0) {
+                Color.white
+                    .frame(height: max(0, visibleHeight - featherHeight))
+                LinearGradient(
+                    colors: [
+                        .white,
+                        .white.opacity(0.72),
+                        .clear,
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: featherHeight)
+                Spacer(minLength: 0)
+            }
         }
     }
 }
@@ -2178,7 +2453,12 @@ private enum CharacterAvatarImageCache {
 
 enum DashboardPalette {
     static let accent = Color(red: 0.13, green: 0.55, blue: 0.52)
-    static let canvas = Color(red: 0.94, green: 0.945, blue: 0.955)
+
+    static func canvas(isNight: Bool) -> Color {
+        isNight
+            ? Color(red: 0.065, green: 0.073, blue: 0.09)
+            : Color(red: 0.94, green: 0.945, blue: 0.955)
+    }
 
     static func characterAccent(for characterID: String) -> Color {
         switch characterID {
@@ -2196,16 +2476,41 @@ enum DashboardPalette {
     }
 }
 
+private struct OfficePanelStyle: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Color(nsColor: .windowBackgroundColor).opacity(0.94),
+                in: RoundedRectangle(
+                    cornerRadius: 20,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: 20,
+                    style: .continuous
+                )
+                .stroke(
+                    colorScheme == .dark
+                        ? Color.white.opacity(0.12)
+                        : Color.white.opacity(0.74)
+                )
+            }
+            .shadow(
+                color: .black.opacity(
+                    colorScheme == .dark ? 0.28 : 0.075
+                ),
+                radius: 18,
+                y: 7
+            )
+    }
+}
+
 extension View {
     func officePanelStyle() -> some View {
-        background(
-            Color(nsColor: .windowBackgroundColor).opacity(0.94),
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.74))
-        }
-        .shadow(color: .black.opacity(0.075), radius: 18, y: 7)
+        modifier(OfficePanelStyle())
     }
 }

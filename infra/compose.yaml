@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: office
       POSTGRES_PASSWORD: office-local
     ports:
-      - "54329:5432"
+      - "127.0.0.1:54329:5432"
     volumes:
       - office-postgres-data:/var/lib/postgresql/data
     healthcheck:

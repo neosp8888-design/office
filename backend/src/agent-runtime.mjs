@@ -1,23 +1,36 @@
 // 이 파일은 백엔드에서 CLI 업무를 실행하고 공개 진행 상태를 PostgreSQL과 WebSocket에 전달한다.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  resolve,
+} from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 
 import {
   decodeAgentResponse,
+  fileChangeActivityText,
   parseAgentEvent,
 } from "./agent-event-parser.mjs";
 import {
@@ -31,6 +44,10 @@ const RESPONSE_INSTRUCTION = `
 사용자에게 보여줄 질문 원문
 표식 다음에는 질문과 판단에 필요한 선택지만 작성한다. 사용자 확인 없이 할 수 있는 작업은 먼저 진행한다.
 `.trim();
+
+const MAX_FILE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_TURN_SNAPSHOT_BYTES = 24 * 1024 * 1024;
+const rolloutPathCache = new Map();
 
 export class AgentBusyError extends Error {}
 export class AgentJobNotFoundError extends Error {}
@@ -48,15 +65,36 @@ export class AgentRuntime {
   async recoverInterruptedJobs() {
     const result = await this.pool.query(
       `
-        UPDATE turns
-        SET
-          status = 'interrupted',
-          error_message =
-            '백엔드가 재시작되어 이전 실시간 출력 연결이 종료됐습니다.',
-          ended_at = COALESCE(ended_at, now()),
-          updated_at = now()
-        WHERE status IN ('pending', 'running')
-        RETURNING id
+        WITH existing_terminal_turns AS (
+          SELECT id, status
+          FROM turns
+          WHERE status IN ('completed', 'failed', 'interrupted')
+        ), interrupted_turns AS (
+          UPDATE turns
+          SET
+            status = 'interrupted',
+            error_message =
+              '백엔드가 재시작되어 이전 실시간 출력 연결이 종료됐습니다.',
+            ended_at = COALESCE(ended_at, now()),
+            updated_at = now()
+          WHERE status IN ('pending', 'running')
+          RETURNING id
+        ), terminal_turns AS (
+          SELECT id, status FROM existing_terminal_turns
+          UNION ALL
+          SELECT id, 'interrupted' AS status FROM interrupted_turns
+        ), closed_activities AS (
+          UPDATE turn_activities AS activity
+          SET status = CASE
+            WHEN turn.status = 'completed' THEN 'completed'
+            ELSE 'failed'
+          END
+          FROM terminal_turns AS turn
+          WHERE activity.turn_id = turn.id
+            AND activity.status = 'running'
+          RETURNING activity.id
+        )
+        SELECT id FROM interrupted_turns
       `,
     );
     return result.rowCount;
@@ -104,6 +142,17 @@ export class AgentRuntime {
       ),
       sequence: 0,
       lastActivity: null,
+      activityRecords: new Map(),
+      fileChangeSnapshots: new Map(),
+      rolloutReader: createRolloutReader(
+        prepared.externalSessionID,
+        true,
+      ),
+      hasSeenInitialCodexReasoning: false,
+      pendingInitialCodexReasoning: null,
+      pendingAgentMessage: null,
+      visibleAgentMessages: [],
+      streamMessageID: null,
       responseText: "",
       partialText: "",
       lastPartialPersistedAt: 0,
@@ -136,6 +185,8 @@ export class AgentRuntime {
     terminateProcessGroup(state.process);
     const message = "사용자가 업무를 중단했습니다.";
     try {
+      await this.completePendingInitialCodexReasoning(state);
+      await this.finalizeRunningActivities(state, "failed");
       await this.pool.query(
         `
           UPDATE turns
@@ -150,7 +201,9 @@ export class AgentRuntime {
         [state.turnID, message],
       );
     } finally {
-      this.running.delete(characterID);
+      if (this.running.get(characterID) === state) {
+        this.running.delete(characterID);
+      }
       this.broadcast({
         type: "feed.changed",
         turnId: state.turnID,
@@ -175,6 +228,7 @@ export class AgentRuntime {
             backend,
             model,
             effort,
+            fast_mode AS "fastMode",
             permission,
             identity_prompt AS "identityPrompt",
             config
@@ -287,12 +341,13 @@ export class AgentRuntime {
             backend,
             model,
             effort,
+            fast_mode,
             prompt,
             status,
             started_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, 'running', now(), now())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', now(), now())
         `,
         [
           turnID,
@@ -300,6 +355,7 @@ export class AgentRuntime {
           character.backend,
           character.model,
           character.effort,
+          character.fastMode,
           prompt,
         ],
       );
@@ -347,7 +403,7 @@ export class AgentRuntime {
     await outputTask;
     const stderr = (await errorTask).trim();
 
-    if (state.cancelRequested) {
+    if (await this.settleCancelledOutput(state)) {
       return;
     }
     if (state.failure) {
@@ -361,7 +417,7 @@ export class AgentRuntime {
       );
     }
 
-    const candidate = state.responseText || state.partialText;
+    const candidate = this.finalResponseCandidate(state);
     const decoded = decodeAgentResponse(candidate);
     if (!decoded.text) {
       throw new Error("CLI 최종 메시지가 없습니다.");
@@ -379,22 +435,91 @@ export class AgentRuntime {
       if (!event) {
         continue;
       }
+      this.enrichFileChangeEvent(state, event);
       if (
         event.sessionID &&
         event.sessionID !== state.externalSessionID
       ) {
         await this.activateSession(state, event.sessionID);
       }
-      if (event.activity) {
-        await this.addActivity(state, event.activity);
+      if (event.streamMessageID) {
+        state.streamMessageID = event.streamMessageID;
+        state.partialText = "";
+        state.responseText = "";
+        state.lastPartialPersistedAt = 0;
+      }
+      const activities = [
+        ...(Array.isArray(event.activities) ? event.activities : []),
+        ...(event.activity ? [event.activity] : []),
+      ];
+      const pendingReasoningBeforeEvent = activities.length > 0
+        ? state.pendingInitialCodexReasoning
+        : null;
+      if (activities.length > 0) {
+        await this.promotePendingAgentMessage(state);
+        for (const activity of activities) {
+          await this.addParsedActivity(
+            state,
+            this.scopedActivity(state, activity),
+          );
+        }
+        if (pendingReasoningBeforeEvent) {
+          await this.completePendingInitialCodexReasoning(
+            state,
+            pendingReasoningBeforeEvent,
+          );
+        }
+      }
+      if (event.agentMessage) {
+        const key = event.agentMessageKey ?? null;
+        if (state.character.backend === "codex") {
+          await this.completePendingInitialCodexReasoning(state);
+          await this.addActivity(state, {
+            kind: "message",
+            text: event.agentMessage,
+            eventKey: key ? `message:${key}` : null,
+            status: "completed",
+            preserveOccurredAt: true,
+          });
+        } else {
+          if (
+            state.pendingAgentMessage &&
+            state.pendingAgentMessage.key !== key
+          ) {
+            await this.promotePendingAgentMessage(state);
+          }
+          state.pendingAgentMessage = {
+            key,
+            text: event.agentMessage,
+          };
+        }
+        this.rememberVisibleAgentMessage(
+          state,
+          key,
+          event.agentMessage,
+        );
+        state.responseText = event.agentMessage;
+        state.partialText = event.agentMessage;
+        await this.persistResponseDraft(
+          state,
+          this.visibleResponseText(state),
+        );
       }
       if (event.responseDelta) {
         state.partialText += event.responseDelta;
         await this.persistPartialResponse(state);
       }
       if (event.responseText) {
+        this.rememberVisibleAgentMessage(
+          state,
+          null,
+          event.responseText,
+        );
         state.responseText = event.responseText;
-        await this.persistResponseDraft(state, event.responseText);
+        await this.persistResponseDraft(
+          state,
+          this.visibleResponseText(state),
+        );
       }
       if (event.warning) {
         state.warning = event.warning;
@@ -403,9 +528,214 @@ export class AgentRuntime {
         state.failure = event.failure;
       }
     }
+    await this.completePendingInitialCodexReasoning(state);
+  }
+
+  scopedActivity(state, activity) {
+    if (!activity.messageScoped || !state.streamMessageID) {
+      return activity;
+    }
+    return {
+      ...activity,
+      eventKey: `${state.streamMessageID}:${activity.eventKey}`,
+      messageScoped: false,
+    };
+  }
+
+  enrichFileChangeEvent(state, event) {
+    const fileChange = event.fileChange;
+    if (!fileChange?.eventKey) {
+      return;
+    }
+    state.fileChangeSnapshots ??= new Map();
+    if (fileChange.phase === "item.started") {
+      state.fileChangeSnapshots.set(
+        fileChange.eventKey,
+        captureFileSnapshots(this.workdir, fileChange.changes),
+      );
+      return;
+    }
+    if (fileChange.phase !== "item.completed") {
+      return;
+    }
+
+    const snapshots = state.fileChangeSnapshots.get(fileChange.eventKey);
+    state.fileChangeSnapshots.delete(fileChange.eventKey);
+    const statistics = rolloutFileChangeStatistics(
+      state.rolloutReader,
+      this.workdir,
+      fileChange.changes,
+    ) ?? fileChangeStatistics(
+      this.workdir,
+      snapshots,
+      fileChange.changes,
+    );
+    if (statistics && event.activity) {
+      event.activity.text = fileChangeActivityText(
+        fileChange.changes,
+        statistics,
+      );
+    }
+  }
+
+  async addParsedActivity(state, activity) {
+    const isInitialCodexReasoning =
+      activity.isCodexReasoning === true &&
+      state.hasSeenInitialCodexReasoning !== true;
+    if (!isInitialCodexReasoning) {
+      await this.addActivity(state, activity);
+      return;
+    }
+
+    state.hasSeenInitialCodexReasoning = true;
+    if (activity.status !== "completed" || !activity.eventKey) {
+      await this.addActivity(state, activity);
+      return;
+    }
+
+    await this.addActivity(state, {
+      ...activity,
+      status: "running",
+    });
+    state.pendingInitialCodexReasoning = {
+      ...activity,
+      status: "completed",
+      preserveOccurredAt: true,
+    };
+  }
+
+  async completePendingInitialCodexReasoning(state, expected = null) {
+    const pending = state.pendingInitialCodexReasoning;
+    if (
+      !pending ||
+      (expected && pending.eventKey !== expected.eventKey)
+    ) {
+      return;
+    }
+
+    state.pendingInitialCodexReasoning = null;
+    try {
+      await this.addActivity(state, pending);
+    } catch (error) {
+      state.pendingInitialCodexReasoning ??= pending;
+      throw error;
+    }
+  }
+
+  rememberVisibleAgentMessage(state, key, text) {
+    const value = String(text ?? "").trim();
+    if (!value) {
+      return;
+    }
+    const messages = state.visibleAgentMessages ?? [];
+    state.visibleAgentMessages = messages;
+    if (key) {
+      const existingIndex = messages.findIndex(
+        (message) => message.key === key,
+      );
+      if (existingIndex >= 0) {
+        messages[existingIndex] = { key, text: value };
+        return;
+      }
+      messages.push({ key, text: value });
+      return;
+    }
+    if (messages.at(-1)?.text !== value) {
+      messages.push({ key, text: value });
+    }
+  }
+
+  visibleResponseText(state, currentText = "") {
+    const values = (state.visibleAgentMessages ?? [])
+      .map((message) => message.text)
+      .filter(Boolean);
+    const current = String(currentText ?? "");
+    if (current.trim() && values.at(-1) !== current.trim()) {
+      values.push(current);
+    }
+    return values.join("\n\n");
+  }
+
+  finalResponseCandidate(state) {
+    const candidates = [
+      state.responseText,
+      state.partialText,
+      state.visibleAgentMessages?.at(-1)?.text,
+    ];
+    return candidates.find(
+      (value) => String(value ?? "").trim().length > 0,
+    ) ?? "";
+  }
+
+  completedResponseText(state, decoded) {
+    const values = (state.visibleAgentMessages ?? [])
+      .map((message) => message.text)
+      .filter(Boolean);
+    if (
+      decoded.needsInput &&
+      values.at(-1) === state.responseText
+    ) {
+      values[values.length - 1] = decoded.text;
+    } else if (values.at(-1) !== decoded.text) {
+      values.push(decoded.text);
+    }
+    return values.join("\n\n");
+  }
+
+  async normalizeCompletedCodexMessageActivity(state, decoded) {
+    if (state.character.backend !== "codex" || !decoded.needsInput) {
+      return;
+    }
+    const finalMessage = state.visibleAgentMessages?.at(-1);
+    const eventKey = finalMessage?.key
+      ? `message:${finalMessage.key}`
+      : null;
+    if (
+      !eventKey ||
+      !state.activityRecords.has(eventKey) ||
+      finalMessage.text === decoded.text
+    ) {
+      return;
+    }
+
+    const originalText = finalMessage.text;
+    await this.addActivity(state, {
+      kind: "message",
+      text: decoded.text,
+      eventKey,
+      status: "completed",
+      preserveOccurredAt: true,
+    });
+    finalMessage.text = decoded.text;
+    if (state.responseText === originalText) {
+      state.responseText = decoded.text;
+    }
+    if (state.partialText === originalText) {
+      state.partialText = decoded.text;
+    }
+  }
+
+  async promotePendingAgentMessage(state) {
+    const pending = state.pendingAgentMessage;
+    if (!pending) {
+      return;
+    }
+    state.pendingAgentMessage = null;
+    await this.addActivity(state, {
+      kind: "message",
+      text: pending.text,
+      eventKey: pending.key ? `message:${pending.key}` : null,
+      status: "completed",
+      preserveText: false,
+    });
+    if (state.responseText === pending.text) {
+      state.responseText = "";
+      state.partialText = "";
+    }
   }
 
   async activateSession(state, externalSessionID) {
+    const isNewSession = !state.externalSessionID;
     await this.withTransaction(async (client) => {
       await client.query(
         `
@@ -448,29 +778,101 @@ export class AgentRuntime {
       );
     });
     state.externalSessionID = externalSessionID;
+    state.rolloutReader = createRolloutReader(
+      externalSessionID,
+      !isNewSession,
+    );
     this.broadcast({ type: "session.changed", turnId: state.turnID });
   }
 
   async addActivity(state, activity) {
-    const key = `${activity.kind}\n${activity.text}`;
-    if (state.lastActivity === key) {
+    const eventKey = activity.eventKey ?? null;
+    const existing = eventKey
+      ? state.activityRecords.get(eventKey)
+      : null;
+    const text = activity.preserveText && existing
+      ? existing.text
+      : activity.text;
+    const status = activity.status ?? "completed";
+    if (
+      existing &&
+      existing.kind === activity.kind &&
+      existing.text === text &&
+      existing.status === status
+    ) {
       return;
     }
-    state.lastActivity = key;
+    const duplicateKey = `${activity.kind}\n${text}\n${status}`;
+    if (!eventKey && state.lastActivity === duplicateKey) {
+      return;
+    }
+    state.lastActivity = duplicateKey;
+
+    if (existing) {
+      await this.pool.query(
+        `
+          UPDATE turn_activities
+          SET
+            kind = $3,
+            text = $4,
+            status = $5
+          WHERE turn_id = $1
+            AND seq = $2
+        `,
+        [
+          state.turnID,
+          existing.sequence,
+          activity.kind,
+          text,
+          status,
+        ],
+      );
+      state.activityRecords.set(eventKey, {
+        sequence: existing.sequence,
+        kind: activity.kind,
+        text,
+        status,
+      });
+      await this.touchTurn(state.turnID);
+      this.broadcast({
+        type: "feed.changed",
+        turnId: state.turnID,
+        characterId: state.character.id,
+      });
+      return;
+    }
+
     state.sequence += 1;
     await this.pool.query(
       `
-        INSERT INTO turn_activities (turn_id, seq, kind, text)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO turn_activities (
+          turn_id,
+          seq,
+          kind,
+          text,
+          event_key,
+          status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (turn_id, seq) DO NOTHING
       `,
       [
         state.turnID,
         state.sequence,
         activity.kind,
-        activity.text,
+        text,
+        eventKey,
+        status,
       ],
     );
+    if (eventKey) {
+      state.activityRecords.set(eventKey, {
+        sequence: state.sequence,
+        kind: activity.kind,
+        text,
+        status,
+      });
+    }
     await this.touchTurn(state.turnID);
     this.broadcast({
       type: "feed.changed",
@@ -485,7 +887,10 @@ export class AgentRuntime {
       return;
     }
     state.lastPartialPersistedAt = now;
-    await this.persistResponseDraft(state, state.partialText);
+    await this.persistResponseDraft(
+      state,
+      this.visibleResponseText(state, state.partialText),
+    );
   }
 
   async persistResponseDraft(state, text) {
@@ -517,15 +922,50 @@ export class AgentRuntime {
     );
   }
 
+  async finalizeRunningActivities(state, status) {
+    await this.pool.query(
+      `
+        UPDATE turn_activities
+        SET status = $2
+        WHERE turn_id = $1
+          AND status = 'running'
+      `,
+      [state.turnID, status],
+    );
+    if (state.activityRecords instanceof Map) {
+      for (const [eventKey, activity] of state.activityRecords) {
+        if (activity.status === "running") {
+          state.activityRecords.set(eventKey, { ...activity, status });
+        }
+      }
+    }
+  }
+
+  async settleCancelledOutput(state) {
+    if (!state.cancelRequested) {
+      return false;
+    }
+    await this.finalizeRunningActivities(state, "failed");
+    this.broadcast({
+      type: "feed.changed",
+      turnId: state.turnID,
+      characterId: state.character.id,
+    });
+    return true;
+  }
+
   async complete(state, decoded) {
     if (state.cancelRequested) {
       return;
     }
+    await this.completePendingInitialCodexReasoning(state);
+    await this.finalizeRunningActivities(state, "completed");
+    await this.normalizeCompletedCodexMessageActivity(state, decoded);
     const generatedImages = listGeneratedImages(
       state.externalSessionID,
     ).filter((path) => !state.initialGeneratedImages.has(path));
     const responseText = appendLocalImagePreviews(
-      decoded.text,
+      this.completedResponseText(state, decoded),
       generatedImages,
     );
 
@@ -553,7 +993,9 @@ export class AgentRuntime {
         [state.turnID, decoded.needsInput],
       );
     });
-    this.running.delete(state.character.id);
+    if (this.running.get(state.character.id) === state) {
+      this.running.delete(state.character.id);
+    }
     this.broadcast({
       type: "feed.changed",
       turnId: state.turnID,
@@ -562,9 +1004,11 @@ export class AgentRuntime {
   }
 
   async fail(state, error) {
-    if (!this.running.has(state.character.id)) {
+    if (this.running.get(state.character.id) !== state) {
       return;
     }
+    await this.completePendingInitialCodexReasoning(state);
+    await this.finalizeRunningActivities(state, "failed");
     const message =
       error instanceof Error ? error.message : String(error);
     await this.withTransaction(async (client) => {
@@ -591,13 +1035,319 @@ export class AgentRuntime {
         );
       }
     });
-    this.running.delete(state.character.id);
+    if (this.running.get(state.character.id) === state) {
+      this.running.delete(state.character.id);
+    }
     this.broadcast({
       type: "feed.changed",
       turnId: state.turnID,
       characterId: state.character.id,
     });
   }
+}
+
+function captureFileSnapshots(workdir, changes) {
+  const snapshots = new Map();
+  let remainingBytes = MAX_TURN_SNAPSHOT_BYTES;
+  for (const change of changes ?? []) {
+    const path = resolvedChangePath(workdir, change?.path);
+    if (!path || snapshots.has(path)) {
+      continue;
+    }
+    const snapshot = readFileSnapshot(path, remainingBytes);
+    if (!snapshot) {
+      continue;
+    }
+    remainingBytes -= snapshot.length;
+    snapshots.set(path, snapshot);
+  }
+  return snapshots;
+}
+
+function fileChangeStatistics(workdir, snapshots, changes) {
+  if (!(snapshots instanceof Map)) {
+    return null;
+  }
+  const directory = mkdtempSync(join(tmpdir(), "office-file-diff-"));
+  try {
+    const beforeDirectory = join(directory, "before");
+    const afterDirectory = join(directory, "after");
+    mkdirSync(beforeDirectory);
+    mkdirSync(afterDirectory);
+    const uniquePaths = normalizedChangePaths(workdir, changes);
+    if (uniquePaths.length === 0) {
+      return null;
+    }
+
+    let remainingAfterBytes = MAX_TURN_SNAPSHOT_BYTES;
+    for (const [index, path] of uniquePaths.entries()) {
+      const before = snapshots.get(path);
+      const after = readFileSnapshot(path, remainingAfterBytes);
+      if (!Buffer.isBuffer(before) || !Buffer.isBuffer(after)) {
+        return null;
+      }
+      remainingAfterBytes -= after.length;
+      const name = String(index).padStart(5, "0");
+      writeFileSync(join(beforeDirectory, name), before);
+      writeFileSync(join(afterDirectory, name), after);
+    }
+
+    const result = spawnSync(
+      "/usr/bin/git",
+      [
+        "diff",
+        "--no-index",
+        "--numstat",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--",
+        beforeDirectory,
+        afterDirectory,
+      ],
+      { encoding: "utf8", maxBuffer: 1_000_000 },
+    );
+    if (result.error || ![0, 1].includes(result.status)) {
+      return null;
+    }
+    const lines = String(result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    if (lines.length !== uniquePaths.length) {
+      return null;
+    }
+
+    let additions = 0;
+    let deletions = 0;
+    for (const line of lines) {
+      const [added, deleted] = line.split("\t");
+      const addedCount = Number.parseInt(added, 10);
+      const deletedCount = Number.parseInt(deleted, 10);
+      if (!Number.isFinite(addedCount) || !Number.isFinite(deletedCount)) {
+        return null;
+      }
+      additions += addedCount;
+      deletions += deletedCount;
+    }
+    return { additions, deletions };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function createRolloutReader(sessionID, startAtEnd) {
+  const path = findRolloutPath(sessionID);
+  if (!path) {
+    return null;
+  }
+  return {
+    path,
+    offset: startAtEnd ? statSync(path).size : 0,
+    remainder: "",
+    pending: [],
+  };
+}
+
+function findRolloutPath(sessionID) {
+  const id = String(sessionID ?? "").trim();
+  if (!id) {
+    return null;
+  }
+  const cached = rolloutPathCache.get(id);
+  if (cached && existsSync(cached)) {
+    return cached;
+  }
+  const root = join(homedir(), ".codex", "sessions");
+  if (!existsSync(root)) {
+    return null;
+  }
+  let entries;
+  try {
+    entries = readdirSync(root, { recursive: true });
+  } catch {
+    return null;
+  }
+  const relative = entries.find((entry) => {
+    const value = String(entry);
+    return value.endsWith(".jsonl") && value.includes(id);
+  });
+  if (!relative) {
+    return null;
+  }
+  const path = join(root, String(relative));
+  rolloutPathCache.set(id, path);
+  return path;
+}
+
+function rolloutFileChangeStatistics(reader, workdir, changes) {
+  if (!reader || !readRolloutPatchEvents(reader, workdir)) {
+    return null;
+  }
+  const expectedPaths = normalizedChangePaths(workdir, changes);
+  const matchIndex = reader.pending.findIndex((event) =>
+    sameStringArrays(event.paths, expectedPaths)
+  );
+  if (matchIndex < 0) {
+    return null;
+  }
+  const [event] = reader.pending.splice(matchIndex, 1);
+  return event.statistics;
+}
+
+function readRolloutPatchEvents(reader, workdir) {
+  let size;
+  try {
+    size = statSync(reader.path).size;
+  } catch {
+    return false;
+  }
+  if (size < reader.offset) {
+    reader.offset = 0;
+    reader.remainder = "";
+    reader.pending = [];
+  }
+  if (size === reader.offset) {
+    return true;
+  }
+
+  const length = size - reader.offset;
+  const buffer = Buffer.alloc(length);
+  let descriptor;
+  let bytesRead = 0;
+  try {
+    descriptor = openSync(reader.path, "r");
+    while (bytesRead < length) {
+      const count = readSync(
+        descriptor,
+        buffer,
+        bytesRead,
+        length - bytesRead,
+        reader.offset + bytesRead,
+      );
+      if (count <= 0) {
+        break;
+      }
+      bytesRead += count;
+    }
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+  if (bytesRead === 0) {
+    return false;
+  }
+  reader.offset += bytesRead;
+  const lines = (
+    reader.remainder + buffer.subarray(0, bytesRead).toString("utf8")
+  ).split("\n");
+  reader.remainder = lines.pop() ?? "";
+  for (const line of lines) {
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const payload = record?.payload;
+    if (
+      payload?.type !== "patch_apply_end" ||
+      payload.status !== "completed" ||
+      payload.success === false ||
+      !payload.changes ||
+      typeof payload.changes !== "object"
+    ) {
+      continue;
+    }
+    const paths = normalizedChangePaths(
+      workdir,
+      Object.keys(payload.changes).map((path) => ({ path })),
+    );
+    let additions = 0;
+    let deletions = 0;
+    let isComplete = paths.length > 0;
+    for (const change of Object.values(payload.changes)) {
+      const statistics = unifiedDiffStatistics(change?.unified_diff);
+      if (!statistics) {
+        isComplete = false;
+        break;
+      }
+      additions += statistics.additions;
+      deletions += statistics.deletions;
+    }
+    if (isComplete) {
+      reader.pending.push({
+        paths,
+        statistics: { additions, deletions },
+      });
+    }
+  }
+  return true;
+}
+
+function unifiedDiffStatistics(value) {
+  if (typeof value !== "string" || !value) {
+    return null;
+  }
+  let additions = 0;
+  let deletions = 0;
+  let hasHunk = false;
+  let isInsideHunk = false;
+  for (const line of value.replaceAll("\r\n", "\n").split("\n")) {
+    if (line.startsWith("@@")) {
+      hasHunk = true;
+      isInsideHunk = true;
+      continue;
+    }
+    if (!isInsideHunk) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      additions += 1;
+    } else if (line.startsWith("-")) {
+      deletions += 1;
+    }
+  }
+  return hasHunk ? { additions, deletions } : null;
+}
+
+function normalizedChangePaths(workdir, changes) {
+  return [...new Set(
+    (changes ?? [])
+      .map((change) => resolvedChangePath(workdir, change?.path))
+      .filter(Boolean),
+  )].sort();
+}
+
+function sameStringArrays(left, right) {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
+}
+
+function readFileSnapshot(path, byteLimit) {
+  try {
+    const metadata = statSync(path);
+    if (
+      !metadata.isFile() ||
+      metadata.size > MAX_FILE_SNAPSHOT_BYTES ||
+      metadata.size > byteLimit
+    ) {
+      return null;
+    }
+    return readFileSync(path);
+  } catch (error) {
+    return error?.code === "ENOENT" ? Buffer.alloc(0) : null;
+  }
+}
+
+function resolvedChangePath(workdir, value) {
+  const path = String(value ?? "").trim();
+  if (!path) {
+    return null;
+  }
+  return isAbsolute(path) ? path : resolve(workdir, path);
 }
 
 export function buildArguments({
@@ -664,6 +1414,14 @@ function codexArguments(
   argumentsList.push(
     "-c",
     `model_reasoning_effort="${character.effort}"`,
+    "-c",
+    "features.fast_mode=true",
+    "-c",
+    `service_tier="${character.fastMode ? "fast" : "default"}"`,
+    "-c",
+    'model_reasoning_summary="detailed"',
+    "-c",
+    "show_raw_agent_reasoning=true",
   );
   if (!previousSessionID) {
     argumentsList.push("-s", character.permission);
@@ -678,6 +1436,9 @@ function codexArguments(
 }
 
 function claudeArguments(character, prompt, previousSessionID) {
+  if (character.fastMode && character.model !== "claude-opus-5") {
+    throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
+  }
   const argumentsList = [
     "-p",
     prompt,
@@ -685,6 +1446,8 @@ function claudeArguments(character, prompt, previousSessionID) {
     "stream-json",
     "--verbose",
     "--include-partial-messages",
+    "--settings",
+    JSON.stringify({ fastMode: character.fastMode === true }),
     "--effort",
     character.effort,
     "--permission-mode",

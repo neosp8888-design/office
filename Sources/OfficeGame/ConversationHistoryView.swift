@@ -178,15 +178,18 @@ private struct TurnDisclosure: View {
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
-                transcriptBlock(title: "업무", text: turn.prompt)
+                taskPromptBlock
                 transcriptBlock(title: "응답", text: turn.response)
             }
             .padding(.top, 8)
         } label: {
             VStack(alignment: .leading, spacing: 3) {
-                Text(turn.prompt)
+                Text(promptPresentation.text)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
+                TaskPromptAttachmentSummary(
+                    attachments: promptPresentation.attachments
+                )
                 HStack(spacing: 5) {
                     Text(
                         turn.startedAt.formatted(
@@ -199,7 +202,8 @@ private struct TurnDisclosure: View {
                         agentExecutionSummary(
                             backend: turn.executionBackend,
                             model: turn.executionModel,
-                            effort: turn.executionEffort
+                            effort: turn.executionEffort,
+                            fastMode: turn.executionFastMode
                         )
                     )
                 }
@@ -212,6 +216,26 @@ private struct TurnDisclosure: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.primary.opacity(0.035))
         )
+    }
+
+    private var promptPresentation: TaskPromptPresentation {
+        TaskPromptPresentation(prompt: turn.prompt)
+    }
+
+    private var taskPromptBlock: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("업무")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.secondary)
+            if !promptPresentation.text.isEmpty {
+                ConversationMarkdownView(source: promptPresentation.text)
+            }
+            if !promptPresentation.attachments.isEmpty {
+                TaskPromptAttachmentList(
+                    attachments: promptPresentation.attachments
+                )
+            }
+        }
     }
 
     private func transcriptBlock(
@@ -409,7 +433,7 @@ private struct ArchiveTurnCard: View {
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
-                transcriptBlock(title: "업무", text: turn.prompt)
+                taskPromptBlock
                 transcriptBlock(title: "응답", text: turn.response)
                 if let sessionID = turn.externalSessionId {
                     VStack(alignment: .leading, spacing: 3) {
@@ -433,15 +457,19 @@ private struct ArchiveTurnCard: View {
                             agentExecutionSummary(
                                 backend: turn.executionBackend,
                                 model: turn.executionModel,
-                                effort: turn.executionEffort
+                                effort: turn.executionEffort,
+                                fastMode: turn.executionFastMode
                             )
                         )
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
-                    Text(turn.prompt)
+                    Text(promptPresentation.text)
                         .font(.system(size: 14, weight: .medium))
                         .lineLimit(1)
+                    TaskPromptAttachmentSummary(
+                        attachments: promptPresentation.attachments
+                    )
                 }
                 Spacer()
                 Text(
@@ -461,6 +489,26 @@ private struct ArchiveTurnCard: View {
         )
     }
 
+    private var promptPresentation: TaskPromptPresentation {
+        TaskPromptPresentation(prompt: turn.prompt)
+    }
+
+    private var taskPromptBlock: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("업무")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.secondary)
+            if !promptPresentation.text.isEmpty {
+                ConversationMarkdownView(source: promptPresentation.text)
+            }
+            if !promptPresentation.attachments.isEmpty {
+                TaskPromptAttachmentList(
+                    attachments: promptPresentation.attachments
+                )
+            }
+        }
+    }
+
     private func transcriptBlock(
         title: String,
         text: String
@@ -477,10 +525,11 @@ private struct ArchiveTurnCard: View {
 private func agentExecutionSummary(
     backend: AgentBackend?,
     model: String?,
-    effort: String?
+    effort: String?,
+    fastMode: Bool?
 ) -> String {
     guard let backend else {
-        return "실행 정보 기록 없음"
+        return "실행 정보 기록 없음 · \(agentExecutionModeTitle(fastMode))"
     }
 
     var parts = [backend.title]
@@ -496,5 +545,6 @@ private func agentExecutionSummary(
     {
         parts.append("추론 \(effort)")
     }
+    parts.append(agentExecutionModeTitle(fastMode))
     return parts.joined(separator: " · ")
 }

@@ -112,10 +112,10 @@ public enum OfficeWhiteboardGeometry {
     public static let usageSize = CGSize(width: 128, height: 78)
     public static let horizontalShear: CGFloat = -70.0 / 128.0
     public static let twoDUsageCorners = (
-        topLeft: CGPoint(x: 194, y: 411),
-        topRight: CGPoint(x: 326, y: 342),
-        bottomRight: CGPoint(x: 326, y: 445),
-        bottomLeft: CGPoint(x: 194, y: 514)
+        topLeft: CGPoint(x: 194, y: 423),
+        topRight: CGPoint(x: 326, y: 339),
+        bottomRight: CGPoint(x: 326, y: 447),
+        bottomLeft: CGPoint(x: 194, y: 531)
     )
     public static let interactionRect = CGRect(
         x: 188,
@@ -228,4 +228,12 @@ public enum OfficeWhiteboardGeometry {
             y: start.y + (end.y - start.y) * amount
         )
     }
+}
+
+public enum OfficeAnalogClockGeometry {
+    // SpriteKit 좌표계에서 2D 벽시계의 실제 안쪽 타원을 따른다.
+    public static let twoDCenter = CGPoint(x: 1_194, y: 687)
+    public static let twoDHorizontalScale: CGFloat = 1
+    public static let twoDVerticalScale: CGFloat = 1.35
+    public static let twoDRotation: CGFloat = 0
 }

@@ -46,7 +46,15 @@ public enum AgentProgressEventParser {
         case "reasoning":
             if
                 eventType != "item.started",
-                let summary = concise(item["text"])
+                let summary = reasoningText(
+                    item["raw_reasoning"]
+                        ?? item["rawReasoning"]
+                        ?? item["raw_content"]
+                        ?? item["rawContent"]
+                        ?? item["content"]
+                        ?? item["text"]
+                        ?? item["summary"]
+                )
             {
                 return summary
             }
@@ -59,32 +67,24 @@ public enum AgentProgressEventParser {
             }
             return concise(item["text"])
         case "command_execution":
-            return eventType == "item.started"
-                ? "터미널 출동 🧰"
-                : eventType == "item.completed"
-                ? "결과 까보는 중 🔎"
-                : nil
+            return commandMessage(item, eventType: eventType)
         case "file_change":
             return eventType == "item.completed"
-                ? "수정본 반영 중 ✍️"
+                ? fileChangeMessage(item)
                 : nil
         case "mcp_tool_call":
-            return eventType == "item.started"
-                ? "도구 콜하는 중 📡"
-                : eventType == "item.completed"
-                ? "도구 결과 체크 중 👀"
-                : nil
+            return mcpMessage(item, eventType: eventType)
         case "collab_tool_call":
             return eventType == "item.started"
-                ? "동료 찬스 소환 중 🤝"
+                ? collabMessage(item)
                 : nil
         case "web_search":
             return eventType == "item.started"
-                ? "자료 서치 중 🔍"
+                ? webSearchMessage(item)
                 : nil
         case "todo_list":
             return eventType == "item.started"
-                ? "할 일 우선순위 픽 중 📌"
+                ? todoMessage(item)
                 : nil
         default:
             return nil
@@ -119,13 +119,321 @@ public enum AgentProgressEventParser {
         if !publicText.isEmpty {
             return concise(publicText)
         }
-        if content.contains(where: { $0["type"] as? String == "tool_use" }) {
-            return "도구로 뚝딱 처리 중 🛠️"
+        if let tool = content.first(where: {
+            $0["type"] as? String == "tool_use"
+        }) {
+            return claudeToolMessage(tool)
         }
-        if content.contains(where: { $0["type"] as? String == "thinking" }) {
-            return "각 잡고 분석 중 🧠"
+        if let thinking = content.first(where: {
+            $0["type"] as? String == "thinking"
+        }), let text = reasoningText(thinking["thinking"]) {
+            return text
         }
         return nil
+    }
+
+    private static func commandMessage(
+        _ item: [String: Any],
+        eventType: String
+    ) -> String? {
+        guard
+            eventType == "item.started"
+                || eventType == "item.updated"
+                || eventType == "item.completed"
+        else {
+            return nil
+        }
+        let command = safeCommand(item["command"]) ?? "명령"
+        guard eventType == "item.completed" else {
+            return "실행 · \(command)"
+        }
+
+        guard let exitCode = integerValue(
+            item["exit_code"] ?? item["exitCode"]
+        ) else {
+            let status = cleanText(item["status"])?.lowercased()
+            if let status,
+                ["failed", "error", "cancelled", "canceled"]
+                    .contains(status)
+            {
+                return "실패 · \(command)"
+            }
+            return "완료 · \(command)"
+        }
+        return exitCode == 0
+            ? "완료(0) · \(command)"
+            : "실패(\(exitCode)) · \(command)"
+    }
+
+    private static func fileChangeMessage(
+        _ item: [String: Any]
+    ) -> String {
+        let changes = item["changes"] as? [[String: Any]] ?? []
+        let summaries = changes.compactMap { change -> String? in
+            guard let path = cleanText(
+                change["path"]
+                    ?? change["file_path"]
+                    ?? change["file"]
+                    ?? change["move_path"]
+            ) else {
+                return nil
+            }
+            return "\(fileChangeLabel(change["kind"])) \(compactPath(path))"
+        }
+        guard !summaries.isEmpty else {
+            return "파일 변경 완료"
+        }
+        let visible = summaries.prefix(3).joined(separator: ", ")
+        let remainder = summaries.count - 3
+        return "파일 · \(visible)"
+            + (remainder > 0 ? " 외 \(remainder)개" : "")
+    }
+
+    private static func mcpMessage(
+        _ item: [String: Any],
+        eventType: String
+    ) -> String? {
+        guard
+            eventType == "item.started"
+                || eventType == "item.updated"
+                || eventType == "item.completed"
+        else {
+            return nil
+        }
+        let server = cleanText(
+            item["server"]
+                ?? item["server_name"]
+                ?? item["appName"]
+                ?? item["app_name"]
+        )
+        let tool = cleanText(
+            item["tool"]
+                ?? item["name"]
+                ?? item["actionName"]
+                ?? item["action_name"]
+        )
+        let target = [server, tool].compactMap { $0 }.joined(separator: "/")
+        let resolvedTarget = target.isEmpty ? "연결 도구" : target
+        let status = cleanText(item["status"])?.lowercased()
+        let failed = (
+            status.map {
+                ["failed", "error", "cancelled", "canceled"]
+                    .contains($0)
+            } ?? false
+        ) || item["error"] != nil
+        if eventType == "item.completed", failed {
+            return "도구 실패 · \(resolvedTarget)"
+        }
+        return eventType == "item.completed"
+            ? "도구 완료 · \(resolvedTarget)"
+            : "도구 호출 · \(resolvedTarget)"
+    }
+
+    private static func collabMessage(
+        _ item: [String: Any]
+    ) -> String {
+        let tool = cleanText(
+            item["tool"] ?? item["name"] ?? item["action"]
+        ) ?? "협업"
+        let target = cleanText(
+            item["receiver_agent_nickname"]
+                ?? item["receiver_agent"]
+                ?? item["agent_name"]
+                ?? item["agent"]
+        )
+        return target.map { "협업 · \(tool) → \($0)" }
+            ?? "협업 · \(tool)"
+    }
+
+    private static func webSearchMessage(
+        _ item: [String: Any]
+    ) -> String {
+        let action = item["action"] as? [String: Any] ?? [:]
+        let detail = cleanText(
+            item["query"]
+                ?? action["query"]
+                ?? action["pattern"]
+                ?? action["url"]
+        )
+        return detail.map {
+            "검색 · \(shortened($0, limit: 220))"
+        } ?? "웹 검색"
+    }
+
+    private static func todoMessage(
+        _ item: [String: Any]
+    ) -> String {
+        let entries = item["items"] as? [[String: Any]]
+            ?? item["todos"] as? [[String: Any]]
+            ?? []
+        let pending = entries.first { entry in
+            let completed = entry["completed"] as? Bool ?? false
+            let status = cleanText(entry["status"])
+            return !completed && status != "completed"
+        }
+        let text = pending.flatMap {
+            cleanText($0["text"] ?? $0["step"] ?? $0["title"])
+        }
+        if let text {
+            return "계획 · \(shortened(text, limit: 220))"
+        }
+        return entries.isEmpty
+            ? "작업 계획 정리"
+            : "계획 · \(entries.count)단계"
+    }
+
+    private static func claudeToolMessage(
+        _ tool: [String: Any]
+    ) -> String {
+        let name = cleanText(tool["name"]) ?? "도구"
+        let input = tool["input"] as? [String: Any] ?? [:]
+        let loweredName = name.lowercased()
+        if ["bash", "shell", "terminal"].contains(loweredName) {
+            if let command = safeCommand(input["command"]) {
+                return "도구 · \(name) · \(command)"
+            }
+            return "도구 · \(name)"
+        }
+
+        if let path = cleanText(
+            input["file_path"]
+                ?? input["path"]
+                ?? input["cwd"]
+                ?? input["directory"]
+        ) {
+            return "도구 · \(name) · \(compactPath(path))"
+        }
+        if ["grep", "glob", "websearch"].contains(loweredName),
+            let query = cleanText(input["pattern"] ?? input["query"])
+        {
+            return "도구 · \(name) · \(shortened(query, limit: 180))"
+        }
+        return "도구 · \(name)"
+    }
+
+    private static func safeCommand(_ value: Any?) -> String? {
+        guard let source = cleanText(value) else {
+            return nil
+        }
+        let command = source.replacingOccurrences(
+            of: #"\s*\n\s*"#,
+            with: " ↳ ",
+            options: .regularExpression
+        )
+        if containsSensitiveCommandData(command) {
+            return "\(commandProgram(command)) [민감 인자 숨김]"
+        }
+        return shortened(command, limit: 280)
+    }
+
+    private static func containsSensitiveCommandData(
+        _ command: String
+    ) -> Bool {
+        let patterns = [
+            #"(?:api[_-]?key|token|password|passwd|secret|authorization|cookie|bearer)"#,
+            #"\b(?:sk|rk|pk)-[a-z0-9_-]{8,}"#,
+            #"://[^/\s:@]+:[^@\s/]+@"#,
+        ]
+        return patterns.contains { pattern in
+            command.range(
+                of: pattern,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+        }
+    }
+
+    private static func commandProgram(_ command: String) -> String {
+        let assignmentPattern = #"^[A-Za-z_][A-Za-z0-9_]*="#
+        return command.split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .first {
+                $0.range(
+                    of: assignmentPattern,
+                    options: .regularExpression
+                ) == nil
+            } ?? "명령"
+    }
+
+    private static func compactPath(_ path: String) -> String {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        guard normalized.count > 96 else {
+            return normalized
+        }
+        let components = normalized.split(separator: "/")
+        guard components.count > 3 else {
+            return "…" + String(normalized.suffix(92))
+        }
+        return "…/" + components.suffix(3).joined(separator: "/")
+    }
+
+    private static func fileChangeLabel(_ value: Any?) -> String {
+        switch cleanText(value)?.lowercased() {
+        case "add", "create":
+            return "추가"
+        case "delete", "remove":
+            return "삭제"
+        case "move", "rename":
+            return "이동"
+        default:
+            return "수정"
+        }
+    }
+
+    private static func integerValue(_ value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+        if let value = value as? NSNumber {
+            return value.intValue
+        }
+        if let value = value as? String {
+            return Int(value)
+        }
+        return nil
+    }
+
+    private static func cleanText(_ value: Any?) -> String? {
+        guard let value = value as? String else {
+            return nil
+        }
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    private static func shortened(_ value: String, limit: Int) -> String {
+        guard value.count > limit else {
+            return value
+        }
+        return String(value.prefix(limit - 1)) + "…"
+    }
+
+    private static func reasoningText(_ value: Any?) -> String? {
+        let source: String?
+        if let value = value as? String {
+            source = value
+        } else if let values = value as? [Any] {
+            let parts = values.compactMap(reasoningText)
+            source = parts.isEmpty ? nil : parts.joined(separator: "\n")
+        } else if let value = value as? [String: Any] {
+            source = reasoningText(
+                value["text"]
+                    ?? value["content"]
+                    ?? value["reasoning"]
+                    ?? value["summary"]
+            )
+        } else {
+            source = nil
+        }
+        guard let source else {
+            return nil
+        }
+        let text = source.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !text.isEmpty else {
+            return nil
+        }
+        return shortened(text, limit: 6_000)
     }
 
     private static func concise(_ value: Any?) -> String? {

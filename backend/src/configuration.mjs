@@ -34,10 +34,11 @@ export async function syncCharacters(client, configuration) {
           identity_prompt,
           model,
           effort,
+          fast_mode,
           permission,
           config
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
         ON CONFLICT (id) DO UPDATE
         SET
           seat = EXCLUDED.seat,
@@ -51,6 +52,7 @@ export async function syncCharacters(client, configuration) {
         character.identityPrompt,
         character.model,
         character.effort,
+        character.fastMode ?? true,
         character.permission,
         JSON.stringify(character),
       ],

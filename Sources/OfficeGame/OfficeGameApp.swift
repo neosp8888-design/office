@@ -66,7 +66,11 @@ private struct OfficeGameView: View {
             }
             .padding(outerPadding)
         }
-        .background(DashboardPalette.canvas.ignoresSafeArea())
+        .background(
+            DashboardPalette.canvas(isNight: theme.isNight)
+                .ignoresSafeArea()
+        )
+        .preferredColorScheme(theme.isNight ? .dark : .light)
         .frame(minWidth: 1_180, minHeight: 760)
         .sheet(item: $historyTarget) { target in
             switch target {
@@ -89,6 +93,9 @@ private struct OfficeGameView: View {
                 isFailure: detail.isFailure,
                 isOffDuty: detail.isOffDuty
             )
+        }
+        .onAppear {
+            director.selectDefaultCharacterIfNeeded()
         }
         .onChange(of: director.latestQuestion) { _, question in
             guard let question else {
@@ -208,6 +215,7 @@ private struct OfficeGameView: View {
                 .opacity(0.55)
 
             LiveWorkspaceFeed(director: director)
+                .equatable()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
@@ -235,24 +243,14 @@ private struct OfficeGameView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("실시간 업무실")
                     .font(.system(size: 17, weight: .bold))
-                Text("모든 직원의 대화와 진행 기록")
+                Text(
+                    "\(director.selectedName ?? "백부장")의 대화와 진행 기록"
+                )
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
-
-            if !director.runningCharacters.isEmpty {
-                Text("\(director.runningCharacters.count)명 업무 중")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(DashboardPalette.accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        DashboardPalette.accent.opacity(0.10),
-                        in: Capsule()
-                    )
-            }
 
             HStack(spacing: 5) {
                 Circle()
@@ -571,14 +569,15 @@ private struct OfficeGameView: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(DashboardPalette.accent)
 
-                TextField(commandPlaceholder, text: $command)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium))
-                    .onSubmit(submitCommand)
-                    .disabled(
-                        !director.isReadyForSubmissions
-                            || director.isUpdatingConfiguration
-                    )
+                CommandComposerView(
+                    text: $command,
+                    placeholder: commandPlaceholder,
+                    isEnabled:
+                        director.isReadyForSubmissions
+                            && !director.isUpdatingConfiguration,
+                    onSubmit: submitCommand
+                )
+                .frame(height: 40)
 
                 Button {
                     chooseAttachments()
@@ -732,7 +731,10 @@ private struct OfficeGameView: View {
                                 cornerRadius: 10,
                                 style: .continuous
                             )
-                            .fill(Color.white.opacity(0.94))
+                            .fill(
+                                Color(nsColor: .controlBackgroundColor)
+                                    .opacity(0.94)
+                            )
                             .overlay {
                                 RoundedRectangle(
                                     cornerRadius: 10,
@@ -1195,6 +1197,7 @@ private struct AgentQuickSettingsView: View {
                                 backend: backend,
                                 model: backend.defaultModel,
                                 effort: "high",
+                                fastMode: settings.fastMode,
                                 permission: settings.permission
                             )
                         )
@@ -1217,7 +1220,7 @@ private struct AgentQuickSettingsView: View {
                 ForEach(settings.backend.modelOptions, id: \.self) { model in
                     Button {
                         var updated = settings
-                        updated.model = model
+                        updated.selectModel(model)
                         apply(updated)
                     } label: {
                         if settings.model == model {
@@ -1238,6 +1241,19 @@ private struct AgentQuickSettingsView: View {
                     systemImage: "cpu"
                 )
             }
+
+            Button {
+                var updated = settings
+                updated.setFastMode(!settings.fastMode)
+                apply(updated)
+            } label: {
+                QuickSettingLabel(
+                    text: settings.fastMode ? "Fast" : "Standard",
+                    systemImage: settings.fastMode ? "bolt.fill" : "bolt"
+                )
+            }
+            .buttonStyle(.plain)
+            .help(settings.fastMode ? "Fast 모드 끄기" : "Fast 모드 켜기")
 
             Menu {
                 ForEach(settings.backend.effortOptions, id: \.self) { effort in
@@ -1306,10 +1322,10 @@ private struct QuickSettingLabel: View {
     var body: some View {
         Label(text, systemImage: systemImage)
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.68))
+            .foregroundStyle(Color.primary.opacity(0.68))
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
-            .background(Color.black.opacity(0.055), in: Capsule())
+            .background(Color.primary.opacity(0.055), in: Capsule())
             .fixedSize()
     }
 }
@@ -1503,6 +1519,18 @@ private struct CharacterSettingsEditor: View {
                 Text(settings.permission.cliValue(for: settings.backend))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                Toggle(isOn: fastModeBinding) {
+                    Label(
+                        settings.fastMode ? "Fast" : "Standard",
+                        systemImage: settings.fastMode ? "bolt.fill" : "bolt"
+                    )
+                    .font(.system(size: 11, weight: .semibold))
+                }
+                .toggleStyle(.switch)
+                .fixedSize()
             }
             .controlSize(.small)
         }
@@ -1521,6 +1549,7 @@ private struct CharacterSettingsEditor: View {
                     backend: backend,
                     model: backend.defaultModel,
                     effort: "high",
+                    fastMode: settings.fastMode,
                     permission: settings.permission
                 )
             }
@@ -1530,7 +1559,14 @@ private struct CharacterSettingsEditor: View {
     private var modelBinding: Binding<String> {
         Binding(
             get: { settings.model ?? settings.backend.defaultModel },
-            set: { settings.model = $0 }
+            set: { settings.selectModel($0) }
+        )
+    }
+
+    private var fastModeBinding: Binding<Bool> {
+        Binding(
+            get: { settings.fastMode },
+            set: { settings.setFastMode($0) }
         )
     }
 

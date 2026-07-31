@@ -20,12 +20,84 @@ final class LiveFeedStore: ObservableObject {
     @Published private(set) var turns: [LiveFeedTurn] = []
     @Published private(set) var isLoadingInitialFeed = true
     @Published private var responseAnimationTurnIDs: Set<String> = []
+    private(set) var persistedTurns: [LiveFeedTurn] = []
+    private var optimisticTurns: [String: LiveFeedTurn] = [:]
 
     func replace(with turns: [LiveFeedTurn]) {
-        guard self.turns != turns else {
+        persistedTurns = turns
+        let persistedIDs = Set(turns.map(\.id))
+        optimisticTurns = optimisticTurns.filter {
+            !persistedIDs.contains($0.key)
+                && !hasMatchingPersistedTurn(
+                    for: $0.value,
+                    in: turns
+                )
+        }
+        publishMergedTurns()
+    }
+
+    func insertOptimisticTurn(_ turn: LiveFeedTurn) {
+        optimisticTurns[turn.id] = turn
+        publishMergedTurns()
+    }
+
+    func reconcileOptimisticTurn(
+        id: String,
+        with persistedTurnID: String
+    ) {
+        guard let turn = optimisticTurns.removeValue(forKey: id) else {
             return
         }
-        self.turns = turns
+        if !persistedTurns.contains(where: { $0.id == persistedTurnID }) {
+            optimisticTurns[persistedTurnID] = turn.replacingID(
+                with: persistedTurnID
+            )
+        }
+        publishMergedTurns()
+    }
+
+    func removeOptimisticTurn(id: String) {
+        guard optimisticTurns.removeValue(forKey: id) != nil else {
+            return
+        }
+        publishMergedTurns()
+    }
+
+    var optimisticCharacterIDs: Set<String> {
+        Set(optimisticTurns.values.map(\.characterId))
+    }
+
+    private func hasMatchingPersistedTurn(
+        for optimisticTurn: LiveFeedTurn,
+        in turns: [LiveFeedTurn]
+    ) -> Bool {
+        let optimisticPrompt = TaskPromptPresentation(
+            prompt: optimisticTurn.prompt
+        ).text
+        return turns.contains { turn in
+            turn.characterId == optimisticTurn.characterId
+                && TaskPromptPresentation(prompt: turn.prompt).text
+                    == optimisticPrompt
+                && turn.startedAt
+                    >= optimisticTurn.startedAt.addingTimeInterval(-5)
+                && turn.startedAt
+                    <= optimisticTurn.startedAt.addingTimeInterval(120)
+        }
+    }
+
+    private func publishMergedTurns() {
+        var mergedTurns = persistedTurns
+        mergedTurns.append(contentsOf: optimisticTurns.values)
+        mergedTurns.sort {
+            if $0.startedAt == $1.startedAt {
+                return $0.id > $1.id
+            }
+            return $0.startedAt > $1.startedAt
+        }
+        guard turns != mergedTurns else {
+            return
+        }
+        turns = mergedTurns
     }
 
     func finishInitialLoading() {
@@ -120,9 +192,10 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var isUpdatingConfiguration = false
     @Published private(set) var turnPersistenceErrors:
         [OfficeCharacter: String] = [:]
-    @Published var selectedCharacterID: OfficeCharacter?
+    @Published var selectedCharacterID: OfficeCharacter? = .boss
     @Published private(set) var settingsStatus: String?
     @Published private(set) var latestSubmittedCommandID: UUID?
+    @Published private(set) var latestSubmittedTurnID: String?
     @Published private(set) var latestStartedCommandID: UUID?
     @Published private(set) var latestCompletedTurnID: String?
     @Published private(set) var latestTerminalTurnID: String?
@@ -151,6 +224,9 @@ final class AgentDirector: ObservableObject {
     private var workingBubbleTask: Task<Void, Never>?
     private var lastIdleChatterCharacter: OfficeCharacter?
     private var workingBubbleStep = 0
+    private var hasAppliedDefaultSelection = false
+    private var hasAppliedLatestConversationSelection = false
+    private var hasUserChosenCharacter = false
     private static let liveFeedSnapshotLimit = 120
     private static let bubbleLifetime = Duration.seconds(10)
     private static let sessionRestoreRetryDelay = Duration.seconds(2)
@@ -307,7 +383,7 @@ final class AgentDirector: ObservableObject {
     }
 
     var liveTurns: [LiveFeedTurn] {
-        liveFeedStore.turns
+        liveFeedStore.persistedTurns
     }
 
     var bubbles: [OfficeCharacter: String] {
@@ -339,6 +415,49 @@ final class AgentDirector: ObservableObject {
         return cancellingCharacters.contains(selectedCharacterID)
     }
 
+    func selectDefaultCharacterIfNeeded() {
+        guard !hasAppliedDefaultSelection else {
+            return
+        }
+        hasAppliedDefaultSelection = true
+        selectedCharacterID = .boss
+    }
+
+    /// 앱을 다시 열었을 때 첫 피드 스냅샷에서 가장 최근 대화의 직원을 선택한다.
+    private func selectLatestConversationCharacterIfNeeded(
+        _ turns: [LiveFeedTurn]
+    ) {
+        guard
+            !hasAppliedLatestConversationSelection,
+            !hasUserChosenCharacter,
+            let latestCharacter = Self.latestConversationCharacter(
+                in: turns
+            )
+        else {
+            return
+        }
+        hasAppliedLatestConversationSelection = true
+        guard latestCharacter != selectedCharacterID else {
+            return
+        }
+        unreviewedCompletedCharacters.remove(latestCharacter)
+        selectedCharacterID = latestCharacter
+    }
+
+    static func latestConversationCharacter(
+        in turns: [LiveFeedTurn]
+    ) -> OfficeCharacter? {
+        turns.compactMap { turn -> (OfficeCharacter, Date)? in
+            guard let character = OfficeCharacter(
+                rawValue: turn.characterId
+            ) else {
+                return nil
+            }
+            return (character, turn.updatedAt)
+        }
+        .max(by: { $0.1 < $1.1 })?.0
+    }
+
     func displayName(for character: OfficeCharacter) -> String {
         names[character] ?? character.rawValue
     }
@@ -364,6 +483,7 @@ final class AgentDirector: ObservableObject {
     }
 
     func select(_ character: CharacterConfiguration) {
+        hasUserChosenCharacter = true
         if let selectedCharacterID {
             unreviewedCompletedCharacters.remove(selectedCharacterID)
         }
@@ -405,6 +525,7 @@ final class AgentDirector: ObservableObject {
         let questionBeingAnswered = pendingQuestions[character.id]
         let conversationID = conversationIDs[character.id] ?? UUID()
         conversationIDs[character.id] = conversationID
+        hasUserChosenCharacter = true
         selectedCharacterID = character.id
         pendingQuestions[character.id] = nil
         questionSubmissionErrors[character.id] = nil
@@ -418,6 +539,34 @@ final class AgentDirector: ObservableObject {
         runningCharacters.insert(character.id)
         showWorkingBubble(for: character.id)
         let commandID = UUID()
+        let optimisticTurnID = "local-\(commandID.uuidString.lowercased())"
+        let submittedAt = Date()
+        liveFeedStore.insertOptimisticTurn(
+            LiveFeedTurn(
+                id: optimisticTurnID,
+                characterId: character.id.rawValue,
+                characterName: displayName(for: character.id),
+                characterBackend: character.backend,
+                backend: character.backend,
+                model: character.model,
+                effort: character.effort,
+                fastMode: character.fastMode,
+                externalSessionId: nil,
+                prompt: TaskPromptPresentation.canonicalPrompt(
+                    text: prompt,
+                    attachmentPaths: attachmentPaths
+                ),
+                response: "",
+                status: .running,
+                needsInput: false,
+                errorMessage: nil,
+                startedAt: submittedAt,
+                endedAt: nil,
+                updatedAt: submittedAt,
+                activities: []
+            )
+        )
+        latestSubmittedTurnID = optimisticTurnID
         latestSubmittedCommandID = commandID
 
         Task {
@@ -429,10 +578,16 @@ final class AgentDirector: ObservableObject {
                     attachmentPaths: attachmentPaths
                 )
                 conversationIDs[character.id] = started.conversationId
+                liveFeedStore.reconcileOptimisticTurn(
+                    id: optimisticTurnID,
+                    with: started.turnId
+                )
+                latestSubmittedTurnID = started.turnId
                 liveFeedStore.beginResponseAnimation(for: started.turnId)
                 scheduleRealtimeFeedRefresh(turnID: started.turnId)
                 latestStartedCommandID = commandID
             } catch {
+                liveFeedStore.removeOptimisticTurn(id: optimisticTurnID)
                 runningCharacters.remove(character.id)
                 let message = error.localizedDescription
                 if AgentUsageLimitClassifier.isLimitReached(message) {
@@ -514,6 +669,7 @@ final class AgentDirector: ObservableObject {
                 backend: .codex,
                 model: AgentBackend.codex.defaultModel,
                 effort: "high",
+                fastMode: true,
                 permission: .workspaceWrite
             )
     }
@@ -782,6 +938,7 @@ final class AgentDirector: ObservableObject {
                             backend: stored.backend,
                             model: stored.model,
                             effort: stored.effort,
+                            fastMode: stored.fastMode,
                             permission: AgentPermission(
                                 cliValue: stored.permission
                             )
@@ -1069,6 +1226,7 @@ final class AgentDirector: ObservableObject {
         let previousRunningCharacters = runningCharacters
         liveFeedStore.replace(with: turns)
         archiveFeedStore.replaceIfNeeded(with: turns)
+        selectLatestConversationCharacterIfNeeded(turns)
         observedTurnStatuses = Dictionary(
             uniqueKeysWithValues: turns.map { ($0.id, $0.status) }
         )
@@ -1078,6 +1236,10 @@ final class AgentDirector: ObservableObject {
             runningTurns.compactMap {
                 OfficeCharacter(rawValue: $0.characterId)
             }
+        ).union(
+            liveFeedStore.optimisticCharacterIDs.compactMap(
+                OfficeCharacter.init(rawValue:)
+            )
         )
         if runningCharacters != updatedRunningCharacters {
             runningCharacters = updatedRunningCharacters
@@ -1308,6 +1470,7 @@ final class AgentDirector: ObservableObject {
             identityPrompt: character.identityPrompt,
             model: character.model,
             effort: character.effort,
+            fastMode: character.fastMode,
             permission: character.permission,
             executablePath: character.executablePath,
             hitbox: character.hitbox,

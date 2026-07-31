@@ -109,6 +109,12 @@ actor AgentCLIRunner {
         arguments += [
             "-c",
             "model_reasoning_effort=\"\(character.effort)\"",
+            "-c",
+            "service_tier=\"\(character.fastMode ? "fast" : "default")\"",
+            "-c",
+            "model_reasoning_summary=\"detailed\"",
+            "-c",
+            "show_raw_agent_reasoning=true",
         ]
         if previousSessionID == nil {
             arguments += ["-s", character.permission]
@@ -128,6 +134,8 @@ actor AgentCLIRunner {
             "--output-format",
             "stream-json",
             "--verbose",
+            "--settings",
+            "{\"fastMode\":\(character.fastMode)}",
             "--effort",
             character.effort,
             "--permission-mode",
