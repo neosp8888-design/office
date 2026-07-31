@@ -17,4 +17,54 @@ final class AgentBackendEffortOptionsTests: XCTestCase {
             ["high", "xhigh", "max"]
         )
     }
+
+    func testCodexModelsSupportFastMode() {
+        XCTAssertTrue(
+            AgentBackend.codex.modelOptions.allSatisfy {
+                AgentBackend.codex.supportsFastMode(model: $0)
+            }
+        )
+    }
+
+    func testClaudeFastModeOnlySupportsOpusFive() {
+        XCTAssertTrue(
+            AgentBackend.claude.supportsFastMode(model: "claude-opus-5")
+        )
+        XCTAssertFalse(
+            AgentBackend.claude.supportsFastMode(model: "fable")
+        )
+        XCTAssertFalse(
+            AgentBackend.claude.supportsFastMode(model: "claude-sonnet-5")
+        )
+    }
+
+    func testEnablingClaudeFastModeSelectsOpusFive() {
+        var settings = CharacterAgentSettings(
+            backend: .claude,
+            model: "fable",
+            effort: "high",
+            fastMode: false,
+            permission: .workspaceWrite
+        )
+
+        settings.setFastMode(true)
+
+        XCTAssertTrue(settings.fastMode)
+        XCTAssertEqual(settings.model, "claude-opus-5")
+    }
+
+    func testSelectingUnsupportedClaudeModelDisablesFastMode() {
+        var settings = CharacterAgentSettings(
+            backend: .claude,
+            model: "claude-opus-5",
+            effort: "high",
+            fastMode: true,
+            permission: .workspaceWrite
+        )
+
+        settings.selectModel("claude-sonnet-5")
+
+        XCTAssertFalse(settings.fastMode)
+        XCTAssertEqual(settings.model, "claude-sonnet-5")
+    }
 }

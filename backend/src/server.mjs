@@ -115,6 +115,7 @@ async function listCharacters(response) {
         backend,
         model,
         effort,
+        fast_mode AS "fastMode",
         permission,
         identity_prompt AS "identityPrompt"
       FROM characters
@@ -243,6 +244,17 @@ async function updateCharacterSettings(response, characterID, body) {
     send(response, 400, { error: "지원하지 않는 모델입니다." });
     return;
   }
+  const fastMode = body.fastMode;
+  if (typeof fastMode !== "boolean") {
+    send(response, 400, { error: "Fast 모드 설정은 참 또는 거짓이어야 합니다." });
+    return;
+  }
+  if (backend === "claude" && fastMode && model !== "claude-opus-5") {
+    send(response, 400, {
+      error: "Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.",
+    });
+    return;
+  }
   const allowedPermissions = backend === "codex"
     ? ["read-only", "workspace-write", "danger-full-access"]
     : ["plan", "auto", "acceptEdits", "bypassPermissions"];
@@ -259,7 +271,13 @@ async function updateCharacterSettings(response, characterID, body) {
   const character = await withTransaction(async (client) => {
     const current = await client.query(
       `
-        SELECT id, backend, model, effort, permission
+        SELECT
+          id,
+          backend,
+          model,
+          effort,
+          fast_mode AS "fastMode",
+          permission
         FROM characters
         WHERE id = $1
         FOR UPDATE
@@ -275,6 +293,7 @@ async function updateCharacterSettings(response, characterID, body) {
       previous.backend !== backend ||
       previous.model !== model ||
       previous.effort !== effort ||
+      previous.fastMode !== fastMode ||
       previous.permission !== permission;
     if (!changed) {
       return previous;
@@ -287,12 +306,19 @@ async function updateCharacterSettings(response, characterID, body) {
           backend = $2,
           model = $3,
           effort = $4,
-          permission = $5,
+          fast_mode = $5,
+          permission = $6,
           updated_at = now()
         WHERE id = $1
-        RETURNING id, backend, model, effort, permission
+        RETURNING
+          id,
+          backend,
+          model,
+          effort,
+          fast_mode AS "fastMode",
+          permission
       `,
-      [characterID, backend, model, effort, permission],
+      [characterID, backend, model, effort, fastMode, permission],
     );
     await endActiveSession(client, characterID);
     return updated.rows[0];
@@ -339,6 +365,7 @@ async function characterHistory(response, characterID) {
         t.backend AS "executionBackend",
         t.model AS "executionModel",
         t.effort AS "executionEffort",
+        t.fast_mode AS "executionFastMode",
         t.prompt,
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
@@ -387,6 +414,7 @@ async function globalHistory(response, url) {
         t.backend AS "executionBackend",
         t.model AS "executionModel",
         t.effort AS "executionEffort",
+        t.fast_mode AS "executionFastMode",
         s.external_id AS "externalSessionId",
         t.prompt,
         COALESCE(
@@ -428,6 +456,7 @@ async function queryLiveFeed({ turnID = null, limit }) {
         t.backend,
         t.model,
         t.effort,
+        t.fast_mode AS "fastMode",
         s.external_id AS "externalSessionId",
         t.prompt,
         t.status,
@@ -454,6 +483,7 @@ async function queryLiveFeed({ turnID = null, limit }) {
                 'id', activity.id,
                 'kind', activity.kind,
                 'text', activity.text,
+                'status', activity.status,
                 'occurredAt', activity.occurred_at
               )
               ORDER BY activity.seq
@@ -738,6 +768,14 @@ async function recordTurn(response, body) {
   const executionBackend = String(body.backend ?? "").trim() || null;
   const executionModel = String(body.model ?? "").trim() || null;
   const executionEffort = String(body.effort ?? "").trim() || null;
+  const hasExecutionFastMode = Object.prototype.hasOwnProperty.call(
+    body,
+    "fastMode",
+  );
+  const executionFastMode = hasExecutionFastMode &&
+      typeof body.fastMode === "boolean"
+    ? body.fastMode
+    : false;
 
   if (!conversationID || !characterID || !body.prompt) {
     send(response, 400, { error: "대화, 캐릭터, 프롬프트가 필요합니다." });
@@ -759,6 +797,20 @@ async function recordTurn(response, body) {
     ).includes(executionEffort)
   ) {
     send(response, 400, { error: "지원하지 않는 실행 추론 레벨입니다." });
+    return;
+  }
+  if (hasExecutionFastMode && typeof body.fastMode !== "boolean") {
+    send(response, 400, { error: "실행 Fast 모드 값이 올바르지 않습니다." });
+    return;
+  }
+  if (
+    executionBackend === "claude" &&
+    executionFastMode === true &&
+    executionModel !== "claude-opus-5"
+  ) {
+    send(response, 400, {
+      error: "Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.",
+    });
     return;
   }
 
@@ -813,11 +865,12 @@ async function recordTurn(response, body) {
           backend,
           model,
           effort,
+          fast_mode,
           prompt,
           started_at,
           ended_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
       `,
@@ -827,6 +880,7 @@ async function recordTurn(response, body) {
         executionBackend,
         executionModel,
         executionEffort,
+        executionFastMode,
         body.prompt,
         body.startedAt ?? new Date().toISOString(),
         body.finishedAt ?? new Date().toISOString(),

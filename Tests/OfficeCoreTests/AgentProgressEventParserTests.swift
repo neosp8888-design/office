@@ -18,7 +18,21 @@ final class AgentProgressEventParserTests: XCTestCase {
         )
     }
 
-    func testCodexCommandArgumentsAreNotExposed() {
+    func testCodexRawReasoningContentTakesPriorityWhenAvailable() {
+        let line = #"""
+        {"type":"item.completed","item":{"type":"reasoning","text":"요약","content":[{"text":"원문 추론 내용"}]}}
+        """#
+
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: line,
+                backend: .codex
+            ),
+            "원문 추론 내용"
+        )
+    }
+
+    func testCodexCommandHidesSensitiveArgumentsAndShowsProgram() {
         let line = #"""
         {"type":"item.started","item":{"type":"command_execution","command":"deploy --token secret-value"}}
         """#
@@ -28,8 +42,50 @@ final class AgentProgressEventParserTests: XCTestCase {
             backend: .codex
         )
 
-        XCTAssertEqual(message, "터미널 출동 🧰")
+        XCTAssertEqual(message, "실행 · deploy [민감 인자 숨김]")
         XCTAssertFalse(message?.contains("secret-value") == true)
+    }
+
+    func testCodexCommandCompletionShowsExitCodeAndSafeCommand() {
+        let line = #"""
+        {"type":"item.completed","item":{"type":"command_execution","command":"swift test --filter ParserTests","exit_code":0}}
+        """#
+
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: line,
+                backend: .codex
+            ),
+            "완료(0) · swift test --filter ParserTests"
+        )
+    }
+
+    func testCodexFileChangeShowsKindsAndPaths() {
+        let line = #"""
+        {"type":"item.completed","item":{"type":"file_change","changes":[{"kind":"update","path":"Sources/OfficeGame/Feed.swift"},{"kind":"add","path":"Tests/FeedTests.swift"}]}}
+        """#
+
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: line,
+                backend: .codex
+            ),
+            "파일 · 수정 Sources/OfficeGame/Feed.swift, 추가 Tests/FeedTests.swift"
+        )
+    }
+
+    func testCodexMCPShowsServerAndTool() {
+        let line = #"""
+        {"type":"item.started","item":{"type":"mcp_tool_call","server":"computer-use","actionName":"inspect"}}
+        """#
+
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: line,
+                backend: .codex
+            ),
+            "도구 호출 · computer-use/inspect"
+        )
     }
 
     func testClaudePublicTextTakesPriorityOverThinking() {
@@ -46,7 +102,7 @@ final class AgentProgressEventParserTests: XCTestCase {
         )
     }
 
-    func testClaudeThinkingUsesGenericSafeStatus() {
+    func testClaudeThinkingDisplaysProviderThinkingText() {
         let line = #"""
         {"type":"assistant","message":{"content":[{"type":"thinking","thinking":"internal details"}]}}
         """#
@@ -56,13 +112,12 @@ final class AgentProgressEventParserTests: XCTestCase {
             backend: .claude
         )
 
-        XCTAssertEqual(message, "각 잡고 분석 중 🧠")
-        XCTAssertFalse(message?.contains("internal details") == true)
+        XCTAssertEqual(message, "internal details")
     }
 
-    func testClaudeToolUseDoesNotExposeInput() {
+    func testClaudeToolUseShowsNameAndSafePath() {
         let line = #"""
-        {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"secret-command"}}]}}
+        {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"Sources/OfficeGame/Feed.swift"}}]}}
         """#
 
         let message = AgentProgressEventParser.message(
@@ -70,8 +125,27 @@ final class AgentProgressEventParserTests: XCTestCase {
             backend: .claude
         )
 
-        XCTAssertEqual(message, "도구로 뚝딱 처리 중 🛠️")
-        XCTAssertFalse(message?.contains("secret-command") == true)
+        XCTAssertEqual(
+            message,
+            "도구 · Read · Sources/OfficeGame/Feed.swift"
+        )
+    }
+
+    func testClaudeBashDoesNotExposeSensitiveInput() {
+        let line = #"""
+        {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"curl --token secret-value example.com"}}]}}
+        """#
+
+        let message = AgentProgressEventParser.message(
+            fromJSONLine: line,
+            backend: .claude
+        )
+
+        XCTAssertEqual(
+            message,
+            "도구 · Bash · curl [민감 인자 숨김]"
+        )
+        XCTAssertFalse(message?.contains("secret-value") == true)
     }
 
     func testMalformedEventIsIgnored() {

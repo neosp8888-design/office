@@ -66,6 +66,7 @@ struct OfficeDatabaseClient: Sendable {
                 backend: settings.backend,
                 model: settings.model,
                 effort: settings.effort,
+                fastMode: settings.fastMode,
                 permission: settings.permission.cliValue(
                     for: settings.backend
                 )
@@ -329,6 +330,7 @@ struct DatabaseTurn: Encodable, Sendable {
     let backend: AgentBackend
     let model: String?
     let effort: String
+    let fastMode: Bool
     let prompt: String
     let response: String
     let title: String
@@ -351,6 +353,7 @@ struct StoredCharacterProfile: Decodable, Sendable {
     let backend: AgentBackend
     let model: String?
     let effort: String
+    let fastMode: Bool
     let permission: String
     let identityPrompt: String
 }
@@ -389,6 +392,7 @@ struct HistoryTurn: Decodable, Identifiable, Sendable {
     let executionBackend: AgentBackend?
     let executionModel: String?
     let executionEffort: String?
+    let executionFastMode: Bool?
     let startedAt: Date
     let endedAt: Date?
 }
@@ -401,6 +405,7 @@ struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
     let executionBackend: AgentBackend?
     let executionModel: String?
     let executionEffort: String?
+    let executionFastMode: Bool?
     let externalSessionId: String?
     let prompt: String
     let response: String
@@ -424,7 +429,34 @@ struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let kind: String
     let text: String
+    let status: LiveFeedActivityStatus
     let occurredAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case text
+        case status
+        case occurredAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        kind = try container.decode(String.self, forKey: .kind)
+        text = try container.decode(String.self, forKey: .text)
+        status = try container.decodeIfPresent(
+            LiveFeedActivityStatus.self,
+            forKey: .status
+        ) ?? .completed
+        occurredAt = try container.decode(Date.self, forKey: .occurredAt)
+    }
+}
+
+enum LiveFeedActivityStatus: String, Decodable, Sendable {
+    case running
+    case completed
+    case failed
 }
 
 struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
@@ -435,6 +467,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let backend: AgentBackend?
     let model: String?
     let effort: String?
+    let fastMode: Bool?
     let externalSessionId: String?
     let prompt: String
     let response: String
@@ -445,6 +478,33 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let endedAt: Date?
     let updatedAt: Date
     let activities: [LiveFeedActivity]
+
+    func replacingID(with id: String) -> LiveFeedTurn {
+        LiveFeedTurn(
+            id: id,
+            characterId: characterId,
+            characterName: characterName,
+            characterBackend: characterBackend,
+            backend: backend,
+            model: model,
+            effort: effort,
+            fastMode: fastMode,
+            externalSessionId: externalSessionId,
+            prompt: prompt,
+            response: response,
+            status: status,
+            needsInput: needsInput,
+            errorMessage: errorMessage,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            updatedAt: updatedAt,
+            activities: activities
+        )
+    }
+}
+
+func agentExecutionModeTitle(_ fastMode: Bool?) -> String {
+    fastMode == true ? "Fast" : "Standard"
 }
 
 private struct GlobalHistoryResponse: Decodable {
@@ -485,6 +545,7 @@ private struct AgentSettingsRequest: Encodable {
     let backend: AgentBackend
     let model: String?
     let effort: String
+    let fastMode: Bool
     let permission: String
 }
 

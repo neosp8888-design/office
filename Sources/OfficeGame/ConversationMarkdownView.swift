@@ -217,7 +217,7 @@ private struct LocalMarkdownFileImage: View {
 }
 
 @MainActor
-private final class LocalMarkdownImageCache {
+final class LocalMarkdownImageCache {
     static let shared = LocalMarkdownImageCache()
 
     private let storage = NSCache<NSString, NSImage>()

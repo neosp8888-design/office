@@ -52,6 +52,15 @@ public enum AgentBackend:
         modelOptions[0]
     }
 
+    public func supportsFastMode(model: String?) -> Bool {
+        switch self {
+        case .codex:
+            true
+        case .claude:
+            model == "claude-opus-5"
+        }
+    }
+
     public func modelTitle(_ model: String) -> String {
         switch model {
         case "gpt-5.6-sol":
@@ -135,18 +144,35 @@ public struct CharacterAgentSettings: Equatable, Sendable {
     public var backend: AgentBackend
     public var model: String?
     public var effort: String
+    public var fastMode: Bool
     public var permission: AgentPermission
 
     public init(
         backend: AgentBackend,
         model: String?,
         effort: String,
+        fastMode: Bool,
         permission: AgentPermission
     ) {
         self.backend = backend
         self.model = model
         self.effort = effort
+        self.fastMode = fastMode
         self.permission = permission
+    }
+
+    public mutating func selectModel(_ model: String) {
+        self.model = model
+        if !backend.supportsFastMode(model: model) {
+            fastMode = false
+        }
+    }
+
+    public mutating func setFastMode(_ isEnabled: Bool) {
+        fastMode = isEnabled
+        if isEnabled && !backend.supportsFastMode(model: model) {
+            model = backend.defaultModel
+        }
     }
 }
 
@@ -178,6 +204,7 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
     public let identityPrompt: String
     public let model: String?
     public let effort: String
+    public let fastMode: Bool
     public let permission: String
     public let executablePath: String?
     public let hitbox: CharacterHitbox
@@ -192,6 +219,7 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
         identityPrompt: String,
         model: String?,
         effort: String,
+        fastMode: Bool,
         permission: String,
         executablePath: String?,
         hitbox: CharacterHitbox,
@@ -205,6 +233,7 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
         self.identityPrompt = identityPrompt
         self.model = model
         self.effort = effort
+        self.fastMode = fastMode
         self.permission = permission
         self.executablePath = executablePath
         self.hitbox = hitbox
@@ -217,6 +246,7 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
             backend: backend,
             model: model,
             effort: effort,
+            fastMode: fastMode,
             permission: AgentPermission(cliValue: permission)
         )
     }
@@ -232,6 +262,7 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
             identityPrompt: identityPrompt,
             model: settings.model,
             effort: settings.effort,
+            fastMode: settings.fastMode,
             permission: settings.permission.cliValue(for: settings.backend),
             executablePath: executablePath,
             hitbox: hitbox,
@@ -251,6 +282,7 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
             identityPrompt: identityPrompt,
             model: model,
             effort: effort,
+            fastMode: fastMode,
             permission: permission,
             executablePath: executablePath,
             hitbox: hitbox,

@@ -56,7 +56,7 @@ let package = Package(
         ),
         .testTarget(
             name: "OfficeCoreTests",
-            dependencies: ["OfficeCore"]
+            dependencies: ["OfficeCore", "OfficeGame"]
         )
     ]
 )

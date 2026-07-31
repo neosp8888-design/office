@@ -1,12 +1,15 @@
 // 이 파일은 Codex와 Claude CLI JSONL을 공개 가능한 실시간 업무 이벤트로 변환한다.
 
-const MAX_ACTIVITY_LENGTH = 800;
+const MAX_REASONING_LENGTH = 6_000;
 
 export function parseAgentEvent(line, backend) {
   let object;
   try {
     object = JSON.parse(line);
   } catch {
+    return null;
+  }
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
     return null;
   }
 
@@ -33,13 +36,10 @@ function parseCodexEvent(object) {
   if (type === "thread.started") {
     return {
       sessionID: cleanText(object.thread_id),
-      activity: activity("thinking", "업무 세팅 중 🧳"),
     };
   }
   if (type === "turn.started") {
-    return {
-      activity: activity("thinking", "요청서 정독 중 👀"),
-    };
+    return null;
   }
   if (type === "turn.failed") {
     return {
@@ -64,52 +64,114 @@ function parseCodexEvent(object) {
   }
 
   const item = object.item;
+  const eventKey = codexEventKey(item);
   switch (item.type) {
     case "reasoning": {
-      const summary = type === "item.started"
-        ? "작전 짜는 중 🧠"
-        : concise(item.text);
-      return summary
-        ? { activity: activity("thinking", summary) }
-        : null;
+      const reasoningText = codexReasoningText(item);
+      if (!reasoningText) {
+        return null;
+      }
+      return {
+        activity: {
+          ...activity("thinking", reasoningText, {
+            eventKey,
+            status: codexActivityStatus(item, type),
+          }),
+          isCodexReasoning: true,
+        },
+      };
     }
     case "agent_message": {
       const text = cleanText(item.text);
-      return text ? { responseText: text } : null;
+      return text
+        ? { agentMessage: text, agentMessageKey: eventKey }
+        : null;
     }
     case "command_execution":
       return {
         activity: activity(
           "command",
-          type === "item.completed"
-            ? "결과 까보는 중 🔎"
-            : "터미널 출동 🧰",
+          commandActivityText(item),
+          {
+            eventKey,
+            status: codexActivityStatus(item, type),
+          },
         ),
       };
     case "file_change":
-      return type === "item.completed"
-        ? { activity: activity("tool", "수정본 반영 중 ✍️") }
-        : null;
-    case "mcp_tool_call":
       return {
         activity: activity(
           "tool",
           type === "item.completed"
-            ? "도구 결과 체크 중 👀"
-            : "도구 콜하는 중 📡",
+            ? fileChangeActivityText(item.changes)
+            : fileChangeRunningText(item.changes),
+          {
+            eventKey,
+            status: codexActivityStatus(item, type),
+          },
+        ),
+        fileChange: {
+          eventKey,
+          phase: type,
+          changes: fileChangeMetadata(item.changes),
+        },
+      };
+    case "mcp_tool_call":
+      return {
+        activity: activity(
+          "tool",
+          mcpActivityText(item),
+          {
+            eventKey,
+            status: codexActivityStatus(item, type),
+          },
         ),
       };
     case "collab_tool_call":
-      return type === "item.started"
-        ? { activity: activity("tool", "동료 찬스 소환 중 🤝") }
-        : null;
+      return {
+        activity: activity(
+          "tool",
+          collabActivityText(item),
+          {
+            eventKey,
+            status: codexActivityStatus(item, type),
+          },
+        ),
+      };
     case "web_search":
-      return type === "item.started"
-        ? { activity: activity("tool", "자료 서치 중 🔍") }
+      return {
+        activity: activity(
+          "tool",
+          webSearchActivityText(item),
+          {
+            eventKey,
+            status: codexActivityStatus(item, type),
+          },
+        ),
+      };
+    case "error": {
+      const text = cleanText(item.message ?? item.error);
+      return text
+        ? {
+            activity: activity("tool", `오류 · ${text}`, {
+              eventKey,
+              status: "failed",
+            }),
+          }
         : null;
+    }
     case "todo_list":
-      return type === "item.started"
-        ? { activity: activity("thinking", "할 일 우선순위 픽 중 📌") }
+      return type !== "item.updated"
+        ? {
+            activity: activity(
+              "thinking",
+              todoActivityText(item),
+              {
+                eventKey,
+                status: "completed",
+              },
+            ),
+          }
         : null;
     default:
       return null;
@@ -120,12 +182,16 @@ function parseClaudeEvent(object) {
   if (object.type === "system" && object.subtype === "init") {
     return {
       sessionID: cleanText(object.session_id),
-      activity: activity("thinking", "업무 세팅 중 🧳"),
     };
   }
 
   if (object.type === "stream_event") {
     const event = object.event ?? {};
+    if (event.type === "message_start") {
+      return {
+        streamMessageID: cleanText(event.message?.id),
+      };
+    }
     if (
       event.type === "content_block_delta" &&
       event.delta?.type === "text_delta"
@@ -138,7 +204,11 @@ function parseClaudeEvent(object) {
       event.content_block?.type === "thinking"
     ) {
       return {
-        activity: activity("thinking", "각 잡고 분석 중 🧠"),
+        activity: activity("thinking", "추론 중", {
+          eventKey: `block:${event.index ?? 0}`,
+          messageScoped: true,
+          status: "running",
+        }),
       };
     }
     if (
@@ -146,7 +216,14 @@ function parseClaudeEvent(object) {
       event.content_block?.type === "tool_use"
     ) {
       return {
-        activity: activity("tool", "도구로 뚝딱 처리 중 🛠️"),
+        activity: activity(
+          "tool",
+          claudeToolActivityText(event.content_block),
+          {
+            eventKey: claudeToolEventKey(event.content_block),
+            status: "running",
+          },
+        ),
       };
     }
     return null;
@@ -157,24 +234,58 @@ function parseClaudeEvent(object) {
     if (!Array.isArray(content)) {
       return null;
     }
+    const messageID = cleanText(object.message?.id);
+    const activities = [];
+    content.forEach((item, index) => {
+      if (item.type === "thinking") {
+        const text = reasoningText(item.thinking);
+        if (text) {
+          activities.push(
+            activity("thinking", text, {
+              eventKey: messageID
+                ? `${messageID}:block:${index}`
+                : null,
+              status: "completed",
+            }),
+          );
+        }
+      } else if (item.type === "tool_use") {
+        activities.push(
+          activity("tool", claudeToolActivityText(item), {
+            eventKey: claudeToolEventKey(item),
+            status: "running",
+          }),
+        );
+      }
+    });
     const publicText = content
       .filter((item) => item.type === "text")
       .map((item) => String(item.text ?? ""))
       .join("");
+    const result = {};
+    if (activities.length > 0) {
+      result.activities = activities;
+    }
     if (publicText.trim()) {
-      return { responseText: publicText.trim() };
+      result.agentMessage = publicText.trim();
+      result.agentMessageKey = messageID;
     }
-    if (content.some((item) => item.type === "tool_use")) {
-      return {
-        activity: activity("tool", "도구로 뚝딱 처리 중 🛠️"),
-      };
+    return Object.keys(result).length > 0 ? result : null;
+  }
+
+  if (object.type === "user") {
+    const content = object.message?.content;
+    if (!Array.isArray(content)) {
+      return null;
     }
-    if (content.some((item) => item.type === "thinking")) {
-      return {
-        activity: activity("thinking", "각 잡고 분석 중 🧠"),
-      };
-    }
-    return null;
+    const activities = content
+      .filter((item) => item.type === "tool_result")
+      .map((item) => activity("tool", "도구 완료", {
+        eventKey: cleanText(item.tool_use_id),
+        preserveText: true,
+        status: item.is_error === true ? "failed" : "completed",
+      }));
+    return activities.length > 0 ? { activities } : null;
   }
 
   if (object.type === "result") {
@@ -196,24 +307,310 @@ function parseClaudeEvent(object) {
   return null;
 }
 
-function activity(kind, text) {
-  return { kind, text };
+function activity(kind, text, options = {}) {
+  return {
+    kind,
+    text,
+    eventKey: options.eventKey ?? null,
+    status: options.status ?? "completed",
+    preserveText: options.preserveText === true,
+    messageScoped: options.messageScoped === true,
+  };
 }
 
-function concise(value) {
-  const lines = String(value ?? "")
-    .replaceAll("\r\n", "\n")
-    .split("\n")
-    .map((line) => line.trim())
+function commandActivityText(item) {
+  return safeCommand(item.command) ?? "명령";
+}
+
+function codexActivityStatus(item, eventType) {
+  if (eventType !== "item.completed") {
+    return "running";
+  }
+  const exitCode = numericValue(item.exit_code ?? item.exitCode);
+  if (exitCode !== null) {
+    return exitCode === 0 ? "completed" : "failed";
+  }
+  const status = cleanText(item.status)?.toLowerCase();
+  return [
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+    "declined",
+  ].includes(status) ||
+      item.error
+    ? "failed"
+    : "completed";
+}
+
+export function fileChangeActivityText(changesValue, statistics = null) {
+  const changes = Array.isArray(changesValue) ? changesValue : [];
+  const summaries = changes
+    .map((change) => {
+      if (!change || typeof change !== "object") {
+        return null;
+      }
+      const path = cleanText(
+        change.path ??
+          change.file_path ??
+          change.file ??
+          change.move_path,
+      );
+      if (!path) {
+        return null;
+      }
+      return `${fileChangeLabel(change.kind)} ${compactPath(path)}`;
+    })
     .filter(Boolean);
-  if (lines.length === 0) {
-    return null;
+  if (summaries.length === 0) {
+    return "파일 변경 완료";
   }
 
-  const joined = lines.slice(0, 6).join("\n");
-  return joined.length <= MAX_ACTIVITY_LENGTH
-    ? joined
-    : `${joined.slice(0, MAX_ACTIVITY_LENGTH - 1)}…`;
+  const visible = summaries.slice(0, 40);
+  const remainder = summaries.length - visible.length;
+  return [
+    `파일 ${summaries.length}개를 편집했습니다`,
+    statistics
+      ? `+${statistics.additions} -${statistics.deletions}`
+      : null,
+    ...visible,
+    remainder > 0 ? `외 ${remainder}개` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function fileChangeRunningText(changesValue) {
+  const changes = fileChangeMetadata(changesValue);
+  if (changes.length === 0) {
+    return "파일 변경을 적용하는 중";
+  }
+  return `파일 변경을 적용하는 중 · ${changes.length}개`;
+}
+
+function fileChangeMetadata(changesValue) {
+  const changes = Array.isArray(changesValue) ? changesValue : [];
+  return changes.flatMap((change) => {
+    if (!change || typeof change !== "object") {
+      return [];
+    }
+    const path = cleanText(
+      change.path ??
+        change.file_path ??
+        change.file ??
+        change.move_path,
+    );
+    return path ? [{ path, kind: cleanText(change.kind) }] : [];
+  });
+}
+
+function mcpActivityText(item) {
+  const server = cleanText(
+    item.server ?? item.server_name ?? item.appName ?? item.app_name,
+  );
+  const tool = cleanText(
+    item.tool ?? item.name ?? item.actionName ?? item.action_name,
+  );
+  const target = [server, tool].filter(Boolean).join("/") || "연결 도구";
+  return target;
+}
+
+function collabActivityText(item) {
+  const tool = cleanText(item.tool ?? item.name ?? item.action) ?? "협업";
+  const target = cleanText(
+    item.receiver_agent_nickname ??
+      item.receiver_agent ??
+      item.agent_name ??
+      item.agent,
+  );
+  return target
+    ? `협업 · ${tool} → ${target}`
+    : `협업 · ${tool}`;
+}
+
+function webSearchActivityText(item) {
+  const action = item.action && typeof item.action === "object"
+    ? item.action
+    : {};
+  const detail = cleanText(
+    item.query ?? action.query ?? action.pattern ?? action.url,
+  );
+  return detail
+    ? `검색 · ${safePublicText(detail, 220)}`
+    : "웹 검색";
+}
+
+function todoActivityText(item) {
+  const entries = Array.isArray(item.items)
+    ? item.items
+    : Array.isArray(item.todos)
+    ? item.todos
+    : [];
+  const pending = entries.find((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    return entry.completed !== true && entry.status !== "completed";
+  });
+  const text = pending && typeof pending === "object"
+    ? cleanText(pending.text ?? pending.step ?? pending.title)
+    : null;
+  return text
+    ? `계획 · ${safePublicText(text, 220)}`
+    : entries.length > 0
+    ? `계획 · ${entries.length}단계`
+    : "작업 계획 정리";
+}
+
+function claudeToolActivityText(tool) {
+  if (!tool || typeof tool !== "object") {
+    return "도구 호출";
+  }
+  const name = cleanText(tool.name) ?? "도구";
+  const input = tool.input && typeof tool.input === "object"
+    ? tool.input
+    : {};
+  const loweredName = name.toLowerCase();
+  if (["bash", "shell", "terminal"].includes(loweredName)) {
+    const command = safeCommand(input.command);
+    return command ? `도구 · ${name} · ${command}` : `도구 · ${name}`;
+  }
+
+  const path = cleanText(
+    input.file_path ?? input.path ?? input.cwd ?? input.directory,
+  );
+  if (path) {
+    return `도구 · ${name} · ${compactPath(path)}`;
+  }
+  if (["grep", "glob", "websearch"].includes(loweredName)) {
+    const query = cleanText(input.pattern ?? input.query);
+    if (query) {
+      return `도구 · ${name} · ${safePublicText(query, 180)}`;
+    }
+  }
+  return `도구 · ${name}`;
+}
+
+function codexEventKey(item) {
+  return cleanText(item.id ?? item.item_id ?? item.itemId);
+}
+
+function claudeToolEventKey(tool) {
+  return cleanText(tool?.id ?? tool?.tool_use_id);
+}
+
+function codexReasoningText(item) {
+  const raw = nestedReasoningText(
+    item.raw_reasoning ??
+      item.rawReasoning ??
+      item.raw_content ??
+      item.rawContent ??
+      item.content,
+  );
+  return reasoningText(raw) ??
+    reasoningText(item.text) ??
+    reasoningText(item.summary);
+}
+
+function nestedReasoningText(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => nestedReasoningText(entry))
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return nestedReasoningText(
+    value.text ?? value.content ?? value.reasoning ?? value.summary,
+  );
+}
+
+function reasoningText(value) {
+  const text = cleanText(value);
+  if (!text) {
+    return null;
+  }
+  return text.length <= MAX_REASONING_LENGTH
+    ? text
+    : `${text.slice(0, MAX_REASONING_LENGTH - 1)}…`;
+}
+
+function safeCommand(value) {
+  const source = cleanText(value);
+  if (!source) {
+    return null;
+  }
+  const command = source.replace(/\s*\n\s*/g, " ↳ ");
+  if (containsSensitiveCommandData(command)) {
+    return `${commandProgram(command)} [민감 인자 숨김]`;
+  }
+  return safePublicText(command, 280);
+}
+
+function containsSensitiveCommandData(command) {
+  return /(?:api[_-]?key|token|password|passwd|secret|authorization|cookie|bearer)/i
+    .test(command) ||
+    /\b(?:sk|rk|pk)-[a-z0-9_-]{8,}/i.test(command) ||
+    /:\/\/[^/\s:@]+:[^@\s/]+@/.test(command);
+}
+
+function commandProgram(command) {
+  const tokens = command.trim().split(/\s+/);
+  const token = tokens.find((candidate) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(candidate));
+  return cleanText(token) ?? "명령";
+}
+
+function safePublicText(value, limit) {
+  const source = String(value ?? "")
+    .replaceAll("\r\n", "\n")
+    .replace(/\s*\n\s*/g, " ↳ ")
+    .trim();
+  if (source.length <= limit) {
+    return source;
+  }
+  return `${source.slice(0, limit - 1)}…`;
+}
+
+function compactPath(value) {
+  const path = String(value).replaceAll("\\", "/");
+  if (path.length <= 96) {
+    return path;
+  }
+  const components = path.split("/").filter(Boolean);
+  return components.length > 3
+    ? `…/${components.slice(-3).join("/")}`
+    : `…${path.slice(-92)}`;
+}
+
+function fileChangeLabel(value) {
+  switch (cleanText(value)?.toLowerCase()) {
+    case "add":
+    case "create":
+      return "추가";
+    case "delete":
+    case "remove":
+      return "삭제";
+    case "move":
+    case "rename":
+      return "이동";
+    default:
+      return "수정";
+  }
+}
+
+function numericValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value)) {
+    return Number(value);
+  }
+  return null;
 }
 
 function cleanText(value) {

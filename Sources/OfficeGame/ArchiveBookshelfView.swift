@@ -1,6 +1,7 @@
 // 이 파일은 대화 기록을 간결한 타일과 좌우 페이지형 상세 화면으로 표시한다.
 
 import AppKit
+import OfficeCore
 import SwiftUI
 
 struct ArchiveRecordGrid: View {
@@ -88,6 +89,10 @@ private struct ArchiveRecordTile: View {
                             alignment: .leading
                         )
 
+                    TaskPromptAttachmentSummary(
+                        attachments: promptPresentation.attachments
+                    )
+
                     Text(executionSummary)
                         .font(.system(size: 8.5, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -114,10 +119,8 @@ private struct ArchiveRecordTile: View {
             }
         }
         .buttonStyle(.plain)
-        .help("\(turn.characterName) · \(turn.prompt)")
-        .accessibilityLabel(
-            "\(turn.characterName) 기록 · \(turn.prompt)"
-        )
+        .help("\(turn.characterName) · \(recordTitle)")
+        .accessibilityLabel(recordAccessibilityLabel)
     }
 
     private var bookColor: Color {
@@ -125,15 +128,31 @@ private struct ArchiveRecordTile: View {
     }
 
     private var recordTitle: String {
-        let title = turn.prompt.trimmingCharacters(
+        let title = promptPresentation.text.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
         return title.isEmpty ? "제목 없는 업무" : title
     }
 
+    private var promptPresentation: TaskPromptPresentation {
+        TaskPromptPresentation(prompt: turn.prompt)
+    }
+
+    private var recordAccessibilityLabel: String {
+        let attachmentDetails = promptPresentation.attachments.map {
+            "첨부 파일 \($0.name), 경로 \($0.path)"
+        }
+        return ([
+            "\(turn.characterName) 기록 · \(recordTitle)",
+            executionSummary,
+        ]
+            + attachmentDetails)
+            .joined(separator: ", ")
+    }
+
     private var executionSummary: String {
         guard let backend = turn.backend else {
-            return "이전 기록"
+            return "이전 기록 · \(agentExecutionModeTitle(turn.fastMode))"
         }
 
         var parts = [backend.title]
@@ -143,6 +162,7 @@ private struct ArchiveRecordTile: View {
         if let effort = turn.effort {
             parts.append("추론 \(effort)")
         }
+        parts.append(agentExecutionModeTitle(turn.fastMode))
         return parts.joined(separator: " · ")
     }
 }
@@ -253,6 +273,10 @@ struct ArchiveOpenBook: View {
                         label: "추론",
                         value: turn.effort ?? "기록 없음"
                     )
+                    metadataRow(
+                        label: "모드",
+                        value: agentExecutionModeTitle(turn.fastMode)
+                    )
                 }
                 .padding(9)
                 .background(
@@ -262,11 +286,19 @@ struct ArchiveOpenBook: View {
 
                 pageHeading("업무", systemImage: "text.quote")
 
-                Text(turn.prompt)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !promptPresentation.text.isEmpty {
+                    Text(promptPresentation.text)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !promptPresentation.attachments.isEmpty {
+                    TaskPromptAttachmentList(
+                        attachments: promptPresentation.attachments
+                    )
+                }
             }
             .padding(12)
         }
@@ -331,6 +363,10 @@ struct ArchiveOpenBook: View {
                 .stroke(Color.primary.opacity(0.07))
         }
         .shadow(color: .black.opacity(0.08), radius: 6, x: 2, y: 3)
+    }
+
+    private var promptPresentation: TaskPromptPresentation {
+        TaskPromptPresentation(prompt: turn.prompt)
     }
 
     private var bookBinding: some View {
