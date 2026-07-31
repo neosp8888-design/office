@@ -1,5 +1,7 @@
 # OFFICESTRA
 
+**한국어** | [English](README.en.md)
+
 > 로컬 Codex CLI와 Claude Code를 다섯 명의 AI 직원처럼 운영하는 macOS 업무실.
 
 <p align="center">
@@ -256,7 +258,7 @@ curl -X POST http://127.0.0.1:4317/api/agent-jobs \
 ## 데이터와 보안 경계
 
 - 업무·응답·세션·활동 기록은 로컬 PostgreSQL Docker 볼륨에 저장된다.
-- 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사되고 Git에서 제외된다.
+- 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사된다. 다른 Git 저장소를 `workdir`로 사용한다면 해당 저장소의 `.gitignore`에도 이 폴더를 추가해야 한다.
 - OFFICESTRA는 API 키를 직접 저장하지 않고 각 CLI의 기존 로컬 로그인을 사용한다.
 - 백엔드는 기본적으로 `127.0.0.1`에만 바인딩된다.
 - PostgreSQL의 호스트 포트도 `127.0.0.1:54329`에만 바인딩된다.
