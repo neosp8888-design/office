@@ -5,6 +5,27 @@ import XCTest
 @testable import OfficeGame
 
 final class AgentActivityLogPresentationTests: XCTestCase {
+    func testCodexOperationExpansionNeverOpensFromStatusChanges() {
+        XCTAssertFalse(
+            codexOperationExpansionState(
+                current: false,
+                isRunning: true
+            )
+        )
+        XCTAssertTrue(
+            codexOperationExpansionState(
+                current: true,
+                isRunning: true
+            )
+        )
+        XCTAssertFalse(
+            codexOperationExpansionState(
+                current: true,
+                isRunning: false
+            )
+        )
+    }
+
     func testLargeOperationGroupUsesRecentRowsUntilExpanded() throws {
         let activities = try (0..<50).map { index in
             try makeActivity(

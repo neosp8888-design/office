@@ -485,12 +485,6 @@ struct CodexTranscriptView: View {
         let visibleEntries = showsAllEntries
             ? presentation.entries
             : Array(presentation.entries.suffix(Self.compactEntryLimit))
-        let lastOperationID = presentation.entries.last { entry in
-            if case .operations = entry {
-                return true
-            }
-            return false
-        }?.id
         let conclusionMessageID: String? = {
             guard
                 isCompleted,
@@ -522,7 +516,6 @@ struct CodexTranscriptView: View {
             ForEach(visibleEntries) { entry in
                 transcriptEntry(
                     entry,
-                    isLatestOperation: entry.id == lastOperationID,
                     isConclusion: entry.id == conclusionMessageID
                 )
             }
@@ -551,19 +544,13 @@ struct CodexTranscriptView: View {
     @ViewBuilder
     private func transcriptEntry(
         _ entry: CodexTranscriptEntry,
-        isLatestOperation: Bool,
         isConclusion: Bool
     ) -> some View {
         switch entry {
         case .narrative(let activity):
             CodexNarrativeActivityView(activity: activity)
         case .operations(let group):
-            CodexOperationGroupView(
-                group: group,
-                isInitiallyExpanded:
-                    group.isRunning
-                        || (isLatestOperation && group.activities.count <= 12)
-            )
+            CodexOperationGroupView(group: group)
         case .message(let message):
             CodexMessageView(
                 message: message,
@@ -656,6 +643,13 @@ private struct CodexNarrativeActivityView: View {
     }
 }
 
+func codexOperationExpansionState(
+    current: Bool,
+    isRunning: Bool
+) -> Bool {
+    isRunning ? current : false
+}
+
 private struct CodexOperationGroupView: View {
     let group: CodexOperationGroup
     @State private var isExpanded: Bool
@@ -663,12 +657,9 @@ private struct CodexOperationGroupView: View {
 
     private static let compactActivityLimit = 20
 
-    init(
-        group: CodexOperationGroup,
-        isInitiallyExpanded: Bool
-    ) {
+    init(group: CodexOperationGroup) {
         self.group = group
-        _isExpanded = State(initialValue: isInitiallyExpanded)
+        _isExpanded = State(initialValue: false)
     }
 
     var body: some View {
@@ -741,9 +732,10 @@ private struct CodexOperationGroupView: View {
                 .stroke(Color.primary.opacity(0.06))
         }
         .onChange(of: group.isRunning) { _, running in
-            if running {
-                isExpanded = true
-            }
+            isExpanded = codexOperationExpansionState(
+                current: isExpanded,
+                isRunning: running
+            )
         }
     }
 

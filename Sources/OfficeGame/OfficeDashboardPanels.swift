@@ -1571,7 +1571,7 @@ private struct LiveTurnCard: View {
         self.turn = turn
         self.shouldAnimateResponse = shouldAnimateResponse
         self.finishResponseAnimation = finishResponseAnimation
-        _activitiesExpanded = State(initialValue: turn.status.isRunning)
+        _activitiesExpanded = State(initialValue: false)
         _responseCopied = State(initialValue: false)
     }
 
@@ -1641,7 +1641,9 @@ private struct LiveTurnCard: View {
             }
         }
         .onChange(of: turn.status) { _, status in
-            activitiesExpanded = status.isRunning
+            if !status.isRunning {
+                activitiesExpanded = false
+            }
         }
     }
 
