@@ -475,9 +475,27 @@ function claudeToolActivityText(tool) {
     const command = safeCommand(input.command);
     return command ? `도구 · ${name} · ${command}` : `도구 · ${name}`;
   }
+  if (loweredName === "todowrite") {
+    return claudePlanActivityText(name, input);
+  }
+  if (loweredName === "task") {
+    const detail = [
+      cleanText(input.subagent_type ?? input.subagentType),
+      cleanText(input.description),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return detail
+      ? `도구 · ${name} · ${safePublicText(detail, 180)}`
+      : `도구 · ${name}`;
+  }
 
   const path = cleanText(
-    input.file_path ?? input.path ?? input.cwd ?? input.directory,
+    input.file_path ??
+      input.notebook_path ??
+      input.path ??
+      input.cwd ??
+      input.directory,
   );
   if (path) {
     return `도구 · ${name} · ${compactPath(path)}`;
@@ -489,6 +507,41 @@ function claudeToolActivityText(tool) {
     }
   }
   return `도구 · ${name}`;
+}
+
+function claudePlanActivityText(name, input) {
+  const entries = Array.isArray(input.todos)
+    ? input.todos
+    : Array.isArray(input.items)
+    ? input.items
+    : [];
+  const steps = entries.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const text = cleanText(entry.content ?? entry.text ?? entry.title);
+    if (!text) {
+      return [];
+    }
+    const status = cleanText(entry.status)?.toLowerCase();
+    const done = entry.completed === true || status === "completed";
+    const marker = done ? "x" : status === "in_progress" ? "~" : " ";
+    return [`[${marker}] ${safePublicText(text, 160)}`];
+  });
+  if (steps.length === 0) {
+    return `도구 · ${name}`;
+  }
+
+  const done = steps.filter((step) => step.startsWith("[x]")).length;
+  const visible = steps.slice(0, 12);
+  const remainder = steps.length - visible.length;
+  return [
+    `도구 · ${name} · ${done}/${steps.length}단계`,
+    ...visible,
+    remainder > 0 ? `외 ${remainder}개` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function codexEventKey(item) {

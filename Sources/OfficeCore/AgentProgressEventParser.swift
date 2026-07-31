@@ -272,7 +272,7 @@ public enum AgentProgressEventParser {
             return !completed && status != "completed"
         }
         let text = pending.flatMap {
-            cleanText($0["text"] ?? $0["step"] ?? $0["title"])
+            cleanText($0["text"] ?? $0["step"] ?? $0["title"] ?? $0["content"])
         }
         if let text {
             return "계획 · \(shortened(text, limit: 220))"
@@ -295,8 +295,24 @@ public enum AgentProgressEventParser {
             return "도구 · \(name)"
         }
 
+        if loweredName == "todowrite" {
+            return todoMessage(input)
+        }
+        if loweredName == "task" {
+            let detail = [
+                cleanText(input["subagent_type"]),
+                cleanText(input["description"]),
+            ]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+            return detail.isEmpty
+                ? "도구 · \(name)"
+                : "도구 · \(name) · \(shortened(detail, limit: 180))"
+        }
+
         if let path = cleanText(
             input["file_path"]
+                ?? input["notebook_path"]
                 ?? input["path"]
                 ?? input["cwd"]
                 ?? input["directory"]
