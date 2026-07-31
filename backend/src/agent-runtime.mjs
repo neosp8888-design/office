@@ -37,6 +37,7 @@ import {
   appendLocalImagePreviews,
   listGeneratedImages,
 } from "./local-artifacts.mjs";
+import { GitWorkspaceError } from "./git-workspace.mjs";
 import { estimateTokenCost } from "./token-cost-estimator.mjs";
 
 const RESPONSE_INSTRUCTION = `
@@ -49,18 +50,38 @@ const RESPONSE_INSTRUCTION = `
 const MAX_FILE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_TURN_SNAPSHOT_BYTES = 24 * 1024 * 1024;
 const ROLLOUT_TAIL_CHUNK_BYTES = 64 * 1024;
+const MAX_WORKSPACE_DIFF_BYTES = 512 * 1024;
 const rolloutPathCache = new Map();
+
+const BLOCKED_WORKSPACE_STATUSES = new Set([
+  "awaiting_approval",
+  "merging",
+  "conflict",
+]);
+const TERMINAL_WORKSPACE_STATUSES = new Set([
+  "merged",
+  "rejected",
+  "closed",
+  "failed",
+]);
 
 export class AgentBusyError extends Error {}
 export class AgentJobNotFoundError extends Error {}
 export class CharacterNotFoundError extends Error {}
 
 export class AgentRuntime {
-  constructor({ pool, withTransaction, workdir, broadcast }) {
+  constructor({
+    pool,
+    withTransaction,
+    workdir,
+    broadcast,
+    workspaceManager = null,
+  }) {
     this.pool = pool;
     this.withTransaction = withTransaction;
     this.workdir = workdir;
     this.broadcast = broadcast;
+    this.workspaceManager = workspaceManager;
     this.running = new Map();
   }
 
@@ -99,6 +120,140 @@ export class AgentRuntime {
         SELECT id FROM interrupted_turns
       `,
     );
+    const interruptedProvisioning = await this.pool.query(
+      `
+        SELECT *
+        FROM task_workspaces
+        WHERE status = 'provisioning'
+      `,
+    );
+    const cleanupFailures = [];
+    if (this.workspaceManager) {
+      for (const row of interruptedProvisioning.rows ?? []) {
+        const workspace = workspaceFromRow(row);
+        try {
+          if (
+            typeof this.workspaceManager.cleanupProvisioning === "function"
+          ) {
+            await this.workspaceManager.cleanupProvisioning(workspace);
+          } else {
+            await this.workspaceManager.cleanup(workspace);
+          }
+        } catch (error) {
+          cleanupFailures.push({
+            cliSessionID: workspace.cliSessionID,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+    await this.pool.query(
+      `
+        UPDATE task_workspaces
+        SET
+          status = 'failed',
+          error_message = CASE status
+            WHEN 'merging' THEN
+              '백엔드 재시작 전에 병합이 시작됐습니다. 원본 Git 상태를 수동으로 확인하세요.'
+            ELSE
+              '백엔드 재시작 전에 작업 공간 준비가 끝나지 않았습니다.'
+          END,
+          updated_at = now()
+        WHERE status IN ('provisioning', 'merging')
+      `,
+    );
+    for (const failure of cleanupFailures) {
+      await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET
+            error_message = $2,
+            updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'failed'
+        `,
+        [
+          failure.cliSessionID,
+          `중단된 작업 공간 자동 정리에 실패했습니다. ${failure.message}`,
+        ],
+      );
+    }
+    if (this.workspaceManager) {
+      const mergedWorkspaces = await this.pool.query(
+        `
+          SELECT *
+          FROM task_workspaces
+          WHERE status = 'merged'
+        `,
+      );
+      for (const row of mergedWorkspaces.rows ?? []) {
+        const workspace = workspaceFromRow(row);
+        try {
+          await this.workspaceManager.cleanup(workspace);
+        } catch (error) {
+          await this.pool.query(
+            `
+              UPDATE task_workspaces
+              SET error_message = $2, updated_at = now()
+              WHERE cli_session_id = $1
+                AND status = 'merged'
+            `,
+            [
+              workspace.cliSessionID,
+              `병합된 작업 공간 자동 정리에 실패했습니다. ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            ],
+          );
+        }
+      }
+    }
+    if (typeof this.workspaceManager?.validateWorkspace === "function") {
+      const activeWorkspaces = await this.pool.query(
+        `
+          SELECT *
+          FROM task_workspaces
+          WHERE status = 'active'
+        `,
+      );
+      for (const row of activeWorkspaces.rows ?? []) {
+        const workspace = workspaceFromRow(row);
+        try {
+          await this.workspaceManager.validateWorkspace(workspace);
+        } catch (error) {
+          const message =
+            `활성 작업 공간을 복구할 수 없습니다. ${
+              error instanceof Error ? error.message : String(error)
+            }`;
+          await this.withTransaction(async (client) => {
+            await client.query(
+              `
+                UPDATE task_workspaces
+                SET status = 'failed', error_message = $2, updated_at = now()
+                WHERE cli_session_id = $1
+                  AND status = 'active'
+              `,
+              [workspace.cliSessionID, message],
+            );
+            await client.query(
+              `
+                DELETE FROM active_cli_sessions
+                WHERE cli_session_id = $1
+              `,
+              [workspace.cliSessionID],
+            );
+            await client.query(
+              `
+                UPDATE cli_sessions
+                SET ended_at = COALESCE(ended_at, now())
+                WHERE id = $1
+              `,
+              [workspace.cliSessionID],
+            );
+          });
+        }
+      }
+    }
     return result.rowCount;
   }
 
@@ -113,24 +268,46 @@ export class AgentRuntime {
       throw new Error("업무 내용을 입력하세요.");
     }
 
-    const attachments = stageAttachments({
-      attachmentPaths,
-      workdir: this.workdir,
-    });
-    const effectivePrompt = promptWithAttachments(
-      cleanPrompt || "첨부 파일을 확인해줘.",
-      attachments,
-    );
-
     let prepared;
+    let attachments = [];
     try {
+      const isolateGitWorkdir = this.workspaceManager
+        ? typeof this.workspaceManager.isRepository === "function"
+          ? await this.workspaceManager.isRepository()
+          : true
+        : false;
       prepared = await this.prepareTurn({
         characterID,
-        prompt: effectivePrompt,
+        prompt: cleanPrompt || "첨부 파일을 확인해줘.",
         conversationID: conversationID || randomUUID(),
+        isolateGitWorkdir,
       });
+      const workspace = await this.ensureWorkspace(prepared);
+      const workdir = workspace?.executionWorkdir ?? this.workdir;
+      attachments = stageAttachments({
+        attachmentPaths,
+        workdir: this.workdir,
+      });
+      const effectivePrompt = promptWithAttachments(
+        cleanPrompt || "첨부 파일을 확인해줘.",
+        attachments,
+      );
+      await this.beginPreparedTurn(prepared.turnID, effectivePrompt);
+      prepared = {
+        ...prepared,
+        prompt: effectivePrompt,
+        workspace,
+        workdir,
+      };
     } catch (error) {
       removeStagedAttachments(attachments);
+      if (prepared?.turnID) {
+        try {
+          await this.failPreparedTurn(prepared, error);
+        } catch {
+          // 준비 단계의 원래 실패 원인을 호출자에게 유지한다.
+        }
+      }
       throw error;
     }
 
@@ -186,6 +363,297 @@ export class AgentRuntime {
     };
   }
 
+  async ensureWorkspace(prepared) {
+    if (prepared.workspace) {
+      return prepared.workspace;
+    }
+    if (!this.workspaceManager || prepared.reusedSession) {
+      return null;
+    }
+    const isolationExpected = prepared.isolateGitWorkdir ?? true;
+    if (!isolationExpected) {
+      return null;
+    }
+
+    const provisionInput = {
+      sessionID: prepared.sessionID,
+      characterID: prepared.character.id,
+    };
+    if (
+      typeof this.workspaceManager.planProvision !== "function" ||
+      typeof this.workspaceManager.provisionPlanned !== "function"
+    ) {
+      const provisioned = await this.workspaceManager.provision(
+        provisionInput,
+      );
+      if (!provisioned) {
+        throw new GitWorkspaceError(
+          "invalid-state",
+          "Git 저장소 확인 뒤 작업 공간을 준비할 수 없게 됐습니다.",
+        );
+      }
+      return this.persistProvisionedWorkspace(prepared, provisioned);
+    }
+
+    const plan = await this.workspaceManager.planProvision(provisionInput);
+    if (!plan) {
+      throw new GitWorkspaceError(
+        "invalid-state",
+        "Git 저장소 확인 뒤 작업 공간을 준비할 수 없게 됐습니다.",
+      );
+    }
+    await this.pool.query(
+      `
+        INSERT INTO task_workspaces (
+          cli_session_id,
+          status,
+          repository_root,
+          source_workdir,
+          worktree_path,
+          execution_workdir,
+          branch_name,
+          base_branch,
+          base_commit
+        )
+        VALUES (
+          $1,
+          'provisioning',
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8
+        )
+      `,
+      [
+        prepared.sessionID,
+        plan.repositoryRoot,
+        plan.sourceWorkdir,
+        plan.worktreePath,
+        plan.executionWorkdir,
+        plan.branchName,
+        plan.baseBranch,
+        plan.baseCommit,
+      ],
+    );
+
+    let provisioned;
+    try {
+      provisioned = await this.workspaceManager.provisionPlanned(plan);
+    } catch (error) {
+      await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET status = 'failed', error_message = $2, updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'provisioning'
+        `,
+        [
+          prepared.sessionID,
+          error instanceof Error ? error.message : String(error),
+        ],
+      );
+      throw error;
+    }
+
+    try {
+      const result = await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET
+            status = 'active',
+            repository_root = $2,
+            source_workdir = $3,
+            worktree_path = $4,
+            execution_workdir = $5,
+            branch_name = $6,
+            base_branch = $7,
+            base_commit = $8,
+            error_message = NULL,
+            updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'provisioning'
+          RETURNING *
+        `,
+        [
+          prepared.sessionID,
+          provisioned.repositoryRoot,
+          provisioned.sourceWorkdir,
+          provisioned.worktreePath,
+          provisioned.executionWorkdir,
+          provisioned.branchName,
+          provisioned.baseBranch,
+          provisioned.baseCommit,
+        ],
+      );
+      if (result.rowCount === 0) {
+        throw new Error("작업 공간 준비 상태가 DB에서 변경됐습니다.");
+      }
+      const workspace = workspaceFromRow(result.rows[0]);
+      this.broadcast({
+        type: "workspace.changed",
+        turnId: prepared.turnID,
+        characterId: prepared.character.id,
+        status: workspace.status,
+      });
+      return workspace;
+    } catch (error) {
+      try {
+        await this.workspaceManager.cleanup(provisioned);
+      } catch {
+        // 실패한 provisioning 기록으로 남겨 재시작 시 다시 확인한다.
+      }
+      await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET status = 'failed', error_message = $2, updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'provisioning'
+        `,
+        [
+          prepared.sessionID,
+          error instanceof Error ? error.message : String(error),
+        ],
+      );
+      throw error;
+    }
+  }
+
+  async persistProvisionedWorkspace(prepared, provisioned) {
+    let result;
+    try {
+      result = await this.pool.query(
+        `
+          INSERT INTO task_workspaces (
+            cli_session_id,
+            status,
+            repository_root,
+            source_workdir,
+            worktree_path,
+            execution_workdir,
+            branch_name,
+            base_branch,
+            base_commit
+          )
+          VALUES (
+            $1,
+            'active',
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            $8
+          )
+          ON CONFLICT (cli_session_id) DO UPDATE
+          SET updated_at = now()
+          RETURNING *
+        `,
+        [
+          prepared.sessionID,
+          provisioned.repositoryRoot,
+          provisioned.sourceWorkdir,
+          provisioned.worktreePath,
+          provisioned.executionWorkdir,
+          provisioned.branchName,
+          provisioned.baseBranch,
+          provisioned.baseCommit,
+        ],
+      );
+    } catch (error) {
+      try {
+        await this.workspaceManager.cleanup(provisioned);
+      } catch {
+        // DB 기록에 실패한 작업 공간은 가능한 범위에서만 정리한다.
+      }
+      throw error;
+    }
+    const workspace = workspaceFromRow(result.rows[0]);
+    this.broadcast({
+      type: "workspace.changed",
+      turnId: prepared.turnID,
+      characterId: prepared.character.id,
+      status: workspace.status,
+    });
+    return workspace;
+  }
+
+  async beginPreparedTurn(turnID, prompt) {
+    await this.withTransaction(async (client) => {
+      await client.query(
+        `
+          UPDATE turns
+          SET
+            prompt = $2,
+            status = 'running',
+            started_at = now(),
+            updated_at = now()
+          WHERE id = $1
+            AND status = 'pending'
+        `,
+        [turnID, prompt],
+      );
+      await client.query(
+        `
+          UPDATE messages
+          SET text = $2, received_at = now()
+          WHERE turn_id = $1
+            AND role = 'user'
+        `,
+        [turnID, prompt],
+      );
+    });
+  }
+
+  async failPreparedTurn(prepared, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.withTransaction(async (client) => {
+      await client.query(
+        `
+          UPDATE turns
+          SET
+            status = 'failed',
+            error_message = $2,
+            ended_at = now(),
+            updated_at = now()
+          WHERE id = $1
+            AND status = 'pending'
+        `,
+        [prepared.turnID, message],
+      );
+      if (!prepared.externalSessionID) {
+        await client.query(
+          `
+            UPDATE cli_sessions
+            SET ended_at = COALESCE(ended_at, now())
+            WHERE id = $1
+          `,
+          [prepared.sessionID],
+        );
+        await client.query(
+          `
+            UPDATE task_workspaces
+            SET
+              status = 'failed',
+              error_message = $2,
+              updated_at = now()
+            WHERE cli_session_id = $1
+              AND status IN ('provisioning', 'active')
+          `,
+          [prepared.sessionID, message],
+        );
+      }
+    });
+    this.broadcast({
+      type: "feed.changed",
+      turnId: prepared.turnID,
+      characterId: prepared.character.id,
+    });
+  }
+
   async cancel(characterID) {
     const state = this.running.get(characterID);
     if (!state) {
@@ -213,6 +681,28 @@ export class AgentRuntime {
         `,
         [state.turnID, message],
       );
+      if (state.workspace && !state.externalSessionID) {
+        await this.pool.query(
+          `
+            UPDATE task_workspaces
+            SET
+              status = 'failed',
+              error_message = $2,
+              updated_at = now()
+            WHERE cli_session_id = $1
+              AND status = 'active'
+          `,
+          [state.sessionID, message],
+        );
+        await this.pool.query(
+          `
+            UPDATE cli_sessions
+            SET ended_at = COALESCE(ended_at, now())
+            WHERE id = $1
+          `,
+          [state.sessionID],
+        );
+      }
       await this.persistUsageRecord(this.pool, state);
     } finally {
       if (this.running.get(characterID) === state) {
@@ -231,8 +721,17 @@ export class AgentRuntime {
     };
   }
 
-  async prepareTurn({ characterID, prompt, conversationID }) {
+  async prepareTurn({
+    characterID,
+    prompt,
+    conversationID,
+    isolateGitWorkdir = false,
+  }) {
     return this.withTransaction(async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [`officestra:character:${characterID}`],
+      );
       const characterResult = await client.query(
         `
           SELECT
@@ -276,15 +775,60 @@ export class AgentRuntime {
         );
       }
 
+      const blockedWorkspace = await client.query(
+        `
+          SELECT workspace.review_turn_id
+          FROM task_workspaces AS workspace
+          JOIN cli_sessions AS session
+            ON session.id = workspace.cli_session_id
+          WHERE session.character_id = $1
+            AND workspace.status IN (
+              'awaiting_approval',
+              'merging',
+              'conflict'
+            )
+          ORDER BY workspace.updated_at DESC
+          LIMIT 1
+        `,
+        [characterID],
+      );
+      if (blockedWorkspace.rowCount > 0) {
+        throw new AgentBusyError(
+          "이 직원의 변경사항을 먼저 검토하고 승인하거나 거절하세요.",
+        );
+      }
+
       const activeResult = await client.query(
         `
           SELECT
             session.id,
             session.external_id AS "externalSessionID",
-            session.conversation_id AS "conversationID"
+            session.conversation_id AS "conversationID",
+            workspace.status AS "workspaceStatus",
+            workspace.repository_root AS "workspaceRepositoryRoot",
+            workspace.source_workdir AS "workspaceSourceWorkdir",
+            workspace.worktree_path AS "workspaceWorktreePath",
+            workspace.execution_workdir AS "workspaceExecutionWorkdir",
+            workspace.branch_name AS "workspaceBranchName",
+            workspace.base_branch AS "workspaceBaseBranch",
+            workspace.base_commit AS "workspaceBaseCommit",
+            workspace.review_turn_id AS "workspaceReviewTurnID",
+            workspace.review_tree AS "workspaceReviewTree",
+            workspace.head_commit AS "workspaceHeadCommit",
+            workspace.changed_files AS "workspaceChangedFiles",
+            workspace.task_commit AS "workspaceTaskCommit",
+            workspace.merged_commit AS "workspaceMergedCommit",
+            workspace.error_message AS "workspaceErrorMessage",
+            workspace.created_at AS "workspaceCreatedAt",
+            workspace.updated_at AS "workspaceUpdatedAt",
+            workspace.review_requested_at AS "workspaceReviewRequestedAt",
+            workspace.merged_at AS "workspaceMergedAt",
+            workspace.rejected_at AS "workspaceRejectedAt"
           FROM active_cli_sessions AS active
           JOIN cli_sessions AS session
             ON session.id = active.cli_session_id
+          LEFT JOIN task_workspaces AS workspace
+            ON workspace.cli_session_id = session.id
           WHERE active.character_id = $1
             AND session.ended_at IS NULL
           LIMIT 1
@@ -295,11 +839,62 @@ export class AgentRuntime {
       let sessionID;
       let externalSessionID;
       let effectiveConversationID;
-      if (activeResult.rowCount > 0) {
-        const active = activeResult.rows[0];
+      let workspace = null;
+      let active = activeResult.rows[0] ?? null;
+      if (
+        active?.workspaceStatus &&
+        BLOCKED_WORKSPACE_STATUSES.has(active.workspaceStatus)
+      ) {
+        throw new AgentBusyError(
+          "이 직원의 변경사항을 먼저 검토하고 승인하거나 거절하세요.",
+        );
+      }
+      if (
+        active?.workspaceStatus &&
+        TERMINAL_WORKSPACE_STATUSES.has(active.workspaceStatus)
+      ) {
+        await client.query(
+          `
+            DELETE FROM active_cli_sessions
+            WHERE character_id = $1
+          `,
+          [characterID],
+        );
+        await client.query(
+          `
+            UPDATE cli_sessions
+            SET ended_at = COALESCE(ended_at, now())
+            WHERE id = $1
+          `,
+          [active.id],
+        );
+        active = null;
+      }
+      if (active && !active.workspaceStatus && isolateGitWorkdir) {
+        await client.query(
+          `
+            DELETE FROM active_cli_sessions
+            WHERE character_id = $1
+          `,
+          [characterID],
+        );
+        await client.query(
+          `
+            UPDATE cli_sessions
+            SET ended_at = COALESCE(ended_at, now())
+            WHERE id = $1
+          `,
+          [active.id],
+        );
+        active = null;
+      }
+
+      const reusedSession = Boolean(active);
+      if (active) {
         sessionID = active.id;
         externalSessionID = active.externalSessionID;
         effectiveConversationID = active.conversationID;
+        workspace = workspaceFromActiveRow(active);
       } else {
         effectiveConversationID = conversationID;
         await client.query(
@@ -361,7 +956,7 @@ export class AgentRuntime {
             started_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', now(), now())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', now(), now())
         `,
         [
           turnID,
@@ -390,6 +985,9 @@ export class AgentRuntime {
         externalSessionID,
         character,
         prompt,
+        workspace,
+        reusedSession,
+        isolateGitWorkdir,
       };
     });
   }
@@ -403,7 +1001,7 @@ export class AgentRuntime {
       attachments: state.attachments,
     });
     const child = spawn(executable, cliArguments, {
-      cwd: this.workdir,
+      cwd: state.workdir,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
@@ -571,7 +1169,7 @@ export class AgentRuntime {
     if (fileChange.phase === "item.started") {
       state.fileChangeSnapshots.set(
         fileChange.eventKey,
-        captureFileSnapshots(this.workdir, fileChange.changes),
+        captureFileSnapshots(state.workdir, fileChange.changes),
       );
       return;
     }
@@ -583,10 +1181,10 @@ export class AgentRuntime {
     state.fileChangeSnapshots.delete(fileChange.eventKey);
     const statistics = rolloutFileChangeStatistics(
       state.rolloutReader,
-      this.workdir,
+      state.workdir,
       fileChange.changes,
     ) ?? fileChangeStatistics(
-      this.workdir,
+      state.workdir,
       snapshots,
       fileChange.changes,
     );
@@ -1038,6 +1636,12 @@ export class AgentRuntime {
       this.completedResponseText(state, decoded),
       generatedImages,
     );
+    const workspaceReview =
+      state.workspace &&
+        this.workspaceManager &&
+        !decoded.needsInput
+        ? await this.workspaceManager.prepareReview(state.workspace)
+        : null;
 
     await this.withTransaction(async (client) => {
       await client.query(
@@ -1063,7 +1667,57 @@ export class AgentRuntime {
         [state.turnID, decoded.needsInput],
       );
       await this.persistUsageRecord(client, state);
+      if (workspaceReview) {
+        const nextStatus = workspaceReview.hasChanges
+          ? "awaiting_approval"
+          : "active";
+        await client.query(
+          `
+            UPDATE task_workspaces
+            SET
+              status = $2,
+              review_turn_id = CASE WHEN $3 THEN $4::uuid ELSE NULL END,
+              review_tree = CASE WHEN $3 THEN $5 ELSE NULL END,
+              head_commit = $6,
+              changed_files = $7::jsonb,
+              error_message = NULL,
+              review_requested_at = CASE WHEN $3 THEN now() ELSE NULL END,
+              updated_at = now()
+            WHERE cli_session_id = $1
+              AND status = 'active'
+          `,
+          [
+            state.sessionID,
+            nextStatus,
+            workspaceReview.hasChanges,
+            state.turnID,
+            workspaceReview.reviewTree,
+            workspaceReview.headCommit,
+            JSON.stringify(workspaceReview.changedFiles ?? []),
+          ],
+        );
+      }
     });
+    if (workspaceReview) {
+      state.workspace = {
+        ...state.workspace,
+        status: workspaceReview.hasChanges
+          ? "awaiting_approval"
+          : "active",
+        reviewTurnID: workspaceReview.hasChanges ? state.turnID : null,
+        reviewTree: workspaceReview.hasChanges
+          ? workspaceReview.reviewTree
+          : null,
+        headCommit: workspaceReview.headCommit,
+        changedFiles: workspaceReview.changedFiles ?? [],
+      };
+      this.broadcast({
+        type: "workspace.changed",
+        turnId: state.turnID,
+        characterId: state.character.id,
+        status: state.workspace.status,
+      });
+    }
     if (this.running.get(state.character.id) === state) {
       this.running.delete(state.character.id);
     }
@@ -1072,6 +1726,618 @@ export class AgentRuntime {
       turnId: state.turnID,
       characterId: state.character.id,
     });
+  }
+
+  async workspaceReviewRecord(client, turnID, lock = false) {
+    const result = await client.query(
+      `
+        SELECT
+          workspace.*,
+          session.character_id AS "characterID",
+          character.name AS "characterName"
+        FROM task_workspaces AS workspace
+        JOIN cli_sessions AS session
+          ON session.id = workspace.cli_session_id
+        JOIN characters AS character
+          ON character.id = session.character_id
+        WHERE workspace.review_turn_id = $1
+        ${lock ? "FOR UPDATE OF workspace, session" : ""}
+      `,
+      [turnID],
+    );
+    if (result.rowCount === 0) {
+      throw new AgentJobNotFoundError(
+        "검토할 작업 공간을 찾을 수 없습니다.",
+      );
+    }
+    return {
+      workspace: workspaceFromRow(result.rows[0]),
+      characterID: result.rows[0].characterID,
+      characterName: result.rows[0].characterName,
+    };
+  }
+
+  async prepareWorkspaceForSessionEnd(characterID) {
+    if (this.running.has(characterID)) {
+      throw new AgentBusyError(
+        "이 직원의 실행 중인 업무가 끝난 뒤 CLI를 변경하세요.",
+      );
+    }
+
+    const busy = await this.pool.query(
+      `
+        SELECT turn.id
+        FROM turns AS turn
+        JOIN cli_sessions AS session
+          ON session.id = turn.cli_session_id
+        WHERE session.character_id = $1
+          AND turn.status IN ('pending', 'running')
+        LIMIT 1
+      `,
+      [characterID],
+    );
+    if (busy.rowCount > 0) {
+      throw new AgentBusyError(
+        "이 직원의 실행 중인 업무가 끝난 뒤 CLI를 변경하세요.",
+      );
+    }
+
+    const candidate = await this.pool.query(
+      `
+        SELECT
+          workspace.*,
+          session.character_id AS "characterID",
+          latest_turn.id AS "reviewCandidateTurnID"
+        FROM task_workspaces AS workspace
+        JOIN cli_sessions AS session
+          ON session.id = workspace.cli_session_id
+        LEFT JOIN LATERAL (
+          SELECT turn.id
+          FROM turns AS turn
+          WHERE turn.cli_session_id = session.id
+          ORDER BY turn.started_at DESC, turn.id DESC
+          LIMIT 1
+        ) AS latest_turn ON true
+        WHERE session.character_id = $1
+          AND workspace.status IN (
+            'active',
+            'awaiting_approval',
+            'merging',
+            'conflict'
+          )
+        ORDER BY
+          CASE workspace.status
+            WHEN 'awaiting_approval' THEN 1
+            WHEN 'merging' THEN 2
+            WHEN 'conflict' THEN 3
+            ELSE 4
+          END,
+          workspace.updated_at DESC
+        LIMIT 1
+      `,
+      [characterID],
+    );
+
+    if (candidate.rowCount === 0) {
+      const ended = await this.withTransaction(async (client) => {
+        const active = await client.query(
+          `
+            DELETE FROM active_cli_sessions
+            WHERE character_id = $1
+            RETURNING cli_session_id
+          `,
+          [characterID],
+        );
+        await client.query(
+          `
+            UPDATE cli_sessions
+            SET ended_at = COALESCE(ended_at, now())
+            WHERE character_id = $1
+              AND ended_at IS NULL
+          `,
+          [characterID],
+        );
+        return active.rowCount > 0;
+      });
+      return { ended };
+    }
+
+    const workspace = workspaceFromRow(candidate.rows[0]);
+    if (BLOCKED_WORKSPACE_STATUSES.has(workspace.status)) {
+      throw new AgentBusyError(
+        "이 직원의 변경사항을 먼저 검토하고 승인하거나 거절하세요.",
+      );
+    }
+    if (!this.workspaceManager) {
+      throw new AgentBusyError(
+        "작업 공간 상태를 확인할 Git 실행기가 준비되지 않았습니다.",
+      );
+    }
+    const reviewTurnID = candidate.rows[0].reviewCandidateTurnID;
+    if (!reviewTurnID) {
+      throw new AgentBusyError(
+        "작업 공간에 연결된 업무 기록을 찾을 수 없습니다.",
+      );
+    }
+
+    const review = await this.workspaceManager.prepareReview(workspace);
+    if (review.hasChanges) {
+      const updated = await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET
+            status = 'awaiting_approval',
+            review_turn_id = $2::uuid,
+            review_tree = $3,
+            head_commit = $4,
+            changed_files = $5::jsonb,
+            error_message = NULL,
+            review_requested_at = now(),
+            updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'active'
+          RETURNING cli_session_id
+        `,
+        [
+          workspace.cliSessionID,
+          reviewTurnID,
+          review.reviewTree,
+          review.headCommit,
+          JSON.stringify(review.changedFiles ?? []),
+        ],
+      );
+      if (updated.rowCount === 0) {
+        throw new AgentBusyError(
+          "작업 공간 상태가 바뀌었습니다. 다시 확인하세요.",
+        );
+      }
+      this.broadcast({
+        type: "workspace.changed",
+        turnId: reviewTurnID,
+        characterId: characterID,
+        status: "awaiting_approval",
+      });
+      this.broadcast({
+        type: "feed.changed",
+        turnId: reviewTurnID,
+        characterId: characterID,
+      });
+      throw new AgentBusyError(
+        "CLI를 변경하기 전에 현재 작업 공간의 변경사항을 승인하거나 거절하세요.",
+      );
+    }
+
+    await this.workspaceManager.cleanup(workspace);
+    const closed = await this.withTransaction(async (client) => {
+      const updated = await client.query(
+        `
+          UPDATE task_workspaces
+          SET
+            status = 'closed',
+            review_tree = NULL,
+            changed_files = '[]'::jsonb,
+            error_message = NULL,
+            updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'active'
+          RETURNING cli_session_id
+        `,
+        [workspace.cliSessionID],
+      );
+      if (updated.rowCount === 0) {
+        throw new AgentBusyError(
+          "작업 공간 상태가 바뀌었습니다. 다시 확인하세요.",
+        );
+      }
+      await client.query(
+        `
+          DELETE FROM active_cli_sessions
+          WHERE cli_session_id = $1
+        `,
+        [workspace.cliSessionID],
+      );
+      await client.query(
+        `
+          UPDATE cli_sessions
+          SET ended_at = COALESCE(ended_at, now())
+          WHERE id = $1
+        `,
+        [workspace.cliSessionID],
+      );
+      return true;
+    });
+    this.broadcast({
+      type: "workspace.changed",
+      turnId: reviewTurnID,
+      characterId: characterID,
+      status: "closed",
+    });
+    return { ended: closed };
+  }
+
+  async fetchWorkspaceReview(turnID) {
+    if (!this.workspaceManager) {
+      throw new AgentJobNotFoundError(
+        "검토할 작업 공간을 찾을 수 없습니다.",
+      );
+    }
+    let record = await this.workspaceReviewRecord(
+      this.pool,
+      turnID,
+    );
+    if (record.workspace.status === "awaiting_approval") {
+      const current = await this.workspaceManager.prepareReview(
+        record.workspace,
+      );
+      if (current.reviewTree !== record.workspace.reviewTree) {
+        const refreshed = current.hasChanges
+          ? await this.pool.query(
+            `
+              UPDATE task_workspaces
+              SET
+                review_tree = $2,
+                head_commit = $3,
+                changed_files = $4::jsonb,
+                error_message = NULL,
+                review_requested_at = now(),
+                updated_at = now()
+              WHERE cli_session_id = $1
+                AND status = 'awaiting_approval'
+                AND review_tree = $5
+              RETURNING *
+            `,
+            [
+              record.workspace.cliSessionID,
+              current.reviewTree,
+              current.headCommit,
+              JSON.stringify(current.changedFiles ?? []),
+              record.workspace.reviewTree,
+            ],
+          )
+          : await this.pool.query(
+            `
+              UPDATE task_workspaces
+              SET
+                status = 'active',
+                review_turn_id = NULL,
+                review_tree = NULL,
+                head_commit = $2,
+                changed_files = '[]'::jsonb,
+                error_message = NULL,
+                review_requested_at = NULL,
+                updated_at = now()
+              WHERE cli_session_id = $1
+                AND status = 'awaiting_approval'
+                AND review_tree = $3
+              RETURNING *
+            `,
+            [
+              record.workspace.cliSessionID,
+              current.headCommit,
+              record.workspace.reviewTree,
+            ],
+          );
+        if (refreshed.rowCount === 0) {
+          throw new AgentBusyError(
+            "검토 상태가 바뀌었습니다. 다시 불러오세요.",
+          );
+        }
+        record.workspace = workspaceFromRow(refreshed.rows[0]);
+        this.broadcast({
+          type: "workspace.changed",
+          turnId: turnID,
+          characterId: record.characterID,
+          status: record.workspace.status,
+        });
+      }
+    }
+    const diff = await this.workspaceManager.diff(record.workspace, {
+      maxBytes: MAX_WORKSPACE_DIFF_BYTES,
+    });
+    return {
+      workspace: workspaceReviewPayload(record.workspace, diff),
+    };
+  }
+
+  async approveWorkspace(turnID, expectedReviewTree) {
+    if (!this.workspaceManager) {
+      throw new AgentJobNotFoundError(
+        "승인할 작업 공간을 찾을 수 없습니다.",
+      );
+    }
+    const reviewedTree = String(expectedReviewTree ?? "").trim();
+    if (!reviewedTree) {
+      throw new AgentBusyError(
+        "검토한 변경 버전을 확인할 수 없습니다. diff를 다시 불러오세요.",
+      );
+    }
+
+    let merged;
+    try {
+      merged = await this.withTransaction(async (client) => {
+        const record = await this.workspaceReviewRecord(
+          client,
+          turnID,
+          true,
+        );
+        if (record.workspace.status !== "awaiting_approval") {
+          throw new AgentBusyError(
+            "현재 상태에서는 이 변경사항을 승인할 수 없습니다.",
+          );
+        }
+        if (record.workspace.reviewTree !== reviewedTree) {
+          throw new AgentBusyError(
+            "검토 뒤 변경사항이 갱신됐습니다. diff를 다시 확인하세요.",
+          );
+        }
+
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext($1))",
+          [record.workspace.repositoryRoot],
+        );
+        const transitioned = await client.query(
+          `
+            UPDATE task_workspaces
+            SET
+              status = 'merging',
+              error_message = NULL,
+              updated_at = now()
+            WHERE cli_session_id = $1
+              AND status = 'awaiting_approval'
+            RETURNING cli_session_id
+          `,
+          [record.workspace.cliSessionID],
+        );
+        if (transitioned.rowCount === 0) {
+          throw new AgentBusyError(
+            "다른 승인 작업이 이미 이 변경사항을 처리하고 있습니다.",
+          );
+        }
+
+        const approved = await this.workspaceManager.approve(
+          record.workspace,
+          {
+            expectedReviewTree: reviewedTree,
+            commitMessage: workspaceCommitMessage(
+              record.characterName,
+              turnID,
+            ),
+          },
+        );
+        await client.query(
+          `
+            DELETE FROM active_cli_sessions
+            WHERE cli_session_id = $1
+          `,
+          [record.workspace.cliSessionID],
+        );
+        await client.query(
+          `
+            UPDATE cli_sessions
+            SET ended_at = COALESCE(ended_at, now())
+            WHERE id = $1
+          `,
+          [record.workspace.cliSessionID],
+        );
+        await client.query(
+          `
+            UPDATE task_workspaces
+            SET
+              status = 'merged',
+              task_commit = $2,
+              merged_commit = $3,
+              error_message = NULL,
+              merged_at = now(),
+              updated_at = now()
+            WHERE cli_session_id = $1
+          `,
+          [
+            record.workspace.cliSessionID,
+            approved.taskCommit,
+            approved.mergedCommit,
+          ],
+        );
+        return {
+          characterID: record.characterID,
+          workspace: {
+            ...record.workspace,
+            status: "merged",
+            taskCommit: approved.taskCommit,
+            mergedCommit: approved.mergedCommit,
+            errorMessage: null,
+            mergedAt: new Date().toISOString(),
+          },
+        };
+      });
+    } catch (error) {
+      try {
+        await this.recordWorkspaceApprovalError(turnID, error);
+      } catch {
+        // 원래 Git 안전 오류를 호출자에게 그대로 전달한다.
+      }
+      throw error;
+    }
+
+    let cleanupWarning = null;
+    try {
+      await this.workspaceManager.cleanup(merged.workspace);
+    } catch (error) {
+      cleanupWarning =
+        `병합은 완료됐지만 작업 공간 정리에 실패했습니다. ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET error_message = $2, updated_at = now()
+          WHERE cli_session_id = $1
+            AND status = 'merged'
+        `,
+        [merged.workspace.cliSessionID, cleanupWarning],
+      );
+      merged.workspace.errorMessage = cleanupWarning;
+    }
+    this.broadcast({
+      type: "workspace.changed",
+      turnId: turnID,
+      characterId: merged.characterID,
+      status: "merged",
+    });
+    return {
+      workspace: workspaceReviewPayload(merged.workspace, {
+        diff: "",
+        diffTruncated: false,
+      }),
+      cleanupWarning,
+    };
+  }
+
+  async recordWorkspaceApprovalError(turnID, error) {
+    if (!error?.code) {
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (error.code === "changed-after-review") {
+      const record = await this.workspaceReviewRecord(this.pool, turnID);
+      const review = await this.workspaceManager.prepareReview(
+        record.workspace,
+      );
+      const updated = await this.pool.query(
+        `
+          UPDATE task_workspaces
+          SET
+            status = CASE WHEN $7 THEN 'awaiting_approval' ELSE 'active' END,
+            review_turn_id = CASE WHEN $7 THEN $6::uuid ELSE NULL END,
+            review_tree = CASE WHEN $7 THEN $2 ELSE NULL END,
+            head_commit = $3,
+            changed_files = $4::jsonb,
+            error_message = CASE WHEN $7 THEN $5 ELSE NULL END,
+            review_requested_at = CASE WHEN $7 THEN now() ELSE NULL END,
+            updated_at = now()
+          WHERE cli_session_id = $1
+            AND review_turn_id = $6::uuid
+            AND status = 'awaiting_approval'
+        `,
+        [
+          record.workspace.cliSessionID,
+          review.reviewTree,
+          review.headCommit,
+          JSON.stringify(review.changedFiles ?? []),
+          message,
+          turnID,
+          review.hasChanges,
+        ],
+      );
+      if (updated.rowCount > 0) {
+        const status = review.hasChanges ? "awaiting_approval" : "active";
+        this.broadcast({
+          type: "workspace.changed",
+          turnId: turnID,
+          characterId: record.characterID,
+          status,
+        });
+      }
+      return;
+    }
+
+    const status = error.code === "conflict"
+      ? "conflict"
+      : "awaiting_approval";
+    const result = await this.pool.query(
+      `
+        UPDATE task_workspaces AS workspace
+        SET
+          status = $2,
+          error_message = $3,
+          updated_at = now()
+        FROM cli_sessions AS session
+        WHERE workspace.review_turn_id = $1
+          AND session.id = workspace.cli_session_id
+          AND workspace.status = 'awaiting_approval'
+        RETURNING session.character_id AS "characterID"
+      `,
+      [turnID, status, message],
+    );
+    if (result.rowCount > 0) {
+      this.broadcast({
+        type: "workspace.changed",
+        turnId: turnID,
+        characterId: result.rows[0].characterID,
+        status,
+      });
+    }
+  }
+
+  async rejectWorkspace(turnID) {
+    const rejected = await this.withTransaction(async (client) => {
+      const record = await this.workspaceReviewRecord(
+        client,
+        turnID,
+        true,
+      );
+      if (!["awaiting_approval", "conflict"].includes(
+        record.workspace.status,
+      )) {
+        throw new AgentBusyError(
+          "현재 상태에서는 이 변경사항을 거절할 수 없습니다.",
+        );
+      }
+      const result = await client.query(
+        `
+          UPDATE task_workspaces
+          SET
+            status = 'rejected',
+            error_message = NULL,
+            rejected_at = now(),
+            updated_at = now()
+          WHERE cli_session_id = $1
+            AND status IN ('awaiting_approval', 'conflict')
+          RETURNING cli_session_id
+        `,
+        [record.workspace.cliSessionID],
+      );
+      if (result.rowCount === 0) {
+        throw new AgentBusyError(
+          "다른 작업이 이미 이 변경사항을 처리했습니다.",
+        );
+      }
+      await client.query(
+        `
+          DELETE FROM active_cli_sessions
+          WHERE cli_session_id = $1
+        `,
+        [record.workspace.cliSessionID],
+      );
+      await client.query(
+        `
+          UPDATE cli_sessions
+          SET ended_at = COALESCE(ended_at, now())
+          WHERE id = $1
+        `,
+        [record.workspace.cliSessionID],
+      );
+      return {
+        characterID: record.characterID,
+        workspace: {
+          ...record.workspace,
+          status: "rejected",
+          errorMessage: null,
+          rejectedAt: new Date().toISOString(),
+        },
+      };
+    });
+    this.broadcast({
+      type: "workspace.changed",
+      turnId: turnID,
+      characterId: rejected.characterID,
+      status: "rejected",
+    });
+    return {
+      workspace: workspaceReviewPayload(rejected.workspace, {
+        diff: "",
+        diffTruncated: false,
+      }),
+    };
   }
 
   async fail(state, error) {
@@ -1105,6 +2371,20 @@ export class AgentRuntime {
           `,
           [state.sessionID],
         );
+        if (state.workspace) {
+          await client.query(
+            `
+              UPDATE task_workspaces
+              SET
+                status = 'failed',
+                error_message = $2,
+                updated_at = now()
+              WHERE cli_session_id = $1
+                AND status = 'active'
+            `,
+            [state.sessionID, message],
+          );
+        }
       }
     });
     if (this.running.get(state.character.id) === state) {
@@ -1116,6 +2396,96 @@ export class AgentRuntime {
       characterId: state.character.id,
     });
   }
+}
+
+function workspaceFromRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    cliSessionID: row.cliSessionID ?? row.cli_session_id,
+    status: row.status,
+    repositoryRoot: row.repositoryRoot ?? row.repository_root,
+    sourceWorkdir: row.sourceWorkdir ?? row.source_workdir,
+    worktreePath: row.worktreePath ?? row.worktree_path,
+    executionWorkdir: row.executionWorkdir ?? row.execution_workdir,
+    branchName: row.branchName ?? row.branch_name,
+    baseBranch: row.baseBranch ?? row.base_branch,
+    baseCommit: row.baseCommit ?? row.base_commit,
+    reviewTurnID: row.reviewTurnID ?? row.review_turn_id ?? null,
+    reviewTree: row.reviewTree ?? row.review_tree ?? null,
+    headCommit: row.headCommit ?? row.head_commit ?? null,
+    changedFiles: row.changedFiles ?? row.changed_files ?? [],
+    taskCommit: row.taskCommit ?? row.task_commit ?? null,
+    mergedCommit: row.mergedCommit ?? row.merged_commit ?? null,
+    errorMessage: row.errorMessage ?? row.error_message ?? null,
+    createdAt: row.createdAt ?? row.created_at ?? null,
+    updatedAt: row.updatedAt ?? row.updated_at ?? null,
+    reviewRequestedAt:
+      row.reviewRequestedAt ?? row.review_requested_at ?? null,
+    mergedAt: row.mergedAt ?? row.merged_at ?? null,
+    rejectedAt: row.rejectedAt ?? row.rejected_at ?? null,
+  };
+}
+
+function workspaceFromActiveRow(row) {
+  if (!row?.workspaceStatus) {
+    return null;
+  }
+  return workspaceFromRow({
+    cliSessionID: row.id,
+    status: row.workspaceStatus,
+    repositoryRoot: row.workspaceRepositoryRoot,
+    sourceWorkdir: row.workspaceSourceWorkdir,
+    worktreePath: row.workspaceWorktreePath,
+    executionWorkdir: row.workspaceExecutionWorkdir,
+    branchName: row.workspaceBranchName,
+    baseBranch: row.workspaceBaseBranch,
+    baseCommit: row.workspaceBaseCommit,
+    reviewTurnID: row.workspaceReviewTurnID,
+    reviewTree: row.workspaceReviewTree,
+    headCommit: row.workspaceHeadCommit,
+    changedFiles: row.workspaceChangedFiles,
+    taskCommit: row.workspaceTaskCommit,
+    mergedCommit: row.workspaceMergedCommit,
+    errorMessage: row.workspaceErrorMessage,
+    createdAt: row.workspaceCreatedAt,
+    updatedAt: row.workspaceUpdatedAt,
+    reviewRequestedAt: row.workspaceReviewRequestedAt,
+    mergedAt: row.workspaceMergedAt,
+    rejectedAt: row.workspaceRejectedAt,
+  });
+}
+
+function workspaceReviewPayload(workspace, diff) {
+  return {
+    status: workspace.status,
+    repositoryRoot: workspace.repositoryRoot,
+    worktreePath: workspace.worktreePath,
+    executionWorkdir: ["merged", "closed"].includes(workspace.status)
+      ? workspace.sourceWorkdir
+      : workspace.executionWorkdir,
+    branchName: workspace.branchName,
+    baseBranch: workspace.baseBranch,
+    baseCommit: workspace.baseCommit,
+    reviewTurnId: workspace.reviewTurnID,
+    reviewTree: workspace.reviewTree,
+    headCommit: workspace.headCommit,
+    changedFiles: workspace.changedFiles ?? [],
+    taskCommit: workspace.taskCommit,
+    mergedCommit: workspace.mergedCommit,
+    errorMessage: workspace.errorMessage,
+    reviewRequestedAt: workspace.reviewRequestedAt,
+    mergedAt: workspace.mergedAt,
+    rejectedAt: workspace.rejectedAt,
+    diff: diff.diff,
+    diffTruncated: diff.diffTruncated,
+  };
+}
+
+function workspaceCommitMessage(characterName, turnID) {
+  const taskID = String(turnID).slice(0, 8);
+  return `OFFICESTRA: ${characterName} 업무 ${taskID}`;
 }
 
 function captureFileSnapshots(workdir, changes) {

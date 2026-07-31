@@ -307,7 +307,9 @@ private struct ArchiveShelfContent: View {
 
     private var turnsRefreshToken: String {
         turns.map {
-            "\($0.id)|\($0.status.rawValue)"
+            "\($0.id)|\($0.status.rawValue)|"
+                + "\($0.workspace?.status.rawValue ?? "")|"
+                + "\($0.workspace?.mergedCommit ?? "")"
         }
         .joined(separator: ";")
     }
@@ -677,6 +679,8 @@ struct LiveWorkspaceFeed: View, Equatable {
     private let latestTerminalTurnID: String?
     private let latestSubmittedTurnID: String?
     private let latestStartedCommandID: UUID?
+    private let fetchWorkspaceReview: WorkspaceReviewFetcher
+    private let resolveWorkspaceReview: WorkspaceReviewResolver
     @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
@@ -699,6 +703,15 @@ struct LiveWorkspaceFeed: View, Equatable {
         latestTerminalTurnID = director.latestTerminalTurnID
         latestSubmittedTurnID = director.latestSubmittedTurnID
         latestStartedCommandID = director.latestStartedCommandID
+        fetchWorkspaceReview = { turnID in
+            try await director.fetchWorkspaceReview(turnID: turnID)
+        }
+        resolveWorkspaceReview = { turnID, decision in
+            try await director.resolveWorkspaceReview(
+                turnID: turnID,
+                decision: decision
+            )
+        }
     }
 
     static func == (
@@ -760,7 +773,9 @@ struct LiveWorkspaceFeed: View, Equatable {
                 updatedAt: turn.updatedAt,
                 status: turn.status,
                 activityCount: turn.activities.count,
-                responseLength: turn.response.count
+                responseLength: turn.response.count,
+                workspaceStatus: turn.workspace?.status,
+                changedFileCount: turn.workspace?.changedFiles.count ?? 0
             )
         }
     }
@@ -838,7 +853,11 @@ struct LiveWorkspaceFeed: View, Equatable {
                                         workspaceDirectory: workspaceDirectory,
                                         shouldAnimateResponse:
                                             liveFeedStore
-                                            .shouldAnimateResponse(for: turn)
+                                            .shouldAnimateResponse(for: turn),
+                                        fetchWorkspaceReview:
+                                            fetchWorkspaceReview,
+                                        resolveWorkspaceReview:
+                                            resolveWorkspaceReview
                                     ) {
                                         liveFeedStore
                                             .finishResponseAnimation(
@@ -1302,6 +1321,8 @@ private struct LiveWorkspaceFeedTurnRevision: Equatable {
     let status: LiveTurnStatus
     let activityCount: Int
     let responseLength: Int
+    let workspaceStatus: WorkspaceReviewStatus?
+    let changedFileCount: Int
 }
 
 private final class LiveWorkspaceFeedScrollMetrics {
@@ -1508,6 +1529,8 @@ private struct EquatableLiveTurnCard: View, Equatable {
     let turn: LiveFeedTurn
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
+    let fetchWorkspaceReview: WorkspaceReviewFetcher
+    let resolveWorkspaceReview: WorkspaceReviewResolver
     let finishResponseAnimation: () -> Void
 
     static func == (
@@ -1524,6 +1547,8 @@ private struct EquatableLiveTurnCard: View, Equatable {
             turn: turn,
             workspaceDirectory: workspaceDirectory,
             shouldAnimateResponse: shouldAnimateResponse,
+            fetchWorkspaceReview: fetchWorkspaceReview,
+            resolveWorkspaceReview: resolveWorkspaceReview,
             finishResponseAnimation: finishResponseAnimation
         )
     }
@@ -1567,6 +1592,8 @@ private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
+    let fetchWorkspaceReview: WorkspaceReviewFetcher
+    let resolveWorkspaceReview: WorkspaceReviewResolver
     let finishResponseAnimation: () -> Void
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -1591,6 +1618,17 @@ private struct LiveTurnCard: View {
                     case .claude:
                         claudeTranscript
                     }
+                }
+
+                if let workspace = turn.workspace,
+                    workspace.status.showsReviewPanel
+                {
+                    WorkspaceReviewPanel(
+                        turnID: turn.id,
+                        workspace: workspace,
+                        fetchReview: fetchWorkspaceReview,
+                        resolveReview: resolveWorkspaceReview
+                    )
                 }
 
                 if let error = turn.errorMessage,
@@ -1686,7 +1724,7 @@ private struct LiveTurnCard: View {
     private var claudeTranscript: some View {
         ClaudeTranscriptView(
             turnID: turn.id,
-            workspaceDirectory: workspaceDirectory,
+            workspaceDirectory: effectiveWorkspaceDirectory,
             activities: turn.activities,
             response: turn.response,
             responseUpdatedAt: turn.updatedAt,
@@ -1701,7 +1739,7 @@ private struct LiveTurnCard: View {
     private var codexTranscript: some View {
         CodexTranscriptView(
             turnID: turn.id,
-            workspaceDirectory: workspaceDirectory,
+            workspaceDirectory: effectiveWorkspaceDirectory,
             activities: turn.activities,
             response: turn.response,
             responseUpdatedAt: turn.updatedAt,
@@ -1718,6 +1756,11 @@ private struct LiveTurnCard: View {
 
     private var promptPresentation: TaskPromptPresentation {
         TaskPromptPresentation(prompt: turn.prompt)
+    }
+
+    private var effectiveWorkspaceDirectory: String {
+        turn.workspace?.fileBaseDirectory(fallback: workspaceDirectory)
+            ?? workspaceDirectory
     }
 
     private func errorBlock(_ error: String) -> some View {

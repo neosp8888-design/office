@@ -11,6 +11,10 @@ import {
   CharacterNotFoundError,
 } from "./agent-runtime.mjs";
 import {
+  GitWorkspaceError,
+  GitWorkspaceManager,
+} from "./git-workspace.mjs";
+import {
   appendLocalImagePreviews,
   generatedImagesForTurn,
 } from "./local-artifacts.mjs";
@@ -41,6 +45,27 @@ function send(response, status, body) {
     "content-type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(body));
+}
+
+async function withCharacterSessionLock(characterID, body) {
+  const client = await pool.connect();
+  const key = `officestra:character:${characterID}`;
+  try {
+    await client.query(
+      "SELECT pg_advisory_lock(hashtext($1))",
+      [key],
+    );
+    return await body(client);
+  } finally {
+    try {
+      await client.query(
+        "SELECT pg_advisory_unlock(hashtext($1))",
+        [key],
+      );
+    } finally {
+      client.release();
+    }
+  }
 }
 
 async function readJSON(request) {
@@ -86,24 +111,16 @@ function routeLiveFeedTurn(pathname) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-async function endActiveSession(client, characterID) {
-  await client.query(
-    `
-      DELETE FROM active_cli_sessions
-      WHERE character_id = $1
-    `,
-    [characterID],
+function routeWorkspaceReview(pathname) {
+  const match = pathname.match(
+    /^\/api\/workspace-reviews\/([^/]+)(?:\/(approve|reject))?$/,
   );
-
-  await client.query(
-    `
-      UPDATE cli_sessions
-      SET ended_at = COALESCE(ended_at, now())
-      WHERE character_id = $1
-        AND ended_at IS NULL
-    `,
-    [characterID],
-  );
+  return match
+    ? {
+      turnID: decodeURIComponent(match[1]),
+      action: match[2] ?? null,
+    }
+    : null;
 }
 
 async function listCharacters(response) {
@@ -268,67 +285,84 @@ async function updateCharacterSettings(response, characterID, body) {
       ? "auto"
       : requestedPermission;
 
-  const character = await withTransaction(async (client) => {
-    const current = await client.query(
-      `
-        SELECT
-          id,
-          backend,
-          model,
-          effort,
-          fast_mode AS "fastMode",
-          permission
-        FROM characters
-        WHERE id = $1
-        FOR UPDATE
-      `,
-      [characterID],
-    );
-    if (current.rowCount === 0) {
-      return null;
-    }
+  const character = await withCharacterSessionLock(
+    characterID,
+    async (client) => {
+      await client.query("BEGIN");
+      try {
+        const current = await client.query(
+          `
+            SELECT
+              id,
+              backend,
+              model,
+              effort,
+              fast_mode AS "fastMode",
+              permission
+            FROM characters
+            WHERE id = $1
+            FOR UPDATE
+          `,
+          [characterID],
+        );
+        if (current.rowCount === 0) {
+          await client.query("COMMIT");
+          return null;
+        }
 
-    const previous = current.rows[0];
-    const requiresNewSession = characterSettingsRequireNewSession(
-      previous,
-      { backend },
-    );
-    const changed =
-      previous.backend !== backend ||
-      previous.model !== model ||
-      previous.effort !== effort ||
-      previous.fastMode !== fastMode ||
-      previous.permission !== permission;
-    if (!changed) {
-      return previous;
-    }
+        const previous = current.rows[0];
+        const requiresNewSession = characterSettingsRequireNewSession(
+          previous,
+          { backend },
+        );
+        const changed =
+          previous.backend !== backend ||
+          previous.model !== model ||
+          previous.effort !== effort ||
+          previous.fastMode !== fastMode ||
+          previous.permission !== permission;
+        if (!changed) {
+          await client.query("COMMIT");
+          return previous;
+        }
+        if (requiresNewSession) {
+          if (!runtime) {
+            throw new AgentBusyError(
+              "CLI 실행기가 준비된 뒤 설정을 변경하세요.",
+            );
+          }
+          await runtime.prepareWorkspaceForSessionEnd(characterID);
+        }
 
-    const updated = await client.query(
-      `
-        UPDATE characters
-        SET
-          backend = $2,
-          model = $3,
-          effort = $4,
-          fast_mode = $5,
-          permission = $6,
-          updated_at = now()
-        WHERE id = $1
-        RETURNING
-          id,
-          backend,
-          model,
-          effort,
-          fast_mode AS "fastMode",
-          permission
-      `,
-      [characterID, backend, model, effort, fastMode, permission],
-    );
-    if (requiresNewSession) {
-      await endActiveSession(client, characterID);
-    }
-    return updated.rows[0];
-  });
+        const updated = await client.query(
+          `
+            UPDATE characters
+            SET
+              backend = $2,
+              model = $3,
+              effort = $4,
+              fast_mode = $5,
+              permission = $6,
+              updated_at = now()
+            WHERE id = $1
+            RETURNING
+              id,
+              backend,
+              model,
+              effort,
+              fast_mode AS "fastMode",
+              permission
+          `,
+          [characterID, backend, model, effort, fastMode, permission],
+        );
+        await client.query("COMMIT");
+        return updated.rows[0];
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    },
+  );
   if (!character) {
     send(response, 404, { error: "캐릭터를 찾을 수 없습니다." });
     return;
@@ -454,6 +488,29 @@ async function globalHistory(response, url) {
 async function queryLiveFeed({ turnID = null, limit }) {
   const result = await pool.query(
     `
+      WITH selected_turn_ids AS (
+        SELECT recent.id
+        FROM (
+          SELECT id
+          FROM turns
+          WHERE $1::uuid IS NULL
+          ORDER BY started_at DESC
+          LIMIT $2
+        ) AS recent
+        UNION
+        SELECT task_workspace.review_turn_id
+        FROM task_workspaces AS task_workspace
+        WHERE $1::uuid IS NULL
+          AND task_workspace.review_turn_id IS NOT NULL
+          AND task_workspace.status IN (
+            'awaiting_approval',
+            'merging',
+            'conflict'
+          )
+        UNION
+        SELECT $1::uuid
+        WHERE $1::uuid IS NOT NULL
+      )
       SELECT
         t.id,
         c.id AS "characterId",
@@ -472,6 +529,7 @@ async function queryLiveFeed({ turnID = null, limit }) {
         t.ended_at AS "endedAt",
         t.updated_at AS "updatedAt",
         usage.cost_usd::double precision AS "estimatedCostUsd",
+        workspace.review AS workspace,
         COALESCE(
           (
             SELECT text
@@ -500,20 +558,132 @@ async function queryLiveFeed({ turnID = null, limit }) {
           ),
           '[]'::json
         ) AS activities
-      FROM turns AS t
+      FROM selected_turn_ids AS selected_turn
+      JOIN turns AS t
+        ON t.id = selected_turn.id
       JOIN cli_sessions AS s
         ON s.id = t.cli_session_id
       JOIN characters AS c
         ON c.id = s.character_id
       LEFT JOIN usage_records AS usage
         ON usage.turn_id = t.id
-      WHERE ($1::uuid IS NULL OR t.id = $1::uuid)
+      LEFT JOIN LATERAL (
+        SELECT json_build_object(
+          'status', task_workspace.status,
+          'repositoryRoot', task_workspace.repository_root,
+          'worktreePath', task_workspace.worktree_path,
+          'executionWorkdir', CASE
+            WHEN task_workspace.status IN ('merged', 'closed')
+              THEN task_workspace.source_workdir
+            ELSE task_workspace.execution_workdir
+          END,
+          'branchName', task_workspace.branch_name,
+          'baseBranch', task_workspace.base_branch,
+          'baseCommit', task_workspace.base_commit,
+          'reviewTree', task_workspace.review_tree,
+          'headCommit', task_workspace.head_commit,
+          'changedFiles', task_workspace.changed_files,
+          'mergedCommit', task_workspace.merged_commit,
+          'errorMessage', task_workspace.error_message
+        ) AS review
+        FROM task_workspaces AS task_workspace
+        WHERE task_workspace.review_turn_id = t.id
+          OR (
+            task_workspace.review_turn_id IS NULL
+            AND task_workspace.cli_session_id = s.id
+          )
+        LIMIT 1
+      ) AS workspace ON true
       ORDER BY t.started_at DESC
-      LIMIT $2
     `,
     [turnID, limit],
   );
   return result.rows.map((turn) => withArtifactPreviews(turn));
+}
+
+async function workspaceReview(response, route, method, request) {
+  if (!runtime) {
+    send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
+    return;
+  }
+
+  try {
+    if (method === "GET" && route.action === null) {
+      send(
+        response,
+        200,
+        await runtime.fetchWorkspaceReview(route.turnID),
+      );
+      return;
+    }
+    if (method === "POST" && route.action === "approve") {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      const body = await readJSON(request);
+      send(
+        response,
+        200,
+        await runtime.approveWorkspace(route.turnID, body.reviewTree),
+      );
+      return;
+    }
+    if (method === "POST" && route.action === "reject") {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await readJSON(request);
+      send(
+        response,
+        200,
+        await runtime.rejectWorkspace(route.turnID),
+      );
+      return;
+    }
+    send(response, 404, { error: "경로를 찾을 수 없습니다." });
+  } catch (error) {
+    if (error instanceof AgentJobNotFoundError) {
+      send(response, 404, { error: error.message });
+      return;
+    }
+    if (
+      error instanceof AgentBusyError ||
+      error instanceof GitWorkspaceError
+    ) {
+      send(response, 409, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
+function trustedJSONMutation(request, response) {
+  const contentType = String(request.headers["content-type"] ?? "")
+    .toLowerCase();
+  if (!contentType.startsWith("application/json")) {
+    send(response, 415, {
+      error: "상태 변경 요청은 application/json 형식이어야 합니다.",
+    });
+    return false;
+  }
+  const origin = request.headers.origin;
+  if (!origin) {
+    return true;
+  }
+  try {
+    const originURL = new URL(origin);
+    const hostname = originURL.hostname;
+    if (
+      ["127.0.0.1", "localhost", "::1"].includes(hostname) &&
+      originURL.host === request.headers.host
+    ) {
+      return true;
+    }
+  } catch {
+    // 올바르지 않은 Origin은 아래에서 거절한다.
+  }
+  send(response, 403, { error: "신뢰할 수 없는 요청 출처입니다." });
+  return false;
 }
 
 async function liveFeed(response, url) {
@@ -567,7 +737,7 @@ async function startAgentJob(response, body) {
       send(response, 404, { error: error.message });
       return;
     }
-    if (error instanceof AgentBusyError) {
+    if (error instanceof AgentBusyError || error instanceof GitWorkspaceError) {
       send(response, 409, { error: error.message });
       return;
     }
@@ -1000,6 +1170,7 @@ const server = createServer(async (request, response) => {
     const historyCharacterID = routeCharacterHistory(url.pathname);
     const jobCharacterID = routeAgentJob(url.pathname);
     const liveFeedTurnID = routeLiveFeedTurn(url.pathname);
+    const workspaceReviewRoute = routeWorkspaceReview(url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
       await pool.query("SELECT 1");
@@ -1028,6 +1199,13 @@ const server = createServer(async (request, response) => {
       await liveFeed(response, url);
     } else if (request.method === "GET" && liveFeedTurnID) {
       await liveFeedTurn(response, liveFeedTurnID);
+    } else if (workspaceReviewRoute) {
+      await workspaceReview(
+        response,
+        workspaceReviewRoute,
+        request.method ?? "GET",
+        request,
+      );
     } else if (request.method === "PUT" && characterID) {
       await updateCharacterName(
         response,
@@ -1075,6 +1253,13 @@ const server = createServer(async (request, response) => {
       send(response, 404, { error: "경로를 찾을 수 없습니다." });
     }
   } catch (error) {
+    if (
+      error instanceof AgentBusyError ||
+      error instanceof GitWorkspaceError
+    ) {
+      send(response, 409, { error: error.message });
+      return;
+    }
     send(response, 500, { error: error.message });
   }
 });
@@ -1111,6 +1296,10 @@ try {
     pool,
     withTransaction,
     workdir: configuration.workdir,
+    workspaceManager: new GitWorkspaceManager({
+      sourceWorkdir: configuration.workdir,
+      worktreeRoot: process.env.OFFICE_WORKTREE_ROOT,
+    }),
     broadcast,
   });
   await runtime.recoverInterruptedJobs();

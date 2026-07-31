@@ -162,13 +162,191 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(agentExecutionModeTitle(nil), "Standard")
     }
 
+    func testReplacingOptimisticIDPreservesWorkspaceReview() {
+        let workspace = makeWorkspace(status: .awaitingApproval)
+        let turn = makeTurn(
+            id: "local-command",
+            characterID: OfficeCharacter.rightMan.rawValue,
+            prompt: "변경 업무",
+            startedAt: Date(),
+            workspace: workspace
+        )
+
+        let replaced = turn.replacingID(with: "server-turn")
+
+        XCTAssertEqual(replaced.id, "server-turn")
+        XCTAssertEqual(replaced.workspace, workspace)
+    }
+
+    func testWorkspaceReviewBlocksOnlyUnresolvedMergeStates() {
+        XCTAssertTrue(WorkspaceReviewStatus.awaitingApproval.blocksNewTasks)
+        XCTAssertTrue(WorkspaceReviewStatus.merging.blocksNewTasks)
+        XCTAssertTrue(WorkspaceReviewStatus.conflict.blocksNewTasks)
+        XCTAssertFalse(WorkspaceReviewStatus.active.blocksNewTasks)
+        XCTAssertFalse(WorkspaceReviewStatus.merged.blocksNewTasks)
+        XCTAssertFalse(WorkspaceReviewStatus.rejected.blocksNewTasks)
+        XCTAssertFalse(WorkspaceReviewStatus.closed.blocksNewTasks)
+        XCTAssertFalse(WorkspaceReviewStatus.failed.blocksNewTasks)
+        XCTAssertFalse(WorkspaceReviewStatus.active.showsReviewPanel)
+        XCTAssertFalse(WorkspaceReviewStatus.closed.showsReviewPanel)
+        XCTAssertTrue(WorkspaceReviewStatus.awaitingApproval.showsReviewPanel)
+    }
+
+    func testSnapshotKeepsOldBlockingWorkspaceTurnBeyondRecentLimit() {
+        let baseDate = Date(timeIntervalSinceReferenceDate: 10_000)
+        var turns = (0 ..< 120).map { index in
+            makeTurn(
+                id: "recent-\(index)",
+                characterID: OfficeCharacter.rightMan.rawValue,
+                prompt: "최근 업무",
+                startedAt: baseDate.addingTimeInterval(-Double(index))
+            )
+        }
+        turns.append(
+            makeTurn(
+                id: "old-closed-review",
+                characterID: OfficeCharacter.leftWoman.rawValue,
+                prompt: "종료된 검토",
+                startedAt: baseDate.addingTimeInterval(-120),
+                workspace: makeWorkspace(status: .closed)
+            )
+        )
+        turns.append(
+            makeTurn(
+                id: "old-blocking-review",
+                characterID: OfficeCharacter.boss.rawValue,
+                prompt: "승인 대기 검토",
+                startedAt: baseDate.addingTimeInterval(-121),
+                workspace: makeWorkspace(status: .awaitingApproval)
+            )
+        )
+
+        let snapshot = LiveFeedStore.snapshotTurns(
+            from: turns,
+            recentLimit: 120
+        )
+
+        XCTAssertEqual(snapshot.count, 121)
+        XCTAssertFalse(snapshot.contains { $0.id == "old-closed-review" })
+        XCTAssertEqual(snapshot.last?.id, "old-blocking-review")
+    }
+
+    func testWorkspaceFileBaseFollowsReviewLifecycle() {
+        let awaiting = makeWorkspace(status: .awaitingApproval)
+        let merged = makeWorkspace(status: .merged)
+
+        XCTAssertEqual(
+            awaiting.fileBaseDirectory(fallback: "/fallback"),
+            "/tmp/worktree/project"
+        )
+        XCTAssertEqual(
+            awaiting.reviewFileBaseDirectory(fallback: "/fallback"),
+            "/tmp/worktree"
+        )
+        XCTAssertEqual(
+            merged.fileBaseDirectory(fallback: "/fallback"),
+            "/repo/project"
+        )
+        XCTAssertEqual(
+            merged.reviewFileBaseDirectory(fallback: "/fallback"),
+            "/repo"
+        )
+    }
+
+    func testWorkspaceApprovalRequiresCurrentCompleteDiff() {
+        let missingDiff = makeWorkspace(status: .awaitingApproval)
+        let completeDiff = makeWorkspace(
+            status: .awaitingApproval,
+            diff: "diff --git a/README.md b/README.md",
+            diffTruncated: false
+        )
+        let truncatedDiff = makeWorkspace(
+            status: .awaitingApproval,
+            diff: "partial diff",
+            diffTruncated: true
+        )
+        let unknownCompleteness = makeWorkspace(
+            status: .awaitingApproval,
+            diff: "diff without completeness metadata"
+        )
+
+        XCTAssertFalse(missingDiff.hasCompleteDiffForApproval)
+        XCTAssertTrue(completeDiff.hasCompleteDiffForApproval)
+        XCTAssertFalse(truncatedDiff.hasCompleteDiffForApproval)
+        XCTAssertFalse(unknownCompleteness.hasCompleteDiffForApproval)
+    }
+
+    func testLiveFeedWorkspaceDecodesWithoutOnDemandDiff() throws {
+        let payload = Data(
+            #"""
+            {
+              "status": "awaiting_approval",
+              "repositoryRoot": "/repo",
+              "worktreePath": "/tmp/worktree",
+              "executionWorkdir": "/tmp/worktree/project",
+              "branchName": "officestra/right-man/task",
+              "baseBranch": "main",
+              "baseCommit": "base",
+              "reviewTree": "review-tree",
+              "headCommit": "head",
+              "changedFiles": [
+                {"status": "M", "path": "README.md"}
+              ],
+              "mergedCommit": null,
+              "errorMessage": null
+            }
+            """#.utf8
+        )
+
+        let workspace = try JSONDecoder().decode(
+            TurnWorkspaceReview.self,
+            from: payload
+        )
+
+        XCTAssertEqual(workspace.status, .awaitingApproval)
+        XCTAssertEqual(workspace.reviewTree, "review-tree")
+        XCTAssertEqual(workspace.executionWorkdir, "/tmp/worktree/project")
+        XCTAssertEqual(workspace.changedFiles.first?.path, "README.md")
+        XCTAssertNil(workspace.diff)
+        XCTAssertNil(workspace.diffTruncated)
+    }
+
+    func testWorkspaceReviewMetadataRemainsBackwardCompatible() throws {
+        let payload = Data(
+            #"""
+            {
+              "status": "awaiting_approval",
+              "repositoryRoot": "/repo",
+              "worktreePath": "/tmp/worktree",
+              "branchName": "officestra/right-man/task",
+              "baseBranch": "main",
+              "baseCommit": "base",
+              "headCommit": "head",
+              "changedFiles": [],
+              "mergedCommit": null,
+              "errorMessage": null
+            }
+            """#.utf8
+        )
+
+        let workspace = try JSONDecoder().decode(
+            TurnWorkspaceReview.self,
+            from: payload
+        )
+
+        XCTAssertNil(workspace.executionWorkdir)
+        XCTAssertNil(workspace.reviewTree)
+        XCTAssertFalse(workspace.hasCompleteDiffForApproval)
+    }
+
     private func makeTurn(
         id: String,
         characterID: String,
         prompt: String,
         response: String = "",
         startedAt: Date,
-        updatedAt: Date? = nil
+        updatedAt: Date? = nil,
+        workspace: TurnWorkspaceReview? = nil
     ) -> LiveFeedTurn {
         LiveFeedTurn(
             id: id,
@@ -189,7 +367,36 @@ final class LiveFeedStoreTests: XCTestCase {
             endedAt: nil,
             updatedAt: updatedAt ?? startedAt,
             estimatedCostUsd: nil,
-            activities: []
+            activities: [],
+            workspace: workspace
+        )
+    }
+
+    private func makeWorkspace(
+        status: WorkspaceReviewStatus,
+        diff: String? = nil,
+        diffTruncated: Bool? = nil
+    ) -> TurnWorkspaceReview {
+        TurnWorkspaceReview(
+            status: status,
+            repositoryRoot: "/repo",
+            worktreePath: "/tmp/worktree",
+            executionWorkdir:
+                status == .merged
+                    ? "/repo/project"
+                    : "/tmp/worktree/project",
+            branchName: "officestra/right-man/task",
+            baseBranch: "main",
+            baseCommit: "base",
+            reviewTree: "review-tree",
+            headCommit: "head",
+            changedFiles: [
+                WorkspaceChangedFile(status: "M", path: "README.md")
+            ],
+            mergedCommit: status == .merged ? "merged" : nil,
+            errorMessage: nil,
+            diff: diff,
+            diffTruncated: diffTruncated
         )
     }
 }

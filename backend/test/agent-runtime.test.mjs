@@ -15,6 +15,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 
 import {
+  AgentBusyError,
   AgentJobNotFoundError,
   AgentRuntime,
   buildArguments,
@@ -38,6 +39,7 @@ const codexCharacter = {
 function makeCodexActivityState() {
   return {
     turnID: "turn-1",
+    workdir: "/tmp",
     character: { id: "right-man", backend: "codex" },
     externalSessionID: "session-1",
     sequence: 0,
@@ -681,6 +683,7 @@ test("Codex 파일 변경 통계는 현재 턴 rollout의 실제 patch diff로 �
     broadcast: () => {},
   });
   const state = makeCodexActivityState();
+  state.workdir = workdir;
   state.rolloutReader = {
     path: rolloutPath,
     offset: 0,
@@ -945,6 +948,147 @@ test("백엔드 복구는 중단된 턴의 실행 중 활동도 닫는다", asyn
   assert.match(queries[0], /THEN 'completed'/);
 });
 
+test("백엔드 복구는 중단된 provisioning 기록을 Git 정리한 뒤 실패로 닫는다", async () => {
+  const events = [];
+  const row = workspaceDatabaseRow({
+    status: "provisioning",
+    review_turn_id: null,
+    review_tree: null,
+    changed_files: [],
+  });
+  const query = async (text) => {
+    if (
+      /SELECT \*\s+FROM task_workspaces\s+WHERE status = 'provisioning'/.test(
+        text,
+      )
+    ) {
+      events.push("db:read-provisioning");
+      return { rowCount: 1, rows: [row] };
+    }
+    if (/WHERE status IN \('provisioning', 'merging'\)/.test(text)) {
+      events.push("db:mark-failed");
+      return { rowCount: 1, rows: [] };
+    }
+    return { rowCount: 0, rows: [] };
+  };
+  const cleaned = [];
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    workspaceManager: {
+      cleanupProvisioning: async (workspace) => {
+        events.push("git:cleanup-provisioning");
+        cleaned.push(workspace);
+      },
+      cleanup: async () => {
+        assert.fail("provisioning 복구는 일반 cleanup을 사용하면 안 됩니다.");
+      },
+    },
+    broadcast: () => {},
+  });
+
+  await runtime.recoverInterruptedJobs();
+
+  assert.equal(cleaned.length, 1);
+  assert.equal(cleaned[0].cliSessionID, "session-1");
+  assert.equal(cleaned[0].status, "provisioning");
+  assert.deepEqual(events, [
+    "db:read-provisioning",
+    "git:cleanup-provisioning",
+    "db:mark-failed",
+  ]);
+});
+
+test("백엔드 복구는 유효하지 않은 active workspace를 실패 처리하고 세션을 종료한다", async () => {
+  const events = [];
+  const queries = [];
+  const row = workspaceDatabaseRow({
+    status: "active",
+    review_turn_id: null,
+    review_tree: null,
+    changed_files: [],
+  });
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (
+      /SELECT \*\s+FROM task_workspaces\s+WHERE status = 'active'/.test(text)
+    ) {
+      events.push("db:read-active");
+      return { rowCount: 1, rows: [row] };
+    }
+    if (
+      /UPDATE task_workspaces/.test(text) &&
+      /SET status = 'failed'/.test(text) &&
+      /AND status = 'active'/.test(text)
+    ) {
+      events.push("db:workspace-failed");
+      return { rowCount: 1, rows: [] };
+    }
+    if (/DELETE FROM active_cli_sessions/.test(text)) {
+      events.push("db:delete-active-session");
+      return { rowCount: 1, rows: [] };
+    }
+    if (/UPDATE cli_sessions/.test(text) && /ended_at/.test(text)) {
+      events.push("db:end-cli-session");
+      return { rowCount: 1, rows: [] };
+    }
+    return { rowCount: 0, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => {
+      events.push("db:transaction");
+      return body({ query });
+    },
+    workdir: "/repo",
+    workspaceManager: {
+      validateWorkspace: async (workspace) => {
+        events.push("git:validate-active");
+        assert.equal(workspace.cliSessionID, "session-1");
+        assert.equal(workspace.status, "active");
+        throw new Error("worktree missing");
+      },
+    },
+    broadcast: () => {},
+  });
+
+  const count = await runtime.recoverInterruptedJobs();
+
+  assert.equal(count, 0);
+  assert.deepEqual(events, [
+    "db:read-active",
+    "git:validate-active",
+    "db:transaction",
+    "db:workspace-failed",
+    "db:delete-active-session",
+    "db:end-cli-session",
+  ]);
+  const failed = queries.find(({ text }) =>
+    /SET status = 'failed'/.test(text) && /AND status = 'active'/.test(text)
+  );
+  assert.ok(failed);
+  assert.deepEqual(failed.values, [
+    "session-1",
+    "활성 작업 공간을 복구할 수 없습니다. worktree missing",
+  ]);
+  assert.equal(
+    queries.some(({ text, values }) =>
+      /DELETE FROM active_cli_sessions/.test(text) &&
+      values?.[0] === "session-1"
+    ),
+    true,
+  );
+  assert.equal(
+    queries.some(({ text, values }) =>
+      /UPDATE cli_sessions/.test(text) &&
+      /ended_at/.test(text) &&
+      values?.[0] === "session-1"
+    ),
+    true,
+  );
+});
+
 test("중단 중 늦게 저장된 keyless 활동도 출력 종료 뒤 닫는다", async () => {
   const queries = [];
   const runtime = new AgentRuntime({
@@ -1170,4 +1314,924 @@ test("완료 사용량과 추정 비용을 같은 턴의 사용량 기록으로 
     null,
     null,
   ]);
+});
+
+function workspaceDatabaseRow(overrides = {}) {
+  return {
+    cli_session_id: "session-1",
+    status: "awaiting_approval",
+    repository_root: "/repo",
+    source_workdir: "/repo",
+    worktree_path: "/worktrees/session-1",
+    execution_workdir: "/worktrees/session-1",
+    branch_name: "officestra/boss/session-1",
+    base_branch: "main",
+    base_commit: "base-commit",
+    review_turn_id: "turn-1",
+    review_tree: "review-tree",
+    head_commit: "head-commit",
+    changed_files: [{ status: "M", path: "README.md" }],
+    task_commit: null,
+    merged_commit: null,
+    error_message: null,
+    created_at: new Date("2026-08-01T00:00:00Z"),
+    updated_at: new Date("2026-08-01T00:00:00Z"),
+    review_requested_at: new Date("2026-08-01T00:00:00Z"),
+    merged_at: null,
+    rejected_at: null,
+    characterID: "boss",
+    characterName: "보스",
+    ...overrides,
+  };
+}
+
+test("새 Git 세션은 격리 작업 공간을 저장하고 실행 폴더로 사용한다", async () => {
+  const queries = [];
+  const provisioned = {
+    repositoryRoot: "/repo",
+    sourceWorkdir: "/repo/subdir",
+    worktreePath: "/worktrees/session-1",
+    executionWorkdir: "/worktrees/session-1/subdir",
+    branchName: "officestra/boss/session-1",
+    baseBranch: "main",
+    baseCommit: "base-commit",
+  };
+  const workspaceManager = {
+    provision: async (input) => {
+      assert.deepEqual(input, {
+        sessionID: "session-1",
+        characterID: "boss",
+      });
+      return provisioned;
+    },
+  };
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return {
+          rowCount: 1,
+          rows: [workspaceDatabaseRow({
+            status: "active",
+            source_workdir: provisioned.sourceWorkdir,
+            execution_workdir: provisioned.executionWorkdir,
+            review_turn_id: null,
+            review_tree: null,
+            changed_files: [],
+          })],
+        };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/repo/subdir",
+    workspaceManager,
+    broadcast: () => {},
+  });
+
+  const workspace = await runtime.ensureWorkspace({
+    turnID: "turn-1",
+    sessionID: "session-1",
+    reusedSession: false,
+    workspace: null,
+    character: { id: "boss" },
+  });
+
+  assert.equal(workspace.executionWorkdir, provisioned.executionWorkdir);
+  assert.match(queries[0].text, /INSERT INTO task_workspaces/);
+  assert.deepEqual(queries[0].values.slice(1), [
+    provisioned.repositoryRoot,
+    provisioned.sourceWorkdir,
+    provisioned.worktreePath,
+    provisioned.executionWorkdir,
+    provisioned.branchName,
+    provisioned.baseBranch,
+    provisioned.baseCommit,
+  ]);
+});
+
+test("새 Git 세션은 provisioning을 먼저 기록한 뒤 계획한 worktree를 활성화한다", async () => {
+  const events = [];
+  const plan = {
+    repositoryRoot: "/repo",
+    sourceWorkdir: "/repo/subdir",
+    worktreePath: "/worktrees/session-1",
+    executionWorkdir: "/worktrees/session-1/subdir",
+    branchName: "officestra/boss/session-1",
+    baseBranch: "main",
+    baseCommit: "base-commit",
+  };
+  const activeRow = workspaceDatabaseRow({
+    status: "active",
+    source_workdir: plan.sourceWorkdir,
+    execution_workdir: plan.executionWorkdir,
+    review_turn_id: null,
+    review_tree: null,
+    changed_files: [],
+  });
+  const query = async (text, values) => {
+    if (/INSERT INTO task_workspaces/.test(text)) {
+      events.push("db:provisioning");
+      assert.match(text, /'provisioning'/);
+      assert.deepEqual(values.slice(1), [
+        plan.repositoryRoot,
+        plan.sourceWorkdir,
+        plan.worktreePath,
+        plan.executionWorkdir,
+        plan.branchName,
+        plan.baseBranch,
+        plan.baseCommit,
+      ]);
+      return { rowCount: 1, rows: [] };
+    }
+    if (
+      /UPDATE task_workspaces/.test(text) &&
+      /status = 'active'/.test(text)
+    ) {
+      events.push("db:active");
+      assert.match(text, /AND status = 'provisioning'/);
+      return { rowCount: 1, rows: [activeRow] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async () => {},
+    workdir: "/repo/subdir",
+    workspaceManager: {
+      planProvision: async (input) => {
+        events.push("git:plan");
+        assert.deepEqual(input, {
+          sessionID: "session-1",
+          characterID: "boss",
+        });
+        return plan;
+      },
+      provisionPlanned: async (receivedPlan) => {
+        events.push("git:provision");
+        assert.equal(receivedPlan, plan);
+        return plan;
+      },
+      cleanup: async () => {
+        assert.fail("정상 provisioning에서는 cleanup을 호출하면 안 됩니다.");
+      },
+    },
+    broadcast: () => {},
+  });
+
+  const workspace = await runtime.ensureWorkspace({
+    turnID: "turn-1",
+    sessionID: "session-1",
+    reusedSession: false,
+    isolateGitWorkdir: true,
+    workspace: null,
+    character: { id: "boss" },
+  });
+
+  assert.equal(workspace.status, "active");
+  assert.equal(workspace.executionWorkdir, plan.executionWorkdir);
+  assert.deepEqual(events, [
+    "git:plan",
+    "db:provisioning",
+    "git:provision",
+    "db:active",
+  ]);
+});
+
+test("Git 저장소 확인 뒤 provisioning 계획이 사라지면 공유 폴더로 후퇴하지 않는다", async () => {
+  const events = [];
+  const runtime = new AgentRuntime({
+    pool: { query: async () => ({ rowCount: 1, rows: [] }) },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    workspaceManager: {
+      isRepository: async () => {
+        events.push("git:is-repository");
+        return true;
+      },
+      planProvision: async () => {
+        events.push("git:plan");
+        return null;
+      },
+      provisionPlanned: async () => {
+        assert.fail("계획이 없으면 worktree 생성을 시도하면 안 됩니다.");
+      },
+    },
+    broadcast: () => {},
+  });
+  runtime.prepareTurn = async (input) => {
+    events.push("db:prepare-turn");
+    assert.equal(input.isolateGitWorkdir, true);
+    return {
+      turnID: "turn-1",
+      sessionID: "session-1",
+      conversationID: input.conversationID,
+      externalSessionID: null,
+      character: { id: "boss", backend: "codex" },
+      prompt: input.prompt,
+      workspace: null,
+      reusedSession: false,
+      isolateGitWorkdir: true,
+    };
+  };
+  runtime.failPreparedTurn = async (_prepared, error) => {
+    events.push("db:fail-prepared-turn");
+    assert.equal(error.code, "invalid-state");
+  };
+
+  await assert.rejects(
+    runtime.start({
+      characterID: "boss",
+      prompt: "업무",
+      conversationID: "11111111-1111-1111-1111-111111111111",
+    }),
+    (error) => error?.code === "invalid-state",
+  );
+
+  assert.deepEqual(events, [
+    "git:is-repository",
+    "db:prepare-turn",
+    "git:plan",
+    "db:fail-prepared-turn",
+  ]);
+  assert.equal(runtime.running.size, 0);
+});
+
+test("완료된 변경 업무는 검토 tree와 파일 목록을 승인 대기로 저장한다", async () => {
+  const queries = [];
+  const broadcasts = [];
+  const review = {
+    hasChanges: true,
+    reviewTree: "review-tree",
+    headCommit: "head-commit",
+    changedFiles: [{ status: "M", path: "README.md" }],
+  };
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    return { rowCount: 1 };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      prepareReview: async () => review,
+    },
+    broadcast: (event) => broadcasts.push(event),
+  });
+  const state = {
+    ...makeCodexActivityState(),
+    sessionID: "session-1",
+    character: {
+      id: "boss",
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      fastMode: true,
+    },
+    workspace: {
+      ...workspaceDatabaseRow({ status: "active" }),
+      cliSessionID: "session-1",
+      repositoryRoot: "/repo",
+      sourceWorkdir: "/repo",
+      worktreePath: "/worktrees/session-1",
+      executionWorkdir: "/worktrees/session-1",
+      branchName: "officestra/boss/session-1",
+      baseBranch: "main",
+      baseCommit: "base-commit",
+    },
+    initialGeneratedImages: new Set(),
+    externalSessionID: null,
+    responseText: "완료했습니다.",
+    visibleAgentMessages: [{ key: "message-1", text: "완료했습니다." }],
+    usage: null,
+    cancelRequested: false,
+  };
+  runtime.running.set("boss", state);
+
+  await runtime.complete(state, {
+    text: "완료했습니다.",
+    needsInput: false,
+  });
+
+  const workspaceUpdate = queries.find(({ text }) =>
+    /UPDATE task_workspaces/.test(text)
+  );
+  assert.equal(workspaceUpdate.values[1], "awaiting_approval");
+  assert.equal(workspaceUpdate.values[2], true);
+  assert.equal(workspaceUpdate.values[3], "turn-1");
+  assert.equal(workspaceUpdate.values[4], "review-tree");
+  assert.equal(state.workspace.status, "awaiting_approval");
+  assert.equal(
+    broadcasts.some((event) =>
+      event.type === "workspace.changed" &&
+      event.status === "awaiting_approval"
+    ),
+    true,
+  );
+});
+
+test("사용자 답이 필요한 완료 턴은 workspace 검토를 시작하지 않는다", async () => {
+  let reviewCount = 0;
+  const query = async () => ({ rowCount: 1 });
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      prepareReview: async () => {
+        reviewCount += 1;
+        return { hasChanges: true };
+      },
+    },
+    broadcast: () => {},
+  });
+  const state = {
+    ...makeCodexActivityState(),
+    sessionID: "session-1",
+    character: {
+      id: "boss",
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      fastMode: true,
+    },
+    workspace: { status: "active" },
+    initialGeneratedImages: new Set(),
+    externalSessionID: null,
+    responseText: "선택해 주세요.",
+    visibleAgentMessages: [{ key: "message-1", text: "선택해 주세요." }],
+    usage: null,
+    cancelRequested: false,
+  };
+  runtime.running.set("boss", state);
+
+  await runtime.complete(state, {
+    text: "선택해 주세요.",
+    needsInput: true,
+  });
+
+  assert.equal(reviewCount, 0);
+  assert.equal(state.workspace.status, "active");
+});
+
+test("provider 전환 전에 변경이 있으면 검토 대기로 바꾸고 세션 종료를 막는다", async () => {
+  const queries = [];
+  const broadcasts = [];
+  let cleanupCount = 0;
+  const row = workspaceDatabaseRow({
+    status: "active",
+    review_turn_id: null,
+    review_tree: null,
+    changed_files: [],
+    reviewCandidateTurnID: "turn-1",
+  });
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM turns AS turn/.test(text) && /turn\.status IN/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (
+      /FROM task_workspaces AS workspace/.test(text) &&
+      /reviewCandidateTurnID/.test(text)
+    ) {
+      return { rowCount: 1, rows: [row] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      prepareReview: async () => ({
+        hasChanges: true,
+        reviewTree: "provider-review-tree",
+        headCommit: "provider-head-commit",
+        changedFiles: [{ status: "M", path: "README.md" }],
+      }),
+      cleanup: async () => {
+        cleanupCount += 1;
+      },
+    },
+    broadcast: (event) => broadcasts.push(event),
+  });
+
+  await assert.rejects(
+    runtime.prepareWorkspaceForSessionEnd("boss"),
+    AgentBusyError,
+  );
+
+  const reviewUpdate = queries.find(({ text, values }) =>
+    /UPDATE task_workspaces/.test(text) &&
+    values?.includes("provider-review-tree")
+  );
+  assert.ok(reviewUpdate);
+  assert.match(reviewUpdate.text, /status\s*=\s*'awaiting_approval'/);
+  assert.equal(
+    queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
+    false,
+  );
+  assert.equal(cleanupCount, 0);
+  assert.equal(
+    broadcasts.some((event) =>
+      event.type === "workspace.changed" &&
+      event.status === "awaiting_approval"
+    ),
+    true,
+  );
+});
+
+test("provider 전환 전 변경이 없으면 세션과 빈 worktree를 정리한다", async () => {
+  const queries = [];
+  const cleaned = [];
+  const row = workspaceDatabaseRow({
+    status: "active",
+    review_turn_id: null,
+    review_tree: null,
+    changed_files: [],
+    reviewCandidateTurnID: "turn-1",
+  });
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM turns AS turn/.test(text) && /turn\.status IN/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (
+      /FROM task_workspaces AS workspace/.test(text) &&
+      /reviewCandidateTurnID/.test(text)
+    ) {
+      return { rowCount: 1, rows: [row] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      prepareReview: async () => ({
+        hasChanges: false,
+        reviewTree: "base-tree",
+        headCommit: "base-commit",
+        changedFiles: [],
+      }),
+      cleanup: async (workspace) => {
+        cleaned.push(workspace);
+      },
+    },
+    broadcast: () => {},
+  });
+
+  const result = await runtime.prepareWorkspaceForSessionEnd("boss");
+
+  assert.deepEqual(result, { ended: true });
+  assert.equal(
+    queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
+    true,
+  );
+  assert.equal(
+    queries.some(({ text }) =>
+      /UPDATE cli_sessions/.test(text) && /ended_at/.test(text)
+    ),
+    true,
+  );
+  assert.equal(cleaned.length, 1);
+  assert.equal(cleaned[0].cliSessionID, "session-1");
+});
+
+test("provider 전환 때 활성 workspace가 없으면 종료할 세션이 없다고 알린다", async () => {
+  let cleanupCount = 0;
+  const query = async () => ({ rowCount: 0, rows: [] });
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      cleanup: async () => {
+        cleanupCount += 1;
+      },
+    },
+    broadcast: () => {},
+  });
+
+  assert.deepEqual(
+    await runtime.prepareWorkspaceForSessionEnd("boss"),
+    { ended: false },
+  );
+  assert.equal(cleanupCount, 0);
+});
+
+test("검토 대기 변경이 base tree로 돌아오면 fetch가 active 상태를 복원한다", async () => {
+  const queries = [];
+  const broadcasts = [];
+  const reviewedRow = workspaceDatabaseRow();
+  const activeRow = workspaceDatabaseRow({
+    status: "active",
+    review_turn_id: null,
+    review_tree: null,
+    head_commit: "base-commit",
+    changed_files: [],
+    review_requested_at: null,
+  });
+  let diffWorkspace;
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (
+      /UPDATE task_workspaces/.test(text) &&
+      /status = 'active'/.test(text) &&
+      /review_turn_id = NULL/.test(text)
+    ) {
+      return { rowCount: 1, rows: [activeRow] };
+    }
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return { rowCount: 1, rows: [reviewedRow] };
+    }
+    return { rowCount: 0, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      prepareReview: async (workspace) => {
+        assert.equal(workspace.status, "awaiting_approval");
+        assert.equal(workspace.reviewTree, "review-tree");
+        return {
+          hasChanges: false,
+          reviewTree: "base-tree",
+          headCommit: "base-commit",
+          changedFiles: [],
+        };
+      },
+      diff: async (workspace) => {
+        diffWorkspace = workspace;
+        return { diff: "", diffTruncated: false };
+      },
+    },
+    broadcast: (event) => broadcasts.push(event),
+  });
+
+  const result = await runtime.fetchWorkspaceReview("turn-1");
+
+  assert.equal(result.workspace.status, "active");
+  assert.equal(result.workspace.reviewTurnId, null);
+  assert.equal(result.workspace.reviewTree, null);
+  assert.deepEqual(result.workspace.changedFiles, []);
+  assert.equal(diffWorkspace.status, "active");
+  assert.equal(diffWorkspace.reviewTurnID, null);
+  assert.equal(diffWorkspace.reviewTree, null);
+  const released = queries.find(({ text }) =>
+    /review_turn_id = NULL/.test(text) && /review_tree = NULL/.test(text)
+  );
+  assert.ok(released);
+  assert.deepEqual(released.values, [
+    "session-1",
+    "base-commit",
+    "review-tree",
+  ]);
+  assert.deepEqual(broadcasts, [{
+    type: "workspace.changed",
+    turnId: "turn-1",
+    characterId: "boss",
+    status: "active",
+  }]);
+});
+
+test("승인은 저장소 advisory lock 뒤 병합하고 활성 세션을 종료한다", async () => {
+  const queries = [];
+  const calls = [];
+  const row = workspaceDatabaseRow();
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return { rowCount: 1, rows: [row] };
+    }
+    if (/RETURNING cli_session_id/.test(text)) {
+      return { rowCount: 1, rows: [{ cli_session_id: "session-1" }] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      approve: async (workspace, options) => {
+        calls.push({ kind: "approve", workspace, options });
+        return {
+          taskCommit: "task-commit",
+          mergedCommit: "merged-commit",
+        };
+      },
+      cleanup: async (workspace) => {
+        calls.push({ kind: "cleanup", workspace });
+      },
+    },
+    broadcast: () => {},
+  });
+
+  const result = await runtime.approveWorkspace("turn-1", "review-tree");
+
+  assert.equal(result.workspace.status, "merged");
+  assert.equal(result.workspace.mergedCommit, "merged-commit");
+  assert.equal(calls[0].options.expectedReviewTree, "review-tree");
+  assert.equal(calls[1].kind, "cleanup");
+  assert.equal(
+    queries.some(({ text, values }) =>
+      /pg_advisory_xact_lock/.test(text) && values[0] === "/repo"
+    ),
+    true,
+  );
+  assert.equal(
+    queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
+    true,
+  );
+});
+
+test("승인은 사용자가 실제로 확인한 review tree가 아니면 병합을 시작하지 않는다", async () => {
+  const queries = [];
+  let approveCount = 0;
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return { rowCount: 1, rows: [workspaceDatabaseRow()] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      approve: async () => {
+        approveCount += 1;
+      },
+    },
+    broadcast: () => {},
+  });
+
+  await assert.rejects(
+    runtime.approveWorkspace("turn-1", "stale-review-tree"),
+    AgentBusyError,
+  );
+
+  assert.equal(approveCount, 0);
+  assert.equal(
+    queries.some(({ text }) => /status = 'merging'/.test(text)),
+    false,
+  );
+});
+
+test("검토 뒤 tree가 바뀌면 새 diff 메타데이터를 저장하고 재승인을 요구한다", async () => {
+  const queries = [];
+  const changedError = new Error("검토 뒤 변경사항이 달라졌습니다.");
+  changedError.code = "changed-after-review";
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return { rowCount: 1, rows: [workspaceDatabaseRow()] };
+    }
+    if (/RETURNING cli_session_id/.test(text)) {
+      return { rowCount: 1, rows: [{ cli_session_id: "session-1" }] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      approve: async () => {
+        throw changedError;
+      },
+      prepareReview: async () => ({
+        hasChanges: true,
+        reviewTree: "new-review-tree",
+        headCommit: "new-head-commit",
+        changedFiles: [{ status: "A", path: "new.txt" }],
+      }),
+    },
+    broadcast: () => {},
+  });
+
+  await assert.rejects(
+    runtime.approveWorkspace("turn-1", "review-tree"),
+    (error) => error === changedError,
+  );
+
+  const refreshed = queries.find(({ text, values }) =>
+    /review_tree = CASE WHEN \$7 THEN \$2 ELSE NULL END/.test(text) &&
+    values?.[1] === "new-review-tree"
+  );
+  assert.ok(refreshed);
+  assert.equal(refreshed.values[2], "new-head-commit");
+  assert.equal(refreshed.values[3], JSON.stringify([
+    { status: "A", path: "new.txt" },
+  ]));
+});
+
+test("검토 갱신 오류는 동시에 거절된 workspace를 다시 승인 대기로 만들지 않는다", async () => {
+  const changedError = new Error("검토 뒤 변경사항이 달라졌습니다.");
+  changedError.code = "changed-after-review";
+  let workspaceStatus = "rejected";
+  const query = async (text) => {
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [workspaceDatabaseRow({ status: workspaceStatus })],
+      };
+    }
+    if (/UPDATE task_workspaces/.test(text)) {
+      const whereClause = text.split(/\bWHERE\b/i).slice(1).join(" WHERE ");
+      const guardsAwaitingApproval =
+        /status\s*=\s*'awaiting_approval'/.test(whereClause);
+      if (!guardsAwaitingApproval || workspaceStatus === "awaiting_approval") {
+        workspaceStatus = "awaiting_approval";
+        return { rowCount: 1, rows: [] };
+      }
+      return { rowCount: 0, rows: [] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      prepareReview: async () => ({
+        hasChanges: true,
+        reviewTree: "new-review-tree",
+        headCommit: "new-head-commit",
+        changedFiles: [{ status: "A", path: "new.txt" }],
+      }),
+    },
+    broadcast: () => {},
+  });
+
+  await runtime.recordWorkspaceApprovalError("turn-1", changedError);
+
+  assert.equal(workspaceStatus, "rejected");
+});
+
+test("충돌한 workspace도 거절하면 세션을 닫고 worktree는 보존한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [workspaceDatabaseRow({ status: "conflict" })],
+      };
+    }
+    if (/RETURNING cli_session_id/.test(text)) {
+      return { rowCount: 1, rows: [{ cli_session_id: "session-1" }] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+
+  const result = await runtime.rejectWorkspace("turn-1");
+
+  assert.equal(result.workspace.status, "rejected");
+  assert.equal(
+    queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
+    true,
+  );
+  assert.equal(
+    queries.some(({ text }) => /worktree remove|DELETE FROM task_workspaces/.test(text)),
+    false,
+  );
+});
+
+test("검토 대기 workspace가 있으면 같은 직원의 다음 턴을 차단한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM characters/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "boss",
+          name: "보스",
+          backend: "codex",
+          model: "gpt-5.6-sol",
+          effort: "high",
+          fastMode: true,
+          permission: "workspace-write",
+          identityPrompt: "업무를 처리한다.",
+          config: {},
+        }],
+      };
+    }
+    if (/turn\.status IN/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (/FROM active_cli_sessions AS active/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "session-1",
+          externalSessionID: "external-1",
+          conversationID: "11111111-1111-1111-1111-111111111111",
+          workspaceStatus: "awaiting_approval",
+        }],
+      };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+
+  await assert.rejects(
+    runtime.prepareTurn({
+      characterID: "boss",
+      prompt: "다음 업무",
+      conversationID: "11111111-1111-1111-1111-111111111111",
+    }),
+    AgentBusyError,
+  );
+  assert.match(queries[0].text, /pg_advisory_xact_lock/);
+  assert.deepEqual(queries[0].values, ["officestra:character:boss"]);
+});
+
+test("외부 CLI 세션 ID가 없어도 직원의 검토 대기 workspace가 다음 턴을 막는다", async () => {
+  const query = async (text) => {
+    if (/FROM characters/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "boss",
+          name: "보스",
+          backend: "codex",
+          model: "gpt-5.6-sol",
+          effort: "high",
+          fastMode: true,
+          permission: "workspace-write",
+          identityPrompt: "업무를 처리한다.",
+          config: {},
+        }],
+      };
+    }
+    if (/turn\.status IN/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (
+      /FROM task_workspaces/.test(text) &&
+      /character_id/.test(text) &&
+      !/active_cli_sessions/.test(text)
+    ) {
+      return {
+        rowCount: 1,
+        rows: [{ status: "awaiting_approval" }],
+      };
+    }
+    if (/FROM active_cli_sessions AS active/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (/INSERT INTO cli_sessions/.test(text)) {
+      return { rowCount: 1, rows: [{ id: "unexpected-session" }] };
+    }
+    return { rowCount: 0, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+
+  await assert.rejects(
+    runtime.prepareTurn({
+      characterID: "boss",
+      prompt: "다음 업무",
+      conversationID: "11111111-1111-1111-1111-111111111111",
+    }),
+    AgentBusyError,
+  );
+});
+
+test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토 턴도 고정한다", () => {
+  const serverSource = readFileSync(
+    new URL("../src/server.mjs", import.meta.url),
+    "utf8",
+  );
+  const queryStart = serverSource.indexOf("async function queryLiveFeed");
+  const queryEnd = serverSource.indexOf(
+    "async function workspaceReview",
+    queryStart,
+  );
+  assert.ok(queryStart >= 0 && queryEnd > queryStart);
+  const querySource = serverSource.slice(queryStart, queryEnd);
+
+  assert.match(querySource, /UNION[\s\S]*task_workspace\.review_turn_id/);
+  for (const status of ["awaiting_approval", "merging", "conflict"]) {
+    assert.match(querySource, new RegExp(`'${status}'`));
+  }
 });
