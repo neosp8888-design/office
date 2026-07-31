@@ -1038,3 +1038,44 @@
 - 사고 당시 숫자를 포함한 백엔드 테스트 `59개`, Swift 경고 오류 승격 테스트 `108개`, 릴리스 앱 빌드와 ad-hoc 서명을 통과했다
 - 완료된 Codex 비용 5건을 실제 rollout 증분으로 정정했고, 문제의 `$192.513590` API 값은 `$0.551042`로 바뀐 것을 4317에서 확인했다
 - 현재 코과장과 다른 직원의 구버전 실행이 끝나면 남은 구버전 기록을 같은 방식으로 정정하고 4317을 재시작한 뒤 건강 상태를 확인하는 일회성 launchd 작업 `com.neo.office-cost-repair-20260801`을 등록했다
+
+## 2026-08-01 코대리 Blender 얼굴 시안
+
+- 코대리는 `right-woman`이며 우측 위 자리에 앉는 Claude 직원이다
+- 기존 인물 기준은 긴 다크 브라운 원사이드 헤어, 따뜻한 피부색, 플럼 퍼플 재킷이다
+- 이번 산출물은 앱 리소스를 바꾸지 않는 독립 Blender 얼굴·상반신 시안과 렌더다
+- `artifacts/blender/ko-associate-face-v1.blend`와 900×1080 렌더를 저장했고, 장면은 얼굴·재킷·조명·카메라를 포함한 45개 오브젝트다
+
+## 2026-08-01 실행 설정 변경 시 CLI 세션 유지
+
+- 공식 Codex App Server는 같은 thread의 `turn/start`마다 모델·추론 레벨을 덮어쓸 수 있고 해당 값을 이후 턴 기본값으로 유지한다
+- 설치된 `codex exec resume`도 기존 세션 ID와 `--model`, `-c model_reasoning_effort`, `-c service_tier`를 함께 받을 수 있다
+- OFFICESTRA 실행 인수는 이미 재개 시 모델·추론·Fast 값을 매번 전달하지만, 설정 API가 이 세 값의 변경까지 `endActiveSession`으로 처리해 외부 세션을 끊고 있다
+- 성공 기준은 같은 CLI에서 Fast·모델·추론·권한·역할 지침을 바꾼 다음 턴이 기존 `external_id`를 재개하고 새 실행값을 적용하는 것이다
+- 권한은 Codex의 `sandbox_mode` 구성 override와 Claude의 `--permission-mode`로, 역할 지침은 Codex의 `developer_instructions`와 Claude의 `--append-system-prompt`로 재개 실행마다 전달할 수 있다
+- Codex thread ID와 Claude session ID는 서로 호환되지 않으므로 CLI 종류를 Codex ↔ Claude로 바꾸는 경우만 새 외부 세션이 필요하다
+- 설정 API는 이제 backend가 실제로 달라질 때만 `endActiveSession`을 호출하고 역할 지침 저장은 활성 세션을 종료하지 않는다
+- 재개 실행은 Codex에 현재 `sandbox_mode`와 `developer_instructions`를, Claude에 현재 `--permission-mode`와 `--append-system-prompt`를 매번 전달한다
+- 격리된 PostgreSQL DB와 4321 백엔드에서 Fast, 모델, 추론, 권한, 역할 지침을 차례로 변경해도 동일한 `test-external-session`과 활성 세션이 유지됐고 Codex → Claude 변경에서만 종료되는 것을 확인했다
+- 로컬 CLI의 존재하지 않는 세션 재개 프로브도 모든 새 override 인수를 정상 파싱한 뒤 각각 `no rollout found`와 `No conversation found`에서 멈춰 실제 모델 호출은 발생하지 않았다
+- 백엔드 검사와 테스트 `65개`, Swift 경고 오류 승격 테스트 `108개`, 릴리스 빌드와 엄격한 코드 서명, `git diff --check`가 통과했다
+- 격리 검증용 4321 백엔드와 임시 DB는 제거했고, 현재 업무 종료 뒤 3회 연속 유휴를 확인해 4317만 재시작하는 `com.neo.office-session-policy-reload-20260801` 일회성 LaunchAgent를 등록했다
+- 운영 4317 재시작 뒤 Fast가 켜진 이전 턴과 Standard로 바뀐 후속 턴이 모두 같은 외부 세션 `019fb980-5378-7313-a4cd-b6750f73de46`을 사용한 것을 API에서 확인했다
+
+## 2026-08-01 파일 편집 경로 Finder 열기
+
+- Codex 파일 변경 카드는 `수정 경로`·`추가 경로`·`삭제 경로` 문자열을, Claude 편집 카드는 도구 상세의 경로 문자열을 표시하지만 현재는 일반 텍스트라 Finder로 열 수 없다
+- 운영 API의 최근 파일 변경 이벤트는 대부분 절대경로이고, 파서 회귀 테스트와 이전 기록에는 작업 폴더 기준 상대경로도 남아 있다
+- 앱의 공통 작업 폴더는 `OfficeAgentConfiguration.workdir`이며 첨부 파일에는 이미 `NSWorkspace.activateFileViewerSelecting` 방식의 Finder 선택 동작이 있다
+- 변경 범위는 Codex·Claude 파일 편집 카드의 경로 행과 작업 폴더 전달로 한정하고 카드 순서·통계·복사·펼침 정책은 유지한다
+- 성공 기준은 절대경로와 상대경로 모두 파일 이름 클릭 시 Finder에서 파일이 선택되고, 삭제된 파일은 가장 가까운 기존 상위 폴더를 표시하며 Swift 테스트·릴리스 빌드·실제 앱 동작을 통과하는 것이다
+- 공통 `WorkspaceFileRevealTarget`이 절대경로와 상대경로를 정규화하고, 존재하는 파일은 Finder에서 선택하며 삭제된 경로는 가장 가까운 기존 상위 폴더를 연다
+- Codex의 추가·수정·삭제·이동 행과 Claude의 Edit·Write 계열 경로를 같은 Finder 버튼으로 표시하고 기존 복사·통계·순서를 보존했다
+- 경로 대상 테스트를 포함한 Swift 경고 오류 승격 테스트 `112개`, 백엔드 테스트 `65개`, 릴리스 빌드와 엄격한 ad-hoc 서명, `git diff --check`가 통과했다
+- 최신 앱 PID `62039`에서 파일 경로가 `Finder에서 보기` 버튼으로 노출됐고 사용자가 실제 Finder 열림을 확인했다
+
+## 2026-08-01 누적 변경 GitHub 최종 반영
+
+- 로컬 `main`은 작업 시작 시 `origin/main`보다 영문 README 병합 커밋 2개 뒤에 있으므로 누적 변경을 기능별로 커밋한 뒤 최신 원격 기준으로 재배치한다
+- 게시 범위는 Git이 추적하는 세션 유지 수정, Finder 링크 수정, 회귀 테스트와 진행 기록 및 새 설정 정책 테스트다. `.gitignore`가 제외하는 빌드·첨부·실험 산출물은 포함하지 않는다
+- 성공 기준은 전체 테스트·릴리스 빌드를 최신 원격 기준으로 다시 통과하고 작업 브랜치 PR을 `main`에 병합한 뒤 공개 원격과 깨끗한 로컬 상태를 확인하는 것이다
