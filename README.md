@@ -19,10 +19,9 @@ _Local-first macOS command center for running Codex CLI and Claude Code as a
 five-person AI team._
 
 <p align="center">
-  <img src="docs/images/officestra-2d-night.jpg" alt="OFFICESTRA 2D night office" width="49%">
-  <img src="docs/images/officestra-3d-day.jpg" alt="OFFICESTRA 3D day office" width="49%">
+  <img src="docs/images/officestra-full.png" alt="OFFICESTRA 전체 앱 화면" width="100%">
 </p>
-<p align="center"><sub>실제 앱의 2D 야간 모드와 3D 주간 모드. 공개 화면에는 로컬 대화와 경로를 포함하지 않았다.</sub></p>
+<p align="center"><sub>OFFICESTRA 전체 앱 화면.</sub></p>
 
 ## 핵심 경험
 
