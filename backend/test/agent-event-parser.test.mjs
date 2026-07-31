@@ -341,6 +341,89 @@ test("Claude Bash 도구의 민감 인자는 노출하지 않는다", () => {
   );
 });
 
+test("Claude 계획 도구는 단계 진행과 항목을 함께 보존한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "TodoWrite",
+            input: {
+              todos: [
+                { content: "활동 형식 확인", status: "completed" },
+                { content: "타임라인 구현", status: "in_progress" },
+                { content: "테스트 실행", status: "pending" },
+              ],
+            },
+          },
+        ],
+      },
+    }),
+    "claude",
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    [
+      "도구 · TodoWrite · 1/3단계",
+      "[x] 활동 형식 확인",
+      "[~] 타임라인 구현",
+      "[ ] 테스트 실행",
+    ].join("\n"),
+  );
+});
+
+test("Claude 위임 도구는 담당 유형과 설명을 표시한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "Task",
+            input: {
+              subagent_type: "Explore",
+              description: "대화창 구현 위치 조사",
+            },
+          },
+        ],
+      },
+    }),
+    "claude",
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    "도구 · Task · Explore · 대화창 구현 위치 조사",
+  );
+});
+
+test("Claude 노트북 편집도 안전한 경로를 표시한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "NotebookEdit",
+            input: { notebook_path: "analysis/report.ipynb" },
+          },
+        ],
+      },
+    }),
+    "claude",
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    "도구 · NotebookEdit · analysis/report.ipynb",
+  );
+});
+
 test("Claude 도구 결과는 같은 도구 행을 완료 상태로 갱신한다", () => {
   const event = parseAgentEvent(
     JSON.stringify({
