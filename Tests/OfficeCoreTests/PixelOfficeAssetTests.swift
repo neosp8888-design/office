@@ -508,7 +508,7 @@ final class PixelOfficeAssetTests: XCTestCase {
                 x: 0,
                 y: 0
             ),
-            CGPoint(x: 194, y: 411)
+            CGPoint(x: 194, y: 423)
         )
         XCTAssertEqual(
             OfficeWhiteboardGeometry.usagePoint(
@@ -516,7 +516,7 @@ final class PixelOfficeAssetTests: XCTestCase {
                 x: 128,
                 y: 0
             ),
-            CGPoint(x: 326, y: 342)
+            CGPoint(x: 326, y: 339)
         )
         XCTAssertEqual(
             OfficeWhiteboardGeometry.usagePoint(
@@ -524,7 +524,7 @@ final class PixelOfficeAssetTests: XCTestCase {
                 x: 128,
                 y: 78
             ),
-            CGPoint(x: 326, y: 445)
+            CGPoint(x: 326, y: 447)
         )
         XCTAssertEqual(
             OfficeWhiteboardGeometry.usagePoint(
@@ -532,8 +532,33 @@ final class PixelOfficeAssetTests: XCTestCase {
                 x: 0,
                 y: 78
             ),
-            CGPoint(x: 194, y: 514)
+            CGPoint(x: 194, y: 531)
         )
+    }
+
+    func testTwoDWhiteboardRowsStayParallelToBoardFrame() {
+        let top = OfficeWhiteboardGeometry.usageTransform(
+            for: .twoD,
+            at: CGPoint(x: 0, y: 0)
+        )
+        let bottom = OfficeWhiteboardGeometry.usageTransform(
+            for: .twoD,
+            at: CGPoint(x: 0, y: 78)
+        )
+
+        XCTAssertEqual(top.b, -84.0 / 128.0, accuracy: 0.000_001)
+        XCTAssertEqual(bottom.b, -84.0 / 128.0, accuracy: 0.000_001)
+        XCTAssertEqual(top.b, bottom.b, accuracy: 0.000_001)
+    }
+
+    func testTwoDClockFaceMatchesTheUprightBackgroundEllipse() {
+        XCTAssertEqual(
+            OfficeAnalogClockGeometry.twoDCenter,
+            CGPoint(x: 1_194, y: 687)
+        )
+        XCTAssertEqual(OfficeAnalogClockGeometry.twoDHorizontalScale, 1)
+        XCTAssertEqual(OfficeAnalogClockGeometry.twoDVerticalScale, 1.35)
+        XCTAssertEqual(OfficeAnalogClockGeometry.twoDRotation, 0)
     }
 
     func testNormalAgentResponseRemainsUnchanged() {

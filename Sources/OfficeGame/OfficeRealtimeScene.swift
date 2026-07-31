@@ -1040,10 +1040,13 @@ final class OfficeRealtimeScene: SKScene {
         case .twoD:
             analogClockDial.isHidden = false
             analogClockTicks.isHidden = false
-            analogClockDial.position = CGPoint(x: 1_194, y: 687)
-            analogClockDial.xScale = 1.05
-            analogClockDial.yScale = 1.36
-            analogClockDial.zRotation = 0.27
+            analogClockDial.position = OfficeAnalogClockGeometry.twoDCenter
+            analogClockDial.xScale =
+                OfficeAnalogClockGeometry.twoDHorizontalScale
+            analogClockDial.yScale =
+                OfficeAnalogClockGeometry.twoDVerticalScale
+            analogClockDial.zRotation =
+                OfficeAnalogClockGeometry.twoDRotation
             analogClockFaceCover.fillColor = theme.isNight
                 ? NSColor(
                     calibratedRed: 0.84,
