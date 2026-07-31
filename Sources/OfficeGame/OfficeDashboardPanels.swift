@@ -672,6 +672,7 @@ struct LiveWorkspaceFeedFollowState: Equatable {
 
 struct LiveWorkspaceFeed: View, Equatable {
     @ObservedObject private var liveFeedStore: LiveFeedStore
+    private let workspaceDirectory: String
     private let selectedCharacterID: OfficeCharacter?
     private let latestTerminalTurnID: String?
     private let latestSubmittedTurnID: String?
@@ -693,6 +694,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         _liveFeedStore = ObservedObject(
             wrappedValue: director.liveFeedStore
         )
+        workspaceDirectory = director.workspaceDirectory
         selectedCharacterID = director.selectedCharacterID
         latestTerminalTurnID = director.latestTerminalTurnID
         latestSubmittedTurnID = director.latestSubmittedTurnID
@@ -704,6 +706,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         rhs: LiveWorkspaceFeed
     ) -> Bool {
         lhs.liveFeedStore === rhs.liveFeedStore
+            && lhs.workspaceDirectory == rhs.workspaceDirectory
             && lhs.selectedCharacterID == rhs.selectedCharacterID
             && lhs.latestTerminalTurnID == rhs.latestTerminalTurnID
             && lhs.latestSubmittedTurnID == rhs.latestSubmittedTurnID
@@ -832,6 +835,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                                 ForEach(displayTurns) { turn in
                                     EquatableLiveTurnCard(
                                         turn: turn,
+                                        workspaceDirectory: workspaceDirectory,
                                         shouldAnimateResponse:
                                             liveFeedStore
                                             .shouldAnimateResponse(for: turn)
@@ -1502,6 +1506,7 @@ private struct LiveWorkspaceFeedStreamingHeightKey: PreferenceKey {
 
 private struct EquatableLiveTurnCard: View, Equatable {
     let turn: LiveFeedTurn
+    let workspaceDirectory: String
     let shouldAnimateResponse: Bool
     let finishResponseAnimation: () -> Void
 
@@ -1510,12 +1515,14 @@ private struct EquatableLiveTurnCard: View, Equatable {
         rhs: EquatableLiveTurnCard
     ) -> Bool {
         lhs.turn == rhs.turn
+            && lhs.workspaceDirectory == rhs.workspaceDirectory
             && lhs.shouldAnimateResponse == rhs.shouldAnimateResponse
     }
 
     var body: some View {
         LiveTurnCard(
             turn: turn,
+            workspaceDirectory: workspaceDirectory,
             shouldAnimateResponse: shouldAnimateResponse,
             finishResponseAnimation: finishResponseAnimation
         )
@@ -1558,6 +1565,7 @@ struct LiveTurnPromptBlock: View {
 
 private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
+    let workspaceDirectory: String
     let shouldAnimateResponse: Bool
     let finishResponseAnimation: () -> Void
     var body: some View {
@@ -1678,6 +1686,7 @@ private struct LiveTurnCard: View {
     private var claudeTranscript: some View {
         ClaudeTranscriptView(
             turnID: turn.id,
+            workspaceDirectory: workspaceDirectory,
             activities: turn.activities,
             response: turn.response,
             responseUpdatedAt: turn.updatedAt,
@@ -1692,6 +1701,7 @@ private struct LiveTurnCard: View {
     private var codexTranscript: some View {
         CodexTranscriptView(
             turnID: turn.id,
+            workspaceDirectory: workspaceDirectory,
             activities: turn.activities,
             response: turn.response,
             responseUpdatedAt: turn.updatedAt,

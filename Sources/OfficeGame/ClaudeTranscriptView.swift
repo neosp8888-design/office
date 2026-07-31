@@ -52,6 +52,7 @@ enum ClaudePalette {
 
 struct ClaudeTranscriptView: View {
     let turnID: String
+    let workspaceDirectory: String
     let activities: [LiveFeedActivity]
     let response: String
     let responseUpdatedAt: Date
@@ -149,7 +150,10 @@ struct ClaudeTranscriptView: View {
         case .tools(let run):
             ClaudeToolRunView(run: run)
         case .edits(let run):
-            ClaudeEditRunView(run: run)
+            ClaudeEditRunView(
+                run: run,
+                workspaceDirectory: workspaceDirectory
+            )
         case .plan(let board):
             ClaudePlanBoardView(board: board)
         case .message(let message):
@@ -435,6 +439,7 @@ private struct ClaudeToolBadge: View {
 /// Claude는 편집 통계를 주지 않으므로 어떤 파일을 고쳤는지만 카드로 보여준다.
 private struct ClaudeEditRunView: View {
     let run: ClaudeEditRun
+    let workspaceDirectory: String
 
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
@@ -484,19 +489,20 @@ private struct ClaudeEditRunView: View {
                     HStack(spacing: 7) {
                         ClaudeToolBadge(call: step.call, isCompact: false)
 
-                        Text(
-                            step.call.detail.isEmpty
+                        WorkspaceFileRevealButton(
+                            title: step.call.detail.isEmpty
                                 ? "파일"
-                                : step.call.detail
+                                : step.call.detail,
+                            path: step.call.detail.isEmpty
+                                ? nil
+                                : step.call.detail,
+                            workspaceDirectory: workspaceDirectory,
+                            foregroundColor: step.status == .failed
+                                ? .red
+                                : .secondary,
+                            accessibilityIdentifier:
+                                "revealEdit-\(run.id)-\(step.id)"
                         )
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(
-                                step.status == .failed
-                                    ? Color.red
-                                    : Color.secondary
-                            )
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }

@@ -206,6 +206,10 @@ final class AgentDirector: ObservableObject {
     let archiveFeedStore = ArchiveFeedStore()
     let speechBubbleStore = SpeechBubbleStore()
 
+    var workspaceDirectory: String {
+        configuration.workdir
+    }
+
     private let configuration: OfficeAgentConfiguration
     private let database: OfficeDatabaseClient
     private var conversationIDs: [OfficeCharacter: UUID] = [:]

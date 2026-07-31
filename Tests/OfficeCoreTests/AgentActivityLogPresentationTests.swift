@@ -243,6 +243,87 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertEqual(changes.reportedFileCount, 2)
     }
 
+    func testFileChangeDescriptionExtractsFinderPath() {
+        XCTAssertEqual(
+            CodexFileChangeSummary.filePath(
+                from: "수정 Sources/OfficeGame/Feed.swift"
+            ),
+            "Sources/OfficeGame/Feed.swift"
+        )
+        XCTAssertEqual(
+            CodexFileChangeSummary.filePath(
+                from: "이동 Sources/OfficeGame/NewFeed.swift"
+            ),
+            "Sources/OfficeGame/NewFeed.swift"
+        )
+        XCTAssertNil(CodexFileChangeSummary.filePath(from: "삭제 "))
+    }
+
+    func testFinderTargetResolvesRelativeAndAbsoluteFiles() throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let file = workspace.appendingPathComponent("Sources/Feed.swift")
+        try fileManager.createDirectory(
+            at: file.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(fileManager.createFile(atPath: file.path, contents: Data()))
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let relative = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "Sources/Feed.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(relative.url, file.standardizedFileURL)
+        XCTAssertTrue(relative.selectsItem)
+
+        let absolute = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: file.path,
+                workspaceDirectory: "/unused",
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(absolute.url, file.standardizedFileURL)
+        XCTAssertTrue(absolute.selectsItem)
+    }
+
+    func testFinderTargetUsesClosestFolderForDeletedFile() throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let existingFolder = workspace
+            .appendingPathComponent("Sources", isDirectory: true)
+        try fileManager.createDirectory(
+            at: existingFolder,
+            withIntermediateDirectories: true
+        )
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let target = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "Sources/Deleted.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(target.url, existingFolder.standardizedFileURL)
+        XCTAssertFalse(target.selectsItem)
+    }
+
+    func testFinderTargetRejectsCompactedLegacyPath() {
+        XCTAssertNil(
+            WorkspaceFileRevealTarget.fileURL(
+                path: "…/Sources/Feed.swift",
+                workspaceDirectory: "/Users/neo/office"
+            )
+        )
+    }
+
     func testCodexTranscriptMergesGeneratedImagesIntoConclusion() throws {
         let message = try makeActivity(
             id: "message-1",
