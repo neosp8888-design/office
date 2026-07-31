@@ -337,11 +337,18 @@ struct CodexFileChangeSummary: Equatable {
         values.append(value)
     }
 
-    private static func fileIdentity(_ value: String) -> String {
-        for prefix in ["추가 ", "수정 ", "삭제 "] where value.hasPrefix(prefix) {
-            return String(value.dropFirst(prefix.count))
+    static func filePath(from value: String) -> String? {
+        for prefix in ["추가 ", "수정 ", "삭제 ", "이동 "]
+        where value.hasPrefix(prefix)
+        {
+            let path = String(value.dropFirst(prefix.count))
+            return path.isEmpty ? nil : path
         }
-        return value
+        return value.isEmpty ? nil : value
+    }
+
+    private static func fileIdentity(_ value: String) -> String {
+        filePath(from: value) ?? value
     }
 
     private static func legacyFiles(
@@ -412,6 +419,7 @@ struct CodexFileChangeSummary: Equatable {
 
 struct CodexTranscriptView: View {
     let turnID: String
+    let workspaceDirectory: String
     let activities: [LiveFeedActivity]
     let response: String
     let responseUpdatedAt: Date
@@ -513,7 +521,10 @@ struct CodexTranscriptView: View {
                 needsInput: isConclusion && needsInput
             )
         case .changes(let summary):
-            CodexFileChangeSummaryView(summary: summary)
+            CodexFileChangeSummaryView(
+                summary: summary,
+                workspaceDirectory: workspaceDirectory
+            )
         }
     }
 }
@@ -850,6 +861,7 @@ private struct CodexMessageView: View {
 
 private struct CodexFileChangeSummaryView: View {
     let summary: CodexFileChangeSummary
+    let workspaceDirectory: String
 
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
@@ -905,12 +917,15 @@ private struct CodexFileChangeSummaryView: View {
             if !summary.files.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(Array(summary.files.enumerated()), id: \.offset) {
-                        _, file in
-                        Text(file)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        index, file in
+                        WorkspaceFileRevealButton(
+                            title: file,
+                            path: CodexFileChangeSummary.filePath(from: file),
+                            workspaceDirectory: workspaceDirectory,
+                            foregroundColor: .secondary,
+                            accessibilityIdentifier:
+                                "revealChange-\(summary.id)-\(index)"
+                        )
                     }
                 }
                 .padding(.top, 2)
@@ -956,6 +971,141 @@ private struct CodexFileChangeSummaryView: View {
             if !Task.isCancelled {
                 copied = false
             }
+        }
+    }
+}
+
+struct WorkspaceFileRevealTarget: Equatable {
+    let url: URL
+    let selectsItem: Bool
+
+    static func resolve(
+        path: String,
+        workspaceDirectory: String,
+        fileManager: FileManager = .default
+    ) -> WorkspaceFileRevealTarget? {
+        guard let requestedURL = fileURL(
+            path: path,
+            workspaceDirectory: workspaceDirectory
+        ) else {
+            return nil
+        }
+        if fileManager.fileExists(atPath: requestedURL.path) {
+            return WorkspaceFileRevealTarget(
+                url: requestedURL,
+                selectsItem: true
+            )
+        }
+
+        var ancestor = requestedURL.deletingLastPathComponent()
+        while true {
+            var isDirectory = ObjCBool(false)
+            if
+                fileManager.fileExists(
+                    atPath: ancestor.path,
+                    isDirectory: &isDirectory
+                ),
+                isDirectory.boolValue
+            {
+                return WorkspaceFileRevealTarget(
+                    url: ancestor,
+                    selectsItem: false
+                )
+            }
+            let parent = ancestor.deletingLastPathComponent()
+            guard parent.path != ancestor.path else {
+                return nil
+            }
+            ancestor = parent
+        }
+    }
+
+    static func fileURL(
+        path: String,
+        workspaceDirectory: String
+    ) -> URL? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmed.isEmpty,
+            !trimmed.hasPrefix("…"),
+            !trimmed.hasPrefix("...")
+        else {
+            return nil
+        }
+        if let url = URL(string: trimmed), url.isFileURL {
+            return url.standardizedFileURL
+        }
+
+        let expanded = NSString(string: trimmed).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded).standardizedFileURL
+        }
+        guard !workspaceDirectory.isEmpty else {
+            return nil
+        }
+        return URL(
+            fileURLWithPath: workspaceDirectory,
+            isDirectory: true
+        )
+            .appendingPathComponent(expanded)
+            .standardizedFileURL
+    }
+}
+
+struct WorkspaceFileRevealButton: View {
+    let title: String
+    let path: String?
+    let workspaceDirectory: String
+    let foregroundColor: Color
+    let accessibilityIdentifier: String
+
+    var body: some View {
+        if let path,
+            WorkspaceFileRevealTarget.fileURL(
+                path: path,
+                workspaceDirectory: workspaceDirectory
+            ) != nil
+        {
+            Button {
+                reveal(path)
+            } label: {
+                HStack(spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(foregroundColor)
+
+                    Image(systemName: "arrow.up.forward.square")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help("Finder에서 보기")
+            .accessibilityLabel("\(title), Finder에서 보기")
+            .accessibilityIdentifier(accessibilityIdentifier)
+        } else {
+            Text(title)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(foregroundColor)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func reveal(_ path: String) {
+        guard let target = WorkspaceFileRevealTarget.resolve(
+            path: path,
+            workspaceDirectory: workspaceDirectory
+        ) else {
+            return
+        }
+        if target.selectsItem {
+            NSWorkspace.shared.activateFileViewerSelecting([target.url])
+        } else {
+            _ = NSWorkspace.shared.open(target.url)
         }
     }
 }
