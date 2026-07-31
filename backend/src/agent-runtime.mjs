@@ -37,6 +37,7 @@ import {
   appendLocalImagePreviews,
   listGeneratedImages,
 } from "./local-artifacts.mjs";
+import { estimateTokenCost } from "./token-cost-estimator.mjs";
 
 const RESPONSE_INSTRUCTION = `
 사용자 판단이 반드시 필요해 더 진행할 수 없을 때만 최종 응답을 정확히 다음 형식으로 작성한다.
@@ -47,6 +48,7 @@ const RESPONSE_INSTRUCTION = `
 
 const MAX_FILE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_TURN_SNAPSHOT_BYTES = 24 * 1024 * 1024;
+const ROLLOUT_TAIL_CHUNK_BYTES = 64 * 1024;
 const rolloutPathCache = new Map();
 
 export class AgentBusyError extends Error {}
@@ -132,6 +134,14 @@ export class AgentRuntime {
       throw error;
     }
 
+    const resumedCodexSession =
+      prepared.character.backend === "codex" &&
+      Boolean(prepared.externalSessionID);
+    const usageBaseline = resumedCodexSession
+      ? latestCodexUsageFromRollout(
+        findRolloutPath(prepared.externalSessionID),
+      )
+      : null;
     const state = {
       ...prepared,
       process: null,
@@ -156,6 +166,9 @@ export class AgentRuntime {
       responseText: "",
       partialText: "",
       lastPartialPersistedAt: 0,
+      resumedCodexSession,
+      usageBaseline,
+      usage: null,
       warning: null,
       failure: null,
     };
@@ -200,6 +213,7 @@ export class AgentRuntime {
         `,
         [state.turnID, message],
       );
+      await this.persistUsageRecord(this.pool, state);
     } finally {
       if (this.running.get(characterID) === state) {
         this.running.delete(characterID);
@@ -434,6 +448,12 @@ export class AgentRuntime {
       const event = parseAgentEvent(line, state.character.backend);
       if (!event) {
         continue;
+      }
+      if (event.usage) {
+        const usage = usageForTurn(state, event.usage);
+        if (usage) {
+          state.usage = usage;
+        }
       }
       this.enrichFileChangeEvent(state, event);
       if (
@@ -954,6 +974,56 @@ export class AgentRuntime {
     return true;
   }
 
+  async persistUsageRecord(client, state) {
+    if (!state.usage) {
+      return;
+    }
+    const usage = state.usage;
+    const costUsd = estimateTokenCost({
+      backend: state.character.backend,
+      model: state.character.model,
+      fastMode: state.character.fastMode,
+      usage,
+    });
+    await client.query(
+      `
+        INSERT INTO usage_records (
+          turn_id,
+          input_tokens,
+          output_tokens,
+          cached_input_tokens,
+          reasoning_output_tokens,
+          cost_usd,
+          cache_write_input_tokens,
+          cache_write_5m_input_tokens,
+          cache_write_1h_input_tokens
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (turn_id) DO UPDATE
+        SET
+          input_tokens = EXCLUDED.input_tokens,
+          output_tokens = EXCLUDED.output_tokens,
+          cached_input_tokens = EXCLUDED.cached_input_tokens,
+          reasoning_output_tokens = EXCLUDED.reasoning_output_tokens,
+          cost_usd = EXCLUDED.cost_usd,
+          cache_write_input_tokens = EXCLUDED.cache_write_input_tokens,
+          cache_write_5m_input_tokens = EXCLUDED.cache_write_5m_input_tokens,
+          cache_write_1h_input_tokens = EXCLUDED.cache_write_1h_input_tokens
+      `,
+      [
+        state.turnID,
+        usage.inputTokens,
+        usage.outputTokens,
+        usage.cachedInputTokens,
+        usage.reasoningOutputTokens,
+        costUsd,
+        usage.cacheWriteInputTokens,
+        usage.cacheWrite5mInputTokens,
+        usage.cacheWrite1hInputTokens,
+      ],
+    );
+  }
+
   async complete(state, decoded) {
     if (state.cancelRequested) {
       return;
@@ -992,6 +1062,7 @@ export class AgentRuntime {
         `,
         [state.turnID, decoded.needsInput],
       );
+      await this.persistUsageRecord(client, state);
     });
     if (this.running.get(state.character.id) === state) {
       this.running.delete(state.character.id);
@@ -1024,6 +1095,7 @@ export class AgentRuntime {
         `,
         [state.turnID, message],
       );
+      await this.persistUsageRecord(client, state);
       if (!state.externalSessionID) {
         await client.query(
           `
@@ -1177,6 +1249,139 @@ function findRolloutPath(sessionID) {
   const path = join(root, String(relative));
   rolloutPathCache.set(id, path);
   return path;
+}
+
+export function latestCodexUsageFromRollout(path) {
+  if (!path) {
+    return null;
+  }
+  let descriptor;
+  try {
+    const size = statSync(path).size;
+    descriptor = openSync(path, "r");
+    let end = size;
+    let leadingFragment = "";
+    while (end > 0) {
+      const start = Math.max(0, end - ROLLOUT_TAIL_CHUNK_BYTES);
+      const length = end - start;
+      const buffer = Buffer.alloc(length);
+      const bytesRead = readSync(
+        descriptor,
+        buffer,
+        0,
+        length,
+        start,
+      );
+      const lines = (
+        buffer.subarray(0, bytesRead).toString("utf8") + leadingFragment
+      ).split("\n");
+      leadingFragment = lines.shift() ?? "";
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const usage = codexRolloutUsage(lines[index]);
+        if (usage) {
+          return usage;
+        }
+      }
+      end = start;
+    }
+    return codexRolloutUsage(leadingFragment);
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
+
+export function codexUsageDelta(usage, baseline) {
+  if (!usage || !baseline) {
+    return null;
+  }
+  const result = { ...usage };
+  for (const field of [
+    "inputTokens",
+    "outputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "cacheWrite5mInputTokens",
+    "cacheWrite1hInputTokens",
+    "reasoningOutputTokens",
+  ]) {
+    const current = usage[field];
+    const previous = baseline[field];
+    if (current == null) {
+      result[field] = null;
+      continue;
+    }
+    if (previous == null) {
+      result[field] = current;
+      continue;
+    }
+    if (current < previous) {
+      return null;
+    }
+    result[field] = current - previous;
+  }
+  return result;
+}
+
+function usageForTurn(state, usage) {
+  if (
+    state.character?.backend !== "codex" ||
+    !state.resumedCodexSession
+  ) {
+    return usage;
+  }
+  if (!state.usageBaseline) {
+    return null;
+  }
+  return codexUsageDelta(usage, state.usageBaseline) ?? usage;
+}
+
+function codexRolloutUsage(line) {
+  let record;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (record?.payload?.type !== "token_count") {
+    return null;
+  }
+  const usage = record.payload.info?.total_token_usage;
+  const inputTokens = nonnegativeTokenCount(usage?.input_tokens);
+  const outputTokens = nonnegativeTokenCount(usage?.output_tokens);
+  if (inputTokens === null || outputTokens === null) {
+    return null;
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: nonnegativeTokenCount(
+      usage.cached_input_tokens,
+    ),
+    cacheWriteInputTokens: nonnegativeTokenCount(
+      usage.cache_write_input_tokens,
+    ),
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: nonnegativeTokenCount(
+      usage.reasoning_output_tokens,
+    ),
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  };
+}
+
+function nonnegativeTokenCount(value) {
+  return typeof value === "number" &&
+      Number.isFinite(value) &&
+      value >= 0
+    ? value
+    : null;
 }
 
 function rolloutFileChangeStatistics(reader, workdir, changes) {

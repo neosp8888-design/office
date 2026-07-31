@@ -465,6 +465,7 @@ async function queryLiveFeed({ turnID = null, limit }) {
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
         t.updated_at AS "updatedAt",
+        usage.cost_usd::double precision AS "estimatedCostUsd",
         COALESCE(
           (
             SELECT text
@@ -498,6 +499,8 @@ async function queryLiveFeed({ turnID = null, limit }) {
         ON s.id = t.cli_session_id
       JOIN characters AS c
         ON c.id = s.character_id
+      LEFT JOIN usage_records AS usage
+        ON usage.turn_id = t.id
       WHERE ($1::uuid IS NULL OR t.id = $1::uuid)
       ORDER BY t.started_at DESC
       LIMIT $2

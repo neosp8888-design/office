@@ -477,6 +477,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let startedAt: Date
     let endedAt: Date?
     let updatedAt: Date
+    let estimatedCostUsd: Double?
     let activities: [LiveFeedActivity]
 
     func replacingID(with id: String) -> LiveFeedTurn {
@@ -498,6 +499,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             startedAt: startedAt,
             endedAt: endedAt,
             updatedAt: updatedAt,
+            estimatedCostUsd: estimatedCostUsd,
             activities: activities
         )
     }

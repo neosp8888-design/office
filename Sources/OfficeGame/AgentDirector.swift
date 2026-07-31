@@ -563,6 +563,7 @@ final class AgentDirector: ObservableObject {
                 startedAt: submittedAt,
                 endedAt: nil,
                 updatedAt: submittedAt,
+                estimatedCostUsd: nil,
                 activities: []
             )
         )

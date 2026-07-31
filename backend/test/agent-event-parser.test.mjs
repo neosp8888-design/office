@@ -56,6 +56,78 @@ test("JSON 객체가 아닌 이벤트 행은 무시한다", () => {
   }
 });
 
+test("Codex 완료 이벤트에서 토큰 사용량을 추출한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "turn.completed",
+      usage: {
+        input_tokens: 2_006,
+        cached_input_tokens: 1_920,
+        cache_write_input_tokens: 0,
+        output_tokens: 300,
+        reasoning_output_tokens: 17,
+      },
+    }),
+    "codex",
+  );
+
+  assert.deepEqual(event.usage, {
+    inputTokens: 2_006,
+    outputTokens: 300,
+    cachedInputTokens: 1_920,
+    cacheWriteInputTokens: 0,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: 17,
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  });
+});
+
+test("Claude 결과에서 누적 토큰과 공급자 비용을 추출한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      session_id: "session-1",
+      result: "완료했습니다.",
+      total_cost_usd: 0.00123,
+      usage: {
+        input_tokens: 2,
+        cache_creation_input_tokens: 30,
+        cache_read_input_tokens: 100,
+        output_tokens: 4,
+        service_tier: "standard",
+        speed: "fast",
+        inference_geo: "global",
+        cache_creation: {
+          ephemeral_5m_input_tokens: 20,
+          ephemeral_1h_input_tokens: 10,
+        },
+      },
+    }),
+    "claude",
+  );
+
+  assert.equal(event.sessionID, "session-1");
+  assert.equal(event.responseText, "완료했습니다.");
+  assert.deepEqual(event.usage, {
+    inputTokens: 2,
+    outputTokens: 4,
+    cachedInputTokens: 100,
+    cacheWriteInputTokens: 30,
+    cacheWrite5mInputTokens: 20,
+    cacheWrite1hInputTokens: 10,
+    reasoningOutputTokens: null,
+    serviceTier: "standard",
+    speed: "fast",
+    inferenceGeo: "global",
+    reportedCostUsd: 0.00123,
+  });
+});
+
 test("Codex 공개 진행 설명은 최종 응답 후보와 분리한다", () => {
   const event = parseAgentEvent(
     JSON.stringify({

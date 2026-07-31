@@ -1597,7 +1597,8 @@ private struct LiveTurnCard: View {
                     LiveTurnElapsedStatusView(
                         startedAt: turn.startedAt,
                         endedAt: turn.endedAt,
-                        status: turn.status
+                        status: turn.status,
+                        estimatedCostUsd: turn.estimatedCostUsd
                     )
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
@@ -1765,25 +1766,37 @@ private struct LiveTurnElapsedStatusView: View {
     let startedAt: Date
     let endedAt: Date?
     let status: LiveTurnStatus
+    let estimatedCostUsd: Double?
 
     @ViewBuilder
     var body: some View {
-        if status.isRunning {
-            TimelineView(.periodic(from: .now, by: 5)) { context in
-                Text("\(elapsedText(at: context.date))째 진행 중")
+        VStack(alignment: .trailing, spacing: 2) {
+            if status.isRunning {
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    Text("\(elapsedText(at: context.date))째 진행 중")
+                        .font(statusFont)
+                        .foregroundStyle(DashboardPalette.accent)
+                        .accessibilityLabel(
+                            "\(elapsedText(at: context.date))째 진행 중"
+                        )
+                }
+            } else if let endedAt {
+                Text("\(elapsedText(at: endedAt))에 \(terminalTitle)")
                     .font(statusFont)
-                    .foregroundStyle(DashboardPalette.accent)
+                    .foregroundStyle(terminalColor)
                     .accessibilityLabel(
-                        "\(elapsedText(at: context.date))째 진행 중"
+                        "\(elapsedText(at: endedAt))에 \(terminalTitle)"
                     )
+
+                if let estimatedCostUsd {
+                    Text(estimatedTokenCostText(estimatedCostUsd))
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(
+                            estimatedTokenCostText(estimatedCostUsd)
+                        )
+                }
             }
-        } else if let endedAt {
-            Text("\(elapsedText(at: endedAt))에 \(terminalTitle)")
-                .font(statusFont)
-                .foregroundStyle(terminalColor)
-                .accessibilityLabel(
-                    "\(elapsedText(at: endedAt))에 \(terminalTitle)"
-                )
         }
     }
 
@@ -1832,6 +1845,11 @@ private struct LiveTurnElapsedStatusView: View {
 
         return "\(minutes / 60)시간 \(minutes % 60)분"
     }
+}
+
+func estimatedTokenCostText(_ costUsd: Double) -> String {
+    let precision = costUsd < 0.0001 ? 8 : costUsd < 1 ? 6 : 4
+    return "토큰 환산 비용(추정) \(String(format: "$%.\(precision)f", costUsd))"
 }
 
 struct EquatableLiveTypingResponseView: View, Equatable {

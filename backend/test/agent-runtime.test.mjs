@@ -18,6 +18,8 @@ import {
   AgentJobNotFoundError,
   AgentRuntime,
   buildArguments,
+  codexUsageDelta,
+  latestCodexUsageFromRollout,
   promptWithAttachments,
   stageAttachments,
 } from "../src/agent-runtime.mjs";
@@ -913,4 +915,184 @@ test("실행 중인 업무가 없으면 중단 요청을 거절한다", async ()
     runtime.cancel("boss"),
     AgentJobNotFoundError,
   );
+});
+
+test("Codex rollout 끝에서 직전 누적 사용량을 찾는다", () => {
+  const directory = mkdtempSync(join(tmpdir(), "office-usage-"));
+  const path = join(directory, "rollout.jsonl");
+  try {
+    writeFileSync(path, [
+      JSON.stringify({
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 124_509_396,
+              cached_input_tokens: 120_069_888,
+              cache_write_input_tokens: 0,
+              output_tokens: 458_293,
+              reasoning_output_tokens: 226_498,
+            },
+          },
+        },
+      }),
+      JSON.stringify({
+        payload: {
+          type: "agent_message",
+          message: "x".repeat(70_000),
+        },
+      }),
+      "",
+    ].join("\n"));
+
+    assert.deepEqual(latestCodexUsageFromRollout(path), {
+      inputTokens: 124_509_396,
+      outputTokens: 458_293,
+      cachedInputTokens: 120_069_888,
+      cacheWriteInputTokens: 0,
+      cacheWrite5mInputTokens: null,
+      cacheWrite1hInputTokens: null,
+      reasoningOutputTokens: 226_498,
+      serviceTier: null,
+      speed: null,
+      inferenceGeo: null,
+      reportedCostUsd: null,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Codex 재개 세션의 누적 사용량을 현재 턴 증분으로 바꾼다", () => {
+  const baseline = {
+    inputTokens: 124_509_396,
+    outputTokens: 458_293,
+    cachedInputTokens: 120_069_888,
+    cacheWriteInputTokens: 0,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: 226_498,
+  };
+  const usage = {
+    inputTokens: 124_946_225,
+    outputTokens: 459_261,
+    cachedInputTokens: 120_500_480,
+    cacheWriteInputTokens: 0,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: 226_746,
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  };
+
+  assert.deepEqual(codexUsageDelta(usage, baseline), {
+    ...usage,
+    inputTokens: 436_829,
+    outputTokens: 968,
+    cachedInputTokens: 430_592,
+    cacheWriteInputTokens: 0,
+    reasoningOutputTokens: 248,
+  });
+});
+
+test("Codex가 이미 턴 사용량을 보고하면 누적값으로 차감하지 않는다", () => {
+  assert.equal(codexUsageDelta(
+    {
+      inputTokens: 10_000,
+      outputTokens: 500,
+      cachedInputTokens: 9_000,
+    },
+    {
+      inputTokens: 100_000,
+      outputTokens: 5_000,
+      cachedInputTokens: 90_000,
+    },
+  ), null);
+});
+
+test("Codex 완료 이벤트는 재개 시점 기준 증분만 상태에 남긴다", async () => {
+  const runtime = new AgentRuntime({
+    pool: { query: async () => ({ rowCount: 1 }) },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+  state.resumedCodexSession = true;
+  state.usageBaseline = {
+    inputTokens: 124_509_396,
+    outputTokens: 458_293,
+    cachedInputTokens: 120_069_888,
+    cacheWriteInputTokens: 0,
+    reasoningOutputTokens: 226_498,
+  };
+  state.usage = null;
+
+  await runtime.consumeOutput(state, Readable.from([
+    `${JSON.stringify({
+      type: "turn.completed",
+      usage: {
+        input_tokens: 124_946_225,
+        output_tokens: 459_261,
+        cached_input_tokens: 120_500_480,
+        cache_write_input_tokens: 0,
+        reasoning_output_tokens: 226_746,
+      },
+    })}\n`,
+  ]));
+
+  assert.equal(state.usage.inputTokens, 436_829);
+  assert.equal(state.usage.cachedInputTokens, 430_592);
+  assert.equal(state.usage.outputTokens, 968);
+  assert.equal(state.usage.reasoningOutputTokens, 248);
+});
+
+test("완료 사용량과 추정 비용을 같은 턴의 사용량 기록으로 저장한다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = {
+    turnID: "turn-1",
+    character: {
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      fastMode: true,
+    },
+    usage: {
+      inputTokens: 1_000,
+      outputTokens: 50,
+      cachedInputTokens: 200,
+      reasoningOutputTokens: 10,
+      cacheWriteInputTokens: 100,
+      cacheWrite5mInputTokens: null,
+      cacheWrite1hInputTokens: null,
+    },
+  };
+
+  await runtime.persistUsageRecord(runtime.pool, state);
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].text, /INSERT INTO usage_records/);
+  assert.deepEqual(queries[0].values, [
+    "turn-1",
+    1_000,
+    50,
+    200,
+    10,
+    0.01145,
+    100,
+    null,
+    null,
+  ]);
 });

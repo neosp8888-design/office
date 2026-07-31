@@ -188,6 +188,7 @@ final class LiveFeedStoreTests: XCTestCase {
             startedAt: startedAt,
             endedAt: nil,
             updatedAt: updatedAt ?? startedAt,
+            estimatedCostUsd: nil,
             activities: []
         )
     }

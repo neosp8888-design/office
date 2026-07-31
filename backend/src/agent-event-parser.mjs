@@ -41,6 +41,10 @@ function parseCodexEvent(object) {
   if (type === "turn.started") {
     return null;
   }
+  if (type === "turn.completed") {
+    const usage = normalizedUsage(object.usage, "codex");
+    return usage ? { usage } : null;
+  }
   if (type === "turn.failed") {
     return {
       failure:
@@ -290,9 +294,13 @@ function parseClaudeEvent(object) {
 
   if (object.type === "result") {
     const sessionID = cleanText(object.session_id);
+    const usage = normalizedUsage(object.usage, "claude", {
+      reportedCostUsd: object.total_cost_usd,
+    });
     if (object.is_error === true) {
       return {
         sessionID,
+        usage,
         failure:
           cleanText(object.result) ??
           "Claude Code 작업이 완료되지 못했습니다.",
@@ -300,6 +308,7 @@ function parseClaudeEvent(object) {
     }
     return {
       sessionID,
+      usage,
       responseText: cleanText(object.result),
     };
   }
@@ -316,6 +325,67 @@ function activity(kind, text, options = {}) {
     preserveText: options.preserveText === true,
     messageScoped: options.messageScoped === true,
   };
+}
+
+function normalizedUsage(value, backend, options = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const cacheCreation = value.cache_creation &&
+      typeof value.cache_creation === "object"
+    ? value.cache_creation
+    : {};
+  const usage = {
+    inputTokens: tokenCount(value.input_tokens),
+    outputTokens: tokenCount(value.output_tokens),
+    cachedInputTokens: tokenCount(
+      backend === "codex"
+        ? value.cached_input_tokens
+        : value.cache_read_input_tokens,
+    ),
+    cacheWriteInputTokens: tokenCount(
+      backend === "codex"
+        ? value.cache_write_input_tokens
+        : value.cache_creation_input_tokens,
+    ),
+    cacheWrite5mInputTokens: tokenCount(
+      cacheCreation.ephemeral_5m_input_tokens,
+    ),
+    cacheWrite1hInputTokens: tokenCount(
+      cacheCreation.ephemeral_1h_input_tokens,
+    ),
+    reasoningOutputTokens: tokenCount(value.reasoning_output_tokens),
+    serviceTier: cleanText(value.service_tier),
+    speed: cleanText(value.speed),
+    inferenceGeo: cleanText(value.inference_geo),
+    reportedCostUsd: nonnegativeNumber(options.reportedCostUsd),
+  };
+  const hasTokenOrCost = [
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.cachedInputTokens,
+    usage.cacheWriteInputTokens,
+    usage.cacheWrite5mInputTokens,
+    usage.cacheWrite1hInputTokens,
+    usage.reasoningOutputTokens,
+    usage.reportedCostUsd,
+  ].some((entry) => entry !== null);
+  return hasTokenOrCost ? usage : null;
+}
+
+function tokenCount(value) {
+  const number = nonnegativeNumber(value);
+  return number === null ? null : Math.trunc(number);
+}
+
+function nonnegativeNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value)) {
+    return Number(value);
+  }
+  return null;
 }
 
 function commandActivityText(item) {
