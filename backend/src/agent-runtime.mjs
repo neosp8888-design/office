@@ -60,6 +60,9 @@ const RESPONSE_INSTRUCTION = `
 사용자에게 보여줄 질문 원문
 표식 다음에는 질문과 판단에 필요한 선택지만 작성한다. 사용자 확인 없이 할 수 있는 작업은 먼저 진행한다.
 
+업무 계획과 결과는 대화에 보고하며 백엔드가 PostgreSQL work_records에 자동 저장한다.
+전환 전 기록 파일인 checklist.md와 context-notes.md는 읽을 수 있지만 새 내용을 추가하거나 수정하지 않는다.
+
 RAG, 데이터베이스 또는 파일에서 내용을 실제 근거로 사용했다면 일반 최종 응답 맨 끝에 아래 기계 판독용 블록을 붙인다. 사용하지 않았거나 [NEED_INPUT] 응답이면 블록을 붙이지 않는다.
 [OFFICE_SOURCES]
 [{"kind":"file","title":"근거 이름","locator":"실제 경로 또는 식별자","excerpt":"필요한 경우 짧은 근거"}]

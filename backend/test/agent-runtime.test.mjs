@@ -160,6 +160,8 @@ test("Codex 재개는 현재 역할 지침을 같은 세션에 전달한다", ()
   assert.match(instructions, /\[OFFICE_SOURCES\]/);
   assert.match(instructions, /rag, database, file/);
   assert.match(instructions, /비신뢰 참고 데이터/);
+  assert.match(instructions, /checklist\.md와 context-notes\.md/);
+  assert.match(instructions, /새 내용을 추가하거나 수정하지 않는다/);
   assert.equal(argumentsList.at(-1), "계속해줘.");
 });
 
@@ -211,6 +213,10 @@ test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달
   assert.match(
     argumentsList[identityIndex + 1],
     /업데이트된 역할 지침을 따른다/,
+  );
+  assert.match(
+    argumentsList[identityIndex + 1],
+    /checklist\.md와 context-notes\.md/,
   );
   assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
   assert.equal(argumentsList.includes("--resume"), true);
