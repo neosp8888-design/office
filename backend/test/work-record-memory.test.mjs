@@ -116,6 +116,7 @@ test("완료 턴 저장은 source turn 고유키와 검토 상태를 한 번에 
     reviewStatus: "awaiting_approval",
     reviewTree: "tree-1",
     changedFiles: [{ path: "backend/src/server.mjs", status: "M" }],
+    recordedAt: "2026-08-01 11:34:14.123456+00",
   });
 
   assert.equal(result.workRecordId, "record-1");
@@ -125,6 +126,11 @@ test("완료 턴 저장은 source turn 고유키와 검토 상태를 한 번에 
   assert.equal(metadata.source, "completed_turn");
   assert.equal(metadata.review.status, "awaiting_approval");
   assert.equal(metadata.review.reviewTree, "tree-1");
+  assert.equal(
+    queries[0].values[8],
+    "2026-08-01 11:34:14.123456+00",
+  );
+  assert.match(queries[0].text, /COALESCE\(\$9::timestamptz, now\(\)\)/);
 });
 
 test("RAG 동기화는 부적격 문서를 지운 뒤 승인된 기록만 멱등 upsert한다", async () => {
