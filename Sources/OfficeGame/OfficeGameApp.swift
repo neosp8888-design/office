@@ -47,6 +47,33 @@ enum OfficeSplitLayout {
         let minimum = min(max(0, minimumColumnWidth), availableWidth / 2)
         return min(max(width, minimum), availableWidth - minimum)
     }
+
+    static func rowHeights(
+        availableHeight: CGFloat,
+        fraction: Double
+    ) -> (top: CGFloat, bottom: CGFloat) {
+        guard availableHeight > 0 else {
+            return (.zero, .zero)
+        }
+        let requestedTopHeight = availableHeight
+            * CGFloat(min(max(fraction, 0), 1))
+        let top = clampedTopHeight(
+            requestedTopHeight,
+            availableHeight: availableHeight
+        )
+        return (top, availableHeight - top)
+    }
+
+    static func clampedTopHeight(
+        _ height: CGFloat,
+        availableHeight: CGFloat
+    ) -> CGFloat {
+        guard availableHeight > 0 else {
+            return .zero
+        }
+        let minimum = availableHeight / 3
+        return min(max(height, minimum), availableHeight - minimum)
+    }
 }
 
 private struct OfficeGameView: View {
@@ -60,6 +87,7 @@ private struct OfficeGameView: View {
     @State private var outgoingArtStyle: OfficeArtStyle?
     @State private var artStyleRevealProgress: CGFloat = 1
     @State private var splitDragStartLeftWidth: CGFloat?
+    @State private var splitDragStartTopHeight: CGFloat?
     @Namespace private var characterSelectionAnimation
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
@@ -67,37 +95,57 @@ private struct OfficeGameView: View {
         OfficeArtStyle.twoD.rawValue
     @AppStorage("officeLeftColumnFraction") private var leftColumnFraction =
         0.5
+    @AppStorage("officeTopRowFraction") private var topRowFraction = 0.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         GeometryReader { geometry in
             let outerPadding: CGFloat = 14
-            let rowGap: CGFloat = 14
-            let dividerWidth: CGFloat = 14
+            let columnDividerWidth: CGFloat = 14
+            let rowDividerHeight: CGFloat = 14
             let availableColumnWidth = max(
                 0,
-                geometry.size.width - outerPadding * 2 - dividerWidth
+                geometry.size.width - outerPadding * 2 - columnDividerWidth
             )
             let columns = OfficeSplitLayout.columnWidths(
                 availableWidth: availableColumnWidth,
                 fraction: leftColumnFraction,
-                minimumColumnWidth: 420
+                minimumColumnWidth: 210
             )
-            let rowHeight = max(
+            let availableRowHeight = max(
                 0,
-                (geometry.size.height - outerPadding * 2 - rowGap) / 2
+                geometry.size.height - outerPadding * 2 - rowDividerHeight
+            )
+            let rows = OfficeSplitLayout.rowHeights(
+                availableHeight: availableRowHeight,
+                fraction: topRowFraction
             )
 
             HStack(spacing: 0) {
-                VStack(spacing: rowGap) {
+                VStack(spacing: 0) {
                     officePanel
-                        .frame(height: rowHeight)
+                        .frame(height: rows.top)
+
+                    OfficeRowResizeHandle(
+                        onDragChanged: { translation in
+                            updateTopRowFraction(
+                                translation: translation,
+                                topRowHeight: rows.top,
+                                availableRowHeight: availableRowHeight
+                            )
+                        },
+                        onDragEnded: {
+                            splitDragStartTopHeight = nil
+                        }
+                    )
+                    .frame(height: rowDividerHeight)
+
                     OfficeDetailPanel(
                         director: director,
                         selection: detailSelection
                     )
-                    .frame(height: rowHeight)
+                    .frame(height: rows.bottom)
                 }
                 .frame(width: columns.left)
 
@@ -113,11 +161,11 @@ private struct OfficeGameView: View {
                         splitDragStartLeftWidth = nil
                     }
                 )
-                .frame(width: dividerWidth)
+                .frame(width: columnDividerWidth)
 
                 liveWorkspacePanel
                     .frame(width: columns.right)
-                    .frame(height: rowHeight * 2 + rowGap)
+                    .frame(height: availableRowHeight + rowDividerHeight)
             }
             .padding(outerPadding)
         }
@@ -192,9 +240,28 @@ private struct OfficeGameView: View {
         let updatedWidth = OfficeSplitLayout.clampedLeftWidth(
             start + translation,
             availableWidth: availableColumnWidth,
-            minimumColumnWidth: 420
+            minimumColumnWidth: 210
         )
         leftColumnFraction = Double(updatedWidth / availableColumnWidth)
+    }
+
+    private func updateTopRowFraction(
+        translation: CGFloat,
+        topRowHeight: CGFloat,
+        availableRowHeight: CGFloat
+    ) {
+        guard availableRowHeight > 0 else {
+            return
+        }
+        let start = splitDragStartTopHeight ?? topRowHeight
+        if splitDragStartTopHeight == nil {
+            splitDragStartTopHeight = start
+        }
+        let updatedHeight = OfficeSplitLayout.clampedTopHeight(
+            start + translation,
+            availableHeight: availableRowHeight
+        )
+        topRowFraction = Double(updatedHeight / availableRowHeight)
     }
 
     private var officePanel: some View {
@@ -1095,6 +1162,33 @@ private struct OfficeColumnResizeHandle: View {
         )
         .accessibilityLabel("좌우 화면 폭 조절")
         .accessibilityHint("드래그해서 사무실과 실시간 대화 영역의 폭을 조절합니다")
+    }
+}
+
+private struct OfficeRowResizeHandle: View {
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: () -> Void
+
+    var body: some View {
+        ZStack {
+            Capsule()
+                .fill(Color.primary.opacity(0.16))
+                .frame(width: 46, height: 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .officeRowResizeCursor()
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    onDragChanged(value.translation.height)
+                }
+                .onEnded { _ in
+                    onDragEnded()
+                }
+        )
+        .accessibilityLabel("상하 화면 높이 조절")
+        .accessibilityHint("드래그해서 사무실과 상세 영역의 높이를 조절합니다")
     }
 }
 
