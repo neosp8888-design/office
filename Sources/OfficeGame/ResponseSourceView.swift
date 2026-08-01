@@ -1,4 +1,4 @@
-// 이 파일은 응답이 근거로 사용한 RAG와 DB와 파일 출처를 한눈에 표시한다.
+// 이 파일은 응답이 근거로 사용한 출처를 종류별로 한눈에 표시한다.
 
 import SwiftUI
 
@@ -102,13 +102,13 @@ private struct ResponseSourceRow: View {
                         foregroundColor: .secondary,
                         accessibilityIdentifier: "responseSource-\(source.id)"
                     )
+                } else if let webURL = source.webURL {
+                    Link(destination: webURL) {
+                        sourceLocatorText
+                    }
+                    .accessibilityIdentifier("responseSource-\(source.id)")
                 } else {
-                    Text(source.locator)
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
+                    sourceLocatorText
                 }
 
                 if let excerpt = source.excerpt, !excerpt.isEmpty {
@@ -131,6 +131,21 @@ private struct ResponseSourceRow: View {
             .blue
         case .file:
             .green
+        case .web:
+            .cyan
+        case .tool:
+            .orange
+        case .skill:
+            .pink
         }
+    }
+
+    private var sourceLocatorText: some View {
+        Text(source.locator)
+            .font(.system(size: 9.5, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
     }
 }

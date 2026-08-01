@@ -706,6 +706,51 @@ test("응답 끝의 출처 블록을 본문과 분리한다", () => {
   );
 });
 
+test("웹과 도구와 스킬 출처를 본문과 분리한다", () => {
+  assert.deepEqual(
+    decodeAgentResponse(`확인했습니다.
+
+[OFFICE_SOURCES]
+[{"kind":"web","title":"공식 문서","locator":"https://example.com/docs"},{"kind":"tool","title":"웹 조회","locator":"web/search_query"},{"kind":"skill","title":"브라우저 절차","locator":"playwright-cli"}]`),
+    {
+      text: "확인했습니다.",
+      needsInput: false,
+      sources: [
+        {
+          ordinal: 0,
+          sourceKind: "web",
+          title: "공식 문서",
+          locator: "https://example.com/docs",
+          excerpt: null,
+          ragDocumentID: null,
+          workRecordID: null,
+          metadata: {},
+        },
+        {
+          ordinal: 1,
+          sourceKind: "tool",
+          title: "웹 조회",
+          locator: "web/search_query",
+          excerpt: null,
+          ragDocumentID: null,
+          workRecordID: null,
+          metadata: {},
+        },
+        {
+          ordinal: 2,
+          sourceKind: "skill",
+          title: "브라우저 절차",
+          locator: "playwright-cli",
+          excerpt: null,
+          ragDocumentID: null,
+          workRecordID: null,
+          metadata: {},
+        },
+      ],
+    },
+  );
+});
+
 test("잘못된 출처 블록도 기계 판독용 내용을 화면에서 숨긴다", () => {
   const response = "완료했습니다.\n[OFFICE_SOURCES]\nnot-json";
   assert.deepEqual(decodeAgentResponse(response), {

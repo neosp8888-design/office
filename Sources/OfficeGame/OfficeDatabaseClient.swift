@@ -661,6 +661,9 @@ enum LiveFeedSourceKind: String, Decodable, Sendable {
     case rag
     case database
     case file
+    case web
+    case tool
+    case skill
 
     var title: String {
         switch self {
@@ -670,6 +673,12 @@ enum LiveFeedSourceKind: String, Decodable, Sendable {
             "DB"
         case .file:
             "파일"
+        case .web:
+            "웹"
+        case .tool:
+            "도구"
+        case .skill:
+            "스킬"
         }
     }
 }
@@ -699,6 +708,22 @@ struct LiveFeedSource: Decodable, Identifiable, Equatable, Sendable {
             return locator
         }
         return components.dropLast().joined(separator: ":")
+    }
+
+    var webURL: URL? {
+        guard
+            sourceKind == .web,
+            let components = URLComponents(string: locator),
+            let scheme = components.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            components.user == nil,
+            components.password == nil,
+            let host = components.host,
+            !host.isEmpty
+        else {
+            return nil
+        }
+        return components.url
     }
 }
 
