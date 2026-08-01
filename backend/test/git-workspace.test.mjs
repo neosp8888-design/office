@@ -17,6 +17,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 import {
+  canonicalProjectRoot,
   GitWorkspaceError,
   GitWorkspaceManager,
 } from "../src/git-workspace.mjs";
@@ -71,6 +72,10 @@ test("저장소 하위 작업 폴더를 같은 상대 위치의 worktree로 격�
       sourceWorkdir: fixture.sourceWorkdir,
       worktreeRoot: fixture.worktreeRoot,
     });
+    assert.equal(
+      await canonicalProjectRoot(fixture.sourceWorkdir),
+      fixture.repositoryRoot,
+    );
     assert.equal(await manager.isRepository(), true);
     const plan = await manager.planProvision({
       workspaceID: "workspace-subdir",
