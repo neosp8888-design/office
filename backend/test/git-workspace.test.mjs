@@ -576,7 +576,7 @@ test("원본 최신 변경과 충돌하면 main을 바꾸지 않고 중단한다
   }
 });
 
-test("병렬 업무 기록 append는 양쪽 내용을 보존해 자동 병합한다", async () => {
+test("동결된 루트 작업 기록도 병렬 변경이면 일반 충돌로 차단한다", async () => {
   const fixture = createRepository();
   try {
     const checklistBase = "# 체크리스트\n\n## 공통 기록\n- 기준\n";
@@ -604,10 +604,6 @@ test("병렬 업무 기록 append는 양쪽 내용을 보존해 자동 병합한
     const review = await manager.prepareReview(workspace);
 
     writeFileSync(
-      join(fixture.repositoryRoot, ".gitattributes"),
-      "/checklist.md merge=union\n/context-notes.md merge=union\n",
-    );
-    writeFileSync(
       join(fixture.repositoryRoot, "checklist.md"),
       `${checklistBase}\n## main 기록\n- main 변경\n`,
     );
@@ -616,25 +612,26 @@ test("병렬 업무 기록 append는 양쪽 내용을 보존해 자동 병합한
       `${contextBase}\n## main 컨텍스트\n- main 변경\n`,
     );
     git(fixture.repositoryRoot, "add", "-A");
-    git(fixture.repositoryRoot, "commit", "-m", "configure work record merge");
+    git(fixture.repositoryRoot, "commit", "-m", "change frozen work records");
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
 
-    await manager.approve(workspace, {
-      expectedReviewTree: review.reviewTree,
-      commitMessage: "test: merge parallel work records",
-    });
-
-    const checklist = readFileSync(
-      join(fixture.repositoryRoot, "checklist.md"),
-      "utf8",
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: review.reviewTree,
+        commitMessage: "test: reject parallel frozen work records",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "conflict",
     );
-    const context = readFileSync(
-      join(fixture.repositoryRoot, "context-notes.md"),
-      "utf8",
+    assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
+    assert.doesNotMatch(
+      readFileSync(join(fixture.repositoryRoot, "checklist.md"), "utf8"),
+      /직원 변경/,
     );
-    assert.match(checklist, /직원 변경/);
-    assert.match(checklist, /main 변경/);
-    assert.match(context, /직원 변경/);
-    assert.match(context, /main 변경/);
+    assert.doesNotMatch(
+      readFileSync(join(fixture.repositoryRoot, "context-notes.md"), "utf8"),
+      /직원 변경/,
+    );
     assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
   } finally {
     fixture.remove();
@@ -645,10 +642,6 @@ test("하위 폴더의 같은 이름 파일은 일반 충돌로 차단한다", a
   const fixture = createRepository();
   try {
     mkdirSync(join(fixture.repositoryRoot, "docs"));
-    writeFileSync(
-      join(fixture.repositoryRoot, ".gitattributes"),
-      "/checklist.md merge=union\n/context-notes.md merge=union\n",
-    );
     writeFileSync(
       join(fixture.repositoryRoot, "docs", "checklist.md"),
       "# 사용자 문서\n\n공통 문장\n",
