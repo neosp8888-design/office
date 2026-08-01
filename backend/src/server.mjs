@@ -37,6 +37,7 @@ import { migrate } from "./migrate.mjs";
 import {
   reconcileTerminalWorkRecordReviews,
   syncWorkRecordRAGDocuments,
+  workRecordSearchTSQuery,
 } from "./work-record-memory.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
@@ -1445,6 +1446,11 @@ async function searchRAG(response, body) {
       [embedding, limit],
     );
   } else {
+    const tsQuery = workRecordSearchTSQuery(body.query);
+    if (!tsQuery) {
+      send(response, 200, { documents: [] });
+      return;
+    }
     result = await pool.query(
       `
         SELECT
@@ -1457,14 +1463,14 @@ async function searchRAG(response, body) {
           work_record_id AS "workRecordId",
           ts_rank(
             search_document,
-            websearch_to_tsquery('simple', $1)
+            to_tsquery('simple', $1)
           ) AS score
         FROM searchable_rag_documents
-        WHERE search_document @@ websearch_to_tsquery('simple', $1)
+        WHERE search_document @@ to_tsquery('simple', $1)
         ORDER BY score DESC
         LIMIT $2
       `,
-      [String(body.query ?? ""), limit],
+      [tsQuery, limit],
     );
   }
   send(response, 200, { documents: result.rows });

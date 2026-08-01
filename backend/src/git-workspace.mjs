@@ -10,6 +10,10 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const DEFAULT_DIFF_BYTES = 512 * 1024;
 const GIT_OUTPUT_BYTES = 8 * 1024 * 1024;
+const FROZEN_WORK_RECORD_PATHS = new Set([
+  "checklist.md",
+  "context-notes.md",
+]);
 const ERROR_CODES = new Set([
   "not-clean",
   "changed-after-review",
@@ -272,6 +276,7 @@ export class GitWorkspaceManager {
           "--",
         ])).stdout,
       );
+    requireUnchangedFrozenWorkRecords(changedFiles);
 
     return {
       hasChanges: reviewTree !== baseTree,
@@ -371,6 +376,19 @@ export class GitWorkspaceManager {
     const currentTree = await gitText(
       workspace.worktreePath,
       ["write-tree"],
+    );
+    requireUnchangedFrozenWorkRecords(
+      parseChangedFiles(
+        (await gitBuffer(workspace.worktreePath, [
+          "diff",
+          "--cached",
+          "--name-status",
+          "-z",
+          "--find-renames",
+          workspace.baseCommit,
+          "--",
+        ])).stdout,
+      ),
     );
     if (currentTree !== expectedReviewTree) {
       throw new GitWorkspaceError(
@@ -1026,6 +1044,20 @@ function parseChangedFiles(buffer) {
     }
   }
   return changedFiles;
+}
+
+function requireUnchangedFrozenWorkRecords(changedFiles) {
+  const frozenPaths = [...new Set(
+    changedFiles
+      .flatMap(({ path, previousPath }) => [previousPath, path])
+      .filter((path) => FROZEN_WORK_RECORD_PATHS.has(path)),
+  )];
+  if (frozenPaths.length > 0) {
+    throw new GitWorkspaceError(
+      "invalid-state",
+      `v1.0 동결 작업 기록은 변경할 수 없습니다: ${frozenPaths.join(", ")}`,
+    );
+  }
 }
 
 async function pathExists(path) {

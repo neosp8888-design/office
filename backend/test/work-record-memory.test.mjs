@@ -1,6 +1,7 @@
 // 이 파일은 완료 턴 작업 기록과 파생 RAG 색인 및 검색 문맥을 검증한다.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -31,7 +32,35 @@ test("RAG 검색어는 일반 지시어를 빼고 의미 토큰을 OR 접두 검
     workRecordSearchTSQuery("계속 진행해 세션 유지 작업 기록을 다시 확인해"),
     "세션:* | 유지:* | 작업:* | 기록을:*",
   );
+  assert.equal(workRecordSearchTSQuery(""), "");
+  assert.equal(workRecordSearchTSQuery("! ? _"), "");
   assert.equal(workRecordSearchTSQuery("계속 진행해 다시 확인해"), "");
+});
+
+test("공개 RAG 검색도 같은 OR 접두 검색을 쓰고 빈 검색은 조회하지 않는다", () => {
+  const serverSource = readFileSync(
+    new URL("../src/server.mjs", import.meta.url),
+    "utf8",
+  );
+  const searchStart = serverSource.indexOf("async function searchRAG");
+  const searchEnd = serverSource.indexOf(
+    "const server = createServer",
+    searchStart,
+  );
+  assert.ok(searchStart >= 0 && searchEnd > searchStart);
+  const searchSource = serverSource.slice(searchStart, searchEnd);
+
+  assert.match(
+    searchSource,
+    /const tsQuery = workRecordSearchTSQuery\(body\.query\)/,
+  );
+  assert.match(
+    searchSource,
+    /if \(!tsQuery\) \{[\s\S]*documents: \[\][\s\S]*return;/,
+  );
+  assert.match(searchSource, /to_tsquery\('simple', \$1\)/);
+  assert.doesNotMatch(searchSource, /websearch_to_tsquery/);
+  assert.match(searchSource, /\[tsQuery, limit\]/);
 });
 
 test("RAG 문맥은 RAG와 DB 원본 식별자를 함께 제공한다", () => {
