@@ -1270,3 +1270,22 @@
 - 성공 기준은 로컬 경로 복구, dirty 원본 보존, 격리 worktree 생성·검토 성공, dirty 상태 승인 거절, 백엔드와 Swift 검증 및 4317 재기동이다
 - 백엔드 전체 137개와 Swift 경고 오류 승격 전체 141개 테스트, 릴리스 빌드와 엄격한 코드 서명 검증이 통과했다
 - 4317 백엔드는 PID 36333, 새 앱은 PID 36515로 재기동했고 헬스 체크와 WebSocket 연결, 앱 번들의 `/Users/neo/office` 설정을 확인했다
+
+## 2026-08-01 작업 기록 전환 3단계
+
+- 이관 원본은 공개 기준점인 `v1.0.0` 커밋 `50dbd10d7ba675bfd0ddcfaa2d1bbdea580211a8`의 `checklist.md`와 `context-notes.md`로 고정한다
+- `v1.0.0`의 두 파일은 2단계 직전 커밋 `0c6adf6`과 byte 단위로 같고 SHA-256은 각각 `ab262339307d7ad1435a0851497fb44ce78ffd027879a385c250a802921ecf6c`, `bfc45e248dd13ec3244739f1cf557b57b76c0bc296f971ac188548110f382228`이다
+- 고정본은 체크리스트 155개와 컨텍스트 76개로 합계 231개이며 현재 파일의 새 2개 섹션은 이관 대상에 섞지 않는다
+- 제목에서 단계 번호 또는 날짜만 제거한 정확한 제목 일치로 62쌍이 연결되고 체크리스트 93개와 컨텍스트 14개는 미연결로 보존한다
+- heading 줄의 Git blame 커밋 제목으로 현재 직원 이름을 확인할 수 있는 24개만 직원 작성으로 기록하고 나머지 207개는 `unknown`으로 보존한다
+- 운영 DB는 013 신규 테이블이 아직 없고 기존 workspace FK는 validated CASCADE 상태이므로, 격리 검증 뒤 최신 백업을 만든 다음 013을 먼저 적용해야 한다
+- 기존 백업 이후 운영 DB가 안정 턴 508개에서 518개, 메시지 1016개에서 1038개, 활동 12555개에서 13155개로 늘었으므로 운영 적용 직전에 새 복구점을 만든다
+- 이관기는 현재 파일이 아니라 `v1.0.0` Git blob과 두 SHA-256을 검증한 뒤 읽으며 dry-run에는 DB 연결이 필요하지 않다
+- 고정본 dry-run은 기록 231개, 항목 2059개, 정확 연결 62개, 직원 귀속 24개, 미상 207개와 내용 digest `61e7ffb9f3d866e87515117a366b15c97e1c874e8fed3bbcba8899a379854328`를 재현했다
+- 새 운영 백업은 `/Users/neo/.officestra/backups/office-journal-migration/20260801-200422/office.dump`에 만들었고 크기 1274653 bytes, SHA-256 `4a2e626cee307138e505b73efe5aa92ddaa7aa4844d7f13c335fc247d0fd640f`를 확인했다
+- tmpfs 격리 PostgreSQL의 두 DB에 최신 백업을 복원해 안정 턴 518개, 메시지 1036개, 활동 13121개의 ID 지문이 운영과 같은지 확인했다
+- 격리 복원본에서 013 단독 적용 2회와 001~013 전체 적용 2회가 통과했고 workspace CLI session FK는 validated RESTRICT로 바뀌었다
+- 격리 이관 3회는 `imported`, `already-imported`, `already-imported` 순서였고 records 231, items 2059, links 62, events 231의 행 ID 지문과 내용 digest가 변하지 않았다
+- 운영 DB에도 013과 이관을 적용했으며 import `dfda380c-9d8f-4dda-87a5-008c21072c70`은 completed 1건, source ordinal 중복과 끊어진 링크 및 running·failed import는 모두 0건이다
+- 운영 재실행은 `already-imported`였고 체크리스트 ordinal 0~154, 컨텍스트 노트 ordinal 0~75가 빠짐없이 저장됐다
+- 백엔드 전체 145개 테스트, 구문 검사, diff 검사가 통과했다
