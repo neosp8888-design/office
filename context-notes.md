@@ -1168,3 +1168,10 @@
 - 코대리 수정은 2D 기본 표시를 되돌리는 변경이 아니라, 네 테마 번들 테스트가 우드 테마까지 검사할 때 3D 스타일을 명시해 2D 지원 범위 오류를 피하는 변경이다
 - 격리 DB `office_conflict_merge_44a69c04_test`에 전체 마이그레이션을 두 번 적용해 `task_workspaces.id` 기본 키와 `turns.task_workspace_id`를 확인한 뒤 DB를 삭제했다
 - 통합 상태에서 백엔드 118개, Swift 경고 오류 승격 126개 테스트가 통과했고 릴리스 앱 빌드와 엄격한 코드 서명 검증도 통과했다
+## 2026-08-01 2D 기본 표시 방식 테스트 회귀 수정
+
+- `74613dd`는 표시 방식 기본값을 3D에서 2D로 바꿨고, 2D는 현대 낮·밤 테마만 지원한다
+- `PixelOfficeAssetTests.testAllFourThemesLoadFromBundle`는 스타일을 생략한 `resourceURL(for:)`을 우드 테마까지 호출해 2D 지원 검사에서 `fatalError`가 난다
+- 성공 기준은 네 테마 리소스 검증이 3D 스타일을 명시해 통과하고, 2D 지원 범위를 검증하는 테스트는 유지하는 것이다
+- `swift test --filter PixelOfficeAssetTests`에서 30개 테스트가 모두 통과했고 `git diff --check`도 통과했다
+- `swift test` 전체 119개 테스트도 모두 통과했다
