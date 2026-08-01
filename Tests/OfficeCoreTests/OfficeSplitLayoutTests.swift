@@ -8,11 +8,11 @@ final class OfficeSplitLayoutTests: XCTestCase {
         let widths = OfficeSplitLayout.columnWidths(
             availableWidth: 1_000,
             fraction: 0.1,
-            minimumColumnWidth: 420
+            minimumColumnWidth: 210
         )
 
-        XCTAssertEqual(widths.left, 420)
-        XCTAssertEqual(widths.right, 580)
+        XCTAssertEqual(widths.left, 210)
+        XCTAssertEqual(widths.right, 790)
     }
 
     func testColumnWidthsSplitNarrowSpaceEvenlyAtMinimum() {
@@ -24,5 +24,15 @@ final class OfficeSplitLayoutTests: XCTestCase {
 
         XCTAssertEqual(widths.left, 300)
         XCTAssertEqual(widths.right, 300)
+    }
+
+    func testRowHeightsKeepBothPanelsAboveOneThird() {
+        let rows = OfficeSplitLayout.rowHeights(
+            availableHeight: 900,
+            fraction: 0.1
+        )
+
+        XCTAssertEqual(rows.top, 300)
+        XCTAssertEqual(rows.bottom, 600)
     }
 }
