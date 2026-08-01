@@ -36,6 +36,14 @@ enum OfficeDetailSelection: String {
     }
 }
 
+enum UsageBoardLayout {
+    static let singleColumnThreshold: CGFloat = 560
+
+    static func usesSingleColumn(for width: CGFloat) -> Bool {
+        width < singleColumnThreshold
+    }
+}
+
 struct OfficeDetailPanel: View {
     @ObservedObject private var archiveFeedStore: ArchiveFeedStore
     let selection: OfficeDetailSelection
@@ -329,68 +337,60 @@ private struct UsageBoardContent: View {
     var body: some View {
         Group {
             if let snapshot {
-                VStack(spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        UsageProviderColumn(
-                            name: "Claude",
-                            icon: "sparkles",
-                            fiveHour: snapshot.claudeFiveHour,
-                            weekly: snapshot.claudeWeekly,
-                            plan: snapshot.claudePlan,
-                            activity: snapshot.claudeActivity,
-                            tint: Color(
-                                red: 0.77,
-                                green: 0.43,
-                                blue: 0.25
-                            )
-                        )
-                        UsageProviderColumn(
-                            name: "Codex",
-                            icon: "terminal.fill",
-                            fiveHour: snapshot.codexFiveHour,
-                            weekly: snapshot.codexWeekly,
-                            plan: snapshot.codexPlan,
-                            activity: snapshot.codexActivity,
-                            tint: DashboardPalette.accent
-                        )
-                    }
-                    HStack(spacing: 5) {
-                        Spacer()
-
-                        Label(
-                            "마지막 갱신",
-                            systemImage: "clock"
-                        )
-                        .font(.system(size: 10, weight: .medium))
-
-                        Text(
-                            snapshot.fetchedAt.formatted(
-                                date: .omitted,
-                                time: .standard
-                            )
-                        )
-                        .font(.system(size: 10, weight: .medium))
-
-                        Button {
-                            Task {
-                                await refresh(force: true)
-                            }
-                        } label: {
-                            if isRefreshing {
-                                ProgressView()
-                                    .controlSize(.mini)
+                GeometryReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            if UsageBoardLayout.usesSingleColumn(
+                                for: proxy.size.width
+                            ) {
+                                VStack(spacing: 12) {
+                                    providerColumns(snapshot)
+                                }
                             } else {
-                                Image(systemName: "arrow.clockwise")
+                                HStack(alignment: .top, spacing: 12) {
+                                    providerColumns(snapshot)
+                                }
                             }
+
+                            HStack(spacing: 5) {
+                                Spacer()
+
+                                Label(
+                                    "마지막 갱신",
+                                    systemImage: "clock"
+                                )
+                                .font(.system(size: 10, weight: .medium))
+
+                                Text(
+                                    snapshot.fetchedAt.formatted(
+                                        date: .omitted,
+                                        time: .standard
+                                    )
+                                )
+                                .font(.system(size: 10, weight: .medium))
+
+                                Button {
+                                    Task {
+                                        await refresh(force: true)
+                                    }
+                                } label: {
+                                    if isRefreshing {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(isRefreshing)
+                                .accessibilityLabel("한도 새로고침")
+                                .help("한도 새로고침")
+                            }
+                            .foregroundStyle(.tertiary)
                         }
-                        .buttonStyle(.borderless)
-                        .disabled(isRefreshing)
-                        .accessibilityLabel("한도 새로고침")
-                        .help("한도 새로고침")
+                        .padding(14)
                     }
-                    .foregroundStyle(.tertiary)
                 }
-                .padding(14)
             } else if let errorMessage {
                 VStack(spacing: 10) {
                     ContentUnavailableView(
@@ -417,6 +417,34 @@ private struct UsageBoardContent: View {
         .task {
             await refresh()
         }
+    }
+
+    @ViewBuilder
+    private func providerColumns(
+        _ snapshot: AIUsageSnapshot
+    ) -> some View {
+        UsageProviderColumn(
+            name: "Claude",
+            icon: "sparkles",
+            fiveHour: snapshot.claudeFiveHour,
+            weekly: snapshot.claudeWeekly,
+            plan: snapshot.claudePlan,
+            activity: snapshot.claudeActivity,
+            tint: Color(
+                red: 0.77,
+                green: 0.43,
+                blue: 0.25
+            )
+        )
+        UsageProviderColumn(
+            name: "Codex",
+            icon: "terminal.fill",
+            fiveHour: snapshot.codexFiveHour,
+            weekly: snapshot.codexWeekly,
+            plan: snapshot.codexPlan,
+            activity: snapshot.codexActivity,
+            tint: DashboardPalette.accent
+        )
     }
 
     @MainActor
