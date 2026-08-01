@@ -2,8 +2,20 @@
 
 import XCTest
 @testable import OfficeCore
+@testable import OfficeGame
 
 final class TaskPromptPresentationTests: XCTestCase {
+    func testImageAttachmentUsesPreviewAction() {
+        XCTAssertEqual(
+            taskAttachmentOpenActionTitle(for: "/tmp/screenshot.png"),
+            "미리보기에서 열기"
+        )
+        XCTAssertEqual(
+            taskAttachmentOpenActionTitle(for: "/tmp/report.pdf"),
+            "Finder에서 보기"
+        )
+    }
+
     func testSeparatesCanonicalAttachmentBlock() {
         let presentation = TaskPromptPresentation(
             prompt: """
