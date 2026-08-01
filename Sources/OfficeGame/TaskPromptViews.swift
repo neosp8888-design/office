@@ -10,15 +10,32 @@ struct TaskPromptAttachmentList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(attachments, id: \.path) { attachment in
-                Button {
-                    openTaskAttachment(attachment.path)
-                } label: {
-                    HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        openTaskAttachmentThumbnail(attachment.path)
+                    } label: {
                         TaskAttachmentThumbnail(
                             path: attachment.path,
                             size: 36
                         )
+                    }
+                    .buttonStyle(.plain)
+                    .help(taskAttachmentOpenActionTitle(
+                        for: attachment.path,
+                        isThumbnail: true
+                    ))
+                    .accessibilityLabel(
+                        "첨부 썸네일 \(attachment.name), "
+                            + taskAttachmentOpenActionTitle(
+                                for: attachment.path,
+                                isThumbnail: true
+                            )
+                    )
 
+                    Button {
+                        openTaskAttachmentInFinder(attachment.path)
+                    } label: {
+                        HStack(spacing: 8) {
                         Text(attachment.name)
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(DashboardPalette.accent)
@@ -32,8 +49,14 @@ struct TaskPromptAttachmentList: View {
                         Spacer(minLength: 0)
                     }
                     .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(attachment.path)\nFinder에서 보기")
+                    .accessibilityLabel(
+                        "첨부 파일 \(attachment.name), Finder에서 보기, "
+                            + "경로 \(attachment.path)"
+                    )
                 }
-                .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .frame(minHeight: 44)
                 .background(
@@ -42,15 +65,6 @@ struct TaskPromptAttachmentList: View {
                         cornerRadius: 8,
                         style: .continuous
                     )
-                )
-                .help(
-                    "\(attachment.path)\n"
-                        + taskAttachmentOpenActionTitle(for: attachment.path)
-                )
-                .accessibilityLabel(
-                    "첨부 파일 \(attachment.name), "
-                        + "\(taskAttachmentOpenActionTitle(for: attachment.path)), "
-                        + "경로 \(attachment.path)"
                 )
             }
         }
@@ -63,29 +77,49 @@ struct TaskPromptAttachmentSummary: View {
     var body: some View {
         if let attachment = attachments.first {
             HStack(spacing: 5) {
-                TaskAttachmentThumbnail(
-                    path: attachment.path,
-                    size: 20
+                Button {
+                    openTaskAttachmentThumbnail(attachment.path)
+                } label: {
+                    TaskAttachmentThumbnail(
+                        path: attachment.path,
+                        size: 20
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(taskAttachmentOpenActionTitle(
+                    for: attachment.path,
+                    isThumbnail: true
+                ))
+                .accessibilityLabel(
+                    "첨부 썸네일 \(attachment.name), "
+                        + taskAttachmentOpenActionTitle(
+                            for: attachment.path,
+                            isThumbnail: true
+                        )
                 )
 
-                Text(attachment.name)
-                    .lineLimit(1)
+                Button {
+                    openTaskAttachmentInFinder(attachment.path)
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(attachment.name)
+                            .lineLimit(1)
 
-                if attachments.count > 1 {
-                    Text("+\(attachments.count - 1)")
-                        .fontWeight(.bold)
+                        if attachments.count > 1 {
+                            Text("+\(attachments.count - 1)")
+                                .fontWeight(.bold)
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
+                .help("\(attachment.path)\nFinder에서 보기")
+                .accessibilityLabel(
+                    "첨부 파일 \(attachment.name), Finder에서 보기, "
+                        + "경로 \(attachment.path)"
+                )
             }
             .font(.system(size: 8.5, weight: .medium))
             .foregroundStyle(.secondary)
-            .help(attachment.path)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(
-                "첨부 파일 \(attachment.name), 경로 \(attachment.path)"
-                    + (attachments.count > 1
-                        ? ", 외 \(attachments.count - 1)개"
-                        : "")
-            )
         }
     }
 }
@@ -155,10 +189,10 @@ private struct TaskAttachmentThumbnail: View {
     }
 }
 
-private func openTaskAttachment(_ path: String) {
+private func openTaskAttachmentThumbnail(_ path: String) {
     let url = URL(fileURLWithPath: path)
     guard taskAttachmentIsImage(path) else {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        openTaskAttachmentInFinder(path)
         return
     }
 
@@ -166,7 +200,7 @@ private func openTaskAttachment(_ path: String) {
         guard let previewURL = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: "com.apple.Preview"
         ) else {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            openTaskAttachmentInFinder(path)
             return
         }
         do {
@@ -176,13 +210,22 @@ private func openTaskAttachment(_ path: String) {
                 configuration: .init()
             )
         } catch {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            openTaskAttachmentInFinder(path)
         }
     }
 }
 
-func taskAttachmentOpenActionTitle(for path: String) -> String {
-    taskAttachmentIsImage(path) ? "미리보기에서 열기" : "Finder에서 보기"
+private func openTaskAttachmentInFinder(_ path: String) {
+    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+}
+
+func taskAttachmentOpenActionTitle(
+    for path: String,
+    isThumbnail: Bool
+) -> String {
+    isThumbnail && taskAttachmentIsImage(path)
+        ? "미리보기에서 열기"
+        : "Finder에서 보기"
 }
 
 private func taskAttachmentIsImage(_ path: String) -> Bool {
