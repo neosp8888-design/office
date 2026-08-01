@@ -196,10 +196,14 @@ struct CharacterInteractionLayer: View {
                         }
                         .buttonStyle(.plain)
                         .position(
-                            x: fittedFrame.minX
-                                + bubbleAnchor.x * scale,
-                            y: fittedFrame.minY
-                                + bubbleAnchor.y * scale
+                            OfficeBubbleLayout.position(
+                                for: character.id,
+                                bubbleAnchor: bubbleAnchor,
+                                fittedFrame: fittedFrame,
+                                scale: scale,
+                                artStyle: artStyle,
+                                fallbackHitbox: character.hitbox.rect
+                            )
                         )
                         .allowsHitTesting(!isThinking)
                         .transition(
@@ -231,6 +235,42 @@ struct CharacterInteractionLayer: View {
                 value: speechBubbleStore.bubbles
             )
         }
+    }
+}
+
+enum OfficeBubbleLayout {
+    static let bossMaximumWidth: CGFloat = 80
+    static let bossLeadingGap: CGFloat = 8
+
+    static func position(
+        for character: OfficeCharacter,
+        bubbleAnchor: CGPoint,
+        fittedFrame: CGRect,
+        scale: CGFloat,
+        artStyle: OfficeArtStyle,
+        fallbackHitbox: CGRect
+    ) -> CGPoint {
+        let idealPosition = CGPoint(
+            x: fittedFrame.minX + bubbleAnchor.x * scale,
+            y: fittedFrame.minY + bubbleAnchor.y * scale
+        )
+        guard character == .boss else {
+            return idealPosition
+        }
+
+        let bossHitbox = OfficeInteractionGeometry.characterHitbox(
+            for: .boss,
+            artStyle: artStyle,
+            fallback: fallbackHitbox
+        )
+        let bossRightEdge = fittedFrame.minX + bossHitbox.maxX * scale
+        return CGPoint(
+            x: max(
+                idealPosition.x,
+                bossRightEdge + bossLeadingGap + bossMaximumWidth / 2
+            ),
+            y: idealPosition.y
+        )
     }
 }
 
