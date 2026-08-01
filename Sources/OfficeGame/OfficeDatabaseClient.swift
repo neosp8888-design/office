@@ -550,9 +550,20 @@ enum WorkspaceReviewStatus: String, Decodable, Equatable, Sendable {
 struct WorkspaceChangedFile: Decodable, Equatable, Identifiable, Sendable {
     let status: String
     let path: String
+    let previousPath: String?
+
+    init(
+        status: String,
+        path: String,
+        previousPath: String? = nil
+    ) {
+        self.status = status
+        self.path = path
+        self.previousPath = previousPath
+    }
 
     var id: String {
-        "\(status)|\(path)"
+        "\(status)|\(previousPath ?? "")|\(path)"
     }
 }
 

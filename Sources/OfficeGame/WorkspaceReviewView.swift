@@ -19,6 +19,8 @@ struct WorkspaceReviewPanel: View {
 
     @State private var detailedReview: TurnWorkspaceReview?
     @State private var isDiffExpanded = false
+    @State private var isWorkRecordListExpanded = false
+    @State private var isWorkRecordDiffExpanded = false
     @State private var isLoadingDiff = false
     @State private var isResolving = false
     @State private var showsApprovalConfirmation = false
@@ -63,6 +65,8 @@ struct WorkspaceReviewPanel: View {
             if detailedReview.reviewTree != updatedWorkspace.reviewTree {
                 self.detailedReview = nil
                 isDiffExpanded = false
+                isWorkRecordListExpanded = false
+                isWorkRecordDiffExpanded = false
                 return
             }
             if
@@ -97,6 +101,10 @@ struct WorkspaceReviewPanel: View {
 
     private var currentReview: TurnWorkspaceReview {
         detailedReview ?? workspace
+    }
+
+    private var fileGroups: WorkspaceReviewFileGroups {
+        WorkspaceReviewFileGroups(files: currentReview.changedFiles)
     }
 
     private var header: some View {
@@ -153,41 +161,45 @@ struct WorkspaceReviewPanel: View {
 
     private var changedFileSummary: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(
-                Array(
-                    currentReview.changedFiles
-                        .prefix(Self.visibleFileLimit)
+            if !fileGroups.primary.isEmpty {
+                fileGroupLabel(
+                    title: "검토할 변경",
+                    count: fileGroups.primary.count
                 )
-            ) { file in
-                HStack(spacing: 7) {
-                    Text(file.status)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(statusColor)
-                        .frame(width: 24, alignment: .leading)
-
-                    WorkspaceFileRevealButton(
-                        title: file.path,
-                        path: file.path,
-                        workspaceDirectory: currentReview
-                            .reviewFileBaseDirectory(
-                                fallback: currentReview.repositoryRoot
-                            ),
-                        foregroundColor: .secondary,
-                        accessibilityIdentifier:
-                            "reviewFile-\(turnID)-\(file.id)"
-                    )
-                }
+                changedFileRows(
+                    Array(fileGroups.primary.prefix(Self.visibleFileLimit))
+                )
+            } else {
+                Label("작업 기록만 변경됨", systemImage: "doc.text")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
 
             let hiddenFileCount = max(
                 0,
-                currentReview.changedFiles.count - Self.visibleFileLimit
+                fileGroups.primary.count - Self.visibleFileLimit
             )
             if hiddenFileCount > 0 {
                 Text("그 외 \(hiddenFileCount)개 파일")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 31)
+            }
+
+            if !fileGroups.workRecords.isEmpty {
+                DisclosureGroup(isExpanded: $isWorkRecordListExpanded) {
+                    changedFileRows(fileGroups.workRecords)
+                        .padding(.top, 5)
+                } label: {
+                    fileGroupLabel(
+                        title: "작업 기록",
+                        count: fileGroups.workRecords.count,
+                        systemImage: "doc.text"
+                    )
+                    .contentShape(Rectangle())
+                }
+                .tint(.secondary)
+                .accessibilityIdentifier("workspaceWorkRecords-\(turnID)")
             }
         }
         .padding(9)
@@ -224,23 +236,39 @@ struct WorkspaceReviewPanel: View {
             if isDiffExpanded {
                 Group {
                     if let diff = currentReview.diff, !diff.isEmpty {
-                        ScrollView([.horizontal, .vertical]) {
-                            Text(diff)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(Color.primary.opacity(0.82))
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: true, vertical: true)
-                                .frame(
-                                    maxWidth: .infinity,
-                                    alignment: .topLeading
+                        let diffGroups = WorkspaceReviewDiffGroups(diff: diff)
+                        VStack(alignment: .leading, spacing: 7) {
+                            if !diffGroups.primary.isEmpty {
+                                diffText(diffGroups.primary)
+                            } else {
+                                Text("작업 기록 외의 변경은 없습니다.")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !diffGroups.workRecords.isEmpty {
+                                DisclosureGroup(
+                                    isExpanded: $isWorkRecordDiffExpanded
+                                ) {
+                                    diffText(
+                                        diffGroups.workRecords,
+                                        maxHeight: 220
+                                    )
+                                    .padding(.top, 6)
+                                } label: {
+                                    fileGroupLabel(
+                                        title: "작업 기록 diff",
+                                        count: fileGroups.workRecords.count,
+                                        systemImage: "doc.text"
+                                    )
+                                    .contentShape(Rectangle())
+                                }
+                                .tint(.secondary)
+                                .accessibilityIdentifier(
+                                    "workspaceWorkRecordDiff-\(turnID)"
                                 )
-                                .padding(9)
+                            }
                         }
-                        .frame(maxHeight: 260)
-                        .background(
-                            Color(nsColor: .textBackgroundColor).opacity(0.72),
-                            in: RoundedRectangle(cornerRadius: 8)
-                        )
                     } else if !isLoadingDiff {
                         Text("표시할 텍스트 diff가 없습니다.")
                             .font(.system(size: 10, weight: .medium))
@@ -373,6 +401,7 @@ struct WorkspaceReviewPanel: View {
     private func toggleDiff() {
         if isDiffExpanded {
             isDiffExpanded = false
+            isWorkRecordDiffExpanded = false
             return
         }
 
@@ -442,5 +471,163 @@ struct WorkspaceReviewPanel: View {
         _ = NSWorkspace.shared.open(
             URL(fileURLWithPath: directory, isDirectory: true)
         )
+    }
+
+    @ViewBuilder
+    private func changedFileRows(_ files: [WorkspaceChangedFile]) -> some View {
+        ForEach(files) { file in
+            HStack(spacing: 7) {
+                Text(file.status)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(statusColor)
+                    .frame(width: 24, alignment: .leading)
+
+                WorkspaceFileRevealButton(
+                    title: file.reviewDisplayPath,
+                    path: file.path,
+                    workspaceDirectory: currentReview
+                        .reviewFileBaseDirectory(
+                            fallback: currentReview.repositoryRoot
+                        ),
+                    foregroundColor: .secondary,
+                    accessibilityIdentifier:
+                        "reviewFile-\(turnID)-\(file.id)"
+                )
+            }
+        }
+    }
+
+    private func fileGroupLabel(
+        title: String,
+        count: Int,
+        systemImage: String? = nil
+    ) -> some View {
+        HStack(spacing: 6) {
+            if let systemImage {
+                Image(systemName: systemImage)
+            }
+            Text(title)
+            Spacer(minLength: 6)
+            Text("\(count)개")
+                .foregroundStyle(.tertiary)
+        }
+        .font(.system(size: 9.5, weight: .semibold))
+        .foregroundStyle(.secondary)
+    }
+
+    private func diffText(
+        _ diff: String,
+        maxHeight: CGFloat = 260
+    ) -> some View {
+        ScrollView([.horizontal, .vertical]) {
+            Text(diff)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color.primary.opacity(0.82))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(9)
+        }
+        .frame(maxHeight: maxHeight)
+        .background(
+            Color(nsColor: .textBackgroundColor).opacity(0.72),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+    }
+}
+
+struct WorkspaceReviewFileGroups: Equatable {
+    let primary: [WorkspaceChangedFile]
+    let workRecords: [WorkspaceChangedFile]
+
+    init(files: [WorkspaceChangedFile]) {
+        primary = files.filter { !$0.isRoutineWorkRecord }
+        workRecords = files.filter(\.isRoutineWorkRecord)
+    }
+}
+
+struct WorkspaceReviewDiffGroups: Equatable {
+    let primary: String
+    let workRecords: String
+
+    init(diff: String) {
+        let sections = Self.sections(in: diff)
+        primary = sections
+            .filter { !Self.isRoutineWorkRecordSection($0) }
+            .joined(separator: "\n")
+        workRecords = sections
+            .filter(Self.isRoutineWorkRecordSection)
+            .joined(separator: "\n")
+    }
+
+    private static let routineWorkRecordHeaders: Set<String> = {
+        let paths = ["checklist.md", "context-notes.md"]
+        return Set(paths.flatMap { previousPath in
+            paths.map { path in
+                "diff --git a/\(previousPath) b/\(path)"
+            }
+        })
+    }()
+
+    private static func sections(in diff: String) -> [String] {
+        guard diff.hasPrefix("diff --git ") else {
+            return [diff]
+        }
+
+        var sections: [String] = []
+        var currentLines: [Substring] = []
+        for line in diff.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        ) {
+            if line.hasPrefix("diff --git "), !currentLines.isEmpty {
+                sections.append(currentLines.joined(separator: "\n"))
+                currentLines.removeAll(keepingCapacity: true)
+            }
+            currentLines.append(line)
+        }
+        if !currentLines.isEmpty {
+            sections.append(currentLines.joined(separator: "\n"))
+        }
+        return sections
+    }
+
+    private static func isRoutineWorkRecordSection(_ section: String) -> Bool {
+        let header = section
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init) ?? ""
+        return routineWorkRecordHeaders.contains(header)
+    }
+}
+
+extension WorkspaceChangedFile {
+    private static let routineWorkRecordPaths: Set<String> = [
+        "checklist.md",
+        "context-notes.md",
+    ]
+
+    var isRoutineWorkRecord: Bool {
+        guard Self.routineWorkRecordPaths.contains(path) else {
+            return false
+        }
+        guard status.hasPrefix("R") || status.hasPrefix("C") else {
+            return true
+        }
+        guard let previousPath else {
+            return false
+        }
+        return Self.routineWorkRecordPaths.contains(previousPath)
+    }
+
+    var reviewDisplayPath: String {
+        guard
+            let previousPath,
+            previousPath != path,
+            status.hasPrefix("R") || status.hasPrefix("C")
+        else {
+            return path
+        }
+        return "\(previousPath) → \(path)"
     }
 }
