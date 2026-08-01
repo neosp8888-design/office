@@ -220,7 +220,7 @@ test("Codex 파일 변경은 변경 종류와 경로를 표시한다", () => {
 
 test("긴 절대 변경 경로는 업무 폴더 상대경로로 보존한다", () => {
   const workdir = [
-    "/Users/neo/.officestra/worktrees/03ffd78858a8",
+    "/Users/example/.officestra/worktrees/03ffd78858a8",
     "right-woman-70d95def-eae4-441f-b0ec-e5cd2e230dee",
   ].join("/");
   const event = parseAgentEvent(
@@ -249,7 +249,7 @@ test("긴 절대 변경 경로는 업무 폴더 상대경로로 보존한다", (
 });
 
 test("업무 폴더 안의 긴 상대경로는 축약하지 않는다", () => {
-  const workdir = "/Users/neo/office";
+  const workdir = "/Users/example/office";
   const path = [
     "packages",
     ...Array.from({ length: 10 }, (_, index) => `nested-${index}`),
@@ -278,9 +278,9 @@ test("업무 폴더 안의 긴 상대경로는 축약하지 않는다", () => {
 });
 
 test("업무 폴더 밖의 긴 절대경로는 상대경로로 바꾸지 않는다", () => {
-  const workdir = "/Users/neo/office";
+  const workdir = "/Users/example/office";
   const outsidePath = [
-    "/Users/neo/another-worktree",
+    "/Users/example/another-worktree",
     ...Array.from({ length: 8 }, () => "very-long-segment"),
     "Sources",
     "Outside.swift",
@@ -587,7 +587,7 @@ test("Claude 노트북 편집도 안전한 경로를 표시한다", () => {
 
 test("Claude 편집 경로도 업무 폴더 상대경로로 보존한다", () => {
   const workdir = [
-    "/Users/neo/.officestra/worktrees/03ffd78858a8",
+    "/Users/example/.officestra/worktrees/03ffd78858a8",
     "left-woman-f2b5a998-f546-42db-b447-cf74977e810c",
   ].join("/");
   const event = parseAgentEvent(
@@ -614,7 +614,7 @@ test("Claude 편집 경로도 업무 폴더 상대경로로 보존한다", () =>
 });
 
 test("Claude 스트리밍 편집 경로도 업무 폴더 상대경로로 보존한다", () => {
-  const workdir = "/Users/neo/office";
+  const workdir = "/Users/example/office";
   const event = parseAgentEvent(
     JSON.stringify({
       type: "stream_event",

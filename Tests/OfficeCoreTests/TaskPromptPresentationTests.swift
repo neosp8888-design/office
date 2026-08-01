@@ -36,7 +36,7 @@ final class TaskPromptPresentationTests: XCTestCase {
 
             첨부 파일
             다음 로컬 파일을 업무 자료로 사용하세요.
-            - "화면.png": "/Users/neo/office/.office-attachments/abc/01-화면.png"
+            - "화면.png": "/Users/example/office/.office-attachments/abc/01-화면.png"
             """
         )
 
@@ -46,7 +46,7 @@ final class TaskPromptPresentationTests: XCTestCase {
             [
                 TaskPromptAttachment(
                     name: "화면.png",
-                    path: "/Users/neo/office/.office-attachments/abc/01-화면.png"
+                    path: "/Users/example/office/.office-attachments/abc/01-화면.png"
                 ),
             ]
         )

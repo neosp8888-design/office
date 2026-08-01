@@ -6,6 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/version-1.0.0-5B5BD6" alt="OFFICESTRA 1.0.0">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -143,70 +144,196 @@ Git 저장소가 아닌 `workdir`는 기존 공유 폴더 방식으로 실행된
 파일 변경만 격리하며 프로세스, 포트, 데이터베이스와 작업 폴더 밖의 파일은
 격리하지 않는다.
 
-## 요구 사항
+## 설치
 
-- macOS 14 이상
-- Swift 5.10 이상
-- Node.js와 npm
-- Docker와 Docker Compose
-- 사용할 Codex CLI 또는 Claude Code CLI의 설치 및 로그인
-- 선택 사항으로 사용량 통계를 표시할 CodexBar CLI
+OFFICESTRA는 macOS 14 이상에서 동작한다. Codex CLI 또는 Claude Code CLI 중
+하나 이상에 로그인되어 있어야 하며, Swift 5.10 이상, Node.js, npm, Docker
+Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수
+있다.
 
-사용 가능한 모델은 설치된 CLI 버전과 계정 권한에 따라 달라질 수 있다.
+### 가장 쉬운 방법 · 사용 중인 AI에게 맡기기
+
+이미 Codex나 Claude Code를 쓰고 있다면 그 도구의 새 대화에 아래 요청을 그대로
+붙여 넣는 방법을 권장한다. 설치 도중 관리자 암호나 Docker 첫 실행 화면처럼
+사람이 직접 처리해야 하는 단계만 AI가 설명하고 기다리게 된다.
+
+```text
+이 Mac에 OFFICESTRA v1.0.0을 설치하고 실제 실행까지 확인해줘.
+저장소는 https://github.com/neosp8888-design/office.git 이야.
+
+1. macOS 버전과 CPU 종류를 확인하고 Git, Swift 5.10+, Node.js/npm, Docker Compose,
+   현재 내가 쓰는 Codex CLI 또는 Claude Code CLI의 설치·로그인 상태를 먼저 점검해.
+2. 없는 필수 도구만 공식 설치 방법으로 설치해. 기존 AI CLI 로그인은 건드리지 말고,
+   내가 사용하지 않는 다른 AI CLI는 억지로 설치하지 마.
+3. 관리자 암호 입력이나 macOS/Docker 화면 클릭이 필요하면 이유와 누를 항목을
+   한국어로 정확히 설명한 뒤 기다려.
+4. ~/OFFICESTRA가 없으면 v1.0.0 태그를 그 폴더에 clone해. 폴더가 이미 있으면
+   삭제하거나 덮어쓰지 말고 Git 상태를 확인한 뒤 안전한 방법을 제안해.
+5. AI 직원들이 작업할 폴더를 나에게 물어보고 characters.json의 workdir를 그
+   절대 경로로 바꿔. 정하지 못하면 ~/Projects를 새로 만들어 사용해.
+6. AI CLI가 하나만 설치되어 있으면 다섯 직원의 provider·model 기본값을 그 CLI에
+   맞게 설정해.
+7. Docker Desktop을 실행한 뒤 백엔드와 DB 마이그레이션을 시작하고 /health가
+   {"ok":true}인지 확인해.
+8. Node 구문 검사와 테스트, Swift 테스트를 실행하고 OFFICESTRA 앱을 빌드해 열어.
+9. 기존 폴더, Git 변경, Docker 데이터는 삭제하지 마. 완료하면 설치 위치, 버전,
+   실행 중인 항목, 다시 실행하는 방법과 검증 결과만 쉽게 정리해줘.
+```
+
+### 새 Mac에서 직접 설치하기
+
+아래 명령은 macOS의 **터미널** 앱에 한 블록씩 붙여 넣는다. 터미널은 Finder의
+`응용 프로그램 → 유틸리티 → 터미널`에서 열 수 있다.
+
+#### 1. Apple 개발 도구 설치
+
+```sh
+xcode-select --install
+```
+
+설치 창이 나타나면 **설치**를 누르고 약관에 동의한다. 완료된 뒤 터미널을 다시
+열고 다음 두 명령이 버전을 출력하는지 확인한다.
+
+```sh
+git --version
+swift --version
+```
+
+Swift가 5.10보다 낮으면 `시스템 설정 → 일반 → 소프트웨어 업데이트`를 먼저
+실행한다. 그래도 낮으면 App Store에서 최신 Xcode를 설치한다.
+
+#### 2. Homebrew와 Node.js 설치
+
+[Homebrew 공식 사이트](https://brew.sh/)의 설치 명령을 실행한다.
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+설치 마지막에 `Next steps`가 나오면 표시된 두 줄도 그대로 실행한다. 새 터미널을
+열어 `brew --version`이 보이면 Node.js를 설치한다.
+
+```sh
+brew install node
+node --version
+npm --version
+```
+
+#### 3. Docker Desktop 설치
+
+```sh
+brew install --cask docker
+open -a Docker
+```
+
+Docker 첫 화면에서 약관에 동의하고 **Use recommended settings**를 선택한다.
+메뉴 막대의 고래 아이콘이 준비 상태가 될 때까지 기다린 뒤 확인한다.
+
+```sh
+docker compose version
+docker info
+```
+
+설치 화면으로 진행하고 싶다면 [Docker의 Mac 설치 안내](https://docs.docker.com/desktop/setup/install/mac-install/)에서
+Apple 칩 또는 Intel 칩에 맞는 설치 파일을 받아도 된다.
+
+#### 4. 사용할 AI CLI 확인
+
+이미 사용하는 CLI가 있으면 다시 설치할 필요가 없다.
 
 ```sh
 codex --version
 claude --version
-docker compose version
-swift --version
 ```
 
-## 빠른 시작
-
-### 1. 저장소 준비
+둘 다 없을 때만 원하는 하나를 설치하고 로그인한다. Codex는 브라우저에서
+ChatGPT 로그인을 마치며, Claude Code는 처음 `claude`를 실행할 때 안내에 따라
+계정을 선택한다.
 
 ```sh
-git clone https://github.com/neosp8888-design/office.git
-cd office
+# Codex를 사용할 경우
+npm install -g @openai/codex
+codex login
+
+# Claude Code를 사용할 경우
+npm install -g @anthropic-ai/claude-code
+claude
 ```
 
-`Sources/OfficeCore/Resources/characters.json`의 최상위 `workdir`를 에이전트가
-실제로 작업할 절대 경로로 바꾼다.
+공식 안내는 [Codex CLI 설치](https://help.openai.com/en/articles/11096431)와
+[Claude Code 설정](https://docs.anthropic.com/en/docs/claude-code/getting-started)에서
+확인할 수 있다.
 
-```json
-{
-  "workdir": "/absolute/path/to/workspace"
-}
-```
-
-Git 업무의 격리 worktree는 기본적으로 `~/.officestra/worktrees` 아래에
-생성된다. 백엔드의 `OFFICE_WORKTREE_ROOT` 환경 변수로 다른 경로를 지정할 수 있다.
-
-### 2. PostgreSQL과 백엔드 실행
+#### 5. OFFICESTRA 내려받기
 
 ```sh
+git clone --branch v1.0.0 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+cd "$HOME/OFFICESTRA"
+```
+
+직원들이 작업할 폴더를 하나 만든 뒤 공개 예시 경로를 자신의 경로로 바꾼다.
+
+```sh
+mkdir -p "$HOME/Projects"
+sed -i '' "s#/Users/your-name/Projects#$HOME/Projects#" Sources/OfficeCore/Resources/characters.json
+grep '"workdir"' Sources/OfficeCore/Resources/characters.json
+```
+
+다른 폴더를 쓰려면 `$HOME/Projects` 대신 그 폴더의 절대 경로를 넣는다. Git 업무의
+격리 worktree는 기본적으로 `~/.officestra/worktrees`에 생성된다.
+
+#### 6. 백엔드와 앱 실행
+
+첫 번째 터미널에서 다음 명령을 실행하고 창을 열어 둔다.
+
+```sh
+cd "$HOME/OFFICESTRA"
 ./scripts/start-backend.sh
 ```
 
-스크립트는 pgvector PostgreSQL 컨테이너를 시작하고 Node 의존성과 DB
-마이그레이션을 준비한 뒤 `127.0.0.1:4317`에서 백엔드를 실행한다. 이 명령은
-전경에서 계속 실행되므로 첫 번째 터미널을 열어둔다.
+처음 실행할 때 PostgreSQL 이미지와 Node 패키지를 받으므로 시간이 걸릴 수 있다.
+다른 터미널 탭에서 상태를 확인했을 때 `{"ok":true}`가 나오면 준비된 것이다.
 
 ```sh
 curl -fsS http://127.0.0.1:4317/health
-# {"ok":true}
 ```
-
-### 3. 앱 실행
 
 두 번째 터미널에서 앱을 실행한다.
 
 ```sh
+cd "$HOME/OFFICESTRA"
 swift run OfficeLLM
 ```
 
-사용자에게 보이는 앱 이름은 `OFFICESTRA`지만 SwiftPM 제품명과 내부 실행
-파일명은 기존 호환성을 위해 `OfficeLLM`을 유지한다.
+첫 빌드는 수 분 걸릴 수 있다. 사용자에게 보이는 앱 이름은 `OFFICESTRA`지만
+SwiftPM 제품명은 호환성을 위해 `OfficeLLM`을 유지한다. AI CLI를 하나만
+설치했다면 앱 우측 상단 설정에서 다섯 직원 모두 그 CLI와 사용 가능한 모델로
+바꾼 뒤 업무를 시작한다.
+
+### 종료와 다시 실행
+
+앱과 백엔드를 실행한 각 터미널에서 `Control + C`를 누르면 종료된다. PostgreSQL
+컨테이너까지 멈추되 대화 데이터는 보존하려면 OFFICESTRA 폴더에서 실행한다.
+
+```sh
+docker compose -f infra/compose.yaml down
+```
+
+`down -v`는 저장된 대화 DB까지 삭제하므로 초기화를 원할 때만 사용한다. 다시
+실행할 때는 Docker Desktop을 먼저 열고, 위의 백엔드 명령과 앱 명령을 각각 다시
+실행한다.
+
+### 막힐 때 확인할 것
+
+- `command not found: brew`가 나오면 터미널을 닫았다 다시 열고 Homebrew 설치
+  마지막의 `Next steps` 두 줄을 실행한다.
+- `Cannot connect to the Docker daemon`이 나오면 Docker Desktop을 열고 준비가
+  끝날 때까지 기다린다.
+- `4317` 또는 `54329` 포트를 이미 사용 중이라는 메시지가 나오면 모르는
+  프로세스를 종료하지 말고 Codex나 Claude에게 해당 포트의 소유자 확인을 맡긴다.
+- 앱은 열리지만 직원 업무가 실패하면 선택한 CLI의 `--version`과 로그인 상태를
+  확인하고, 설치되지 않은 CLI로 지정된 직원 설정을 바꾼다.
+- 백엔드가 시작되지 않으면 첫 번째 터미널의 마지막 오류 전체를 AI에게 전달한다.
 
 ## 직원 실행 설정
 

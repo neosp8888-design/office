@@ -6,6 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/version-1.0.0-5B5BD6" alt="OFFICESTRA 1.0.0">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -117,65 +118,196 @@ Immediately before merging, OFFICESTRA verifies that the source worktree is stil
 
 Non-Git workdirs continue to use the existing shared-folder behavior. A Git worktree isolates repository file changes only; it does not isolate processes, ports, databases, or files outside the workdir.
 
-## Requirements
+## Installation
 
-- macOS 14 or later.
-- Swift 5.10 or later.
-- Node.js and npm.
-- Docker with Docker Compose.
-- An installed and authenticated Codex CLI, Claude Code CLI, or both. If only one is installed, configure every coworker to use that provider before running tasks.
-- Optional CodexBar CLI for additional usage statistics.
+OFFICESTRA requires macOS 14 or later, Swift 5.10 or later, Node.js with npm,
+Docker Desktop, and at least one authenticated Codex CLI or Claude Code CLI.
+Available models depend on the installed CLI version and account entitlements.
 
-Available models depend on the installed CLI versions and account entitlements.
+### Easiest path · ask your coding agent
+
+If you already use Codex or Claude Code, paste the prompt below into a new
+conversation. The agent can handle the terminal work and stop only when macOS
+needs your password or a Docker first-run confirmation.
+
+```text
+Install OFFICESTRA v1.0.0 on this Mac and verify that it actually runs.
+Repository: https://github.com/neosp8888-design/office.git
+
+1. Check the macOS version and CPU architecture, then verify Git, Swift 5.10+,
+   Node.js/npm, Docker Compose, and the Codex CLI or Claude Code CLI I already use.
+2. Install only missing prerequisites through their official installation paths.
+   Preserve my existing AI CLI login and do not install another AI provider unless needed.
+3. If an administrator password or a macOS/Docker GUI action is required, explain
+   exactly why and what I should click, then wait for me.
+4. If ~/OFFICESTRA does not exist, clone the v1.0.0 tag there. If it exists, do not
+   delete or overwrite it; inspect its Git state and propose a safe path.
+5. Ask which folder the AI coworkers should work in and set the absolute workdir in
+   characters.json. If I have no preference, create and use ~/Projects.
+6. If only one AI provider is installed, set all five coworkers to compatible
+   provider and model defaults before building.
+7. Start Docker Desktop, the backend, and database migrations, then verify that
+   /health returns {"ok":true}.
+8. Run the Node checks and tests plus the Swift tests, build OFFICESTRA, and open it.
+9. Do not delete existing folders, Git changes, or Docker data. Report the install
+   path, versions, running components, restart instructions, and verification results.
+```
+
+### Manual setup on a new Mac
+
+Paste each command block into **Terminal**, found under
+`Applications → Utilities → Terminal`.
+
+#### 1. Install Apple's developer tools
+
+```sh
+xcode-select --install
+```
+
+Choose **Install** in the dialog and accept the license. Reopen Terminal when it
+finishes, then verify both tools.
+
+```sh
+git --version
+swift --version
+```
+
+If Swift is older than 5.10, run macOS Software Update first. If it is still too
+old, install the latest Xcode from the App Store.
+
+#### 2. Install Homebrew and Node.js
+
+Run the installer from the [official Homebrew site](https://brew.sh/).
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+If the installer prints `Next steps`, run the two lines it shows. Open a new
+Terminal window, confirm `brew --version`, and install Node.js.
+
+```sh
+brew install node
+node --version
+npm --version
+```
+
+#### 3. Install Docker Desktop
+
+```sh
+brew install --cask docker
+open -a Docker
+```
+
+Accept the first-run terms, choose **Use recommended settings**, and wait until
+the whale menu icon reports that Docker is ready.
+
+```sh
+docker compose version
+docker info
+```
+
+You can instead follow [Docker's official Mac installer](https://docs.docker.com/desktop/setup/install/mac-install/)
+and choose the download for Apple silicon or Intel.
+
+#### 4. Verify an AI CLI
+
+Do not reinstall a CLI you already use.
 
 ```sh
 codex --version
 claude --version
-docker compose version
-swift --version
 ```
 
-## Quick start
-
-### 1. Clone and configure
+If neither exists, install and authenticate the one you want. Codex opens a
+browser for ChatGPT sign-in. Claude Code presents its account choices the first
+time you run `claude`.
 
 ```sh
-git clone https://github.com/neosp8888-design/office.git
-cd office
+# If you use Codex
+npm install -g @openai/codex
+codex login
+
+# If you use Claude Code
+npm install -g @anthropic-ai/claude-code
+claude
 ```
 
-Update the top-level `workdir` in `Sources/OfficeCore/Resources/characters.json` to the absolute path where agents should work.
+See the official [Codex CLI setup](https://help.openai.com/en/articles/11096431)
+and [Claude Code setup](https://docs.anthropic.com/en/docs/claude-code/getting-started)
+for current provider-specific details.
 
-```json
-{
-  "workdir": "/absolute/path/to/workspace"
-}
-```
-
-Git task worktrees are created under `~/.officestra/worktrees` by default. Set the backend `OFFICE_WORKTREE_ROOT` environment variable to use a different location.
-
-### 2. Start PostgreSQL and the backend
+#### 5. Download and configure OFFICESTRA
 
 ```sh
+git clone --branch v1.0.0 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+cd "$HOME/OFFICESTRA"
+```
+
+Create a workspace for your AI coworkers and replace the public placeholder.
+
+```sh
+mkdir -p "$HOME/Projects"
+sed -i '' "s#/Users/your-name/Projects#$HOME/Projects#" Sources/OfficeCore/Resources/characters.json
+grep '"workdir"' Sources/OfficeCore/Resources/characters.json
+```
+
+Use another absolute path instead of `$HOME/Projects` if preferred. Isolated Git
+task worktrees are created under `~/.officestra/worktrees` by default.
+
+#### 6. Start the backend and app
+
+Keep the first Terminal window open while the backend runs.
+
+```sh
+cd "$HOME/OFFICESTRA"
 ./scripts/start-backend.sh
 ```
 
-The script starts a pgvector-enabled PostgreSQL container, installs Node.js dependencies when needed, prepares database migrations, and launches the backend on `127.0.0.1:4317`. It remains attached to the terminal.
+The first run downloads the PostgreSQL image and Node packages. In another
+Terminal tab, wait for the health check to return `{"ok":true}`.
 
 ```sh
 curl -fsS http://127.0.0.1:4317/health
-# {"ok":true}
 ```
 
-### 3. Run the app
-
-In a second terminal:
+Start the app from a second Terminal window.
 
 ```sh
+cd "$HOME/OFFICESTRA"
 swift run OfficeLLM
 ```
 
-The user-facing product name is `OFFICESTRA`. The Swift package product and internal executable remain `OfficeLLM` for compatibility.
+The first build can take several minutes. The visible app name is `OFFICESTRA`;
+the Swift package product remains `OfficeLLM` for compatibility. If you installed
+only one AI provider, use the upper-right settings screen to assign that provider
+and a compatible model to all five coworkers before starting work.
+
+### Stop and restart
+
+Press `Control + C` in each Terminal running the app or backend. To stop the
+PostgreSQL container without deleting conversation data, run this inside the
+OFFICESTRA folder.
+
+```sh
+docker compose -f infra/compose.yaml down
+```
+
+Do not add `-v` unless you intend to erase the stored database. To start again,
+open Docker Desktop, then rerun the backend and app commands above.
+
+### Troubleshooting
+
+- For `command not found: brew`, reopen Terminal and run the two `Next steps`
+  lines printed by the Homebrew installer.
+- For `Cannot connect to the Docker daemon`, open Docker Desktop and wait until
+  initialization finishes.
+- If ports `4317` or `54329` are occupied, do not kill an unknown process. Ask
+  Codex or Claude to identify the owner first.
+- If the app opens but a coworker fails, check the selected CLI's `--version` and
+  login state, then change any coworker assigned to an unavailable provider.
+- If the backend fails, give your coding agent the complete final error from the
+  first Terminal window.
 
 ## Agent runtime configuration
 
