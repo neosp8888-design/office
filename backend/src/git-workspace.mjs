@@ -73,8 +73,6 @@ export class GitWorkspaceManager {
         "원본 작업 폴더가 Git 저장소 밖에 있습니다.",
       );
     }
-    await requireClean(repositoryRoot, "원본 Git 작업 트리에 변경사항이 있습니다.");
-
     const baseBranch = await currentBranch(repositoryRoot);
     const baseCommit = await gitText(repositoryRoot, ["rev-parse", "HEAD"]);
     const branchName = workspaceBranchName(characterID, workspaceID);
@@ -125,7 +123,6 @@ export class GitWorkspaceManager {
         "작업 공간 준비 중 원본 브랜치가 변경됐습니다.",
       );
     }
-    await requireClean(repositoryRoot, "원본 Git 작업 트리에 변경사항이 있습니다.");
     const currentHead = await gitText(repositoryRoot, ["rev-parse", "HEAD"]);
     if (currentHead !== plan.baseCommit) {
       throw new GitWorkspaceError(
@@ -245,7 +242,7 @@ export class GitWorkspaceManager {
   }
 
   async prepareReview(workspace) {
-    await this.validateSource(workspace);
+    await this.validateSource(workspace, null, { allowDirty: true });
     await this.validateWorkspace(workspace);
     await gitText(workspace.worktreePath, ["add", "-A", "--", "."]);
 
@@ -688,17 +685,23 @@ export class GitWorkspaceManager {
     }
   }
 
-  async validateSource(workspace, expectedHead = null) {
+  async validateSource(
+    workspace,
+    expectedHead = null,
+    { allowDirty = false } = {},
+  ) {
     if (await currentBranch(workspace.repositoryRoot) !== workspace.baseBranch) {
       throw new GitWorkspaceError(
         "invalid-state",
         "원본 작업 트리의 브랜치가 변경됐습니다.",
       );
     }
-    await requireClean(
-      workspace.repositoryRoot,
-      "원본 Git 작업 트리에 변경사항이 있어 병합할 수 없습니다.",
-    );
+    if (!allowDirty) {
+      await requireClean(
+        workspace.repositoryRoot,
+        "원본 Git 작업 트리에 변경사항이 있어 병합할 수 없습니다.",
+      );
+    }
     if (expectedHead) {
       const currentHead = await gitText(
         workspace.repositoryRoot,
