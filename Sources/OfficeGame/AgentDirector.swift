@@ -595,6 +595,7 @@ final class AgentDirector: ObservableObject {
                 endedAt: nil,
                 updatedAt: submittedAt,
                 estimatedCostUsd: nil,
+                sessionContext: nil,
                 activities: [],
                 workspace: nil
             )

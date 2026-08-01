@@ -18,6 +18,7 @@ import {
   appendLocalImagePreviews,
   generatedImagesForTurn,
 } from "./local-artifacts.mjs";
+import { sessionContextUsage } from "./session-context-usage.mjs";
 import { pool, withTransaction } from "./db.mjs";
 import {
   characterSettingsRequireNewSession,
@@ -598,7 +599,21 @@ async function queryLiveFeed({ turnID = null, limit }) {
     `,
     [turnID, limit],
   );
-  return result.rows.map((turn) => withArtifactPreviews(turn));
+  return result.rows.map(
+    (turn) => withSessionContext(withArtifactPreviews(turn)),
+  );
+}
+
+function withSessionContext(turn) {
+  return {
+    ...turn,
+    sessionContext: sessionContextUsage({
+      backend: turn.backend ?? turn.characterBackend,
+      sessionID: turn.externalSessionId,
+      model: turn.model,
+      at: turn.endedAt ?? Date.now(),
+    }),
+  };
 }
 
 async function workspaceReview(response, route, method, request) {
