@@ -19,6 +19,13 @@ import {
   generatedImagesForTurn,
 } from "./local-artifacts.mjs";
 import { sessionContextUsage } from "./session-context-usage.mjs";
+import {
+  ProvenanceValidationError,
+  isUUID,
+  normalizeResponseSources,
+  parseWorkRecordFilters,
+  replaceTurnResponseSources,
+} from "./work-record-provenance.mjs";
 import { pool, withTransaction } from "./db.mjs";
 import {
   characterSettingsRequireNewSession,
@@ -109,6 +116,11 @@ function routeAgentJob(pathname) {
 
 function routeLiveFeedTurn(pathname) {
   const match = pathname.match(/^\/api\/live-feed\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function routeTurnSources(pathname) {
+  const match = pathname.match(/^\/api\/turns\/([^/]+)\/sources$/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
@@ -407,9 +419,18 @@ async function characterHistory(response, characterID) {
         t.model AS "executionModel",
         t.effort AS "executionEffort",
         t.fast_mode AS "executionFastMode",
+        COALESCE(
+          CASE
+            WHEN history_workspace.status IN ('merged', 'closed')
+              THEN history_workspace.source_workdir
+            ELSE history_workspace.execution_workdir
+          END,
+          conversation.workdir
+        ) AS "conversationWorkdir",
         t.prompt,
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
+        t.response_source_warning AS "responseSourceWarning",
         COALESCE(
           (
             SELECT text
@@ -419,9 +440,32 @@ async function characterHistory(response, characterID) {
             LIMIT 1
           ),
           ''
-        ) AS response
+        ) AS response,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', source.id,
+                'sourceKind', source.source_kind,
+                'title', source.title,
+                'locator', source.locator,
+                'excerpt', source.excerpt,
+                'ragDocumentId', source.rag_document_id,
+                'workRecordId', source.work_record_id
+              )
+              ORDER BY source.ordinal, source.created_at, source.id
+            )
+            FROM turn_response_sources AS source
+            WHERE source.turn_id = t.id
+          ),
+          '[]'::json
+        ) AS sources
       FROM turns t
       JOIN cli_sessions s ON s.id = t.cli_session_id
+      JOIN conversations AS conversation
+        ON conversation.id = s.conversation_id
+      LEFT JOIN task_workspaces AS history_workspace
+        ON history_workspace.id = t.task_workspace_id
       WHERE s.character_id = $1
       ORDER BY t.started_at DESC
     `,
@@ -457,6 +501,14 @@ async function globalHistory(response, url) {
         t.effort AS "executionEffort",
         t.fast_mode AS "executionFastMode",
         s.external_id AS "externalSessionId",
+        COALESCE(
+          CASE
+            WHEN history_workspace.status IN ('merged', 'closed')
+              THEN history_workspace.source_workdir
+            ELSE history_workspace.execution_workdir
+          END,
+          conversation.workdir
+        ) AS "conversationWorkdir",
         t.prompt,
         COALESCE(
           (
@@ -468,10 +520,34 @@ async function globalHistory(response, url) {
           ),
           ''
         ) AS response,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', source.id,
+                'sourceKind', source.source_kind,
+                'title', source.title,
+                'locator', source.locator,
+                'excerpt', source.excerpt,
+                'ragDocumentId', source.rag_document_id,
+                'workRecordId', source.work_record_id
+              )
+              ORDER BY source.ordinal, source.created_at, source.id
+            )
+            FROM turn_response_sources AS source
+            WHERE source.turn_id = t.id
+          ),
+          '[]'::json
+        ) AS sources,
         t.started_at AS "startedAt",
-        t.ended_at AS "endedAt"
+        t.ended_at AS "endedAt",
+        t.response_source_warning AS "responseSourceWarning"
       FROM turns t
       JOIN cli_sessions s ON s.id = t.cli_session_id
+      JOIN conversations AS conversation
+        ON conversation.id = s.conversation_id
+      LEFT JOIN task_workspaces AS history_workspace
+        ON history_workspace.id = t.task_workspace_id
       JOIN characters c ON c.id = s.character_id
       WHERE ($1::text IS NULL OR c.id = $1)
         AND ($2::timestamptz IS NULL OR t.started_at >= $2)
@@ -484,6 +560,194 @@ async function globalHistory(response, url) {
   send(response, 200, {
     turns: result.rows.map((turn) => withArtifactPreviews(turn)),
   });
+}
+
+async function listWorkRecords(response, url) {
+  const filters = parseWorkRecordFilters(url.searchParams);
+  const result = await pool.query(
+    `
+      WITH matching AS (
+        SELECT
+          record.id,
+          record.project_id AS "projectId",
+          project.name AS "projectName",
+          project.repository_root AS "repositoryRoot",
+          record.record_type AS "recordType",
+          record.lifecycle_state AS "lifecycleState",
+          record.title,
+          record.body,
+          record.legacy_stage_number AS "legacyStageNumber",
+          record.character_id AS "characterId",
+          record.attribution,
+          record.source_turn_id AS "sourceTurnId",
+          record.source_workspace_id AS "sourceWorkspaceId",
+          record.source_path AS "sourcePath",
+          record.source_commit AS "sourceCommit",
+          record.source_section_ordinal AS "sourceSectionOrdinal",
+          record.source_line_start AS "sourceLineStart",
+          record.source_line_end AS "sourceLineEnd",
+          record.source_section_sha256 AS "sourceSectionSha256",
+          record.metadata,
+          record.recorded_at AS "recordedAt",
+          record.updated_at AS "updatedAt",
+          CASE
+            WHEN $5::text IS NULL THEN NULL
+            ELSE ts_rank(
+              record.search_document,
+              websearch_to_tsquery('simple', $5)
+            )::double precision
+          END AS score,
+          COALESCE(
+            (
+              SELECT json_agg(
+                json_build_object(
+                  'ordinal', item.ordinal,
+                  'text', item.item_text,
+                  'isChecked', item.is_checked,
+                  'metadata', item.metadata
+                )
+                ORDER BY item.ordinal
+              )
+              FROM work_record_items AS item
+              WHERE item.record_id = record.id
+            ),
+            '[]'::json
+          ) AS items
+        FROM work_records AS record
+        JOIN projects AS project
+          ON project.id = record.project_id
+        WHERE ($1::uuid IS NULL OR record.project_id = $1)
+          AND ($2::text IS NULL OR record.record_type = $2)
+          AND ($3::text IS NULL OR record.lifecycle_state = $3)
+          AND ($4::text IS NULL OR record.attribution = $4)
+          AND (
+            $5::text IS NULL
+            OR record.search_document @@ websearch_to_tsquery('simple', $5)
+          )
+      ), page AS (
+        SELECT *
+        FROM matching
+        ORDER BY score DESC NULLS LAST, "recordedAt" DESC, id
+        LIMIT $6
+        OFFSET $7
+      )
+      SELECT
+        (SELECT count(*)::integer FROM matching) AS total,
+        COALESCE(
+          (
+            SELECT json_agg(
+              row_to_json(page)
+              ORDER BY score DESC NULLS LAST, "recordedAt" DESC, id
+            )
+            FROM page
+          ),
+          '[]'::json
+        ) AS records
+    `,
+    [
+      filters.projectID,
+      filters.recordType,
+      filters.lifecycleState,
+      filters.attribution,
+      filters.query,
+      filters.limit,
+      filters.offset,
+    ],
+  );
+  send(response, 200, {
+    records: result.rows[0].records,
+    total: result.rows[0].total,
+    limit: filters.limit,
+    offset: filters.offset,
+  });
+}
+
+async function listTurnSources(response, turnID) {
+  if (!isUUID(turnID)) {
+    throw new ProvenanceValidationError("turnId 값은 UUID여야 합니다.");
+  }
+  const result = await pool.query(
+    `
+      SELECT
+        turn.id,
+        turn.response_source_warning AS warning,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', source.id,
+                'sourceKind', source.source_kind,
+                'title', source.title,
+                'locator', source.locator,
+                'excerpt', source.excerpt,
+                'ragDocumentId', source.rag_document_id,
+                'workRecordId', source.work_record_id
+              )
+              ORDER BY source.ordinal, source.created_at, source.id
+            )
+            FROM turn_response_sources AS source
+            WHERE source.turn_id = turn.id
+          ),
+          '[]'::json
+        ) AS sources
+      FROM turns AS turn
+      WHERE turn.id = $1
+    `,
+    [turnID],
+  );
+  if (result.rowCount === 0) {
+    send(response, 404, { error: "대화를 찾을 수 없습니다." });
+    return;
+  }
+  send(response, 200, {
+    sources: result.rows[0].sources,
+    warning: result.rows[0].warning,
+  });
+}
+
+async function replaceTurnSources(response, turnID, body) {
+  if (!isUUID(turnID)) {
+    throw new ProvenanceValidationError("turnId 값은 UUID여야 합니다.");
+  }
+  const sources = normalizeResponseSources(body.sources);
+  const stored = await withTransaction(async (client) => {
+    const turn = await client.query(
+      "SELECT id, status FROM turns WHERE id = $1 FOR UPDATE",
+      [turnID],
+    );
+    if (turn.rowCount === 0) {
+      return { outcome: "missing" };
+    }
+    if (["pending", "running"].includes(turn.rows[0].status)) {
+      return { outcome: "running" };
+    }
+    const records = await replaceTurnResponseSources(
+      client,
+      turnID,
+      sources,
+    );
+    await client.query(
+      `
+        UPDATE turns
+        SET updated_at = now(), response_source_warning = NULL
+        WHERE id = $1
+      `,
+      [turnID],
+    );
+    return { outcome: "stored", records };
+  });
+  if (stored.outcome === "missing") {
+    send(response, 404, { error: "대화를 찾을 수 없습니다." });
+    return;
+  }
+  if (stored.outcome === "running") {
+    send(response, 409, {
+      error: "진행 중인 대화의 출처는 완료 후 수정할 수 있습니다.",
+    });
+    return;
+  }
+  broadcast({ type: "feed.changed", turnId: turnID });
+  send(response, 200, { sources: stored.records });
 }
 
 async function queryLiveFeed({ turnID = null, limit }) {
@@ -522,10 +786,12 @@ async function queryLiveFeed({ turnID = null, limit }) {
         t.effort,
         t.fast_mode AS "fastMode",
         s.external_id AS "externalSessionId",
+        conversation.workdir AS "conversationWorkdir",
         t.prompt,
         t.status,
         t.needs_input AS "needsInput",
         t.error_message AS "errorMessage",
+        t.response_source_warning AS "responseSourceWarning",
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
         t.updated_at AS "updatedAt",
@@ -558,12 +824,33 @@ async function queryLiveFeed({ turnID = null, limit }) {
             WHERE activity.turn_id = t.id
           ),
           '[]'::json
-        ) AS activities
+        ) AS activities,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', source.id,
+                'sourceKind', source.source_kind,
+                'title', source.title,
+                'locator', source.locator,
+                'excerpt', source.excerpt,
+                'ragDocumentId', source.rag_document_id,
+                'workRecordId', source.work_record_id
+              )
+              ORDER BY source.ordinal, source.created_at, source.id
+            )
+            FROM turn_response_sources AS source
+            WHERE source.turn_id = t.id
+          ),
+          '[]'::json
+        ) AS sources
       FROM selected_turn_ids AS selected_turn
       JOIN turns AS t
         ON t.id = selected_turn.id
       JOIN cli_sessions AS s
         ON s.id = t.cli_session_id
+      JOIN conversations AS conversation
+        ON conversation.id = s.conversation_id
       JOIN characters AS c
         ON c.id = s.character_id
       LEFT JOIN usage_records AS usage
@@ -1185,6 +1472,7 @@ const server = createServer(async (request, response) => {
     const historyCharacterID = routeCharacterHistory(url.pathname);
     const jobCharacterID = routeAgentJob(url.pathname);
     const liveFeedTurnID = routeLiveFeedTurn(url.pathname);
+    const turnSourcesID = routeTurnSources(url.pathname);
     const workspaceReviewRoute = routeWorkspaceReview(url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
@@ -1207,6 +1495,22 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/history"
     ) {
       await globalHistory(response, url);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/work-records"
+    ) {
+      await listWorkRecords(response, url);
+    } else if (request.method === "GET" && turnSourcesID) {
+      await listTurnSources(response, turnSourcesID);
+    } else if (request.method === "PUT" && turnSourcesID) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await replaceTurnSources(
+        response,
+        turnSourcesID,
+        await readJSON(request),
+      );
     } else if (
       request.method === "GET" &&
       url.pathname === "/api/live-feed"
@@ -1268,6 +1572,10 @@ const server = createServer(async (request, response) => {
       send(response, 404, { error: "경로를 찾을 수 없습니다." });
     }
   } catch (error) {
+    if (error instanceof ProvenanceValidationError) {
+      send(response, 400, { error: error.message });
+      return;
+    }
     if (
       error instanceof AgentBusyError ||
       error instanceof GitWorkspaceError

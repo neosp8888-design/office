@@ -666,6 +666,52 @@ test("사용자 확인 표식을 질문 상태로 분리한다", () => {
     {
       text: "어느 색으로 할까요?",
       needsInput: true,
+      sources: [],
     },
   );
+});
+
+test("응답 끝의 출처 블록을 본문과 분리한다", () => {
+  assert.deepEqual(
+    decodeAgentResponse(`완료했습니다.
+
+[OFFICE_SOURCES]
+[{"kind":"file","title":"설정","locator":"/repo/config.json:3"},{"kind":"database","title":"업무 기록","locator":"work_records/5e7aa706-3c02-4d7a-8d9d-bfe735731fcb","workRecordId":"5e7aa706-3c02-4d7a-8d9d-bfe735731fcb","excerpt":"세션 유지"}]`),
+    {
+      text: "완료했습니다.",
+      needsInput: false,
+      sources: [
+        {
+          ordinal: 0,
+          sourceKind: "file",
+          title: "설정",
+          locator: "/repo/config.json:3",
+          excerpt: null,
+          ragDocumentID: null,
+          workRecordID: null,
+          metadata: {},
+        },
+        {
+          ordinal: 1,
+          sourceKind: "database",
+          title: "업무 기록",
+          locator: "work_records/5e7aa706-3c02-4d7a-8d9d-bfe735731fcb",
+          excerpt: "세션 유지",
+          ragDocumentID: null,
+          workRecordID: "5e7aa706-3c02-4d7a-8d9d-bfe735731fcb",
+          metadata: {},
+        },
+      ],
+    },
+  );
+});
+
+test("잘못된 출처 블록도 기계 판독용 내용을 화면에서 숨긴다", () => {
+  const response = "완료했습니다.\n[OFFICE_SOURCES]\nnot-json";
+  assert.deepEqual(decodeAgentResponse(response), {
+    text: "완료했습니다.",
+    needsInput: false,
+    sources: [],
+    sourceError: "응답 근거 형식을 읽지 못했습니다.",
+  });
 });

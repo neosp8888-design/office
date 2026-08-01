@@ -150,7 +150,13 @@ final class ArchiveFeedStore: ObservableObject {
         let updatedRevision = turns.map {
             "\($0.id)|\($0.status.rawValue)|"
                 + "\($0.workspace?.status.rawValue ?? "")|"
-                + "\($0.workspace?.mergedCommit ?? "")"
+                + "\($0.workspace?.mergedCommit ?? "")|"
+                + "\($0.responseSourceWarning ?? "")|"
+                + $0.responseSources.map {
+                    "\($0.id),\($0.sourceKind.rawValue),\($0.title),"
+                        + "\($0.locator),\($0.excerpt ?? "")"
+                }
+                .joined(separator: ",")
         }
         guard revision != updatedRevision else {
             return
@@ -594,6 +600,7 @@ final class AgentDirector: ObservableObject {
                 effort: character.effort,
                 fastMode: character.fastMode,
                 externalSessionId: nil,
+                conversationWorkdir: nil,
                 prompt: TaskPromptPresentation.canonicalPrompt(
                     text: prompt,
                     attachmentPaths: attachmentPaths
@@ -602,12 +609,14 @@ final class AgentDirector: ObservableObject {
                 status: .running,
                 needsInput: false,
                 errorMessage: nil,
+                responseSourceWarning: nil,
                 startedAt: submittedAt,
                 endedAt: nil,
                 updatedAt: submittedAt,
                 estimatedCostUsd: nil,
                 sessionContext: nil,
                 activities: [],
+                sources: nil,
                 workspace: nil
             )
         )

@@ -156,6 +156,8 @@ test("Codex 재개는 현재 역할 지침을 같은 세션에 전달한다", ()
   );
 
   assert.match(instructions, /업데이트된 역할 지침을 따른다/);
+  assert.match(instructions, /\[OFFICE_SOURCES\]/);
+  assert.match(instructions, /rag, database, file/);
   assert.equal(argumentsList.at(-1), "계속해줘.");
 });
 
@@ -1788,6 +1790,126 @@ test("사용자 답이 필요한 완료 턴은 workspace 검토를 시작하지 
 
   assert.equal(reviewCount, 0);
   assert.equal(state.workspace.status, "active");
+});
+
+test("완료 응답의 출처 블록은 본문에서 숨기고 별도 행으로 저장한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/INSERT INTO turn_response_sources/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{ id: "source-1", sourceKind: "file" }],
+      };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  const rawResponse = [
+    "완료했습니다.",
+    "[OFFICE_SOURCES]",
+    '[{"kind":"file","title":"README","locator":"README.md:8"}]',
+  ].join("\n");
+  const state = {
+    ...makeCodexActivityState(),
+    workdir: "/repo",
+    character: { id: "boss", backend: "codex" },
+    workspace: null,
+    initialGeneratedImages: new Set(),
+    externalSessionID: null,
+    responseText: rawResponse,
+    visibleAgentMessages: [{ key: "message-1", text: rawResponse }],
+    usage: null,
+    cancelRequested: false,
+  };
+  runtime.running.set("boss", state);
+
+  await runtime.complete(state, {
+    text: "완료했습니다.",
+    needsInput: false,
+    sources: [{
+      ordinal: 0,
+      sourceKind: "file",
+      title: "README",
+      locator: "/repo/README.md:8",
+      excerpt: null,
+      ragDocumentID: null,
+      workRecordID: null,
+      metadata: {},
+    }],
+  });
+
+  const messageUpdate = queries.find(({ text }) =>
+    /UPDATE messages/.test(text)
+  );
+  const sourceInsert = queries.find(({ text }) =>
+    /INSERT INTO turn_response_sources/.test(text)
+  );
+  assert.equal(messageUpdate.values[1], "완료했습니다.");
+  assert.equal(sourceInsert.values[2], "file");
+  assert.equal(sourceInsert.values[4], "README.md:8");
+});
+
+test("존재하지 않는 출처 참조는 응답을 살리고 경고로 표시한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/SELECT id::text FROM rag_documents/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  const state = {
+    ...makeCodexActivityState(),
+    workdir: "/repo",
+    character: { id: "boss", backend: "codex" },
+    workspace: null,
+    initialGeneratedImages: new Set(),
+    externalSessionID: null,
+    responseText: '{"ok":true}',
+    visibleAgentMessages: [{ key: "message-1", text: '{"ok":true}' }],
+    usage: null,
+    cancelRequested: false,
+  };
+
+  await runtime.complete(state, {
+    text: '{"ok":true}',
+    needsInput: false,
+    sources: [{
+      ordinal: 0,
+      sourceKind: "rag",
+      title: "없는 문서",
+      locator: "rag_documents/missing",
+      excerpt: null,
+      ragDocumentID: "44444444-4444-4444-8444-444444444444",
+      workRecordID: null,
+      metadata: {},
+    }],
+  });
+
+  const messageUpdate = queries.find(({ text }) =>
+    /UPDATE messages/.test(text)
+  );
+  const turnUpdate = queries.find(({ text }) =>
+    /response_source_warning/.test(text)
+  );
+  assert.equal(messageUpdate.values[1], '{"ok":true}');
+  assert.match(turnUpdate.values[2], /RAG 출처 문서 참조를 찾을 수 없습니다/);
+  assert.equal(
+    queries.some(({ text }) => /INSERT INTO turn_response_sources/.test(text)),
+    false,
+  );
 });
 
 test("provider 전환 전에 변경이 있으면 검토 대기로 바꾸고 세션 종료를 막는다", async () => {

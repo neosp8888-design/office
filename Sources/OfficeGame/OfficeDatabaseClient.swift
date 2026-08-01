@@ -453,12 +453,19 @@ struct HistoryTurn: Decodable, Identifiable, Sendable {
     let sessionId: String
     let prompt: String
     let response: String
+    let sources: [LiveFeedSource]?
     let executionBackend: AgentBackend?
     let executionModel: String?
     let executionEffort: String?
     let executionFastMode: Bool?
+    let conversationWorkdir: String?
+    let responseSourceWarning: String?
     let startedAt: Date
     let endedAt: Date?
+
+    var responseSources: [LiveFeedSource] {
+        sources ?? []
+    }
 }
 
 struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
@@ -471,10 +478,17 @@ struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
     let executionEffort: String?
     let executionFastMode: Bool?
     let externalSessionId: String?
+    let conversationWorkdir: String?
     let prompt: String
     let response: String
+    let sources: [LiveFeedSource]?
+    let responseSourceWarning: String?
     let startedAt: Date
     let endedAt: Date?
+
+    var responseSources: [LiveFeedSource] {
+        sources ?? []
+    }
 }
 
 enum LiveTurnStatus: String, Decodable, Sendable {
@@ -643,6 +657,51 @@ struct SessionContextUsage: Decodable, Equatable, Sendable {
     }
 }
 
+enum LiveFeedSourceKind: String, Decodable, Sendable {
+    case rag
+    case database
+    case file
+
+    var title: String {
+        switch self {
+        case .rag:
+            "RAG"
+        case .database:
+            "DB"
+        case .file:
+            "파일"
+        }
+    }
+}
+
+struct LiveFeedSource: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let sourceKind: LiveFeedSourceKind
+    let title: String
+    let locator: String
+    let excerpt: String?
+    let ragDocumentId: String?
+    let workRecordId: String?
+
+    var filePath: String? {
+        guard sourceKind == .file else {
+            return nil
+        }
+        let components = locator.split(separator: ":", omittingEmptySubsequences: false)
+        guard components.count > 1, let suffix = components.last else {
+            return locator
+        }
+        let lineRange = suffix.split(separator: "-", omittingEmptySubsequences: false)
+        guard
+            !lineRange.isEmpty,
+            lineRange.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) })
+        else {
+            return locator
+        }
+        return components.dropLast().joined(separator: ":")
+    }
+}
+
 struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let characterId: String
@@ -653,18 +712,25 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let effort: String?
     let fastMode: Bool?
     let externalSessionId: String?
+    let conversationWorkdir: String?
     let prompt: String
     let response: String
     let status: LiveTurnStatus
     let needsInput: Bool
     let errorMessage: String?
+    let responseSourceWarning: String?
     let startedAt: Date
     let endedAt: Date?
     let updatedAt: Date
     let estimatedCostUsd: Double?
     let sessionContext: SessionContextUsage?
     let activities: [LiveFeedActivity]
+    let sources: [LiveFeedSource]?
     let workspace: TurnWorkspaceReview?
+
+    var responseSources: [LiveFeedSource] {
+        sources ?? []
+    }
 
     func replacingID(with id: String) -> LiveFeedTurn {
         LiveFeedTurn(
@@ -677,17 +743,20 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             effort: effort,
             fastMode: fastMode,
             externalSessionId: externalSessionId,
+            conversationWorkdir: conversationWorkdir,
             prompt: prompt,
             response: response,
             status: status,
             needsInput: needsInput,
             errorMessage: errorMessage,
+            responseSourceWarning: responseSourceWarning,
             startedAt: startedAt,
             endedAt: endedAt,
             updatedAt: updatedAt,
             estimatedCostUsd: estimatedCostUsd,
             sessionContext: sessionContext,
             activities: activities,
+            sources: sources,
             workspace: workspace
         )
     }

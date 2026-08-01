@@ -309,7 +309,13 @@ private struct ArchiveShelfContent: View {
         turns.map {
             "\($0.id)|\($0.status.rawValue)|"
                 + "\($0.workspace?.status.rawValue ?? "")|"
-                + "\($0.workspace?.mergedCommit ?? "")"
+                + "\($0.workspace?.mergedCommit ?? "")|"
+                + "\($0.responseSourceWarning ?? "")|"
+                + $0.responseSources.map {
+                    "\($0.id),\($0.sourceKind.rawValue),\($0.title),"
+                        + "\($0.locator),\($0.excerpt ?? "")"
+                }
+                .joined(separator: ",")
         }
         .joined(separator: ";")
     }
@@ -1620,6 +1626,17 @@ private struct LiveTurnCard: View {
                     }
                 }
 
+                if let warning = turn.responseSourceWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(message: warning)
+                }
+
+                if !turn.responseSources.isEmpty {
+                    ResponseSourceList(
+                        sources: turn.responseSources,
+                        workspaceDirectory: effectiveWorkspaceDirectory
+                    )
+                }
+
                 if let workspace = turn.workspace,
                     workspace.status.showsReviewPanel
                 {
@@ -1760,7 +1777,10 @@ private struct LiveTurnCard: View {
     }
 
     private var effectiveWorkspaceDirectory: String {
-        turn.workspace?.fileBaseDirectory(fallback: workspaceDirectory)
+        turn.workspace?.fileBaseDirectory(
+            fallback: turn.conversationWorkdir ?? workspaceDirectory
+        )
+            ?? turn.conversationWorkdir
             ?? workspaceDirectory
     }
 
