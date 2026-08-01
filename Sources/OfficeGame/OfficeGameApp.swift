@@ -160,16 +160,21 @@ private struct OfficeGameView: View {
                     let offDutyReason = director.offDutyReason(
                         for: character
                     )
+                    let failureMessage = director.failureMessage(
+                        for: character
+                    )
                     bubbleDetail = BubbleDetail(
                         character: character,
                         name: director.displayName(for: character),
                         message: offDutyReason ?? message,
                         isQuestion:
                             director.pendingQuestion(for: character) != nil,
-                        isFailure:
-                            director.failureMessage(for: character) != nil,
+                        isFailure: failureMessage != nil,
                         isOffDuty: offDutyReason != nil
                     )
+                    if offDutyReason != nil || failureMessage != nil {
+                        director.acknowledgeWarningBubble(for: character)
+                    }
                 }
             )
         }

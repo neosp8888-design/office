@@ -242,6 +242,7 @@ final class AgentDirector: ObservableObject {
     private var nextLiveFeedRequestSequence = 0
     private var lastAppliedLiveFeedRequestSequence = 0
     private var observedTurnStatuses: [String: LiveTurnStatus] = [:]
+    private var acknowledgedWarningMessages: [OfficeCharacter: String] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
     private var workingBubbleTask: Task<Void, Never>?
@@ -512,6 +513,15 @@ final class AgentDirector: ObservableObject {
         offDutyCharacters[character]
     }
 
+    func acknowledgeWarningBubble(for character: OfficeCharacter) {
+        guard let message = warningMessage(for: character) else {
+            return
+        }
+        acknowledgedWarningMessages[character] = message
+        bubbleDismissTasks.removeValue(forKey: character)?.cancel()
+        speechBubbleStore.remove(for: character)
+    }
+
     func select(_ character: CharacterConfiguration) {
         hasUserChosenCharacter = true
         if let selectedCharacterID {
@@ -562,6 +572,7 @@ final class AgentDirector: ObservableObject {
         questionSubmissionErrors[character.id] = nil
         turnPersistenceErrors[character.id] = nil
         unreviewedCompletedCharacters.remove(character.id)
+        acknowledgedWarningMessages[character.id] = nil
         failedCharacters[character.id] = nil
         offDutyCharacters[character.id] = nil
         if latestQuestion?.character == character.id {
@@ -900,8 +911,8 @@ final class AgentDirector: ObservableObject {
             with: bubbles.filter {
                 pendingQuestions[$0.key] != nil
                     || runningCharacters.contains($0.key)
-                    || failedCharacters[$0.key] != nil
-                    || offDutyCharacters[$0.key] != nil
+                    || !isWarningAcknowledged(for: $0.key)
+                        && warningMessage(for: $0.key) != nil
             }
         )
     }
@@ -1383,6 +1394,7 @@ final class AgentDirector: ObservableObject {
             {
                 applyTerminalTurn(turn, for: character)
             } else if turn.status == .completed, !turn.needsInput {
+                acknowledgedWarningMessages[character] = nil
                 if failedCharacters[character] != nil {
                     failedCharacters[character] = nil
                 }
@@ -1423,6 +1435,7 @@ final class AgentDirector: ObservableObject {
     ) {
         switch turn.status {
         case .completed:
+            acknowledgedWarningMessages[character] = nil
             if failedCharacters[character] != nil {
                 failedCharacters[character] = nil
             }
@@ -1458,11 +1471,13 @@ final class AgentDirector: ObservableObject {
                 if offDutyCharacters[character] != message {
                     offDutyCharacters[character] = message
                 }
-                showBubble(
-                    "오늘 할당량 끝, 퇴근 모드 🌙",
-                    for: character,
-                    autoDismiss: false
-                )
+                if !isWarningAcknowledged(for: character) {
+                    showBubble(
+                        "오늘 할당량 끝, 퇴근 모드 🌙",
+                        for: character,
+                        autoDismiss: false
+                    )
+                }
             } else {
                 if offDutyCharacters[character] != nil {
                     offDutyCharacters[character] = nil
@@ -1470,11 +1485,13 @@ final class AgentDirector: ObservableObject {
                 if failedCharacters[character] != message {
                     failedCharacters[character] = message
                 }
-                showBubble(
-                    "앗, 작업 멈춤\n\(message)",
-                    for: character,
-                    autoDismiss: false
-                )
+                if !isWarningAcknowledged(for: character) {
+                    showBubble(
+                        "앗, 작업 멈춤\n\(message)",
+                        for: character,
+                        autoDismiss: false
+                    )
+                }
             }
         case .pending, .running:
             break
@@ -1540,6 +1557,7 @@ final class AgentDirector: ObservableObject {
         sessionIDs[character] = nil
         pendingQuestions[character] = nil
         questionSubmissionErrors[character] = nil
+        acknowledgedWarningMessages[character] = nil
         failedCharacters[character] = nil
         offDutyCharacters[character] = nil
         bubbleDismissTasks.removeValue(forKey: character)?.cancel()
@@ -1547,6 +1565,19 @@ final class AgentDirector: ObservableObject {
         if latestQuestion?.character == character {
             latestQuestion = nil
         }
+    }
+
+    private func warningMessage(for character: OfficeCharacter) -> String? {
+        failedCharacters[character] ?? offDutyCharacters[character]
+    }
+
+    private func isWarningAcknowledged(
+        for character: OfficeCharacter
+    ) -> Bool {
+        guard let message = warningMessage(for: character) else {
+            return false
+        }
+        return acknowledgedWarningMessages[character] == message
     }
 
     private func characterWithCurrentName(
