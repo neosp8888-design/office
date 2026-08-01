@@ -117,9 +117,10 @@ flowchart LR
 
 ## 병렬 개발과 Git 안전 수칙
 
-Git 저장소를 `workdir`로 지정하면 OFFICESTRA가 활성 CLI 세션마다 전용
-branch와 worktree를 만든다. 같은 Codex thread 또는 Claude session을
-재개하는 동안에는 같은 worktree를 사용한다.
+Git 저장소를 `workdir`로 지정하면 OFFICESTRA가 검토 단위 업무마다 전용
+branch와 worktree를 만든다. worktree는 파일 변경만 격리하며 Codex thread나
+Claude session의 수명주기와는 독립적이다. 승인·병합·거절 뒤 새 worktree를
+만들어도 같은 직원의 CLI 세션은 그대로 재개한다.
 
 변경이 생긴 업무가 성공하면 우측 업무 카드가 기준 커밋 대비 파일 목록과
 diff를 보여주고 해당 직원의 다음 업무를 잠근다. 사용자가 `승인 후 병합`을
@@ -128,7 +129,8 @@ diff를 보여주고 해당 직원의 다음 업무를 잠근다. 사용자가 `
 
 Codex ↔ Claude 전환으로 활성 세션을 끝낼 때 변경사항이 남아 있으면 먼저
 검토 대기로 전환하고 설정 저장을 `409`로 중단한다. 변경사항이 없는 빈
-worktree만 자동으로 정리한 뒤 새 provider 세션을 시작한다.
+worktree만 자동으로 정리한 뒤 새 provider 세션을 시작한다. worktree 자체의
+승인·병합·거절은 provider 세션을 종료하지 않는다.
 
 병합 직전에는 다음 조건을 다시 검사한다.
 

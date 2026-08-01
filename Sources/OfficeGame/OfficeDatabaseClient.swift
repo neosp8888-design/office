@@ -620,6 +620,13 @@ struct TurnWorkspaceReview: Decodable, Equatable, Sendable {
             && diff != nil
             && diffTruncated == false
     }
+
+    var canRetryMerge: Bool {
+        status == .conflict
+            && !(reviewTree?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty ?? true)
+    }
 }
 
 struct SessionContextUsage: Decodable, Equatable, Sendable {

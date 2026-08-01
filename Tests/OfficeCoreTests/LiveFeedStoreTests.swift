@@ -276,6 +276,14 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertFalse(unknownCompleteness.hasCompleteDiffForApproval)
     }
 
+    func testWorkspaceMergeRetryRequiresConflictReviewTree() {
+        let conflict = makeWorkspace(status: .conflict)
+        let awaiting = makeWorkspace(status: .awaitingApproval)
+
+        XCTAssertTrue(conflict.canRetryMerge)
+        XCTAssertFalse(awaiting.canRetryMerge)
+    }
+
     func testLiveFeedWorkspaceDecodesWithoutOnDemandDiff() throws {
         let payload = Data(
             #"""

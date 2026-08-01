@@ -591,7 +591,7 @@ async function queryLiveFeed({ turnID = null, limit }) {
         WHERE task_workspace.review_turn_id = t.id
           OR (
             task_workspace.review_turn_id IS NULL
-            AND task_workspace.cli_session_id = s.id
+            AND task_workspace.id = t.task_workspace_id
           )
         LIMIT 1
       ) AS workspace ON true

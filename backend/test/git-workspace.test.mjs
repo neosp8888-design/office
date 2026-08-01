@@ -28,14 +28,14 @@ test("Git 저장소가 아닌 작업 폴더는 기존 실행 경로를 유지한
     assert.equal(await manager.isRepository(), false);
     assert.equal(
       await manager.planProvision({
-        sessionID: "session-plan",
+        workspaceID: "workspace-plan",
         characterID: "boss",
       }),
       null,
     );
     assert.equal(
       await manager.provision({
-        sessionID: "session-1",
+        workspaceID: "workspace-1",
         characterID: "boss",
       }),
       null,
@@ -73,7 +73,7 @@ test("저장소 하위 작업 폴더를 같은 상대 위치의 worktree로 격�
     });
     assert.equal(await manager.isRepository(), true);
     const plan = await manager.planProvision({
-      sessionID: "session-subdir",
+      workspaceID: "workspace-subdir",
       characterID: "right-woman",
     });
     assert.equal(pathExists(plan.worktreePath), false);
@@ -126,7 +126,7 @@ test("worktree 생성 뒤 실행 폴더 검증 실패는 branch와 worktree를 �
       worktreeRoot: fixture.worktreeRoot,
     });
     const plan = await manager.planProvision({
-      sessionID: "session-cleanup",
+      workspaceID: "workspace-cleanup",
       characterID: "boss",
     });
 
@@ -164,7 +164,7 @@ test("재시작 복구는 provisioning worktree와 branch를 정리한다", asyn
       worktreeRoot: fixture.worktreeRoot,
     });
     const plan = await manager.planProvision({
-      sessionID: "session-recovery-cleanup",
+      workspaceID: "workspace-recovery-cleanup",
       characterID: "boss",
     });
     mkdirSync(join(plan.worktreePath, ".."), { recursive: true });
@@ -210,7 +210,7 @@ test("provisioning 정리는 manager 소유가 아닌 branch를 삭제하지 않
       worktreeRoot: fixture.worktreeRoot,
     });
     const plan = await manager.planProvision({
-      sessionID: "session-recovery-failure",
+      workspaceID: "workspace-recovery-failure",
       characterID: "boss",
     });
 
@@ -314,7 +314,7 @@ test("원본 저장소의 추적 또는 미추적 변경이 있으면 생성을 
 
       await assert.rejects(
         manager.provision({
-          sessionID: `session-${dirty}`,
+          workspaceID: `workspace-${dirty}`,
           characterID: "boss",
         }),
         (error) => error instanceof GitWorkspaceError &&
@@ -337,7 +337,7 @@ test("worktree 보관 폴더가 원본 저장소 내부면 생성 전에 거절�
 
     await assert.rejects(
       manager.provision({
-        sessionID: "session-nested",
+        workspaceID: "workspace-nested",
         characterID: "boss",
       }),
       (error) => error instanceof GitWorkspaceError &&
@@ -552,6 +552,122 @@ test("원본 최신 변경과 충돌하면 main을 바꾸지 않고 중단한다
     assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
     assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
     assert.equal(readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"), "main side\n");
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("병렬 업무 기록 append는 양쪽 내용을 보존해 자동 병합한다", async () => {
+  const fixture = createRepository();
+  try {
+    const checklistBase = "# 체크리스트\n\n## 공통 기록\n- 기준\n";
+    const contextBase = "# 컨텍스트\n\n## 공통 기록\n- 기준\n";
+    writeFileSync(
+      join(fixture.repositoryRoot, "checklist.md"),
+      checklistBase,
+    );
+    writeFileSync(
+      join(fixture.repositoryRoot, "context-notes.md"),
+      contextBase,
+    );
+    git(fixture.repositoryRoot, "add", "checklist.md", "context-notes.md");
+    git(fixture.repositoryRoot, "commit", "-m", "add work records");
+
+    const { manager, workspace } = await fixture.provision();
+    writeFileSync(
+      join(workspace.worktreePath, "checklist.md"),
+      `${checklistBase}\n## 직원 기록\n- 직원 변경\n`,
+    );
+    writeFileSync(
+      join(workspace.worktreePath, "context-notes.md"),
+      `${contextBase}\n## 직원 컨텍스트\n- 직원 변경\n`,
+    );
+    const review = await manager.prepareReview(workspace);
+
+    writeFileSync(
+      join(fixture.repositoryRoot, ".gitattributes"),
+      "/checklist.md merge=union\n/context-notes.md merge=union\n",
+    );
+    writeFileSync(
+      join(fixture.repositoryRoot, "checklist.md"),
+      `${checklistBase}\n## main 기록\n- main 변경\n`,
+    );
+    writeFileSync(
+      join(fixture.repositoryRoot, "context-notes.md"),
+      `${contextBase}\n## main 컨텍스트\n- main 변경\n`,
+    );
+    git(fixture.repositoryRoot, "add", "-A");
+    git(fixture.repositoryRoot, "commit", "-m", "configure work record merge");
+
+    await manager.approve(workspace, {
+      expectedReviewTree: review.reviewTree,
+      commitMessage: "test: merge parallel work records",
+    });
+
+    const checklist = readFileSync(
+      join(fixture.repositoryRoot, "checklist.md"),
+      "utf8",
+    );
+    const context = readFileSync(
+      join(fixture.repositoryRoot, "context-notes.md"),
+      "utf8",
+    );
+    assert.match(checklist, /직원 변경/);
+    assert.match(checklist, /main 변경/);
+    assert.match(context, /직원 변경/);
+    assert.match(context, /main 변경/);
+    assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("하위 폴더의 같은 이름 파일은 일반 충돌로 차단한다", async () => {
+  const fixture = createRepository();
+  try {
+    mkdirSync(join(fixture.repositoryRoot, "docs"));
+    writeFileSync(
+      join(fixture.repositoryRoot, ".gitattributes"),
+      "/checklist.md merge=union\n/context-notes.md merge=union\n",
+    );
+    writeFileSync(
+      join(fixture.repositoryRoot, "docs", "checklist.md"),
+      "# 사용자 문서\n\n공통 문장\n",
+    );
+    git(fixture.repositoryRoot, "add", "-A");
+    git(fixture.repositoryRoot, "commit", "-m", "add nested checklist");
+
+    const { manager, workspace } = await fixture.provision();
+    writeFileSync(
+      join(workspace.worktreePath, "docs", "checklist.md"),
+      "# 사용자 문서\n\n직원 변경\n",
+    );
+    const review = await manager.prepareReview(workspace);
+
+    writeFileSync(
+      join(fixture.repositoryRoot, "docs", "checklist.md"),
+      "# 사용자 문서\n\nmain 변경\n",
+    );
+    git(fixture.repositoryRoot, "add", "docs/checklist.md");
+    git(fixture.repositoryRoot, "commit", "-m", "change nested checklist");
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: review.reviewTree,
+        commitMessage: "test: nested work record conflict",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "conflict",
+    );
+    assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
+    assert.equal(
+      readFileSync(
+        join(fixture.repositoryRoot, "docs", "checklist.md"),
+        "utf8",
+      ),
+      "# 사용자 문서\n\nmain 변경\n",
+    );
   } finally {
     fixture.remove();
   }
@@ -803,7 +919,7 @@ function createRepository({ withSubdirectory = false } = {}) {
         worktreeRoot,
       });
       const workspace = await manager.provision({
-        sessionID: "session-1",
+        workspaceID: "workspace-1",
         characterID: "boss",
       });
       return { manager, workspace };
