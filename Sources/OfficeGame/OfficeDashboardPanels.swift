@@ -47,6 +47,7 @@ enum UsageBoardLayout {
 struct OfficeDetailPanel: View {
     @ObservedObject private var archiveFeedStore: ArchiveFeedStore
     let selection: OfficeDetailSelection
+    @State private var usageRefreshRequestID = UUID()
 
     init(
         director: AgentDirector,
@@ -76,9 +77,22 @@ struct OfficeDetailPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(selection.title)
                         .font(.system(size: 15, weight: .bold))
-                    Text(selection.subtitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text(selection.subtitle)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        if selection == .usage {
+                            Button {
+                                usageRefreshRequestID = UUID()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("한도 새로고침")
+                            .help("한도 새로고침")
+                        }
+                    }
                 }
                 Spacer()
             }
@@ -93,7 +107,9 @@ struct OfficeDetailPanel: View {
                 case .archive:
                     ArchiveShelfContent(turns: archiveFeedStore.turns)
                 case .usage:
-                    UsageBoardContent()
+                    UsageBoardContent(
+                        refreshRequestID: usageRefreshRequestID
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -330,6 +346,7 @@ private struct ArchiveShelfContent: View {
 }
 
 private struct UsageBoardContent: View {
+    let refreshRequestID: UUID
     @State private var snapshot: AIUsageSnapshot?
     @State private var errorMessage: String?
     @State private var isRefreshing = false
@@ -351,42 +368,6 @@ private struct UsageBoardContent: View {
                                     providerColumns(snapshot)
                                 }
                             }
-
-                            HStack(spacing: 5) {
-                                Spacer()
-
-                                Label(
-                                    "마지막 갱신",
-                                    systemImage: "clock"
-                                )
-                                .font(.system(size: 10, weight: .medium))
-
-                                Text(
-                                    snapshot.fetchedAt.formatted(
-                                        date: .omitted,
-                                        time: .standard
-                                    )
-                                )
-                                .font(.system(size: 10, weight: .medium))
-
-                                Button {
-                                    Task {
-                                        await refresh(force: true)
-                                    }
-                                } label: {
-                                    if isRefreshing {
-                                        ProgressView()
-                                            .controlSize(.mini)
-                                    } else {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                }
-                                .buttonStyle(.borderless)
-                                .disabled(isRefreshing)
-                                .accessibilityLabel("한도 새로고침")
-                                .help("한도 새로고침")
-                            }
-                            .foregroundStyle(.tertiary)
                         }
                         .padding(14)
                     }
@@ -414,8 +395,8 @@ private struct UsageBoardContent: View {
                 ProgressView("CLI 한도를 확인하는 중")
             }
         }
-        .task {
-            await refresh()
+        .task(id: refreshRequestID) {
+            await refresh(force: true)
         }
     }
 
