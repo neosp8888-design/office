@@ -4,13 +4,15 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -18,7 +20,10 @@ import {
   AgentBusyError,
   AgentJobNotFoundError,
   AgentRuntime,
+  adoptClaudeSession,
   buildArguments,
+  claudeSessionPath,
+  claudeSessionResumable,
   codexUsageDelta,
   latestCodexUsageFromRollout,
   promptWithAttachments,
@@ -205,6 +210,116 @@ test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달
   );
   assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
   assert.equal(argumentsList.includes("--resume"), true);
+});
+
+const claudeResumeCharacter = {
+  backend: "claude",
+  model: "claude-sonnet-5",
+  effort: "high",
+  fastMode: false,
+  permission: "bypassPermissions",
+  name: "클대리",
+  seat: "좌측 아래",
+  identityPrompt: "업무 지시를 정확히 이해한다.",
+};
+
+function withClaudeSessionHome(run) {
+  const home = mkdtempSync(join(tmpdir(), "office-claude-home-"));
+  const workdir = mkdtempSync(join(tmpdir(), "office-claude-workdir-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    return run({ workdir });
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(home, { recursive: true, force: true });
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
+function writeClaudeSession(workdir, sessionID) {
+  const path = claudeSessionPath(workdir, sessionID);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `{"sessionId":"${sessionID}"}\n`);
+  return path;
+}
+
+test("Claude 세션 경로는 실행 디렉토리를 그대로 반영한다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const path = claudeSessionPath(workdir, "session-1");
+    const encoded = realpathSync(workdir).replace(/[/.]/g, "-");
+
+    assert.equal(path.endsWith(join(encoded, "session-1.jsonl")), true);
+    assert.equal(claudeSessionResumable(workdir, "session-1"), false);
+
+    writeClaudeSession(workdir, "session-1");
+    assert.equal(claudeSessionResumable(workdir, "session-1"), true);
+  });
+});
+
+test("Claude는 어디에도 세션이 없으면 재개하지 않는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const argumentsList = buildArguments({
+      character: claudeResumeCharacter,
+      prompt: "계속해줘.",
+      previousSessionID: "session-1",
+      workdir,
+    });
+
+    assert.equal(argumentsList.includes("--resume"), false);
+  });
+});
+
+test("Claude는 병합으로 작업 공간이 바뀌어도 이전 세션을 이어받는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const previousWorkdir = mkdtempSync(join(tmpdir(), "office-claude-old-"));
+    try {
+      const source = writeClaudeSession(previousWorkdir, "session-1");
+      assert.equal(claudeSessionResumable(workdir, "session-1"), false);
+
+      const adopted = adoptClaudeSession(workdir, "session-1");
+
+      assert.equal(adopted, true);
+      assert.equal(claudeSessionResumable(workdir, "session-1"), true);
+      assert.equal(
+        readFileSync(claudeSessionPath(workdir, "session-1"), "utf8"),
+        readFileSync(source, "utf8"),
+      );
+
+      const argumentsList = buildArguments({
+        character: claudeResumeCharacter,
+        prompt: "계속해줘.",
+        previousSessionID: "session-1",
+        workdir,
+      });
+      const resumeIndex = argumentsList.indexOf("--resume");
+
+      assert.notEqual(resumeIndex, -1);
+      assert.equal(argumentsList[resumeIndex + 1], "session-1");
+    } finally {
+      rmSync(previousWorkdir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("Claude는 같은 작업 공간에 세션이 남아 있으면 재개한다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    writeClaudeSession(workdir, "session-1");
+    const argumentsList = buildArguments({
+      character: claudeResumeCharacter,
+      prompt: "계속해줘.",
+      previousSessionID: "session-1",
+      workdir,
+    });
+    const resumeIndex = argumentsList.indexOf("--resume");
+
+    assert.notEqual(resumeIndex, -1);
+    assert.equal(argumentsList[resumeIndex + 1], "session-1");
+  });
 });
 
 test("Claude는 Fast 비활성화를 명시하고 다른 모델의 Fast를 거절한다", () => {

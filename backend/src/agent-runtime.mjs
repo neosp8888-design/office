@@ -20,6 +20,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import {
   basename,
+  dirname,
   extname,
   isAbsolute,
   join,
@@ -979,6 +980,7 @@ export class AgentRuntime {
       prompt: state.prompt,
       previousSessionID: state.externalSessionID,
       attachments: state.attachments,
+      workdir: state.workdir,
     });
     const child = spawn(executable, cliArguments, {
       cwd: state.workdir,
@@ -2890,11 +2892,85 @@ function resolvedChangePath(workdir, value) {
   return isAbsolute(path) ? path : resolve(workdir, path);
 }
 
+export function claudeSessionPath(workdir, sessionID) {
+  const directory = String(workdir ?? "").trim();
+  const id = String(sessionID ?? "").trim();
+  if (!directory || !id) {
+    return null;
+  }
+  let resolved;
+  try {
+    resolved = realpathSync(directory);
+  } catch {
+    resolved = directory;
+  }
+  return join(
+    homedir(),
+    ".claude",
+    "projects",
+    resolved.replace(/[/.]/g, "-"),
+    `${id}.jsonl`,
+  );
+}
+
+export function claudeSessionResumable(workdir, sessionID) {
+  const path = claudeSessionPath(workdir, sessionID);
+  return path === null ? false : existsSync(path);
+}
+
+function findClaudeSessionFile(sessionID) {
+  const id = String(sessionID ?? "").trim();
+  if (!id) {
+    return null;
+  }
+  const root = join(homedir(), ".claude", "projects");
+  if (!existsSync(root)) {
+    return null;
+  }
+  let directories;
+  try {
+    directories = readdirSync(root);
+  } catch {
+    return null;
+  }
+  for (const directory of directories) {
+    const candidate = join(root, String(directory), `${id}.jsonl`);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+// Claude Code는 세션을 실행 디렉토리 단위로 찾으므로 병합 뒤 작업 공간이
+// 바뀌면 이전 세션을 잃는다. 기록을 새 작업 공간으로 옮겨 대화를 잇는다.
+export function adoptClaudeSession(workdir, sessionID) {
+  const target = claudeSessionPath(workdir, sessionID);
+  if (target === null) {
+    return false;
+  }
+  if (existsSync(target)) {
+    return true;
+  }
+  const source = findClaudeSessionFile(sessionID);
+  if (!source) {
+    return false;
+  }
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 export function buildArguments({
   character,
   prompt,
   previousSessionID,
   attachments = [],
+  workdir = null,
 }) {
   return character.backend === "codex"
     ? codexArguments(
@@ -2903,7 +2979,7 @@ export function buildArguments({
       previousSessionID,
       attachments,
     )
-    : claudeArguments(character, prompt, previousSessionID);
+    : claudeArguments(character, prompt, previousSessionID, workdir);
 }
 
 function locateExecutable(character) {
@@ -2982,7 +3058,7 @@ function codexArguments(
   return argumentsList;
 }
 
-function claudeArguments(character, prompt, previousSessionID) {
+function claudeArguments(character, prompt, previousSessionID, workdir = null) {
   if (character.fastMode && character.model !== "claude-opus-5") {
     throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
   }
@@ -3007,7 +3083,10 @@ function claudeArguments(character, prompt, previousSessionID) {
     "--append-system-prompt",
     identityPrompt(character),
   );
-  if (previousSessionID) {
+  if (
+    previousSessionID &&
+    (workdir === null || adoptClaudeSession(workdir, previousSessionID))
+  ) {
     argumentsList.push("--resume", previousSessionID);
   }
   return argumentsList;
