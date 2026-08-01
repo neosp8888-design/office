@@ -74,8 +74,15 @@ final class PixelOfficeAssetTests: XCTestCase {
         XCTAssertEqual(OfficeTheme.allCases.count, 4)
 
         for theme in OfficeTheme.allCases {
-            XCTAssertEqual(PixelOfficeAsset.resourceURL(for: theme).pathExtension, "png")
-            XCTAssertFalse(PixelOfficeAsset.image(for: theme).representations.isEmpty)
+            XCTAssertEqual(
+                PixelOfficeAsset.resourceURL(for: theme, style: .threeD)
+                    .pathExtension,
+                "png"
+            )
+            XCTAssertFalse(
+                PixelOfficeAsset.image(for: theme, style: .threeD)
+                    .representations.isEmpty
+            )
         }
     }
 

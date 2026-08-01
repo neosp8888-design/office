@@ -1000,7 +1000,7 @@ test("백엔드 복구는 중단된 provisioning 기록을 Git 정리한 뒤 실
   ]);
 });
 
-test("백엔드 복구는 유효하지 않은 active workspace를 실패 처리하고 세션을 종료한다", async () => {
+test("백엔드 복구는 유효하지 않은 active workspace만 실패 처리하고 세션은 유지한다", async () => {
   const events = [];
   const queries = [];
   const row = workspaceDatabaseRow({
@@ -1061,15 +1061,13 @@ test("백엔드 복구는 유효하지 않은 active workspace를 실패 처리�
     "git:validate-active",
     "db:transaction",
     "db:workspace-failed",
-    "db:delete-active-session",
-    "db:end-cli-session",
   ]);
   const failed = queries.find(({ text }) =>
     /SET status = 'failed'/.test(text) && /AND status = 'active'/.test(text)
   );
   assert.ok(failed);
   assert.deepEqual(failed.values, [
-    "session-1",
+    "workspace-1",
     "활성 작업 공간을 복구할 수 없습니다. worktree missing",
   ]);
   assert.equal(
@@ -1077,7 +1075,7 @@ test("백엔드 복구는 유효하지 않은 active workspace를 실패 처리�
       /DELETE FROM active_cli_sessions/.test(text) &&
       values?.[0] === "session-1"
     ),
-    true,
+    false,
   );
   assert.equal(
     queries.some(({ text, values }) =>
@@ -1085,7 +1083,7 @@ test("백엔드 복구는 유효하지 않은 active workspace를 실패 처리�
       /ended_at/.test(text) &&
       values?.[0] === "session-1"
     ),
-    true,
+    false,
   );
 });
 
@@ -1318,13 +1316,14 @@ test("완료 사용량과 추정 비용을 같은 턴의 사용량 기록으로 
 
 function workspaceDatabaseRow(overrides = {}) {
   return {
+    id: "workspace-1",
     cli_session_id: "session-1",
     status: "awaiting_approval",
     repository_root: "/repo",
     source_workdir: "/repo",
-    worktree_path: "/worktrees/session-1",
-    execution_workdir: "/worktrees/session-1",
-    branch_name: "officestra/boss/session-1",
+    worktree_path: "/worktrees/workspace-1",
+    execution_workdir: "/worktrees/workspace-1",
+    branch_name: "officestra/boss/workspace-1",
     base_branch: "main",
     base_commit: "base-commit",
     review_turn_id: "turn-1",
@@ -1345,21 +1344,21 @@ function workspaceDatabaseRow(overrides = {}) {
   };
 }
 
-test("새 Git 세션은 격리 작업 공간을 저장하고 실행 폴더로 사용한다", async () => {
+test("기존 CLI 세션도 새 Git 업무의 격리 작업 공간을 만든다", async () => {
   const queries = [];
   const provisioned = {
     repositoryRoot: "/repo",
     sourceWorkdir: "/repo/subdir",
-    worktreePath: "/worktrees/session-1",
-    executionWorkdir: "/worktrees/session-1/subdir",
-    branchName: "officestra/boss/session-1",
+    worktreePath: "/worktrees/workspace-1",
+    executionWorkdir: "/worktrees/workspace-1/subdir",
+    branchName: "officestra/boss/workspace-1",
     baseBranch: "main",
     baseCommit: "base-commit",
   };
   const workspaceManager = {
     provision: async (input) => {
       assert.deepEqual(input, {
-        sessionID: "session-1",
+        workspaceID: "workspace-1",
         characterID: "boss",
       });
       return provisioned;
@@ -1391,14 +1390,15 @@ test("새 Git 세션은 격리 작업 공간을 저장하고 실행 폴더로 �
   const workspace = await runtime.ensureWorkspace({
     turnID: "turn-1",
     sessionID: "session-1",
-    reusedSession: false,
+    workspaceID: "workspace-1",
+    reusedSession: true,
     workspace: null,
     character: { id: "boss" },
   });
 
   assert.equal(workspace.executionWorkdir, provisioned.executionWorkdir);
   assert.match(queries[0].text, /INSERT INTO task_workspaces/);
-  assert.deepEqual(queries[0].values.slice(1), [
+  assert.deepEqual(queries[0].values.slice(2, -1), [
     provisioned.repositoryRoot,
     provisioned.sourceWorkdir,
     provisioned.worktreePath,
@@ -1409,14 +1409,14 @@ test("새 Git 세션은 격리 작업 공간을 저장하고 실행 폴더로 �
   ]);
 });
 
-test("새 Git 세션은 provisioning을 먼저 기록한 뒤 계획한 worktree를 활성화한다", async () => {
+test("새 Git 업무는 provisioning을 먼저 기록한 뒤 계획한 worktree를 활성화한다", async () => {
   const events = [];
   const plan = {
     repositoryRoot: "/repo",
     sourceWorkdir: "/repo/subdir",
-    worktreePath: "/worktrees/session-1",
-    executionWorkdir: "/worktrees/session-1/subdir",
-    branchName: "officestra/boss/session-1",
+    worktreePath: "/worktrees/workspace-1",
+    executionWorkdir: "/worktrees/workspace-1/subdir",
+    branchName: "officestra/boss/workspace-1",
     baseBranch: "main",
     baseCommit: "base-commit",
   };
@@ -1432,7 +1432,7 @@ test("새 Git 세션은 provisioning을 먼저 기록한 뒤 계획한 worktree�
     if (/INSERT INTO task_workspaces/.test(text)) {
       events.push("db:provisioning");
       assert.match(text, /'provisioning'/);
-      assert.deepEqual(values.slice(1), [
+      assert.deepEqual(values.slice(2, -1), [
         plan.repositoryRoot,
         plan.sourceWorkdir,
         plan.worktreePath,
@@ -1461,7 +1461,7 @@ test("새 Git 세션은 provisioning을 먼저 기록한 뒤 계획한 worktree�
       planProvision: async (input) => {
         events.push("git:plan");
         assert.deepEqual(input, {
-          sessionID: "session-1",
+          workspaceID: "workspace-1",
           characterID: "boss",
         });
         return plan;
@@ -1481,6 +1481,7 @@ test("새 Git 세션은 provisioning을 먼저 기록한 뒤 계획한 worktree�
   const workspace = await runtime.ensureWorkspace({
     turnID: "turn-1",
     sessionID: "session-1",
+    workspaceID: "workspace-1",
     reusedSession: false,
     isolateGitWorkdir: true,
     workspace: null,
@@ -1524,6 +1525,7 @@ test("Git 저장소 확인 뒤 provisioning 계획이 사라지면 공유 폴더
     return {
       turnID: "turn-1",
       sessionID: "session-1",
+      workspaceID: "workspace-1",
       conversationID: input.conversationID,
       externalSessionID: null,
       character: { id: "boss", backend: "codex" },
@@ -1589,12 +1591,13 @@ test("완료된 변경 업무는 검토 tree와 파일 목록을 승인 대기�
     },
     workspace: {
       ...workspaceDatabaseRow({ status: "active" }),
+      id: "workspace-1",
       cliSessionID: "session-1",
       repositoryRoot: "/repo",
       sourceWorkdir: "/repo",
-      worktreePath: "/worktrees/session-1",
-      executionWorkdir: "/worktrees/session-1",
-      branchName: "officestra/boss/session-1",
+      worktreePath: "/worktrees/workspace-1",
+      executionWorkdir: "/worktrees/workspace-1",
+      branchName: "officestra/boss/workspace-1",
       baseBranch: "main",
       baseCommit: "base-commit",
     },
@@ -1883,7 +1886,7 @@ test("검토 대기 변경이 base tree로 돌아오면 fetch가 active 상태�
   );
   assert.ok(released);
   assert.deepEqual(released.values, [
-    "session-1",
+    "workspace-1",
     "base-commit",
     "review-tree",
   ]);
@@ -1895,7 +1898,7 @@ test("검토 대기 변경이 base tree로 돌아오면 fetch가 active 상태�
   }]);
 });
 
-test("승인은 저장소 advisory lock 뒤 병합하고 활성 세션을 종료한다", async () => {
+test("승인은 저장소 advisory lock 뒤 병합하고 활성 세션을 유지한다", async () => {
   const queries = [];
   const calls = [];
   const row = workspaceDatabaseRow();
@@ -1904,8 +1907,8 @@ test("승인은 저장소 advisory lock 뒤 병합하고 활성 세션을 종료
     if (/FROM task_workspaces AS workspace/.test(text)) {
       return { rowCount: 1, rows: [row] };
     }
-    if (/RETURNING cli_session_id/.test(text)) {
-      return { rowCount: 1, rows: [{ cli_session_id: "session-1" }] };
+    if (/RETURNING id/.test(text)) {
+      return { rowCount: 1, rows: [{ id: "workspace-1" }] };
     }
     return { rowCount: 1, rows: [] };
   };
@@ -1942,8 +1945,99 @@ test("승인은 저장소 advisory lock 뒤 병합하고 활성 세션을 종료
   );
   assert.equal(
     queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
+    false,
+  );
+  assert.equal(
+    queries.some(({ text }) =>
+      /UPDATE cli_sessions/.test(text) && /ended_at/.test(text)
+    ),
+    false,
+  );
+});
+
+test("충돌 상태는 같은 review tree로 다시 병합할 수 있다", async () => {
+  const queries = [];
+  const calls = [];
+  const row = workspaceDatabaseRow({ status: "conflict" });
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return { rowCount: 1, rows: [row] };
+    }
+    if (/RETURNING id/.test(text)) {
+      return { rowCount: 1, rows: [{ id: "workspace-1" }] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      approve: async (workspace, options) => {
+        calls.push({ workspace, options });
+        return {
+          taskCommit: "retried-task-commit",
+          mergedCommit: "retried-merged-commit",
+        };
+      },
+      cleanup: async () => {},
+    },
+    broadcast: () => {},
+  });
+
+  const result = await runtime.approveWorkspace("turn-1", "review-tree");
+
+  assert.equal(result.workspace.status, "merged");
+  assert.equal(result.workspace.mergedCommit, "retried-merged-commit");
+  assert.equal(calls[0].options.expectedReviewTree, "review-tree");
+  assert.equal(
+    queries.some(({ text }) =>
+      /status IN \('awaiting_approval', 'conflict'\)/.test(text)
+    ),
     true,
   );
+});
+
+test("충돌 재시도의 stale tree 오류는 충돌 상태를 유지한다", async () => {
+  const queries = [];
+  const broadcasts = [];
+  const row = workspaceDatabaseRow({ status: "conflict" });
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM task_workspaces AS workspace/.test(text)) {
+      return { rowCount: 1, rows: [row] };
+    }
+    if (/RETURNING\s+session\.character_id/s.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{ characterID: "boss", status: "conflict" }],
+      };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    workspaceManager: {
+      approve: async () => {
+        assert.fail("stale review tree는 Git 병합을 시작하면 안 됩니다.");
+      },
+    },
+    broadcast: (event) => broadcasts.push(event),
+  });
+
+  await assert.rejects(
+    runtime.approveWorkspace("turn-1", "stale-review-tree"),
+    AgentBusyError,
+  );
+
+  assert.equal(
+    queries.some(({ text }) => /UPDATE task_workspaces AS workspace/.test(text)),
+    false,
+  );
+  assert.deepEqual(broadcasts, []);
 });
 
 test("승인은 사용자가 실제로 확인한 review tree가 아니면 병합을 시작하지 않는다", async () => {
@@ -1989,8 +2083,8 @@ test("검토 뒤 tree가 바뀌면 새 diff 메타데이터를 저장하고 재�
     if (/FROM task_workspaces AS workspace/.test(text)) {
       return { rowCount: 1, rows: [workspaceDatabaseRow()] };
     }
-    if (/RETURNING cli_session_id/.test(text)) {
-      return { rowCount: 1, rows: [{ cli_session_id: "session-1" }] };
+    if (/RETURNING id/.test(text)) {
+      return { rowCount: 1, rows: [{ id: "workspace-1" }] };
     }
     return { rowCount: 1, rows: [] };
   };
@@ -2041,9 +2135,14 @@ test("검토 갱신 오류는 동시에 거절된 workspace를 다시 승인 대
     }
     if (/UPDATE task_workspaces/.test(text)) {
       const whereClause = text.split(/\bWHERE\b/i).slice(1).join(" WHERE ");
-      const guardsAwaitingApproval =
-        /status\s*=\s*'awaiting_approval'/.test(whereClause);
-      if (!guardsAwaitingApproval || workspaceStatus === "awaiting_approval") {
+      const guardsReviewableStatus =
+        /status\s+(?:=|IN\b)/.test(whereClause) &&
+        /'awaiting_approval'/.test(whereClause);
+      const isReviewable = [
+        "awaiting_approval",
+        "conflict",
+      ].includes(workspaceStatus);
+      if (!guardsReviewableStatus || isReviewable) {
         workspaceStatus = "awaiting_approval";
         return { rowCount: 1, rows: [] };
       }
@@ -2071,7 +2170,7 @@ test("검토 갱신 오류는 동시에 거절된 workspace를 다시 승인 대
   assert.equal(workspaceStatus, "rejected");
 });
 
-test("충돌한 workspace도 거절하면 세션을 닫고 worktree는 보존한다", async () => {
+test("충돌한 workspace를 거절해도 세션을 유지하고 worktree는 보존한다", async () => {
   const queries = [];
   const query = async (text, values) => {
     queries.push({ text, values });
@@ -2081,8 +2180,8 @@ test("충돌한 workspace도 거절하면 세션을 닫고 worktree는 보존한
         rows: [workspaceDatabaseRow({ status: "conflict" })],
       };
     }
-    if (/RETURNING cli_session_id/.test(text)) {
-      return { rowCount: 1, rows: [{ cli_session_id: "session-1" }] };
+    if (/RETURNING id/.test(text)) {
+      return { rowCount: 1, rows: [{ id: "workspace-1" }] };
     }
     return { rowCount: 1, rows: [] };
   };
@@ -2098,10 +2197,80 @@ test("충돌한 workspace도 거절하면 세션을 닫고 worktree는 보존한
   assert.equal(result.workspace.status, "rejected");
   assert.equal(
     queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
-    true,
+    false,
   );
   assert.equal(
     queries.some(({ text }) => /worktree remove|DELETE FROM task_workspaces/.test(text)),
+    false,
+  );
+});
+
+test("worktree가 없는 활성 CLI 세션은 종료하지 않고 다음 업무에 재사용한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/FROM characters/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "boss",
+          name: "보스",
+          backend: "codex",
+          model: "gpt-5.6-sol",
+          effort: "high",
+          fastMode: true,
+          permission: "workspace-write",
+          identityPrompt: "업무를 처리한다.",
+          config: {},
+        }],
+      };
+    }
+    if (/turn\.status IN/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (/SELECT workspace\.review_turn_id/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (/FROM active_cli_sessions AS active/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "session-1",
+          externalSessionID: "external-1",
+          conversationID: "11111111-1111-1111-1111-111111111111",
+          workspaceID: null,
+          workspaceStatus: null,
+        }],
+      };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+
+  const prepared = await runtime.prepareTurn({
+    characterID: "boss",
+    prompt: "다음 업무",
+    conversationID: "22222222-2222-2222-2222-222222222222",
+    isolateGitWorkdir: true,
+  });
+
+  assert.equal(prepared.sessionID, "session-1");
+  assert.equal(prepared.externalSessionID, "external-1");
+  assert.equal(prepared.reusedSession, true);
+  assert.equal(prepared.workspace, null);
+  assert.equal(
+    queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
+    false,
+  );
+  assert.equal(
+    queries.some(({ text }) =>
+      /UPDATE cli_sessions/.test(text) && /ended_at/.test(text)
+    ),
     false,
   );
 });
@@ -2231,6 +2400,11 @@ test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토
   const querySource = serverSource.slice(queryStart, queryEnd);
 
   assert.match(querySource, /UNION[\s\S]*task_workspace\.review_turn_id/);
+  assert.match(querySource, /task_workspace\.id = t\.task_workspace_id/);
+  assert.doesNotMatch(
+    querySource,
+    /task_workspace\.cli_session_id = s\.id/,
+  );
   for (const status of ["awaiting_approval", "merging", "conflict"]) {
     assert.match(querySource, new RegExp(`'${status}'`));
   }

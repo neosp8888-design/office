@@ -1,4 +1,4 @@
-// 이 파일은 CLI 세션별 Git worktree를 만들고 검토된 변경만 원본 브랜치에 병합한다.
+// 이 파일은 업무별 Git worktree를 만들고 검토된 변경만 원본 브랜치에 병합한다.
 
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -49,7 +49,7 @@ export class GitWorkspaceManager {
     return Boolean(await repositoryRootFor(sourceWorkdir));
   }
 
-  async planProvision({ sessionID, characterID }) {
+  async planProvision({ workspaceID, characterID }) {
     const sourceWorkdir = await canonicalDirectory(this.sourceWorkdir);
     const repositoryRoot = await repositoryRootFor(sourceWorkdir);
     if (!repositoryRoot) {
@@ -77,14 +77,14 @@ export class GitWorkspaceManager {
 
     const baseBranch = await currentBranch(repositoryRoot);
     const baseCommit = await gitText(repositoryRoot, ["rev-parse", "HEAD"]);
-    const branchName = workspaceBranchName(characterID, sessionID);
+    const branchName = workspaceBranchName(characterID, workspaceID);
     await requireMissingBranch(repositoryRoot, branchName);
 
     const repositoryKey = createHash("sha256")
       .update(repositoryRoot)
       .digest("hex")
       .slice(0, 12);
-    const leafName = `${safeSegment(characterID)}-${safeSegment(sessionID)}`;
+    const leafName = `${safeSegment(characterID)}-${safeSegment(workspaceID)}`;
     const worktreePath = join(this.worktreeRoot, repositoryKey, leafName);
     if (await pathExists(worktreePath)) {
       throw new GitWorkspaceError(
@@ -974,14 +974,14 @@ async function requireBaseAncestor(workspace, headCommit) {
   }
 }
 
-function workspaceBranchName(characterID, sessionID) {
+function workspaceBranchName(characterID, workspaceID) {
   const character = safeSegment(characterID);
-  const session = safeSegment(sessionID);
+  const workspace = safeSegment(workspaceID);
   const suffix = createHash("sha256")
-    .update(`${characterID}\0${sessionID}`)
+    .update(`${characterID}\0${workspaceID}`)
     .digest("hex")
     .slice(0, 8);
-  return `officestra/${character}/${session.slice(0, 48)}-${suffix}`;
+  return `officestra/${character}/${workspace.slice(0, 48)}-${suffix}`;
 }
 
 function safeSegment(value) {

@@ -59,10 +59,15 @@ struct WorkspaceReviewPanel: View {
                 .stroke(statusColor.opacity(0.22))
         }
         .onChange(of: workspace) { _, updatedWorkspace in
+            requestError = nil
             guard let detailedReview else {
                 return
             }
-            if detailedReview.reviewTree != updatedWorkspace.reviewTree {
+            if
+                detailedReview.reviewTree != updatedWorkspace.reviewTree
+                    || detailedReview.baseCommit
+                        != updatedWorkspace.baseCommit
+            {
                 self.detailedReview = nil
                 isDiffExpanded = false
                 isWorkRecordListExpanded = false
@@ -324,13 +329,21 @@ struct WorkspaceReviewPanel: View {
                 .accessibilityIdentifier("approveWorkspace-\(turnID)")
             }
         case .conflict:
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
                 Button("충돌 작업 거절", role: .destructive) {
                     resolve(.reject)
                 }
                 .disabled(isResolving)
                 .accessibilityIdentifier("rejectWorkspace-\(turnID)")
+
+                Button("다시 병합") {
+                    retryCurrentReview()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isResolving || !currentReview.canRetryMerge)
+                .help("같은 검토 버전을 최신 main에 다시 병합합니다.")
+                .accessibilityIdentifier("retryWorkspace-\(turnID)")
             }
         case .active, .merging, .merged, .rejected, .closed, .failed:
             EmptyView()
@@ -454,6 +467,16 @@ struct WorkspaceReviewPanel: View {
     private func approveCurrentReview() {
         guard
             currentReview.hasCompleteDiffForApproval,
+            let reviewTree = currentReview.reviewTree
+        else {
+            return
+        }
+        resolve(.approve(reviewTree: reviewTree))
+    }
+
+    private func retryCurrentReview() {
+        guard
+            currentReview.canRetryMerge,
             let reviewTree = currentReview.reviewTree
         else {
             return

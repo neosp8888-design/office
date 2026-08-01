@@ -107,11 +107,11 @@ As long as the backend remains running, tasks continue after the app window clos
 
 ## Parallel development and Git safety
 
-When `workdir` is a Git repository, OFFICESTRA creates a dedicated branch and worktree for each active CLI session. Resumed Codex threads and Claude sessions keep using the same worktree.
+When `workdir` is a Git repository, OFFICESTRA creates a dedicated branch and worktree for each reviewable task workspace. Worktrees isolate file changes and have a lifecycle independent from Codex threads and Claude sessions. Approving, merging, or rejecting a workspace does not replace the coworker's active CLI session.
 
 After a successful task creates changes, the live task card shows the changed files and the diff against the base commit, then blocks additional work for that coworker. Nothing reaches the recorded source branch until the user selects **Approve and merge**. Rejected branches and worktrees are retained for recovery.
 
-When a Codex-to-Claude or Claude-to-Codex switch would end an active session, unreviewed changes move to review and the settings request stops with `409`. An unchanged worktree is cleaned up automatically before the new provider session starts.
+When a Codex-to-Claude or Claude-to-Codex switch would end an active session, unreviewed changes move to review and the settings request stops with `409`. An unchanged worktree is cleaned up automatically before the new provider session starts. Workspace approval, merge, and rejection do not end a provider session by themselves.
 
 Immediately before merging, OFFICESTRA verifies that the source worktree is still on the recorded branch and clean, invalidates approval if the reviewed task tree changed, serializes merges per repository, and checks for conflicts before touching the source branch. Dirty source state and conflicts stop the merge for user review.
 

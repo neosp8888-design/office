@@ -58,13 +58,6 @@ const BLOCKED_WORKSPACE_STATUSES = new Set([
   "merging",
   "conflict",
 ]);
-const TERMINAL_WORKSPACE_STATUSES = new Set([
-  "merged",
-  "rejected",
-  "closed",
-  "failed",
-]);
-
 export class AgentBusyError extends Error {}
 export class AgentJobNotFoundError extends Error {}
 export class CharacterNotFoundError extends Error {}
@@ -141,7 +134,7 @@ export class AgentRuntime {
           }
         } catch (error) {
           cleanupFailures.push({
-            cliSessionID: workspace.cliSessionID,
+            workspaceID: workspace.id,
             message: error instanceof Error ? error.message : String(error),
           });
         }
@@ -169,11 +162,11 @@ export class AgentRuntime {
           SET
             error_message = $2,
             updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'failed'
         `,
         [
-          failure.cliSessionID,
+          failure.workspaceID,
           `중단된 작업 공간 자동 정리에 실패했습니다. ${failure.message}`,
         ],
       );
@@ -195,11 +188,11 @@ export class AgentRuntime {
             `
               UPDATE task_workspaces
               SET error_message = $2, updated_at = now()
-              WHERE cli_session_id = $1
+              WHERE id = $1
                 AND status = 'merged'
             `,
             [
-              workspace.cliSessionID,
+              workspace.id,
               `병합된 작업 공간 자동 정리에 실패했습니다. ${
                 error instanceof Error ? error.message : String(error)
               }`,
@@ -230,25 +223,10 @@ export class AgentRuntime {
               `
                 UPDATE task_workspaces
                 SET status = 'failed', error_message = $2, updated_at = now()
-                WHERE cli_session_id = $1
+                WHERE id = $1
                   AND status = 'active'
               `,
-              [workspace.cliSessionID, message],
-            );
-            await client.query(
-              `
-                DELETE FROM active_cli_sessions
-                WHERE cli_session_id = $1
-              `,
-              [workspace.cliSessionID],
-            );
-            await client.query(
-              `
-                UPDATE cli_sessions
-                SET ended_at = COALESCE(ended_at, now())
-                WHERE id = $1
-              `,
-              [workspace.cliSessionID],
+              [workspace.id, message],
             );
           });
         }
@@ -367,7 +345,7 @@ export class AgentRuntime {
     if (prepared.workspace) {
       return prepared.workspace;
     }
-    if (!this.workspaceManager || prepared.reusedSession) {
+    if (!this.workspaceManager) {
       return null;
     }
     const isolationExpected = prepared.isolateGitWorkdir ?? true;
@@ -375,8 +353,10 @@ export class AgentRuntime {
       return null;
     }
 
+    const workspaceID = prepared.workspaceID ?? randomUUID();
+    prepared.workspaceID = workspaceID;
     const provisionInput = {
-      sessionID: prepared.sessionID,
+      workspaceID,
       characterID: prepared.character.id,
     };
     if (
@@ -404,30 +384,40 @@ export class AgentRuntime {
     }
     await this.pool.query(
       `
-        INSERT INTO task_workspaces (
-          cli_session_id,
-          status,
-          repository_root,
-          source_workdir,
-          worktree_path,
-          execution_workdir,
-          branch_name,
-          base_branch,
-          base_commit
+        WITH inserted_workspace AS (
+          INSERT INTO task_workspaces (
+            id,
+            cli_session_id,
+            status,
+            repository_root,
+            source_workdir,
+            worktree_path,
+            execution_workdir,
+            branch_name,
+            base_branch,
+            base_commit
+          )
+          VALUES (
+            $1,
+            $2,
+            'provisioning',
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9
+          )
+          RETURNING id
         )
-        VALUES (
-          $1,
-          'provisioning',
-          $2,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7,
-          $8
-        )
+        UPDATE turns AS turn
+        SET task_workspace_id = inserted_workspace.id
+        FROM inserted_workspace
+        WHERE turn.id = $10
       `,
       [
+        workspaceID,
         prepared.sessionID,
         plan.repositoryRoot,
         plan.sourceWorkdir,
@@ -436,6 +426,7 @@ export class AgentRuntime {
         plan.branchName,
         plan.baseBranch,
         plan.baseCommit,
+        prepared.turnID,
       ],
     );
 
@@ -447,11 +438,11 @@ export class AgentRuntime {
         `
           UPDATE task_workspaces
           SET status = 'failed', error_message = $2, updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'provisioning'
         `,
         [
-          prepared.sessionID,
+          workspaceID,
           error instanceof Error ? error.message : String(error),
         ],
       );
@@ -473,12 +464,12 @@ export class AgentRuntime {
             base_commit = $8,
             error_message = NULL,
             updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'provisioning'
           RETURNING *
         `,
         [
-          prepared.sessionID,
+          workspaceID,
           provisioned.repositoryRoot,
           provisioned.sourceWorkdir,
           provisioned.worktreePath,
@@ -509,11 +500,11 @@ export class AgentRuntime {
         `
           UPDATE task_workspaces
           SET status = 'failed', error_message = $2, updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'provisioning'
         `,
         [
-          prepared.sessionID,
+          workspaceID,
           error instanceof Error ? error.message : String(error),
         ],
       );
@@ -526,33 +517,43 @@ export class AgentRuntime {
     try {
       result = await this.pool.query(
         `
-          INSERT INTO task_workspaces (
-            cli_session_id,
-            status,
-            repository_root,
-            source_workdir,
-            worktree_path,
-            execution_workdir,
-            branch_name,
-            base_branch,
-            base_commit
+          WITH inserted_workspace AS (
+            INSERT INTO task_workspaces (
+              id,
+              cli_session_id,
+              status,
+              repository_root,
+              source_workdir,
+              worktree_path,
+              execution_workdir,
+              branch_name,
+              base_branch,
+              base_commit
+            )
+            VALUES (
+              $1,
+              $2,
+              'active',
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9
+            )
+            RETURNING *
+          ), linked_turn AS (
+            UPDATE turns AS turn
+            SET task_workspace_id = inserted_workspace.id
+            FROM inserted_workspace
+            WHERE turn.id = $10
+            RETURNING turn.id
           )
-          VALUES (
-            $1,
-            'active',
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            $8
-          )
-          ON CONFLICT (cli_session_id) DO UPDATE
-          SET updated_at = now()
-          RETURNING *
+          SELECT * FROM inserted_workspace
         `,
         [
+          prepared.workspaceID,
           prepared.sessionID,
           provisioned.repositoryRoot,
           provisioned.sourceWorkdir,
@@ -561,6 +562,7 @@ export class AgentRuntime {
           provisioned.branchName,
           provisioned.baseBranch,
           provisioned.baseCommit,
+          prepared.turnID,
         ],
       );
     } catch (error) {
@@ -633,6 +635,8 @@ export class AgentRuntime {
           `,
           [prepared.sessionID],
         );
+      }
+      if (prepared.workspaceID) {
         await client.query(
           `
             UPDATE task_workspaces
@@ -640,10 +644,10 @@ export class AgentRuntime {
               status = 'failed',
               error_message = $2,
               updated_at = now()
-            WHERE cli_session_id = $1
+            WHERE id = $1
               AND status IN ('provisioning', 'active')
           `,
-          [prepared.sessionID, message],
+          [prepared.workspaceID, message],
         );
       }
     });
@@ -689,10 +693,10 @@ export class AgentRuntime {
               status = 'failed',
               error_message = $2,
               updated_at = now()
-            WHERE cli_session_id = $1
+            WHERE id = $1
               AND status = 'active'
           `,
-          [state.sessionID, message],
+          [state.workspace.id, message],
         );
         await this.pool.query(
           `
@@ -804,6 +808,7 @@ export class AgentRuntime {
             session.id,
             session.external_id AS "externalSessionID",
             session.conversation_id AS "conversationID",
+            workspace.id AS "workspaceID",
             workspace.status AS "workspaceStatus",
             workspace.repository_root AS "workspaceRepositoryRoot",
             workspace.source_workdir AS "workspaceSourceWorkdir",
@@ -827,8 +832,20 @@ export class AgentRuntime {
           FROM active_cli_sessions AS active
           JOIN cli_sessions AS session
             ON session.id = active.cli_session_id
-          LEFT JOIN task_workspaces AS workspace
-            ON workspace.cli_session_id = session.id
+          LEFT JOIN LATERAL (
+            SELECT candidate.*
+            FROM task_workspaces AS candidate
+            WHERE candidate.cli_session_id = session.id
+              AND candidate.status IN (
+                'provisioning',
+                'active',
+                'awaiting_approval',
+                'merging',
+                'conflict'
+              )
+            ORDER BY candidate.updated_at DESC
+            LIMIT 1
+          ) AS workspace ON true
           WHERE active.character_id = $1
             AND session.ended_at IS NULL
           LIMIT 1
@@ -840,7 +857,7 @@ export class AgentRuntime {
       let externalSessionID;
       let effectiveConversationID;
       let workspace = null;
-      let active = activeResult.rows[0] ?? null;
+      const active = activeResult.rows[0] ?? null;
       if (
         active?.workspaceStatus &&
         BLOCKED_WORKSPACE_STATUSES.has(active.workspaceStatus)
@@ -849,46 +866,6 @@ export class AgentRuntime {
           "이 직원의 변경사항을 먼저 검토하고 승인하거나 거절하세요.",
         );
       }
-      if (
-        active?.workspaceStatus &&
-        TERMINAL_WORKSPACE_STATUSES.has(active.workspaceStatus)
-      ) {
-        await client.query(
-          `
-            DELETE FROM active_cli_sessions
-            WHERE character_id = $1
-          `,
-          [characterID],
-        );
-        await client.query(
-          `
-            UPDATE cli_sessions
-            SET ended_at = COALESCE(ended_at, now())
-            WHERE id = $1
-          `,
-          [active.id],
-        );
-        active = null;
-      }
-      if (active && !active.workspaceStatus && isolateGitWorkdir) {
-        await client.query(
-          `
-            DELETE FROM active_cli_sessions
-            WHERE character_id = $1
-          `,
-          [characterID],
-        );
-        await client.query(
-          `
-            UPDATE cli_sessions
-            SET ended_at = COALESCE(ended_at, now())
-            WHERE id = $1
-          `,
-          [active.id],
-        );
-        active = null;
-      }
-
       const reusedSession = Boolean(active);
       if (active) {
         sessionID = active.id;
@@ -947,6 +924,7 @@ export class AgentRuntime {
           INSERT INTO turns (
             id,
             cli_session_id,
+            task_workspace_id,
             backend,
             model,
             effort,
@@ -956,11 +934,12 @@ export class AgentRuntime {
             started_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', now(), now())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', now(), now())
         `,
         [
           turnID,
           sessionID,
+          workspace?.id ?? null,
           character.backend,
           character.model,
           character.effort,
@@ -986,6 +965,7 @@ export class AgentRuntime {
         character,
         prompt,
         workspace,
+        workspaceID: workspace?.id ?? null,
         reusedSession,
         isolateGitWorkdir,
       };
@@ -1683,11 +1663,11 @@ export class AgentRuntime {
               error_message = NULL,
               review_requested_at = CASE WHEN $3 THEN now() ELSE NULL END,
               updated_at = now()
-            WHERE cli_session_id = $1
+            WHERE id = $1
               AND status = 'active'
           `,
           [
-            state.sessionID,
+            state.workspace.id,
             nextStatus,
             workspaceReview.hasChanges,
             state.turnID,
@@ -1794,7 +1774,7 @@ export class AgentRuntime {
         LEFT JOIN LATERAL (
           SELECT turn.id
           FROM turns AS turn
-          WHERE turn.cli_session_id = session.id
+          WHERE turn.task_workspace_id = workspace.id
           ORDER BY turn.started_at DESC, turn.id DESC
           LIMIT 1
         ) AS latest_turn ON true
@@ -1874,12 +1854,12 @@ export class AgentRuntime {
             error_message = NULL,
             review_requested_at = now(),
             updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'active'
-          RETURNING cli_session_id
+          RETURNING id
         `,
         [
-          workspace.cliSessionID,
+          workspace.id,
           reviewTurnID,
           review.reviewTree,
           review.headCommit,
@@ -1918,11 +1898,11 @@ export class AgentRuntime {
             changed_files = '[]'::jsonb,
             error_message = NULL,
             updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'active'
-          RETURNING cli_session_id
+          RETURNING id
         `,
-        [workspace.cliSessionID],
+        [workspace.id],
       );
       if (updated.rowCount === 0) {
         throw new AgentBusyError(
@@ -1981,13 +1961,13 @@ export class AgentRuntime {
                 error_message = NULL,
                 review_requested_at = now(),
                 updated_at = now()
-              WHERE cli_session_id = $1
+              WHERE id = $1
                 AND status = 'awaiting_approval'
                 AND review_tree = $5
               RETURNING *
             `,
             [
-              record.workspace.cliSessionID,
+              record.workspace.id,
               current.reviewTree,
               current.headCommit,
               JSON.stringify(current.changedFiles ?? []),
@@ -2006,13 +1986,13 @@ export class AgentRuntime {
                 error_message = NULL,
                 review_requested_at = NULL,
                 updated_at = now()
-              WHERE cli_session_id = $1
+              WHERE id = $1
                 AND status = 'awaiting_approval'
                 AND review_tree = $3
               RETURNING *
             `,
             [
-              record.workspace.cliSessionID,
+              record.workspace.id,
               current.headCommit,
               record.workspace.reviewTree,
             ],
@@ -2060,7 +2040,10 @@ export class AgentRuntime {
           turnID,
           true,
         );
-        if (record.workspace.status !== "awaiting_approval") {
+        if (![
+          "awaiting_approval",
+          "conflict",
+        ].includes(record.workspace.status)) {
           throw new AgentBusyError(
             "현재 상태에서는 이 변경사항을 승인할 수 없습니다.",
           );
@@ -2082,11 +2065,11 @@ export class AgentRuntime {
               status = 'merging',
               error_message = NULL,
               updated_at = now()
-            WHERE cli_session_id = $1
-              AND status = 'awaiting_approval'
-            RETURNING cli_session_id
+            WHERE id = $1
+              AND status IN ('awaiting_approval', 'conflict')
+            RETURNING id
           `,
-          [record.workspace.cliSessionID],
+          [record.workspace.id],
         );
         if (transitioned.rowCount === 0) {
           throw new AgentBusyError(
@@ -2106,21 +2089,6 @@ export class AgentRuntime {
         );
         await client.query(
           `
-            DELETE FROM active_cli_sessions
-            WHERE cli_session_id = $1
-          `,
-          [record.workspace.cliSessionID],
-        );
-        await client.query(
-          `
-            UPDATE cli_sessions
-            SET ended_at = COALESCE(ended_at, now())
-            WHERE id = $1
-          `,
-          [record.workspace.cliSessionID],
-        );
-        await client.query(
-          `
             UPDATE task_workspaces
             SET
               status = 'merged',
@@ -2129,10 +2097,10 @@ export class AgentRuntime {
               error_message = NULL,
               merged_at = now(),
               updated_at = now()
-            WHERE cli_session_id = $1
+            WHERE id = $1
           `,
           [
-            record.workspace.cliSessionID,
+            record.workspace.id,
             approved.taskCommit,
             approved.mergedCommit,
           ],
@@ -2170,10 +2138,10 @@ export class AgentRuntime {
         `
           UPDATE task_workspaces
           SET error_message = $2, updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status = 'merged'
         `,
-        [merged.workspace.cliSessionID, cleanupWarning],
+        [merged.workspace.id, cleanupWarning],
       );
       merged.workspace.errorMessage = cleanupWarning;
     }
@@ -2214,12 +2182,12 @@ export class AgentRuntime {
             error_message = CASE WHEN $7 THEN $5 ELSE NULL END,
             review_requested_at = CASE WHEN $7 THEN now() ELSE NULL END,
             updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND review_turn_id = $6::uuid
-            AND status = 'awaiting_approval'
+            AND status IN ('awaiting_approval', 'conflict')
         `,
         [
-          record.workspace.cliSessionID,
+          record.workspace.id,
           review.reviewTree,
           review.headCommit,
           JSON.stringify(review.changedFiles ?? []),
@@ -2247,14 +2215,19 @@ export class AgentRuntime {
       `
         UPDATE task_workspaces AS workspace
         SET
-          status = $2,
+          status = CASE
+            WHEN workspace.status = 'conflict' THEN 'conflict'
+            ELSE $2
+          END,
           error_message = $3,
           updated_at = now()
         FROM cli_sessions AS session
         WHERE workspace.review_turn_id = $1
           AND session.id = workspace.cli_session_id
-          AND workspace.status = 'awaiting_approval'
-        RETURNING session.character_id AS "characterID"
+          AND workspace.status IN ('awaiting_approval', 'conflict')
+        RETURNING
+          session.character_id AS "characterID",
+          workspace.status
       `,
       [turnID, status, message],
     );
@@ -2263,7 +2236,7 @@ export class AgentRuntime {
         type: "workspace.changed",
         turnId: turnID,
         characterId: result.rows[0].characterID,
-        status,
+        status: result.rows[0].status ?? status,
       });
     }
   }
@@ -2290,32 +2263,17 @@ export class AgentRuntime {
             error_message = NULL,
             rejected_at = now(),
             updated_at = now()
-          WHERE cli_session_id = $1
+          WHERE id = $1
             AND status IN ('awaiting_approval', 'conflict')
-          RETURNING cli_session_id
+          RETURNING id
         `,
-        [record.workspace.cliSessionID],
+        [record.workspace.id],
       );
       if (result.rowCount === 0) {
         throw new AgentBusyError(
           "다른 작업이 이미 이 변경사항을 처리했습니다.",
         );
       }
-      await client.query(
-        `
-          DELETE FROM active_cli_sessions
-          WHERE cli_session_id = $1
-        `,
-        [record.workspace.cliSessionID],
-      );
-      await client.query(
-        `
-          UPDATE cli_sessions
-          SET ended_at = COALESCE(ended_at, now())
-          WHERE id = $1
-        `,
-        [record.workspace.cliSessionID],
-      );
       return {
         characterID: record.characterID,
         workspace: {
@@ -2379,10 +2337,10 @@ export class AgentRuntime {
                 status = 'failed',
                 error_message = $2,
                 updated_at = now()
-              WHERE cli_session_id = $1
+              WHERE id = $1
                 AND status = 'active'
             `,
-            [state.sessionID, message],
+            [state.workspace.id, message],
           );
         }
       }
@@ -2403,6 +2361,7 @@ function workspaceFromRow(row) {
     return null;
   }
   return {
+    id: row.id ?? row.workspaceID ?? row.workspace_id,
     cliSessionID: row.cliSessionID ?? row.cli_session_id,
     status: row.status,
     repositoryRoot: row.repositoryRoot ?? row.repository_root,
@@ -2433,6 +2392,7 @@ function workspaceFromActiveRow(row) {
     return null;
   }
   return workspaceFromRow({
+    id: row.workspaceID,
     cliSessionID: row.id,
     status: row.workspaceStatus,
     repositoryRoot: row.workspaceRepositoryRoot,
