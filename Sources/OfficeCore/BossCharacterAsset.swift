@@ -68,10 +68,6 @@ private extension OfficeTheme {
             "modern-day"
         case .modernNight:
             "modern-night"
-        case .woodDay:
-            "wood-day"
-        case .woodNight:
-            "wood-night"
         }
     }
 }

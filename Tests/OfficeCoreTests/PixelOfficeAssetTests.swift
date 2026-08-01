@@ -19,8 +19,7 @@ final class PixelOfficeAssetTests: XCTestCase {
             OfficeArtStyle.threeD.supportedThemes,
             OfficeTheme.allCases
         )
-        XCTAssertFalse(OfficeArtStyle.twoD.supports(.woodDay))
-        XCTAssertFalse(OfficeArtStyle.twoD.supports(.woodNight))
+        XCTAssertEqual(OfficeTheme.allCases, [.modernDay, .modernNight])
     }
 
     func testTwoDAndThreeDUseDistinctModernBackgrounds() {
@@ -70,19 +69,12 @@ final class PixelOfficeAssetTests: XCTestCase {
         }
     }
 
-    func testAllFourThemesLoadFromBundle() {
-        XCTAssertEqual(OfficeTheme.allCases.count, 4)
+    func testAllThemesLoadFromBundle() {
+        XCTAssertEqual(OfficeTheme.allCases.count, 2)
 
         for theme in OfficeTheme.allCases {
-            XCTAssertEqual(
-                PixelOfficeAsset.resourceURL(for: theme, style: .threeD)
-                    .pathExtension,
-                "png"
-            )
-            XCTAssertFalse(
-                PixelOfficeAsset.image(for: theme, style: .threeD)
-                    .representations.isEmpty
-            )
+            XCTAssertEqual(PixelOfficeAsset.resourceURL(for: theme).pathExtension, "png")
+            XCTAssertFalse(PixelOfficeAsset.image(for: theme).representations.isEmpty)
         }
     }
 
@@ -284,8 +276,11 @@ final class PixelOfficeAssetTests: XCTestCase {
     func testNightFlagsMatchThemeNames() {
         XCTAssertFalse(OfficeTheme.modernDay.isNight)
         XCTAssertTrue(OfficeTheme.modernNight.isNight)
-        XCTAssertFalse(OfficeTheme.woodDay.isNight)
-        XCTAssertTrue(OfficeTheme.woodNight.isNight)
+    }
+
+    func testWoodThemeValuesAreRetired() {
+        XCTAssertNil(OfficeTheme(rawValue: "woodDay"))
+        XCTAssertNil(OfficeTheme(rawValue: "woodNight"))
     }
 
     func testCanvasAspectFitIncludesLetterboxing() {
