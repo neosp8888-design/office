@@ -48,6 +48,7 @@ struct OfficeDetailPanel: View {
     @ObservedObject private var archiveFeedStore: ArchiveFeedStore
     let selection: OfficeDetailSelection
     @State private var usageRefreshRequestID = UUID()
+    @State private var usageIsRefreshing = false
 
     init(
         director: AgentDirector,
@@ -86,10 +87,19 @@ struct OfficeDetailPanel: View {
                             Button {
                                 usageRefreshRequestID = UUID()
                             } label: {
-                                Image(systemName: "arrow.clockwise")
+                                if usageIsRefreshing {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
                             }
                             .buttonStyle(.borderless)
+                            .disabled(usageIsRefreshing)
                             .accessibilityLabel("한도 새로고침")
+                            .accessibilityValue(
+                                usageIsRefreshing ? "새로고침 중" : ""
+                            )
                             .help("한도 새로고침")
                         }
                     }
@@ -108,7 +118,8 @@ struct OfficeDetailPanel: View {
                     ArchiveShelfContent(turns: archiveFeedStore.turns)
                 case .usage:
                     UsageBoardContent(
-                        refreshRequestID: usageRefreshRequestID
+                        refreshRequestID: usageRefreshRequestID,
+                        isRefreshing: $usageIsRefreshing
                     )
                 }
             }
@@ -347,9 +358,9 @@ private struct ArchiveShelfContent: View {
 
 private struct UsageBoardContent: View {
     let refreshRequestID: UUID
+    @Binding var isRefreshing: Bool
     @State private var snapshot: AIUsageSnapshot?
     @State private var errorMessage: String?
-    @State private var isRefreshing = false
 
     var body: some View {
         Group {
