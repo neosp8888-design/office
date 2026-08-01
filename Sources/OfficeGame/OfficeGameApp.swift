@@ -31,7 +31,7 @@ private struct OfficeGameView: View {
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
     @AppStorage("officeArtStyle") private var selectedArtStyleRawValue =
-        OfficeArtStyle.threeD.rawValue
+        OfficeArtStyle.twoD.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
@@ -286,7 +286,7 @@ private struct OfficeGameView: View {
 
     private var artStyle: OfficeArtStyle {
         OfficeArtStyle(rawValue: selectedArtStyleRawValue)
-            ?? .threeD
+            ?? .twoD
     }
 
     @ViewBuilder

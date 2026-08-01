@@ -161,7 +161,7 @@ public enum OfficeArtStyle:
     case twoD = "2d"
     case threeD = "3d"
 
-    public static let defaultValue: OfficeArtStyle = .threeD
+    public static let defaultValue: OfficeArtStyle = .twoD
 
     public var id: String {
         rawValue
