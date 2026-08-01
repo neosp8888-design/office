@@ -889,6 +889,18 @@ final class AgentDirector: ObservableObject {
         )
     }
 
+    func archiveFeed(
+        query: String?,
+        limit: Int,
+        offset: Int
+    ) async throws -> ArchiveFeedPage {
+        try await database.fetchArchiveFeed(
+            query: query,
+            limit: limit,
+            offset: offset
+        )
+    }
+
     private func showBubble(
         _ text: String,
         for character: OfficeCharacter,

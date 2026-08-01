@@ -45,7 +45,7 @@ enum UsageBoardLayout {
 }
 
 struct OfficeDetailPanel: View {
-    @ObservedObject private var archiveFeedStore: ArchiveFeedStore
+    let director: AgentDirector
     let selection: OfficeDetailSelection
     @State private var usageRefreshRequestID = UUID()
     @State private var usageIsRefreshing = false
@@ -54,9 +54,7 @@ struct OfficeDetailPanel: View {
         director: AgentDirector,
         selection: OfficeDetailSelection
     ) {
-        _archiveFeedStore = ObservedObject(
-            wrappedValue: director.archiveFeedStore
-        )
+        self.director = director
         self.selection = selection
     }
 
@@ -115,7 +113,7 @@ struct OfficeDetailPanel: View {
             Group {
                 switch selection {
                 case .archive:
-                    ArchiveShelfContent(turns: archiveFeedStore.turns)
+                    ArchiveShelfContent(director: director)
                 case .usage:
                     UsageBoardContent(
                         refreshRequestID: usageRefreshRequestID,
@@ -130,18 +128,16 @@ struct OfficeDetailPanel: View {
 }
 
 private struct ArchiveShelfContent: View {
-    let turns: [LiveFeedTurn]
+    @ObservedObject var director: AgentDirector
     @State private var searchText = ""
     @State private var selectedTurnID: String?
-    @State private var displayedTurns: [LiveFeedTurn]
-    @State private var visibleTurnCount = Self.pageSize
+    @State private var turns: [LiveFeedTurn] = []
+    @State private var totalTurnCount = 0
+    @State private var errorMessage: String?
+    @State private var isLoading = true
+    @State private var isLoadingMore = false
 
     private static let pageSize = 12
-
-    init(turns: [LiveFeedTurn]) {
-        self.turns = turns
-        _displayedTurns = State(initialValue: turns)
-    }
 
     var body: some View {
         Group {
@@ -160,7 +156,17 @@ private struct ArchiveShelfContent: View {
                 VStack(spacing: 0) {
                     searchBar
 
-                    if displayedTurns.isEmpty {
+                    if isLoading && turns.isEmpty {
+                        ProgressView("기록을 불러오는 중")
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let errorMessage, turns.isEmpty {
+                        ContentUnavailableView(
+                            "기록을 불러오지 못했습니다",
+                            systemImage: "exclamationmark.triangle",
+                            description: Text(errorMessage)
+                        )
+                    } else if turns.isEmpty && normalizedSearchText.isEmpty {
                         ContentUnavailableView(
                             "아직 저장된 기록이 없습니다",
                             systemImage: "tray",
@@ -168,7 +174,7 @@ private struct ArchiveShelfContent: View {
                                 "직원에게 업무를 보내면 여기에 쌓입니다."
                             )
                         )
-                    } else if filteredTurns.isEmpty {
+                    } else if turns.isEmpty {
                         ContentUnavailableView(
                             "검색 결과가 없습니다",
                             systemImage: "text.magnifyingglass",
@@ -180,7 +186,7 @@ private struct ArchiveShelfContent: View {
                         ScrollView {
                             VStack(spacing: 10) {
                                 ArchiveRecordGrid(
-                                    turns: visibleTurns
+                                    turns: turns
                                 ) { turn in
                                     withAnimation(
                                         .easeInOut(duration: 0.16)
@@ -189,7 +195,7 @@ private struct ArchiveShelfContent: View {
                                     }
                                 }
 
-                                if hasMoreTurns {
+                                if turns.count < totalTurnCount {
                                     loadMoreButton
                                 }
                             }
@@ -201,14 +207,14 @@ private struct ArchiveShelfContent: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: isSearching)
-        .onChange(of: turnsRefreshToken) {
-            _, _ in
-            displayedTurns = turns
-            visibleTurnCount = Self.pageSize
-        }
-        .onChange(of: normalizedSearchText) {
-            _, _ in
-            visibleTurnCount = Self.pageSize
+        .task(id: normalizedSearchText) {
+            if !normalizedSearchText.isEmpty {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            await reload()
         }
     }
 
@@ -219,7 +225,7 @@ private struct ArchiveShelfContent: View {
                 .foregroundStyle(.secondary)
 
             TextField(
-                "기록 검색 · 업무, 응답, 세션, 모델",
+                "전체 기록 검색 · 업무, 응답, 세션, 모델",
                 text: $searchText
             )
             .textFieldStyle(.plain)
@@ -236,15 +242,21 @@ private struct ArchiveShelfContent: View {
                 .accessibilityLabel("검색어 지우기")
             }
 
-            Text("\(filteredTurns.count)건")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(DashboardPalette.accent)
-                .padding(.horizontal, 7)
-                .frame(height: 22)
-                .background(
-                    DashboardPalette.accent.opacity(0.09),
-                    in: Capsule()
-                )
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 22, height: 22)
+            } else {
+                Text("\(totalTurnCount)건")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(DashboardPalette.accent)
+                    .padding(.horizontal, 7)
+                    .frame(height: 22)
+                    .background(
+                        DashboardPalette.accent.opacity(0.09),
+                        in: Capsule()
+                    )
+            }
         }
         .padding(.horizontal, 11)
         .frame(height: 38)
@@ -260,54 +272,22 @@ private struct ArchiveShelfContent: View {
         .padding(.vertical, 9)
     }
 
-    private var filteredTurns: [LiveFeedTurn] {
-        let query = normalizedSearchText
-        guard !query.isEmpty else {
-            return displayedTurns
-        }
-
-        return displayedTurns.filter { turn in
-            var fields = [
-                turn.characterName,
-                turn.prompt,
-                turn.response,
-                turn.externalSessionId ?? "",
-                turn.model ?? "",
-                turn.effort ?? "",
-                agentExecutionModeTitle(turn.fastMode),
-                turn.backend?.title ?? "",
-            ]
-            if let backend = turn.backend, let model = turn.model {
-                fields.append(backend.modelTitle(model))
-            }
-            return fields.contains {
-                $0.localizedCaseInsensitiveContains(query)
-            }
-        }
-    }
-
-    private var visibleTurns: [LiveFeedTurn] {
-        Array(filteredTurns.prefix(visibleTurnCount))
-    }
-
-    private var hasMoreTurns: Bool {
-        visibleTurnCount < filteredTurns.count
-    }
-
     private var loadMoreButton: some View {
         Button {
-            visibleTurnCount = min(
-                visibleTurnCount + Self.pageSize,
-                filteredTurns.count
-            )
+            Task {
+                await loadMore()
+            }
         } label: {
             HStack(spacing: 7) {
-                Image(systemName: "chevron.down")
-                Text("다음 12건 보기")
-                Text(
-                    "\(visibleTurns.count)/\(filteredTurns.count)"
-                )
-                .foregroundStyle(.tertiary)
+                if isLoadingMore {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "chevron.down")
+                    Text("다음 12건 보기")
+                    Text("\(turns.count)/\(totalTurnCount)")
+                        .foregroundStyle(.tertiary)
+                }
             }
             .font(.system(size: 10, weight: .bold))
             .foregroundStyle(DashboardPalette.accent)
@@ -322,6 +302,7 @@ private struct ArchiveShelfContent: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(isLoadingMore)
         .accessibilityLabel("다음 12개 기록 보기")
     }
 
@@ -337,22 +318,64 @@ private struct ArchiveShelfContent: View {
         guard let selectedTurnID else {
             return nil
         }
-        return displayedTurns.first { $0.id == selectedTurnID }
+        return turns.first { $0.id == selectedTurnID }
     }
 
-    private var turnsRefreshToken: String {
-        turns.map {
-            "\($0.id)|\($0.status.rawValue)|"
-                + "\($0.workspace?.status.rawValue ?? "")|"
-                + "\($0.workspace?.mergedCommit ?? "")|"
-                + "\($0.responseSourceWarning ?? "")|"
-                + $0.responseSources.map {
-                    "\($0.id),\($0.sourceKind.rawValue),\($0.title),"
-                        + "\($0.locator),\($0.excerpt ?? "")"
-                }
-                .joined(separator: ",")
+    private func reload() async {
+        let query = normalizedSearchText
+        isLoading = true
+        errorMessage = nil
+        do {
+            let page = try await director.archiveFeed(
+                query: query.isEmpty ? nil : query,
+                limit: Self.pageSize,
+                offset: 0
+            )
+            guard !Task.isCancelled, query == normalizedSearchText else {
+                return
+            }
+            turns = page.turns
+            totalTurnCount = page.total
+        } catch {
+            guard !Task.isCancelled, query == normalizedSearchText else {
+                return
+            }
+            turns = []
+            totalTurnCount = 0
+            errorMessage = error.localizedDescription
         }
-        .joined(separator: ";")
+        isLoading = false
+    }
+
+    private func loadMore() async {
+        guard !isLoadingMore, turns.count < totalTurnCount else {
+            return
+        }
+        let query = normalizedSearchText
+        isLoadingMore = true
+        defer {
+            isLoadingMore = false
+        }
+        do {
+            let page = try await director.archiveFeed(
+                query: query.isEmpty ? nil : query,
+                limit: Self.pageSize,
+                offset: turns.count
+            )
+            guard query == normalizedSearchText else {
+                return
+            }
+            let existingIDs = Set(turns.map(\.id))
+            turns.append(contentsOf: page.turns.filter {
+                !existingIDs.contains($0.id)
+            })
+            totalTurnCount = page.total
+        } catch {
+            guard query == normalizedSearchText else {
+                return
+            }
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
