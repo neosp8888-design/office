@@ -164,11 +164,13 @@ final class LiveFeedStoreTests: XCTestCase {
 
     func testReplacingOptimisticIDPreservesWorkspaceReview() {
         let workspace = makeWorkspace(status: .awaitingApproval)
+        let source = makeSource(kind: .database)
         let turn = makeTurn(
             id: "local-command",
             characterID: OfficeCharacter.rightMan.rawValue,
             prompt: "변경 업무",
             startedAt: Date(),
+            sources: [source],
             workspace: workspace
         )
 
@@ -176,6 +178,99 @@ final class LiveFeedStoreTests: XCTestCase {
 
         XCTAssertEqual(replaced.id, "server-turn")
         XCTAssertEqual(replaced.workspace, workspace)
+        XCTAssertEqual(replaced.responseSources, [source])
+    }
+
+    func testLiveFeedSourcesDecodeAllKindsAndFileLineLocator() throws {
+        let payload = Data(
+            #"""
+            [
+              {
+                "id": "source-rag",
+                "sourceKind": "rag",
+                "title": "이전 결정",
+                "locator": "rag_documents/record",
+                "excerpt": null,
+                "ragDocumentId": null,
+                "workRecordId": null
+              },
+              {
+                "id": "source-database",
+                "sourceKind": "database",
+                "title": "업무 기록",
+                "locator": "work_records/record",
+                "excerpt": "세션을 유지한다.",
+                "ragDocumentId": null,
+                "workRecordId": null
+              },
+              {
+                "id": "source-file",
+                "sourceKind": "file",
+                "title": "README",
+                "locator": "/repo/README.md:14-18",
+                "excerpt": null,
+                "ragDocumentId": null,
+                "workRecordId": null
+              }
+            ]
+            """#.utf8
+        )
+
+        let sources = try JSONDecoder().decode(
+            [LiveFeedSource].self,
+            from: payload
+        )
+
+        XCTAssertEqual(sources.map(\.sourceKind), [.rag, .database, .file])
+        XCTAssertEqual(sources.map(\.sourceKind.title), ["RAG", "DB", "파일"])
+        XCTAssertEqual(sources.last?.filePath, "/repo/README.md")
+    }
+
+    func testArchiveRefreshesWhenOnlyResponseSourcesChange() {
+        let store = ArchiveFeedStore()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 7_000)
+        let original = makeTurn(
+            id: "turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "근거 확인",
+            startedAt: startedAt
+        )
+        let sourced = makeTurn(
+            id: "turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "근거 확인",
+            startedAt: startedAt,
+            sources: [makeSource(kind: .file)]
+        )
+
+        store.replaceIfNeeded(with: [original])
+        store.replaceIfNeeded(with: [sourced])
+
+        XCTAssertEqual(store.turns.first?.responseSources.count, 1)
+        XCTAssertEqual(store.turns.first?.responseSources.first?.sourceKind, .file)
+    }
+
+    func testArchiveRefreshesWhenOnlyResponseSourceWarningClears() {
+        let store = ArchiveFeedStore()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 7_100)
+        let warning = makeTurn(
+            id: "turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "근거 확인",
+            startedAt: startedAt,
+            responseSourceWarning: "근거 형식을 읽지 못했습니다."
+        )
+        let cleared = makeTurn(
+            id: "turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "근거 확인",
+            startedAt: startedAt
+        )
+
+        store.replaceIfNeeded(with: [warning])
+        store.replaceIfNeeded(with: [cleared])
+
+        XCTAssertNil(store.turns.first?.responseSourceWarning)
     }
 
     func testWorkspaceReviewBlocksOnlyUnresolvedMergeStates() {
@@ -356,6 +451,8 @@ final class LiveFeedStoreTests: XCTestCase {
         response: String = "",
         startedAt: Date,
         updatedAt: Date? = nil,
+        sources: [LiveFeedSource]? = nil,
+        responseSourceWarning: String? = nil,
         workspace: TurnWorkspaceReview? = nil
     ) -> LiveFeedTurn {
         LiveFeedTurn(
@@ -368,17 +465,20 @@ final class LiveFeedStoreTests: XCTestCase {
             effort: "high",
             fastMode: true,
             externalSessionId: nil,
+            conversationWorkdir: "/repo",
             prompt: prompt,
             response: response,
             status: .running,
             needsInput: false,
             errorMessage: nil,
+            responseSourceWarning: responseSourceWarning,
             startedAt: startedAt,
             endedAt: nil,
             updatedAt: updatedAt ?? startedAt,
             estimatedCostUsd: nil,
             sessionContext: nil,
             activities: [],
+            sources: sources,
             workspace: workspace
         )
     }
@@ -409,6 +509,18 @@ final class LiveFeedStoreTests: XCTestCase {
             errorMessage: nil,
             diff: diff,
             diffTruncated: diffTruncated
+        )
+    }
+
+    private func makeSource(kind: LiveFeedSourceKind) -> LiveFeedSource {
+        LiveFeedSource(
+            id: "source-\(kind.rawValue)",
+            sourceKind: kind,
+            title: "근거",
+            locator: kind == .file ? "/repo/README.md:14" : "record/14",
+            excerpt: nil,
+            ragDocumentId: nil,
+            workRecordId: nil
         )
     }
 }

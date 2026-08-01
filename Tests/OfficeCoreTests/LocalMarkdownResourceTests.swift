@@ -7,12 +7,12 @@ import XCTest
 final class LocalMarkdownResourceTests: XCTestCase {
     func testAbsolutePathBecomesFileURL() throws {
         let relativeURL = try XCTUnwrap(
-            URL(string: "/Users/neo/office/sample.png")
+            URL(string: "/Users/example/office/sample.png")
         )
 
         XCTAssertEqual(
             LocalMarkdownResource.fileURL(from: relativeURL)?.absoluteString,
-            "file:///Users/neo/office/sample.png"
+            "file:///Users/example/office/sample.png"
         )
     }
 

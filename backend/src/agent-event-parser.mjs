@@ -2,7 +2,10 @@
 
 import { isAbsolute, relative } from "node:path";
 
+import { normalizeResponseSources } from "./work-record-provenance.mjs";
+
 const MAX_REASONING_LENGTH = 6_000;
+const RESPONSE_SOURCES_MARKER = "[OFFICE_SOURCES]";
 
 export function parseAgentEvent(line, backend, workdir = null) {
   let object;
@@ -21,16 +24,62 @@ export function parseAgentEvent(line, backend, workdir = null) {
 }
 
 export function decodeAgentResponse(value) {
-  const text = String(value ?? "").trim();
+  const decodedSources = responseSources(String(value ?? "").trim());
+  const text = decodedSources.text;
   const marker = "[NEED_INPUT]";
   if (!text.startsWith(marker)) {
-    return { text, needsInput: false };
+    const response = {
+      text,
+      needsInput: false,
+      sources: decodedSources.sources,
+    };
+    if (decodedSources.sourceError) {
+      response.sourceError = decodedSources.sourceError;
+    }
+    return response;
   }
 
-  return {
+  const response = {
     text: text.slice(marker.length).replace(/^\s+/, ""),
     needsInput: true,
+    sources: decodedSources.sources,
   };
+  if (decodedSources.sourceError) {
+    response.sourceError = decodedSources.sourceError;
+  }
+  return response;
+}
+
+function responseSources(text) {
+  const markerIndex = text.lastIndexOf(RESPONSE_SOURCES_MARKER);
+  if (
+    markerIndex < 0 ||
+    (markerIndex > 0 && text[markerIndex - 1] !== "\n")
+  ) {
+    return { text, sources: [] };
+  }
+  let encoded = text
+    .slice(markerIndex + RESPONSE_SOURCES_MARKER.length)
+    .trim();
+  if (encoded.startsWith("```")) {
+    encoded = encoded
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "");
+  }
+  try {
+    const parsed = JSON.parse(encoded);
+    const sources = normalizeResponseSources(parsed, { maximum: 20 });
+    return {
+      text: text.slice(0, markerIndex).trim(),
+      sources,
+    };
+  } catch {
+    return {
+      text: text.slice(0, markerIndex).trim(),
+      sources: [],
+      sourceError: "응답 근거 형식을 읽지 못했습니다.",
+    };
+  }
 }
 
 function parseCodexEvent(object, workdir) {

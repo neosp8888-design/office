@@ -448,7 +448,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertNil(
             WorkspaceFileRevealTarget.fileURL(
                 path: "…/../outside.txt",
-                workspaceDirectory: "/Users/neo/office"
+                workspaceDirectory: "/Users/example/office"
             )
         )
     }

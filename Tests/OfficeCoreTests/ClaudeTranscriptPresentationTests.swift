@@ -10,13 +10,13 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
             try makeActivity(
                 id: "tool-1",
                 kind: "tool",
-                text: "도구 · Read · /Users/neo/office/Package.swift",
+                text: "도구 · Read · /Users/example/office/Package.swift",
                 status: "completed"
             )
         )
 
         XCTAssertEqual(call.name, "Read")
-        XCTAssertEqual(call.detail, "/Users/neo/office/Package.swift")
+        XCTAssertEqual(call.detail, "/Users/example/office/Package.swift")
         XCTAssertEqual(call.family, .read)
     }
 

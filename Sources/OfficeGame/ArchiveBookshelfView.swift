@@ -351,6 +351,17 @@ struct ArchiveOpenBook: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
+
+                if let warning = turn.responseSourceWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(message: warning)
+                }
+
+                if !turn.responseSources.isEmpty {
+                    ResponseSourceList(
+                        sources: turn.responseSources,
+                        workspaceDirectory: archiveWorkspaceDirectory
+                    )
+                }
             }
             .padding(12)
         }
@@ -367,6 +378,14 @@ struct ArchiveOpenBook: View {
 
     private var promptPresentation: TaskPromptPresentation {
         TaskPromptPresentation(prompt: turn.prompt)
+    }
+
+    private var archiveWorkspaceDirectory: String {
+        turn.workspace?.fileBaseDirectory(
+            fallback: turn.conversationWorkdir ?? ""
+        )
+            ?? turn.conversationWorkdir
+            ?? ""
     }
 
     private var bookBinding: some View {

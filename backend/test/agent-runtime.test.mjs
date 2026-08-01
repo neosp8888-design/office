@@ -4,13 +4,15 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -18,7 +20,10 @@ import {
   AgentBusyError,
   AgentJobNotFoundError,
   AgentRuntime,
+  adoptClaudeSession,
   buildArguments,
+  claudeSessionPath,
+  claudeSessionResumable,
   codexUsageDelta,
   latestCodexUsageFromRollout,
   promptWithAttachments,
@@ -151,6 +156,8 @@ test("Codex 재개는 현재 역할 지침을 같은 세션에 전달한다", ()
   );
 
   assert.match(instructions, /업데이트된 역할 지침을 따른다/);
+  assert.match(instructions, /\[OFFICE_SOURCES\]/);
+  assert.match(instructions, /rag, database, file/);
   assert.equal(argumentsList.at(-1), "계속해줘.");
 });
 
@@ -205,6 +212,116 @@ test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달
   );
   assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
   assert.equal(argumentsList.includes("--resume"), true);
+});
+
+const claudeResumeCharacter = {
+  backend: "claude",
+  model: "claude-sonnet-5",
+  effort: "high",
+  fastMode: false,
+  permission: "bypassPermissions",
+  name: "클대리",
+  seat: "좌측 아래",
+  identityPrompt: "업무 지시를 정확히 이해한다.",
+};
+
+function withClaudeSessionHome(run) {
+  const home = mkdtempSync(join(tmpdir(), "office-claude-home-"));
+  const workdir = mkdtempSync(join(tmpdir(), "office-claude-workdir-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    return run({ workdir });
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(home, { recursive: true, force: true });
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
+function writeClaudeSession(workdir, sessionID) {
+  const path = claudeSessionPath(workdir, sessionID);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `{"sessionId":"${sessionID}"}\n`);
+  return path;
+}
+
+test("Claude 세션 경로는 실행 디렉토리를 그대로 반영한다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const path = claudeSessionPath(workdir, "session-1");
+    const encoded = realpathSync(workdir).replace(/[/.]/g, "-");
+
+    assert.equal(path.endsWith(join(encoded, "session-1.jsonl")), true);
+    assert.equal(claudeSessionResumable(workdir, "session-1"), false);
+
+    writeClaudeSession(workdir, "session-1");
+    assert.equal(claudeSessionResumable(workdir, "session-1"), true);
+  });
+});
+
+test("Claude는 어디에도 세션이 없으면 재개하지 않는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const argumentsList = buildArguments({
+      character: claudeResumeCharacter,
+      prompt: "계속해줘.",
+      previousSessionID: "session-1",
+      workdir,
+    });
+
+    assert.equal(argumentsList.includes("--resume"), false);
+  });
+});
+
+test("Claude는 병합으로 작업 공간이 바뀌어도 이전 세션을 이어받는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const previousWorkdir = mkdtempSync(join(tmpdir(), "office-claude-old-"));
+    try {
+      const source = writeClaudeSession(previousWorkdir, "session-1");
+      assert.equal(claudeSessionResumable(workdir, "session-1"), false);
+
+      const adopted = adoptClaudeSession(workdir, "session-1");
+
+      assert.equal(adopted, true);
+      assert.equal(claudeSessionResumable(workdir, "session-1"), true);
+      assert.equal(
+        readFileSync(claudeSessionPath(workdir, "session-1"), "utf8"),
+        readFileSync(source, "utf8"),
+      );
+
+      const argumentsList = buildArguments({
+        character: claudeResumeCharacter,
+        prompt: "계속해줘.",
+        previousSessionID: "session-1",
+        workdir,
+      });
+      const resumeIndex = argumentsList.indexOf("--resume");
+
+      assert.notEqual(resumeIndex, -1);
+      assert.equal(argumentsList[resumeIndex + 1], "session-1");
+    } finally {
+      rmSync(previousWorkdir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("Claude는 같은 작업 공간에 세션이 남아 있으면 재개한다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    writeClaudeSession(workdir, "session-1");
+    const argumentsList = buildArguments({
+      character: claudeResumeCharacter,
+      prompt: "계속해줘.",
+      previousSessionID: "session-1",
+      workdir,
+    });
+    const resumeIndex = argumentsList.indexOf("--resume");
+
+    assert.notEqual(resumeIndex, -1);
+    assert.equal(argumentsList[resumeIndex + 1], "session-1");
+  });
 });
 
 test("Claude는 Fast 비활성화를 명시하고 다른 모델의 Fast를 거절한다", () => {
@@ -1673,6 +1790,126 @@ test("사용자 답이 필요한 완료 턴은 workspace 검토를 시작하지 
 
   assert.equal(reviewCount, 0);
   assert.equal(state.workspace.status, "active");
+});
+
+test("완료 응답의 출처 블록은 본문에서 숨기고 별도 행으로 저장한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/INSERT INTO turn_response_sources/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{ id: "source-1", sourceKind: "file" }],
+      };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  const rawResponse = [
+    "완료했습니다.",
+    "[OFFICE_SOURCES]",
+    '[{"kind":"file","title":"README","locator":"README.md:8"}]',
+  ].join("\n");
+  const state = {
+    ...makeCodexActivityState(),
+    workdir: "/repo",
+    character: { id: "boss", backend: "codex" },
+    workspace: null,
+    initialGeneratedImages: new Set(),
+    externalSessionID: null,
+    responseText: rawResponse,
+    visibleAgentMessages: [{ key: "message-1", text: rawResponse }],
+    usage: null,
+    cancelRequested: false,
+  };
+  runtime.running.set("boss", state);
+
+  await runtime.complete(state, {
+    text: "완료했습니다.",
+    needsInput: false,
+    sources: [{
+      ordinal: 0,
+      sourceKind: "file",
+      title: "README",
+      locator: "/repo/README.md:8",
+      excerpt: null,
+      ragDocumentID: null,
+      workRecordID: null,
+      metadata: {},
+    }],
+  });
+
+  const messageUpdate = queries.find(({ text }) =>
+    /UPDATE messages/.test(text)
+  );
+  const sourceInsert = queries.find(({ text }) =>
+    /INSERT INTO turn_response_sources/.test(text)
+  );
+  assert.equal(messageUpdate.values[1], "완료했습니다.");
+  assert.equal(sourceInsert.values[2], "file");
+  assert.equal(sourceInsert.values[4], "README.md:8");
+});
+
+test("존재하지 않는 출처 참조는 응답을 살리고 경고로 표시한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/SELECT id::text FROM rag_documents/.test(text)) {
+      return { rowCount: 0, rows: [] };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  const state = {
+    ...makeCodexActivityState(),
+    workdir: "/repo",
+    character: { id: "boss", backend: "codex" },
+    workspace: null,
+    initialGeneratedImages: new Set(),
+    externalSessionID: null,
+    responseText: '{"ok":true}',
+    visibleAgentMessages: [{ key: "message-1", text: '{"ok":true}' }],
+    usage: null,
+    cancelRequested: false,
+  };
+
+  await runtime.complete(state, {
+    text: '{"ok":true}',
+    needsInput: false,
+    sources: [{
+      ordinal: 0,
+      sourceKind: "rag",
+      title: "없는 문서",
+      locator: "rag_documents/missing",
+      excerpt: null,
+      ragDocumentID: "44444444-4444-4444-8444-444444444444",
+      workRecordID: null,
+      metadata: {},
+    }],
+  });
+
+  const messageUpdate = queries.find(({ text }) =>
+    /UPDATE messages/.test(text)
+  );
+  const turnUpdate = queries.find(({ text }) =>
+    /response_source_warning/.test(text)
+  );
+  assert.equal(messageUpdate.values[1], '{"ok":true}');
+  assert.match(turnUpdate.values[2], /RAG 출처 문서 참조를 찾을 수 없습니다/);
+  assert.equal(
+    queries.some(({ text }) => /INSERT INTO turn_response_sources/.test(text)),
+    false,
+  );
 });
 
 test("provider 전환 전에 변경이 있으면 검토 대기로 바꾸고 세션 종료를 막는다", async () => {

@@ -180,6 +180,15 @@ private struct TurnDisclosure: View {
             VStack(alignment: .leading, spacing: 10) {
                 taskPromptBlock
                 transcriptBlock(title: "응답", text: turn.response)
+                if let warning = turn.responseSourceWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(message: warning)
+                }
+                if !turn.responseSources.isEmpty {
+                    ResponseSourceList(
+                        sources: turn.responseSources,
+                        workspaceDirectory: turn.conversationWorkdir ?? ""
+                    )
+                }
             }
             .padding(.top, 8)
         } label: {
@@ -435,6 +444,15 @@ private struct ArchiveTurnCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 taskPromptBlock
                 transcriptBlock(title: "응답", text: turn.response)
+                if let warning = turn.responseSourceWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(message: warning)
+                }
+                if !turn.responseSources.isEmpty {
+                    ResponseSourceList(
+                        sources: turn.responseSources,
+                        workspaceDirectory: turn.conversationWorkdir ?? ""
+                    )
+                }
                 if let sessionID = turn.externalSessionId {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("세션 ID")

@@ -20,6 +20,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import {
   basename,
+  dirname,
   extname,
   isAbsolute,
   join,
@@ -39,12 +40,25 @@ import {
 } from "./local-artifacts.mjs";
 import { GitWorkspaceError } from "./git-workspace.mjs";
 import { estimateTokenCost } from "./token-cost-estimator.mjs";
+import {
+  ProvenanceValidationError,
+  portableResponseSources,
+  replaceTurnResponseSources,
+} from "./work-record-provenance.mjs";
 
 const RESPONSE_INSTRUCTION = `
 사용자 판단이 반드시 필요해 더 진행할 수 없을 때만 최종 응답을 정확히 다음 형식으로 작성한다.
 [NEED_INPUT]
 사용자에게 보여줄 질문 원문
 표식 다음에는 질문과 판단에 필요한 선택지만 작성한다. 사용자 확인 없이 할 수 있는 작업은 먼저 진행한다.
+
+RAG, 데이터베이스 또는 파일에서 내용을 실제 근거로 사용했다면 일반 최종 응답 맨 끝에 아래 기계 판독용 블록을 붙인다. 사용하지 않았거나 [NEED_INPUT] 응답이면 블록을 붙이지 않는다.
+[OFFICE_SOURCES]
+[{"kind":"file","title":"근거 이름","locator":"실제 경로 또는 식별자","excerpt":"필요한 경우 짧은 근거"}]
+kind는 rag, database, file 중 하나만 쓴다. JSON 배열만 쓰고 코드 펜스는 쓰지 않는다.
+출처는 최대 20개만 쓴다. RAG 출처에는 검색 결과의 ragDocumentId를, work_records DB 출처에는 workRecordId를 반드시 함께 쓴다.
+출처 블록에는 비밀번호나 토큰을 넣지 않는다. locator는 전체 DB 접속 문자열 대신 테이블·행 식별자나 파일 경로만 쓴다.
+업무 폴더 안의 파일 locator는 worktree 절대경로 대신 업무 폴더 상대경로로 쓴다.
 `.trim();
 
 const MAX_FILE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
@@ -979,6 +993,7 @@ export class AgentRuntime {
       prompt: state.prompt,
       previousSessionID: state.externalSessionID,
       attachments: state.attachments,
+      workdir: state.workdir,
     });
     const child = spawn(executable, cliArguments, {
       cwd: state.workdir,
@@ -1275,8 +1290,8 @@ export class AgentRuntime {
       .map((message) => message.text)
       .filter(Boolean);
     if (
-      decoded.needsInput &&
-      values.at(-1) === state.responseText
+      values.at(-1) === state.responseText &&
+      values.at(-1) !== decoded.text
     ) {
       values[values.length - 1] = decoded.text;
     } else if (values.at(-1) !== decoded.text) {
@@ -1286,7 +1301,7 @@ export class AgentRuntime {
   }
 
   async normalizeCompletedCodexMessageActivity(state, decoded) {
-    if (state.character.backend !== "codex" || !decoded.needsInput) {
+    if (state.character.backend !== "codex") {
       return;
     }
     const finalMessage = state.visibleAgentMessages?.at(-1);
@@ -1497,6 +1512,7 @@ export class AgentRuntime {
   }
 
   async persistResponseDraft(state, text) {
+    const visibleText = decodeAgentResponse(text).text;
     await this.pool.query(
       `
         UPDATE messages
@@ -1504,7 +1520,7 @@ export class AgentRuntime {
         WHERE turn_id = $1
           AND role = 'assistant'
       `,
-      [state.turnID, text],
+      [state.turnID, visibleText],
     );
     await this.touchTurn(state.turnID);
     this.broadcast({
@@ -1621,6 +1637,10 @@ export class AgentRuntime {
       this.completedResponseText(state, decoded),
       generatedImages,
     );
+    const responseSources = portableResponseSources(
+      decoded.sources ?? [],
+      state.workdir,
+    );
     const workspaceReview =
       state.workspace &&
         this.workspaceManager &&
@@ -1629,6 +1649,20 @@ export class AgentRuntime {
         : null;
 
     await this.withTransaction(async (client) => {
+      let sourceWarning = decoded.sourceError ?? null;
+      try {
+        await replaceTurnResponseSources(
+          client,
+          state.turnID,
+          responseSources,
+        );
+      } catch (error) {
+        if (!(error instanceof ProvenanceValidationError)) {
+          throw error;
+        }
+        sourceWarning = error.message;
+        await replaceTurnResponseSources(client, state.turnID, []);
+      }
       await client.query(
         `
           UPDATE messages
@@ -1644,12 +1678,13 @@ export class AgentRuntime {
           SET
             status = 'completed',
             needs_input = $2,
+            response_source_warning = $3,
             error_message = NULL,
             ended_at = now(),
             updated_at = now()
           WHERE id = $1
         `,
-        [state.turnID, decoded.needsInput],
+        [state.turnID, decoded.needsInput, sourceWarning],
       );
       await this.persistUsageRecord(client, state);
       if (workspaceReview) {
@@ -2890,11 +2925,85 @@ function resolvedChangePath(workdir, value) {
   return isAbsolute(path) ? path : resolve(workdir, path);
 }
 
+export function claudeSessionPath(workdir, sessionID) {
+  const directory = String(workdir ?? "").trim();
+  const id = String(sessionID ?? "").trim();
+  if (!directory || !id) {
+    return null;
+  }
+  let resolved;
+  try {
+    resolved = realpathSync(directory);
+  } catch {
+    resolved = directory;
+  }
+  return join(
+    homedir(),
+    ".claude",
+    "projects",
+    resolved.replace(/[/.]/g, "-"),
+    `${id}.jsonl`,
+  );
+}
+
+export function claudeSessionResumable(workdir, sessionID) {
+  const path = claudeSessionPath(workdir, sessionID);
+  return path === null ? false : existsSync(path);
+}
+
+function findClaudeSessionFile(sessionID) {
+  const id = String(sessionID ?? "").trim();
+  if (!id) {
+    return null;
+  }
+  const root = join(homedir(), ".claude", "projects");
+  if (!existsSync(root)) {
+    return null;
+  }
+  let directories;
+  try {
+    directories = readdirSync(root);
+  } catch {
+    return null;
+  }
+  for (const directory of directories) {
+    const candidate = join(root, String(directory), `${id}.jsonl`);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+// Claude Code는 세션을 실행 디렉토리 단위로 찾으므로 병합 뒤 작업 공간이
+// 바뀌면 이전 세션을 잃는다. 기록을 새 작업 공간으로 옮겨 대화를 잇는다.
+export function adoptClaudeSession(workdir, sessionID) {
+  const target = claudeSessionPath(workdir, sessionID);
+  if (target === null) {
+    return false;
+  }
+  if (existsSync(target)) {
+    return true;
+  }
+  const source = findClaudeSessionFile(sessionID);
+  if (!source) {
+    return false;
+  }
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 export function buildArguments({
   character,
   prompt,
   previousSessionID,
   attachments = [],
+  workdir = null,
 }) {
   return character.backend === "codex"
     ? codexArguments(
@@ -2903,7 +3012,7 @@ export function buildArguments({
       previousSessionID,
       attachments,
     )
-    : claudeArguments(character, prompt, previousSessionID);
+    : claudeArguments(character, prompt, previousSessionID, workdir);
 }
 
 function locateExecutable(character) {
@@ -2982,7 +3091,7 @@ function codexArguments(
   return argumentsList;
 }
 
-function claudeArguments(character, prompt, previousSessionID) {
+function claudeArguments(character, prompt, previousSessionID, workdir = null) {
   if (character.fastMode && character.model !== "claude-opus-5") {
     throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
   }
@@ -3007,7 +3116,10 @@ function claudeArguments(character, prompt, previousSessionID) {
     "--append-system-prompt",
     identityPrompt(character),
   );
-  if (previousSessionID) {
+  if (
+    previousSessionID &&
+    (workdir === null || adoptClaudeSession(workdir, previousSessionID))
+  ) {
     argumentsList.push("--resume", previousSessionID);
   }
   return argumentsList;
