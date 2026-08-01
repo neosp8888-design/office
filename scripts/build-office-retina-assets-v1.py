@@ -40,8 +40,6 @@ BACKGROUND_SOURCES = {
     "3d": {
         "modernDay": RESOURCES_DIR / "office-theme-modern-day-v4.png",
         "modernNight": RESOURCES_DIR / "office-theme-modern-night-v4.png",
-        "woodDay": RESOURCES_DIR / "office-theme-wood-day-v4.png",
-        "woodNight": RESOURCES_DIR / "office-theme-wood-night-v4.png",
     },
 }
 

@@ -27,9 +27,7 @@ let package = Package(
                 "Resources/office-3d-motion-v1",
                 "Resources/office-background-3d-v4.png",
                 "Resources/office-theme-modern-day-v4.png",
-                "Resources/office-theme-modern-night-v4.png",
-                "Resources/office-theme-wood-day-v4.png",
-                "Resources/office-theme-wood-night-v4.png"
+                "Resources/office-theme-modern-night-v4.png"
             ],
             resources: [
                 .copy("Resources/office-retina-v1"),

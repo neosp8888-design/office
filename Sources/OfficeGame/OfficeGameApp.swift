@@ -241,7 +241,7 @@ private struct OfficeGameView: View {
                 )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("실시간 업무실")
+                Text("실시간 대화")
                     .font(.system(size: 17, weight: .bold))
                 Text(
                     "\(director.selectedName ?? "백부장")의 대화와 진행 기록"

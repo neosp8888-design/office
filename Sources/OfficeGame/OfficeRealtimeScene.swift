@@ -1085,8 +1085,6 @@ final class OfficeRealtimeScene: SKScene {
                     blue: 0.60,
                     alpha: 1
                 )
-            case .woodDay, .woodNight:
-                analogClockDial.isHidden = true
             }
         }
 
@@ -1301,10 +1299,6 @@ final class OfficeRealtimeScene: SKScene {
             NSColor(calibratedRed: 0.82, green: 0.95, blue: 0.96, alpha: 1)
         case .modernNight:
             NSColor(calibratedRed: 1.00, green: 0.80, blue: 0.52, alpha: 1)
-        case .woodDay:
-            NSColor(calibratedRed: 1.00, green: 0.82, blue: 0.55, alpha: 1)
-        case .woodNight:
-            NSColor(calibratedRed: 1.00, green: 0.74, blue: 0.38, alpha: 1)
         }
     }
 

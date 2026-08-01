@@ -1,12 +1,10 @@
-// 이 파일은 V4 오피스의 네 가지 테마와 번들 이미지를 안전하게 제공한다.
+// 이 파일은 V4 오피스의 두 가지 모던 테마와 번들 이미지를 안전하게 제공한다.
 
 import AppKit
 
 public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
     case modernDay
     case modernNight
-    case woodDay
-    case woodNight
 
     public var id: String {
         rawValue
@@ -18,10 +16,6 @@ public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
             "office-theme-modern-day-v4"
         case .modernNight:
             "office-theme-modern-night-v4"
-        case .woodDay:
-            "office-theme-wood-day-v4"
-        case .woodNight:
-            "office-theme-wood-night-v4"
         }
     }
 
@@ -31,27 +25,18 @@ public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
             "모던 낮"
         case .modernNight:
             "모던 밤"
-        case .woodDay:
-            "우드 낮"
-        case .woodNight:
-            "우드 밤"
         }
     }
 
     public var materialTitle: String {
-        switch self {
-        case .modernDay, .modernNight:
-            "모던"
-        case .woodDay, .woodNight:
-            "우드"
-        }
+        "모던"
     }
 
     public var isNight: Bool {
         switch self {
-        case .modernNight, .woodNight:
+        case .modernNight:
             true
-        case .modernDay, .woodDay:
+        case .modernDay:
             false
         }
     }
@@ -97,48 +82,6 @@ public enum OfficeTheme: String, CaseIterable, Identifiable, Sendable {
                     srgbRed: 0.224,
                     green: 0.247,
                     blue: 0.324,
-                    alpha: 1
-                )
-            ]
-        case .woodDay:
-            [
-                NSColor(
-                    srgbRed: 0.951,
-                    green: 0.894,
-                    blue: 0.861,
-                    alpha: 1
-                ),
-                NSColor(
-                    srgbRed: 0.949,
-                    green: 0.897,
-                    blue: 0.864,
-                    alpha: 1
-                ),
-                NSColor(
-                    srgbRed: 0.948,
-                    green: 0.895,
-                    blue: 0.864,
-                    alpha: 1
-                )
-            ]
-        case .woodNight:
-            [
-                NSColor(
-                    srgbRed: 0.523,
-                    green: 0.555,
-                    blue: 0.643,
-                    alpha: 1
-                ),
-                NSColor(
-                    srgbRed: 0.523,
-                    green: 0.556,
-                    blue: 0.646,
-                    alpha: 1
-                ),
-                NSColor(
-                    srgbRed: 0.522,
-                    green: 0.555,
-                    blue: 0.644,
                     alpha: 1
                 )
             ]

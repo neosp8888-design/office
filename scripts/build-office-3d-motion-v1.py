@@ -1,11 +1,11 @@
-# 이 스크립트는 3D V4 원본을 고정한 채 인물의 눈·입·손 패치와 네 테마를 생성한다.
+# 이 스크립트는 3D V4 원본을 고정한 채 인물의 눈·입·손 패치와 두 모던 테마를 생성한다.
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -13,7 +13,6 @@ ARTIFACTS_DIR = PROJECT_DIR / "artifacts"
 RESOURCES_DIR = PROJECT_DIR / "Sources" / "OfficeCore" / "Resources"
 SOURCE_DIR = ARTIFACTS_DIR / "motion-sources"
 MOTION_DIR = RESOURCES_DIR / "office-3d-motion-v1"
-BASE_PATH = ARTIFACTS_DIR / "office-3d-v4-layout-concept-v3.png"
 MODERN_BASE_PATH = (
     ARTIFACTS_DIR / "office-3d-modern-v3-purple-right-woman.png"
 )
@@ -23,8 +22,6 @@ MODERN_NIGHT_BASE_PATH = (
 THEME_PATHS = {
     "modernDay": RESOURCES_DIR / "office-theme-modern-day-v4.png",
     "modernNight": RESOURCES_DIR / "office-theme-modern-night-v4.png",
-    "woodDay": RESOURCES_DIR / "office-theme-wood-day-v4.png",
-    "woodNight": RESOURCES_DIR / "office-theme-wood-night-v4.png",
 }
 SOURCE_PATHS = {
     "boss-blink": SOURCE_DIR / "boss-blink-source.png",
@@ -191,40 +188,6 @@ def add_radial_glow(
     return Image.alpha_composite(image.convert("RGBA"), glow).convert("RGB")
 
 
-def night_grade(image: Image.Image, modern: bool) -> Image.Image:
-    image = ImageEnhance.Color(image).enhance(0.68 if modern else 0.78)
-    image = ImageEnhance.Brightness(image).enhance(0.64 if modern else 0.68)
-    image = ImageEnhance.Contrast(image).enhance(1.08)
-    tint = Image.new("RGB", image.size, (180, 205, 255))
-    image = ImageChops.multiply(image, tint)
-    image = add_radial_glow(
-        image,
-        center=(455, 325),
-        radius=(180, 160),
-        color=(255, 190, 95),
-        opacity=30,
-    )
-    image = add_radial_glow(
-        image,
-        center=(770, 445),
-        radius=(260, 90),
-        color=(255, 177, 92),
-        opacity=24,
-    )
-    return image
-
-
-def apply_theme(image: Image.Image, theme: str) -> Image.Image:
-    image = image.convert("RGB")
-    if theme in ("woodDay", "modernDay"):
-        return image
-    if theme == "woodNight":
-        return night_grade(image, modern=False)
-    if theme == "modernNight":
-        return image
-    raise ValueError(f"지원하지 않는 테마입니다. {theme}")
-
-
 def localized_variant(
     base: Image.Image,
     generated: Image.Image,
@@ -247,8 +210,6 @@ def build_contact_sheet(themes: dict[str, Image.Image]) -> None:
     positions = {
         "modernDay": (0, 0),
         "modernNight": (768, 0),
-        "woodDay": (0, 512),
-        "woodNight": (768, 512),
     }
     for theme, position in positions.items():
         preview = themes[theme].resize(preview_size, Image.Resampling.LANCZOS)
@@ -290,11 +251,9 @@ def build_motion_contact_sheet(
 
 
 def main() -> None:
-    wood_base = Image.open(BASE_PATH).convert("RGB")
     modern_base = Image.open(MODERN_BASE_PATH).convert("RGB")
     modern_night_base = Image.open(MODERN_NIGHT_BASE_PATH).convert("RGB")
     for name, image in {
-        "우드": wood_base,
         "모던": modern_base,
         "모던 야간": modern_night_base,
     }.items():
@@ -308,19 +267,14 @@ def main() -> None:
         for key, path in SOURCE_PATHS.items()
     }
     for key, image in generated_sources.items():
-        if image.size != wood_base.size:
+        if image.size != modern_base.size:
             raise ValueError(f"{key} 원형 크기가 올바르지 않습니다. {image.size}")
 
     theme_bases = {
         "modernDay": modern_base,
         "modernNight": modern_night_base,
-        "woodDay": wood_base,
-        "woodNight": wood_base,
     }
-    themes = {
-        theme: apply_theme(theme_bases[theme], theme)
-        for theme in THEME_PATHS
-    }
+    themes = {theme: theme_bases[theme] for theme in THEME_PATHS}
     for theme, path in THEME_PATHS.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         themes[theme].save(path)
@@ -360,15 +314,12 @@ def main() -> None:
                 source_key = f"modern-night-{spec['kind']}"
             elif theme == "modernDay":
                 source_key = f"modern-{spec['kind']}"
-            else:
-                source_key = spec["source"]
             localized = localized_variant(
                 theme_bases[theme],
                 generated_sources[source_key],
                 spec,
             )
-            themed_variant = apply_theme(localized, theme)
-            patch = themed_variant.crop(spec["crop"])
+            patch = localized.crop(spec["crop"])
             output_dir = MOTION_DIR / theme
             output_dir.mkdir(parents=True, exist_ok=True)
             patch.save(
@@ -382,11 +333,6 @@ def main() -> None:
     )
     build_contact_sheet(themes)
     build_motion_contact_sheet(
-        themes["woodDay"],
-        "woodDay",
-        "office-3d-motion-v1-contact-sheet.png",
-    )
-    build_motion_contact_sheet(
         themes["modernDay"],
         "modernDay",
         "office-3d-modern-motion-v1-contact-sheet.png",
@@ -397,7 +343,7 @@ def main() -> None:
         "office-3d-modern-night-motion-v1-contact-sheet.png",
     )
 
-    print(f"테마 4장 생성. {RESOURCES_DIR}")
+    print(f"테마 2장 생성. {RESOURCES_DIR}")
     print(f"동작 패치 {len(SPECS) * len(THEME_PATHS)}장 생성. {MOTION_DIR}")
 
 
