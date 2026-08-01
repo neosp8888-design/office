@@ -612,13 +612,11 @@ struct TurnWorkspaceReview: Decodable, Equatable, Sendable {
         return fallback
     }
 
-    var hasCompleteDiffForApproval: Bool {
+    var canApprove: Bool {
         status == .awaitingApproval
             && !(reviewTree?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .isEmpty ?? true)
-            && diff != nil
-            && diffTruncated == false
     }
 
     var canRetryMerge: Bool {
