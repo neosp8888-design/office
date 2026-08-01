@@ -267,7 +267,7 @@ test("변경이 없는 worktree는 검토 대상을 만들지 않는다", async 
   }
 });
 
-test("검토 시작 전 원본 저장소가 dirty면 원본 변경을 보존하고 중단한다", async () => {
+test("원본 저장소가 dirty여도 원본 변경을 보존하고 검토를 준비한다", async () => {
   const fixture = createRepository();
   try {
     const { manager, workspace } = await fixture.provision();
@@ -280,11 +280,12 @@ test("검토 시작 전 원본 저장소가 dirty면 원본 변경을 보존하�
       "direct source edit\n",
     );
 
-    await assert.rejects(
-      manager.prepareReview(workspace),
-      (error) => error instanceof GitWorkspaceError &&
-        error.code === "not-clean",
-    );
+    const review = await manager.prepareReview(workspace);
+
+    assert.equal(review.hasChanges, true);
+    assert.deepEqual(review.changedFiles, [
+      { status: "M", path: "tracked.txt" },
+    ]);
     assert.equal(
       readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"),
       "direct source edit\n",
@@ -298,7 +299,7 @@ test("검토 시작 전 원본 저장소가 dirty면 원본 변경을 보존하�
   }
 });
 
-test("원본 저장소의 추적 또는 미추적 변경이 있으면 생성을 막는다", async () => {
+test("원본 저장소의 추적 또는 미추적 변경을 건드리지 않고 worktree를 만든다", async () => {
   for (const dirty of ["tracked", "untracked"]) {
     const fixture = createRepository();
     try {
@@ -312,14 +313,27 @@ test("원본 저장소의 추적 또는 미추적 변경이 있으면 생성을 
         worktreeRoot: fixture.worktreeRoot,
       });
 
-      await assert.rejects(
-        manager.provision({
-          workspaceID: `workspace-${dirty}`,
-          characterID: "boss",
-        }),
-        (error) => error instanceof GitWorkspaceError &&
-          error.code === "not-clean",
+      const workspace = await manager.provision({
+        workspaceID: `workspace-${dirty}`,
+        characterID: "boss",
+      });
+
+      assert.equal(
+        readFileSync(join(workspace.worktreePath, "tracked.txt"), "utf8"),
+        "base\n",
       );
+      if (dirty === "tracked") {
+        assert.equal(
+          readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"),
+          "dirty\n",
+        );
+      } else {
+        assert.equal(
+          readFileSync(join(fixture.repositoryRoot, "new.txt"), "utf8"),
+          "dirty\n",
+        );
+        assert.equal(pathExists(join(workspace.worktreePath, "new.txt")), false);
+      }
     } finally {
       fixture.remove();
     }
