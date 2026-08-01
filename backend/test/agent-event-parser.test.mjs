@@ -218,6 +218,95 @@ test("Codex 파일 변경은 변경 종류와 경로를 표시한다", () => {
   assert.equal(event.activity.status, "completed");
 });
 
+test("긴 절대 변경 경로는 업무 폴더 상대경로로 보존한다", () => {
+  const workdir = [
+    "/Users/neo/.officestra/worktrees/03ffd78858a8",
+    "right-woman-70d95def-eae4-441f-b0ec-e5cd2e230dee",
+  ].join("/");
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "files-long-path",
+        type: "file_change",
+        changes: [{
+          kind: "update",
+          path: `${workdir}/Sources/OfficeGame/AgentDirector.swift`,
+        }],
+      },
+    }),
+    "codex",
+    workdir,
+  );
+
+  assert.equal(
+    event.activity.text,
+    [
+      "파일 1개를 편집했습니다",
+      "수정 Sources/OfficeGame/AgentDirector.swift",
+    ].join("\n"),
+  );
+});
+
+test("업무 폴더 안의 긴 상대경로는 축약하지 않는다", () => {
+  const workdir = "/Users/neo/office";
+  const path = [
+    "packages",
+    ...Array.from({ length: 10 }, (_, index) => `nested-${index}`),
+    "Sources",
+    "Feature.swift",
+  ].join("/");
+  assert.ok(path.length > 96);
+
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "files-long-relative-path",
+        type: "file_change",
+        changes: [{ kind: "update", path }],
+      },
+    }),
+    "codex",
+    workdir,
+  );
+
+  assert.equal(
+    event.activity.text,
+    `파일 1개를 편집했습니다\n수정 ${path}`,
+  );
+});
+
+test("업무 폴더 밖의 긴 절대경로는 상대경로로 바꾸지 않는다", () => {
+  const workdir = "/Users/neo/office";
+  const outsidePath = [
+    "/Users/neo/another-worktree",
+    ...Array.from({ length: 8 }, () => "very-long-segment"),
+    "Sources",
+    "Outside.swift",
+  ].join("/");
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "files-outside-workdir",
+        type: "file_change",
+        changes: [{ kind: "update", path: outsidePath }],
+      },
+    }),
+    "codex",
+    workdir,
+  );
+
+  assert.equal(
+    event.activity.text,
+    [
+      "파일 1개를 편집했습니다",
+      "수정 …/very-long-segment/Sources/Outside.swift",
+    ].join("\n"),
+  );
+});
+
 test("Codex 파일 변경 시작은 실행 중 활동과 스냅샷 메타데이터를 만든다", () => {
   const event = parseAgentEvent(
     JSON.stringify({
@@ -493,6 +582,61 @@ test("Claude 노트북 편집도 안전한 경로를 표시한다", () => {
   assert.equal(
     event.activities[0].text,
     "도구 · NotebookEdit · analysis/report.ipynb",
+  );
+});
+
+test("Claude 편집 경로도 업무 폴더 상대경로로 보존한다", () => {
+  const workdir = [
+    "/Users/neo/.officestra/worktrees/03ffd78858a8",
+    "left-woman-f2b5a998-f546-42db-b447-cf74977e810c",
+  ].join("/");
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Edit",
+          input: {
+            file_path: `${workdir}/Sources/OfficeGame/OfficeGameApp.swift`,
+          },
+        }],
+      },
+    }),
+    "claude",
+    workdir,
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    "도구 · Edit · Sources/OfficeGame/OfficeGameApp.swift",
+  );
+});
+
+test("Claude 스트리밍 편집 경로도 업무 폴더 상대경로로 보존한다", () => {
+  const workdir = "/Users/neo/office";
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        content_block: {
+          id: "tool-stream-edit",
+          type: "tool_use",
+          name: "Edit",
+          input: {
+            file_path: `${workdir}/Sources/OfficeGame/AgentDirector.swift`,
+          },
+        },
+      },
+    }),
+    "claude",
+    workdir,
+  );
+
+  assert.equal(
+    event.activity.text,
+    "도구 · Edit · Sources/OfficeGame/AgentDirector.swift",
   );
 });
 

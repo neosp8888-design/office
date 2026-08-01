@@ -1,8 +1,10 @@
 // 이 파일은 Codex와 Claude CLI JSONL을 공개 가능한 실시간 업무 이벤트로 변환한다.
 
+import { isAbsolute, relative } from "node:path";
+
 const MAX_REASONING_LENGTH = 6_000;
 
-export function parseAgentEvent(line, backend) {
+export function parseAgentEvent(line, backend, workdir = null) {
   let object;
   try {
     object = JSON.parse(line);
@@ -14,8 +16,8 @@ export function parseAgentEvent(line, backend) {
   }
 
   return backend === "codex"
-    ? parseCodexEvent(object)
-    : parseClaudeEvent(object);
+    ? parseCodexEvent(object, workdir)
+    : parseClaudeEvent(object, workdir);
 }
 
 export function decodeAgentResponse(value) {
@@ -31,7 +33,7 @@ export function decodeAgentResponse(value) {
   };
 }
 
-function parseCodexEvent(object) {
+function parseCodexEvent(object, workdir) {
   const type = object.type;
   if (type === "thread.started") {
     return {
@@ -107,7 +109,7 @@ function parseCodexEvent(object) {
         activity: activity(
           "tool",
           type === "item.completed"
-            ? fileChangeActivityText(item.changes)
+            ? fileChangeActivityText(item.changes, null, workdir)
             : fileChangeRunningText(item.changes),
           {
             eventKey,
@@ -182,7 +184,7 @@ function parseCodexEvent(object) {
   }
 }
 
-function parseClaudeEvent(object) {
+function parseClaudeEvent(object, workdir) {
   if (object.type === "system" && object.subtype === "init") {
     return {
       sessionID: cleanText(object.session_id),
@@ -222,7 +224,7 @@ function parseClaudeEvent(object) {
       return {
         activity: activity(
           "tool",
-          claudeToolActivityText(event.content_block),
+          claudeToolActivityText(event.content_block, workdir),
           {
             eventKey: claudeToolEventKey(event.content_block),
             status: "running",
@@ -255,7 +257,7 @@ function parseClaudeEvent(object) {
         }
       } else if (item.type === "tool_use") {
         activities.push(
-          activity("tool", claudeToolActivityText(item), {
+          activity("tool", claudeToolActivityText(item, workdir), {
             eventKey: claudeToolEventKey(item),
             status: "running",
           }),
@@ -413,7 +415,11 @@ function codexActivityStatus(item, eventType) {
     : "completed";
 }
 
-export function fileChangeActivityText(changesValue, statistics = null) {
+export function fileChangeActivityText(
+  changesValue,
+  statistics = null,
+  workdir = null,
+) {
   const changes = Array.isArray(changesValue) ? changesValue : [];
   const summaries = changes
     .map((change) => {
@@ -429,7 +435,7 @@ export function fileChangeActivityText(changesValue, statistics = null) {
       if (!path) {
         return null;
       }
-      return `${fileChangeLabel(change.kind)} ${compactPath(path)}`;
+      return `${fileChangeLabel(change.kind)} ${compactPath(path, workdir)}`;
     })
     .filter(Boolean);
   if (summaries.length === 0) {
@@ -532,7 +538,7 @@ function todoActivityText(item) {
     : "작업 계획 정리";
 }
 
-function claudeToolActivityText(tool) {
+function claudeToolActivityText(tool, workdir) {
   if (!tool || typeof tool !== "object") {
     return "도구 호출";
   }
@@ -568,7 +574,7 @@ function claudeToolActivityText(tool) {
       input.directory,
   );
   if (path) {
-    return `도구 · ${name} · ${compactPath(path)}`;
+    return `도구 · ${name} · ${compactPath(path, workdir)}`;
   }
   if (["grep", "glob", "websearch"].includes(loweredName)) {
     const query = cleanText(input.pattern ?? input.query);
@@ -699,8 +705,23 @@ function safePublicText(value, limit) {
   return `${source.slice(0, limit - 1)}…`;
 }
 
-function compactPath(value) {
-  const path = String(value).replaceAll("\\", "/");
+function compactPath(value, workdir = null) {
+  const source = String(value);
+  const base = String(workdir ?? "");
+  const relativePath = base
+    ? isAbsolute(source) ? relative(base, source) : source
+    : null;
+  const normalizedRelativePath = relativePath?.replaceAll("\\", "/");
+  if (
+    normalizedRelativePath &&
+    normalizedRelativePath !== ".." &&
+    !normalizedRelativePath.startsWith("../") &&
+    !isAbsolute(relativePath)
+  ) {
+    return normalizedRelativePath;
+  }
+
+  const path = source.replaceAll("\\", "/");
   if (path.length <= 96) {
     return path;
   }
