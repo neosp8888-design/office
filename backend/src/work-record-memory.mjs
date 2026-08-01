@@ -83,6 +83,7 @@ export async function persistCompletedTurnWorkRecord(client, {
   reviewTree = null,
   headCommit = null,
   changedFiles = [],
+  recordedAt = null,
 }) {
   const root = String(repositoryRoot ?? "").trim();
   if (!root) {
@@ -146,7 +147,7 @@ export async function persistCompletedTurnWorkRecord(client, {
           $3,
           $4,
           $8::jsonb,
-          now(),
+          COALESCE($9::timestamptz, now()),
           now()
         FROM selected_project AS project
         ON CONFLICT (source_turn_id, record_type)
@@ -172,7 +173,8 @@ export async function persistCompletedTurnWorkRecord(client, {
           source_turn_id,
           previous_value,
           next_value,
-          idempotency_key
+          idempotency_key,
+          occurred_at
         )
         SELECT
           record.id,
@@ -187,7 +189,8 @@ export async function persistCompletedTurnWorkRecord(client, {
             'lifecycleState', record.lifecycle_state,
             'title', record.title
           ),
-          'completed-turn:' || $3::text
+          'completed-turn:' || $3::text,
+          COALESCE($9::timestamptz, now())
         FROM selected_record AS record
         ON CONFLICT DO NOTHING
         RETURNING id
@@ -204,6 +207,7 @@ export async function persistCompletedTurnWorkRecord(client, {
       title,
       body,
       JSON.stringify(metadata),
+      recordedAt,
     ],
   );
   return result.rows?.[0] ?? null;
@@ -219,6 +223,7 @@ export async function transitionTurnWorkRecordReview(client, {
   changedFiles = null,
   errorMessage = null,
   actorType = "user",
+  occurredAt = null,
 }) {
   const review = {
     status,
@@ -264,7 +269,8 @@ export async function transitionTurnWorkRecordReview(client, {
           source_turn_id,
           previous_value,
           next_value,
-          idempotency_key
+          idempotency_key,
+          occurred_at
         )
         SELECT
           record.id,
@@ -282,7 +288,8 @@ export async function transitionTurnWorkRecordReview(client, {
             'lifecycleState', record.lifecycle_state,
             'review', record.metadata->'review'
           ),
-          $5
+          $5,
+          COALESCE($6::timestamptz, now())
         FROM updated_record AS record
         ON CONFLICT (record_id, idempotency_key)
           WHERE idempotency_key IS NOT NULL
@@ -298,6 +305,7 @@ export async function transitionTurnWorkRecordReview(client, {
       JSON.stringify(review),
       actorType,
       `review:${status}:${eventKeyPart}`,
+      occurredAt,
     ],
   );
   return result.rows?.[0]?.workRecordId ?? null;
