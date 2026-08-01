@@ -181,7 +181,7 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(replaced.responseSources, [source])
     }
 
-    func testLiveFeedSourcesDecodeAllKindsAndFileLineLocator() throws {
+    func testLiveFeedSourcesDecodeAllKindsAndLocators() throws {
         let payload = Data(
             #"""
             [
@@ -211,6 +211,33 @@ final class LiveFeedStoreTests: XCTestCase {
                 "excerpt": null,
                 "ragDocumentId": null,
                 "workRecordId": null
+              },
+              {
+                "id": "source-web",
+                "sourceKind": "web",
+                "title": "공식 문서",
+                "locator": "https://example.com/guide?q=office",
+                "excerpt": null,
+                "ragDocumentId": null,
+                "workRecordId": null
+              },
+              {
+                "id": "source-tool",
+                "sourceKind": "tool",
+                "title": "실행 도구",
+                "locator": "web.search",
+                "excerpt": null,
+                "ragDocumentId": null,
+                "workRecordId": null
+              },
+              {
+                "id": "source-skill",
+                "sourceKind": "skill",
+                "title": "사용 스킬",
+                "locator": "openai-docs",
+                "excerpt": null,
+                "ragDocumentId": null,
+                "workRecordId": null
               }
             ]
             """#.utf8
@@ -221,9 +248,51 @@ final class LiveFeedStoreTests: XCTestCase {
             from: payload
         )
 
-        XCTAssertEqual(sources.map(\.sourceKind), [.rag, .database, .file])
-        XCTAssertEqual(sources.map(\.sourceKind.title), ["RAG", "DB", "파일"])
-        XCTAssertEqual(sources.last?.filePath, "/repo/README.md")
+        XCTAssertEqual(
+            sources.map(\.sourceKind),
+            [.rag, .database, .file, .web, .tool, .skill]
+        )
+        XCTAssertEqual(
+            sources.map(\.sourceKind.title),
+            ["RAG", "DB", "파일", "웹", "도구", "스킬"]
+        )
+        XCTAssertEqual(sources[2].filePath, "/repo/README.md")
+        XCTAssertEqual(
+            sources[3].webURL?.absoluteString,
+            "https://example.com/guide?q=office"
+        )
+        XCTAssertNil(sources[4].webURL)
+        XCTAssertNil(sources[5].webURL)
+    }
+
+    func testWebSourceAllowsOnlySafeHTTPURLs() {
+        let https = makeSource(
+            kind: .web,
+            locator: "https://example.com/reference"
+        )
+        let http = makeSource(
+            kind: .web,
+            locator: "http://example.com/reference"
+        )
+        let credentials = makeSource(
+            kind: .web,
+            locator: "https://user:password@example.com/reference"
+        )
+        let script = makeSource(
+            kind: .web,
+            locator: "javascript:alert(1)"
+        )
+        let missingHost = makeSource(
+            kind: .web,
+            locator: "https:///reference"
+        )
+
+        XCTAssertEqual(https.webURL?.scheme, "https")
+        XCTAssertEqual(http.webURL?.scheme, "http")
+        XCTAssertNil(credentials.webURL)
+        XCTAssertNil(script.webURL)
+        XCTAssertNil(missingHost.webURL)
+        XCTAssertNil(makeSource(kind: .file).webURL)
     }
 
     func testArchiveRefreshesWhenOnlyResponseSourcesChange() {
@@ -512,12 +581,16 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
-    private func makeSource(kind: LiveFeedSourceKind) -> LiveFeedSource {
+    private func makeSource(
+        kind: LiveFeedSourceKind,
+        locator: String? = nil
+    ) -> LiveFeedSource {
         LiveFeedSource(
             id: "source-\(kind.rawValue)",
             sourceKind: kind,
             title: "근거",
-            locator: kind == .file ? "/repo/README.md:14" : "record/14",
+            locator: locator
+                ?? (kind == .file ? "/repo/README.md:14" : "record/14"),
             excerpt: nil,
             ragDocumentId: nil,
             workRecordId: nil

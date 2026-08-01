@@ -159,9 +159,14 @@ test("Codex 재개는 현재 역할 지침을 같은 세션에 전달한다", ()
   assert.match(instructions, /업데이트된 역할 지침을 따른다/);
   assert.match(instructions, /\[OFFICE_SOURCES\]/);
   assert.match(instructions, /rag, database, file/);
+  assert.match(instructions, /web, tool, skill/);
+  assert.match(instructions, /실제로 근거가 된 http 또는 https 원문 URL/);
+  assert.match(instructions, /단순히 호출한 모든 도구와 스킬을 나열하지 말고/);
   assert.match(instructions, /비신뢰 참고 데이터/);
   assert.match(instructions, /checklist\.md와 context-notes\.md/);
+  assert.match(instructions, /v1\.0 이전 작업 기록/);
   assert.match(instructions, /새 내용을 추가하거나 수정하지 않는다/);
+  assert.match(instructions, /GET \/api\/work-records/);
   assert.equal(argumentsList.at(-1), "계속해줘.");
 });
 

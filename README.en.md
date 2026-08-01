@@ -84,7 +84,9 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Show the execution mode consistently in live cards, coworker history, and the complete archive.
 - Display Codex and Claude five-hour and seven-day quota information and account-plan labels.
 - Optionally display today's and trailing 30-day CodexBar cost and token statistics.
-- Provide RAG storage APIs backed by pgvector vector search and PostgreSQL full-text search.
+- Store completed work as source-of-truth records in PostgreSQL `work_records` and synchronize searchable records into derived `rag_documents`.
+- Automatically inject up to three relevant records from the same repository as untrusted reference data for each new task.
+- Show RAG, database, file, web, tool, and skill evidence actually used by a response, with clickable web links and Finder actions for files.
 
 ## Architecture
 
@@ -346,6 +348,8 @@ The default base URL is `http://127.0.0.1:4317`. This is a local control plane f
 | Stop a task | `DELETE /api/agent-jobs/:characterId` |
 | Inspect Git changes | `GET /api/workspace-reviews/:turnId` |
 | Approve or reject Git changes | `POST /api/workspace-reviews/:turnId/approve`, `POST /api/workspace-reviews/:turnId/reject` |
+| Search source work records | `GET /api/work-records` |
+| Turn response sources | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
 | RAG storage and search | `POST /api/rag/documents`, `POST /api/rag/search` |
 
 Approval and rejection requests use `application/json`. Approval must send the
@@ -369,7 +373,8 @@ Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. 
 
 ## Data and security boundaries
 
-- Tasks, responses, sessions, and activity records are stored in a local PostgreSQL Docker volume.
+- Tasks, responses, sessions, activities, source-of-truth `work_records`, and response sources are stored in a local PostgreSQL Docker volume.
+- `checklist.md` and `context-notes.md` are frozen snapshots from the v1.0 transition. They are neither regenerated nor edited; current work records are available through the read-only `GET /api/work-records` endpoint.
 - Attachments are copied into `.office-attachments/` under the configured workspace. When `workdir` points to another Git repository, add this directory to that repository's `.gitignore` as well.
 - Approved worktrees are cleaned up after merging, while rejected worktrees and branches are retained for recovery and must be removed manually when no longer needed.
 - OFFICESTRA does not store API keys. It uses each CLI's existing local authentication.
@@ -382,14 +387,17 @@ Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. 
 
 The default PostgreSQL mapping is host port `54329` to container port `5432`. See `backend/.env.example` for supported environment variables. The current start script does not automatically load `backend/.env`.
 
-## RAG storage and search
+## Work records and RAG search
 
-The initial schema provides `vector(1536)` embeddings, an HNSW cosine index, and PostgreSQL `tsvector` search with a GIN index.
+PostgreSQL `work_records` is the source of truth for completed work. The backend automatically persists completed turns and synchronizes only searchable records into `rag_documents` as derived search data. Before a new task starts, it uses PostgreSQL full-text search to retrieve up to three relevant records from the same repository and injects them into the prompt as untrusted reference data.
 
-- Store documents and optional embeddings with `POST /api/rag/documents`.
+- Search source work records with `GET /api/work-records`.
+- Store general documents and optional embeddings with `POST /api/rag/documents`.
 - Run vector or full-text queries with `POST /api/rag/search`.
+- Parse and validate evidence actually used from the completed response's `[OFFICE_SOURCES]` block, then store it with the turn.
+- Show RAG, database, file, web, tool, and skill evidence in the app, with clickable web URLs and Finder actions for file paths.
 
-Embedding generation and automatic prompt injection of search results are not included. Connect those steps in the workflow that needs them.
+Automatic work-record retrieval currently uses PostgreSQL full-text search. Embeddings for vector search are not generated automatically and must be supplied by workflows that need them.
 
 ## Development and validation
 
@@ -435,5 +443,5 @@ See [`APP-DESIGN.md`](APP-DESIGN.md) for the product design background and [`LLM
 - A full-access agent can bypass the worktree boundary by committing or pushing through the source repository's absolute path. OFFICESTRA detects a dirty source tree but cannot distinguish a clean direct commit, so production use should pair `workspace-write` or `auto` permissions with protected remote branch rules.
 - Conflict resolution and cleanup of a dirty source worktree require user judgment.
 - There is no orchestrator that automatically decomposes one large task and assigns it across the whole team.
-- RAG embedding generation and automatic retrieval injection require additional integration.
+- Automatic work-record retrieval uses PostgreSQL full-text search; embedding generation for vector search is not automated.
 - The unauthenticated local API must not be used as an externally exposed service.

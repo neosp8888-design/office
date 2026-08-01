@@ -93,7 +93,11 @@ five-person AI team._
 - 실시간 카드, 직원별 기록과 전체 대화 보관함에서 실행 모드를 항상 표시
 - Codex·Claude의 5시간·7일 잔여량과 요금제 표시
 - 선택적으로 CodexBar의 오늘·최근 30일 비용과 토큰 통계 표시
-- pgvector 벡터 검색과 PostgreSQL 전문 검색을 위한 RAG API
+- 완료 업무를 PostgreSQL `work_records` 원본으로 저장하고 검색 가능한 기록을
+  `rag_documents` 파생 검색 자료로 동기화
+- 새 업무에 같은 저장소의 관련 기록을 최대 3개 비신뢰 참고 자료로 자동 주입
+- 실제 사용한 RAG·DB·파일·웹·도구·스킬 근거를 응답과 함께 표시하고 웹은
+  클릭, 파일은 Finder로 열기
 
 ## 동작 구조
 
@@ -379,6 +383,8 @@ Standard로 표시한다.
 | 업무 중단 | `DELETE /api/agent-jobs/:characterId` |
 | Git 변경 검토 | `GET /api/workspace-reviews/:turnId` |
 | Git 승인·거절 | `POST /api/workspace-reviews/:turnId/approve`, `POST /api/workspace-reviews/:turnId/reject` |
+| 업무 기록 원본 검색 | `GET /api/work-records` |
+| 턴 응답 근거 | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
 | RAG 문서·검색 | `POST /api/rag/documents`, `POST /api/rag/search` |
 
 Git 승인·거절 요청은 `application/json`으로 보낸다. 승인은 검토 응답에서 받은
@@ -412,7 +418,11 @@ API를 이용한 직원 주도 오케스트레이션은 가능하다. 다만 직
 
 ## 데이터와 보안 경계
 
-- 업무·응답·세션·활동 기록은 로컬 PostgreSQL Docker 볼륨에 저장된다.
+- 업무·응답·세션·활동, 완료 업무 원본 `work_records`와 응답 근거는 로컬
+  PostgreSQL Docker 볼륨에 저장된다.
+- `checklist.md`와 `context-notes.md`는 v1.0 전환 당시의 동결본이다. 이 두
+  파일은 재생성하거나 편집하지 않으며, 현재 작업 기록은 읽기 전용
+  `GET /api/work-records`로 조회한다.
 - 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사된다. 다른 Git 저장소를 `workdir`로 사용한다면 해당 저장소의 `.gitignore`에도 이 폴더를 추가해야 한다.
 - 승인된 worktree는 병합 뒤 정리되지만 거절된 worktree와 branch는 복구를 위해 남으므로 필요 없어진 뒤 사용자가 삭제한다.
 - OFFICESTRA는 API 키를 직접 저장하지 않고 각 CLI의 기존 로컬 로그인을 사용한다.
@@ -427,16 +437,23 @@ API를 이용한 직원 주도 오케스트레이션은 가능하다. 다만 직
 `backend/.env.example`에서 확인할 수 있으며, 현재 시작 스크립트는
 `backend/.env`를 자동으로 불러오지 않는다.
 
-## RAG 저장과 검색
+## 작업 기록과 RAG 검색
 
-초기 스키마는 `vector(1536)` 임베딩, HNSW 코사인 인덱스, `tsvector`와 GIN
-인덱스를 제공한다.
+완료 업무의 원본은 PostgreSQL `work_records`다. 백엔드는 완료 턴을 자동으로
+저장하고 검색 가능한 상태의 기록만 `rag_documents` 파생 검색 자료로
+동기화한다. 새 업무를 시작할 때는 같은 저장소의 관련 기록을 PostgreSQL 전문
+검색으로 최대 3개 찾아 비신뢰 참고 자료로 프롬프트에 자동 주입한다.
 
-- `POST /api/rag/documents`로 문서와 선택적인 임베딩 저장
+- `GET /api/work-records`로 원본 업무 기록 검색
+- `POST /api/rag/documents`로 일반 문서와 선택적인 임베딩 저장
 - `POST /api/rag/search`로 벡터 또는 전문 검색
+- 완료 응답의 `[OFFICE_SOURCES]`에서 실제 사용한 근거를 읽어 검증한 뒤 턴에 저장
+- 앱에서 RAG·DB·파일·웹·도구·스킬 근거를 표시하고 웹 주소는 클릭,
+  파일 경로는 Finder로 열기
 
-임베딩 생성과 검색 결과의 자동 프롬프트 주입은 포함하지 않는다. 필요한
-워크플로에서 별도로 연결해야 한다.
+작업 기록 자동 검색은 현재 PostgreSQL 전문 검색을 사용한다. 벡터 검색용
+임베딩은 자동으로 생성하지 않으므로 필요한 워크플로에서 선택적으로 제공해야
+한다.
 
 ## 개발과 검증
 
@@ -488,5 +505,6 @@ docs/images/              공개 문서용 선별 화면 이미지
 - 충돌 해결과 dirty 원본 작업 트리 정리는 사용자가 직접 판단해야 한다.
 - 직원 주도 오케스트레이션은 가능하지만, 백엔드가 독립적으로 업무를
   계획·분배·감시·재시도하는 자동 오케스트레이터는 없다.
-- RAG 임베딩 생성과 검색 결과 자동 주입은 별도 구현이 필요하다.
+- 작업 기록 자동 검색은 PostgreSQL 전문 검색을 사용하며 벡터 검색용 임베딩
+  생성은 자동화하지 않는다.
 - 로컬 API는 인증이 없으므로 외부 네트워크용 서비스로 사용하면 안 된다.

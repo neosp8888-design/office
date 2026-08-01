@@ -101,6 +101,107 @@ test("출처 UUID는 PostgreSQL 표기와 같은 소문자로 정규화한다", 
   );
 });
 
+test("웹과 도구와 스킬 출처를 안전한 locator로 정규화한다", () => {
+  const sources = normalizeResponseSources([
+    {
+      kind: "web",
+      title: "공식 문서",
+      locator: "https://example.com/docs?lang=ko",
+    },
+    {
+      kind: "tool",
+      title: "GitHub 조회",
+      locator: "github/get_pull_request/openai/codex/123",
+    },
+    {
+      kind: "skill",
+      title: "브라우저 제어 절차",
+      locator: "browser:control-in-app-browser",
+    },
+  ]);
+
+  assert.deepEqual(sources.map((source) => source.sourceKind), [
+    "web",
+    "tool",
+    "skill",
+  ]);
+  assert.equal(sources[0].locator, "https://example.com/docs?lang=ko");
+  assert.equal(
+    sources[1].locator,
+    "github/get_pull_request/openai/codex/123",
+  );
+  assert.equal(sources[2].locator, "browser:control-in-app-browser");
+});
+
+test("웹 출처는 위험한 URL과 민감한 쿼리 키를 거절한다", () => {
+  for (const locator of [
+    "ftp://example.com/reference",
+    "https://user:password@example.com/reference",
+    "https://example.com/reference?access_token=secret",
+    "https://example.com/reference?api-key=secret",
+    "https://example.com/reference?signature=secret",
+    "https://example.com/callback?code=secret",
+    "https://example.com/reference#access_token=secret",
+    "https://example.com/reference#oauth_token=secret",
+    "https://example.com/reference#access_token%3Dsecret",
+  ]) {
+    assert.throws(
+      () => normalizeResponseSources([{
+        kind: "web",
+        title: "위험한 링크",
+        locator,
+      }]),
+      /웹 출처 locator/,
+    );
+  }
+});
+
+test("웹 출처는 정상 인용 쿼리와 문서 fragment를 보존한다", () => {
+  const sources = normalizeResponseSources([
+    {
+      kind: "web",
+      title: "저자별 문서",
+      locator: "https://example.com/reference?author=neo#installation",
+    },
+    {
+      kind: "web",
+      title: "인증 문서 섹션",
+      locator: "https://example.com/docs#authorization",
+    },
+    {
+      kind: "web",
+      title: "접근 토큰 문서 섹션",
+      locator: "https://example.com/docs#access-token",
+    },
+  ]);
+
+  assert.equal(
+    sources[0].locator,
+    "https://example.com/reference?author=neo#installation",
+  );
+  assert.equal(sources[1].locator, "https://example.com/docs#authorization");
+  assert.equal(sources[2].locator, "https://example.com/docs#access-token");
+});
+
+test("도구와 스킬 출처는 식별자가 아닌 locator를 거절한다", () => {
+  for (const [kind, locator] of [
+    ["tool", "web/search query"],
+    ["tool", "web/search?token=secret"],
+    ["tool", "web/../secret"],
+    ["skill", "playwright-cli/SKILL.md"],
+    ["skill", "../../skill"],
+  ]) {
+    assert.throws(
+      () => normalizeResponseSources([{
+        kind,
+        title: "잘못된 식별자",
+        locator,
+      }]),
+      /locator/,
+    );
+  }
+});
+
 test("응답 출처는 중복과 종류가 다른 참조를 거절한다", () => {
   assert.throws(
     () => normalizeResponseSources([

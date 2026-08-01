@@ -24,7 +24,47 @@ const ATTRIBUTIONS = new Set([
   "unknown",
   "system",
 ]);
-const SOURCE_KINDS = new Set(["rag", "database", "file"]);
+const SOURCE_KINDS = new Set([
+  "rag",
+  "database",
+  "file",
+  "web",
+  "tool",
+  "skill",
+]);
+const TOOL_LOCATOR_PATTERN =
+  /^[A-Za-z0-9._:-]+(?:\/[A-Za-z0-9._:-]+)*$/;
+const SKILL_LOCATOR_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const SENSITIVE_QUERY_KEYS = new Set([
+  "key",
+  "sig",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "auth",
+  "authorization",
+  "signature",
+  "credential",
+  "credentials",
+  "accesskey",
+  "privatekey",
+  "secretkey",
+  "authcode",
+  "authorizationcode",
+  "oauthcode",
+  "code",
+]);
+const SENSITIVE_QUERY_SUFFIXES = [
+  "token",
+  "apikey",
+  "secret",
+  "password",
+  "passwd",
+  "signature",
+  "credential",
+  "credentials",
+];
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -97,7 +137,10 @@ export function normalizeResponseSources(value, { maximum = 50 } = {}) {
       "sourceKind",
     );
     const title = requiredText(source.title, 200, "title");
-    const locator = requiredText(source.locator, 2_000, "locator");
+    const locator = normalizedSourceLocator(
+      sourceKind,
+      requiredText(source.locator, 2_000, "locator"),
+    );
     const excerpt = optionalText(source.excerpt, 1_000, "excerpt");
     const ragDocumentID = optionalUUID(
       source.ragDocumentId,
@@ -293,6 +336,91 @@ async function validateSourceReferenceSet(client, values, table, label) {
 function optionalChoice(value, choices, field) {
   const text = String(value ?? "").trim();
   return text ? requiredChoice(text, choices, field) : null;
+}
+
+function normalizedSourceLocator(sourceKind, locator) {
+  if (sourceKind === "web") {
+    return normalizedWebLocator(locator);
+  }
+  if (sourceKind === "tool") {
+    return normalizedIdentifierLocator(
+      locator,
+      TOOL_LOCATOR_PATTERN,
+      "도구 출처 locator는 도구 식별자만 사용할 수 있습니다.",
+    );
+  }
+  if (sourceKind === "skill") {
+    return normalizedIdentifierLocator(
+      locator,
+      SKILL_LOCATOR_PATTERN,
+      "스킬 출처 locator는 등록된 스킬 이름만 사용할 수 있습니다.",
+    );
+  }
+  return locator;
+}
+
+function normalizedWebLocator(locator) {
+  let url;
+  try {
+    url = new URL(locator);
+  } catch {
+    throw new ProvenanceValidationError(
+      "웹 출처 locator는 올바른 URL이어야 합니다.",
+    );
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    !url.hostname ||
+    url.username ||
+    url.password
+  ) {
+    throw new ProvenanceValidationError(
+      "웹 출처 locator는 사용자 정보가 없는 http 또는 https URL이어야 합니다.",
+    );
+  }
+  for (const key of url.searchParams.keys()) {
+    if (isSensitiveQueryKey(key)) {
+      throw new ProvenanceValidationError(
+        "웹 출처 locator에 민감한 쿼리 키를 넣을 수 없습니다.",
+      );
+    }
+  }
+  const fragmentParameters = new URLSearchParams(
+    decodedURLFragment(url.hash),
+  );
+  for (const [key, value] of fragmentParameters.entries()) {
+    if (value && isSensitiveQueryKey(key)) {
+      throw new ProvenanceValidationError(
+        "웹 출처 locator에 민감한 fragment 키를 넣을 수 없습니다.",
+      );
+    }
+  }
+  return url.toString();
+}
+
+function normalizedIdentifierLocator(locator, pattern, message) {
+  if (
+    !pattern.test(locator) ||
+    locator.split("/").some((part) => part === "." || part === "..")
+  ) {
+    throw new ProvenanceValidationError(message);
+  }
+  return locator;
+}
+
+function decodedURLFragment(hash) {
+  const fragment = String(hash ?? "").replace(/^#/, "");
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
+}
+
+function isSensitiveQueryKey(key) {
+  const compact = String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
+  return SENSITIVE_QUERY_KEYS.has(compact) ||
+    SENSITIVE_QUERY_SUFFIXES.some((suffix) => compact.endsWith(suffix));
 }
 
 function requiredChoice(value, choices, field) {
