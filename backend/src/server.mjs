@@ -11,6 +11,7 @@ import {
   CharacterNotFoundError,
 } from "./agent-runtime.mjs";
 import {
+  canonicalProjectRoot,
   GitWorkspaceError,
   GitWorkspaceManager,
 } from "./git-workspace.mjs";
@@ -33,6 +34,10 @@ import {
   syncCharacters,
 } from "./configuration.mjs";
 import { migrate } from "./migrate.mjs";
+import {
+  reconcileTerminalWorkRecordReviews,
+  syncWorkRecordRAGDocuments,
+} from "./work-record-memory.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const sockets = new Set();
@@ -1425,12 +1430,14 @@ async function searchRAG(response, body) {
       `
         SELECT
           id,
+          id AS "ragDocumentId",
           source,
           title,
           content,
           metadata,
+          work_record_id AS "workRecordId",
           1 - (embedding <=> $1::vector) AS score
-        FROM rag_documents
+        FROM searchable_rag_documents
         WHERE embedding IS NOT NULL
         ORDER BY embedding <=> $1::vector
         LIMIT $2
@@ -1442,15 +1449,17 @@ async function searchRAG(response, body) {
       `
         SELECT
           id,
+          id AS "ragDocumentId",
           source,
           title,
           content,
           metadata,
+          work_record_id AS "workRecordId",
           ts_rank(
             search_document,
             websearch_to_tsquery('simple', $1)
           ) AS score
-        FROM rag_documents
+        FROM searchable_rag_documents
         WHERE search_document @@ websearch_to_tsquery('simple', $1)
         ORDER BY score DESC
         LIMIT $2
@@ -1612,17 +1621,44 @@ server.on("upgrade", (request, socket, head) => {
 try {
   await migrate();
   const configuration = await readCharacterConfiguration();
+  const repositoryRoot = await canonicalProjectRoot(configuration.workdir);
+  const workspaceManager = new GitWorkspaceManager({
+    sourceWorkdir: configuration.workdir,
+    worktreeRoot: process.env.OFFICE_WORKTREE_ROOT,
+  });
   await withTransaction(async (client) => {
     await syncCharacters(client, configuration);
   });
+  try {
+    await withTransaction(async (client) => {
+      await reconcileTerminalWorkRecordReviews(client, {
+        repositoryRoot,
+      });
+    });
+  } catch (error) {
+    console.warn(
+      "종료된 작업 기록 상태를 재조정하지 못했지만 기동을 계속합니다.",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  try {
+    await withTransaction(async (client) => {
+      await syncWorkRecordRAGDocuments(client, {
+        repositoryRoot,
+      });
+    });
+  } catch (error) {
+    console.warn(
+      "파생 RAG 재색인에 실패했지만 백엔드를 계속 시작합니다.",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   runtime = new AgentRuntime({
     pool,
     withTransaction,
     workdir: configuration.workdir,
-    workspaceManager: new GitWorkspaceManager({
-      sourceWorkdir: configuration.workdir,
-      worktreeRoot: process.env.OFFICE_WORKTREE_ROOT,
-    }),
+    repositoryRoot,
+    workspaceManager,
     broadcast,
   });
   await runtime.recoverInterruptedJobs();

@@ -717,6 +717,11 @@ export class GitWorkspaceManager {
   }
 }
 
+export async function canonicalProjectRoot(sourceWorkdir) {
+  const canonicalWorkdir = await canonicalDirectory(resolve(sourceWorkdir));
+  return await repositoryRootFor(canonicalWorkdir) ?? canonicalWorkdir;
+}
+
 async function repositoryRootFor(sourceWorkdir) {
   const repositoryProbe = await gitResult(
     sourceWorkdir,
