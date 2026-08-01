@@ -622,6 +622,22 @@ struct TurnWorkspaceReview: Decodable, Equatable, Sendable {
     }
 }
 
+struct SessionContextUsage: Decodable, Equatable, Sendable {
+    let usedTokens: Int
+    let limitTokens: Int
+
+    var remainingTokens: Int {
+        max(0, limitTokens - usedTokens)
+    }
+
+    var remainingRatio: Double {
+        guard limitTokens > 0 else {
+            return 0
+        }
+        return Double(remainingTokens) / Double(limitTokens)
+    }
+}
+
 struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let characterId: String
@@ -641,6 +657,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let endedAt: Date?
     let updatedAt: Date
     let estimatedCostUsd: Double?
+    let sessionContext: SessionContextUsage?
     let activities: [LiveFeedActivity]
     let workspace: TurnWorkspaceReview?
 
@@ -664,6 +681,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             endedAt: endedAt,
             updatedAt: updatedAt,
             estimatedCostUsd: estimatedCostUsd,
+            sessionContext: sessionContext,
             activities: activities,
             workspace: workspace
         )

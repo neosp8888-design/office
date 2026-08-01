@@ -367,6 +367,7 @@ final class LiveFeedStoreTests: XCTestCase {
             endedAt: nil,
             updatedAt: updatedAt ?? startedAt,
             estimatedCostUsd: nil,
+            sessionContext: nil,
             activities: [],
             workspace: workspace
         )

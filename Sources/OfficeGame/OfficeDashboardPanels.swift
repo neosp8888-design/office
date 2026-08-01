@@ -1644,7 +1644,8 @@ private struct LiveTurnCard: View {
                         startedAt: turn.startedAt,
                         endedAt: turn.endedAt,
                         status: turn.status,
-                        estimatedCostUsd: turn.estimatedCostUsd
+                        estimatedCostUsd: turn.estimatedCostUsd,
+                        sessionContext: turn.sessionContext
                     )
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
@@ -1820,6 +1821,7 @@ private struct LiveTurnElapsedStatusView: View {
     let endedAt: Date?
     let status: LiveTurnStatus
     let estimatedCostUsd: Double?
+    let sessionContext: SessionContextUsage?
 
     @ViewBuilder
     var body: some View {
@@ -1843,14 +1845,41 @@ private struct LiveTurnElapsedStatusView: View {
 
                 if let estimatedCostUsd {
                     Text(estimatedTokenCostText(estimatedCostUsd))
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .font(supplementFont)
                         .foregroundStyle(.secondary)
                         .accessibilityLabel(
                             estimatedTokenCostText(estimatedCostUsd)
                         )
                 }
+
+                if let sessionContext {
+                    Text(sessionContextRemainingText(sessionContext))
+                        .font(supplementFont)
+                        .foregroundStyle(
+                            sessionContextColor(sessionContext)
+                        )
+                        .accessibilityLabel(
+                            sessionContextRemainingText(sessionContext)
+                        )
+                }
             }
         }
+    }
+
+    private var supplementFont: Font {
+        .system(size: 9.5, weight: .medium, design: .monospaced)
+    }
+
+    private func sessionContextColor(
+        _ usage: SessionContextUsage
+    ) -> Color {
+        if usage.remainingRatio <= 0.1 {
+            return .red
+        }
+        if usage.remainingRatio <= 0.25 {
+            return .orange
+        }
+        return .secondary
     }
 
     private var statusFont: Font {
@@ -1903,6 +1932,27 @@ private struct LiveTurnElapsedStatusView: View {
 func estimatedTokenCostText(_ costUsd: Double) -> String {
     let precision = costUsd < 0.0001 ? 8 : costUsd < 1 ? 6 : 4
     return "토큰 환산 비용(추정) \(String(format: "$%.\(precision)f", costUsd))"
+}
+
+func sessionContextRemainingText(_ usage: SessionContextUsage) -> String {
+    let percent = String(
+        format: "%.1f",
+        usage.remainingRatio * 100
+    )
+    return "컨텍스트 잔량 \(groupedTokenCount(usage.remainingTokens))"
+        + " / \(groupedTokenCount(usage.limitTokens)) (\(percent)%)"
+}
+
+private func groupedTokenCount(_ value: Int) -> String {
+    let digits = Array(String(max(0, value)))
+    var grouped: [String] = []
+    var index = digits.count
+    while index > 3 {
+        grouped.insert(String(digits[(index - 3)..<index]), at: 0)
+        index -= 3
+    }
+    grouped.insert(String(digits[0..<index]), at: 0)
+    return grouped.joined(separator: ",")
 }
 
 struct EquatableLiveTypingResponseView: View, Equatable {
