@@ -3090,7 +3090,7 @@ test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토
     new URL("../src/server.mjs", import.meta.url),
     "utf8",
   );
-  const queryStart = serverSource.indexOf("async function queryLiveFeed");
+  const queryStart = serverSource.indexOf("async function queryTurnFeed");
   const queryEnd = serverSource.indexOf(
     "async function workspaceReview",
     queryStart,
@@ -3107,4 +3107,22 @@ test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토
   for (const status of ["awaiting_approval", "merging", "conflict"]) {
     assert.match(querySource, new RegExp(`'${status}'`));
   }
+});
+
+test("대화 보관함은 전체 검색을 12건 페이지로 요청한다", () => {
+  const serverSource = readFileSync(
+    new URL("../src/server.mjs", import.meta.url),
+    "utf8",
+  );
+  const archiveStart = serverSource.indexOf("async function archiveFeed");
+  const archiveEnd = serverSource.indexOf("async function liveFeedTurn", archiveStart);
+  const archiveSource = serverSource.slice(archiveStart, archiveEnd);
+  const queryStart = serverSource.indexOf("async function queryArchiveFeed");
+  const queryEnd = serverSource.indexOf("function withSessionContext", queryStart);
+  const querySource = serverSource.slice(queryStart, queryEnd);
+
+  assert.match(archiveSource, /limit"\) \?\? 12/);
+  assert.match(archiveSource, /offset/);
+  assert.match(querySource, /ILIKE '%' \|\| \$1 \|\| '%'/);
+  assert.match(querySource, /includesWorkspaceReviews: false/);
 });

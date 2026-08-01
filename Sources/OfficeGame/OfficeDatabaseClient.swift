@@ -201,6 +201,36 @@ struct OfficeDatabaseClient: Sendable {
         .turn
     }
 
+    func fetchArchiveFeed(
+        query: String?,
+        limit: Int,
+        offset: Int
+    ) async throws -> ArchiveFeedPage {
+        let endpoint = baseURL
+            .appending(path: "api")
+            .appending(path: "archive-feed")
+        guard var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OfficeDatabaseError.requestFailed
+        }
+        var queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
+        ]
+        if let query, !query.isEmpty {
+            queryItems.append(URLQueryItem(name: "query", value: query))
+        }
+        components.queryItems = queryItems
+        guard let url = components.url else {
+            throw OfficeDatabaseError.requestFailed
+        }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response)
+        return try historyDecoder().decode(ArchiveFeedPage.self, from: data)
+    }
+
     func fetchWorkspaceReview(
         turnID: String
     ) async throws -> TurnWorkspaceReview {
@@ -760,6 +790,11 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             workspace: workspace
         )
     }
+}
+
+struct ArchiveFeedPage: Decodable, Sendable {
+    let turns: [LiveFeedTurn]
+    let total: Int
 }
 
 func agentExecutionModeTitle(_ fastMode: Bool?) -> String {

@@ -755,22 +755,59 @@ async function replaceTurnSources(response, turnID, body) {
   send(response, 200, { sources: stored.records });
 }
 
-async function queryLiveFeed({ turnID = null, limit }) {
+async function queryTurnFeed({
+  turnID = null,
+  query = null,
+  limit,
+  offset = 0,
+  includesWorkspaceReviews,
+}) {
   const result = await pool.query(
     `
-      WITH selected_turn_ids AS (
+      WITH matching_turn_ids AS (
+        SELECT t.id, t.started_at
+        FROM turns AS t
+        JOIN cli_sessions AS session
+          ON session.id = t.cli_session_id
+        JOIN characters AS character
+          ON character.id = session.character_id
+        WHERE $1::uuid IS NULL
+          AND (
+            $3::text IS NULL
+            OR concat_ws(
+              ' ',
+              character.name,
+              t.prompt,
+              t.backend,
+              t.model,
+              t.effort,
+              session.external_id,
+              (
+                SELECT text
+                FROM messages
+                WHERE turn_id = t.id
+                  AND role = 'assistant'
+                ORDER BY received_at DESC
+                LIMIT 1
+              )
+            ) ILIKE '%' || $3 || '%'
+          )
+      ), selected_turn_ids AS (
         SELECT recent.id
         FROM (
           SELECT id
-          FROM turns
-          WHERE $1::uuid IS NULL
+          FROM matching_turn_ids
           ORDER BY started_at DESC
           LIMIT $2
+          OFFSET $4
         ) AS recent
         UNION
         SELECT task_workspace.review_turn_id
         FROM task_workspaces AS task_workspace
         WHERE $1::uuid IS NULL
+          AND $5::boolean
+          AND $3::text IS NULL
+          AND $4::integer = 0
           AND task_workspace.review_turn_id IS NOT NULL
           AND task_workspace.status IN (
             'awaiting_approval',
@@ -889,11 +926,66 @@ async function queryLiveFeed({ turnID = null, limit }) {
       ) AS workspace ON true
       ORDER BY t.started_at DESC
     `,
-    [turnID, limit],
+    [turnID, limit, query, offset, includesWorkspaceReviews],
   );
-  return result.rows.map(
-    (turn) => withSessionContext(withArtifactPreviews(turn)),
+  return result.rows.map((turn) =>
+    withSessionContext(withArtifactPreviews(turn)),
   );
+}
+
+async function queryLiveFeed({ turnID = null, limit }) {
+  const page = await queryTurnFeed({
+    turnID,
+    limit,
+    includesWorkspaceReviews: true,
+  });
+  return page;
+}
+
+async function queryArchiveFeed({ query, limit, offset }) {
+  const [turns, countResult] = await Promise.all([
+    queryTurnFeed({
+      query,
+      limit,
+      offset,
+      includesWorkspaceReviews: false,
+    }),
+    pool.query(
+      `
+        SELECT count(*)::integer AS total
+        FROM turns AS t
+        JOIN cli_sessions AS session
+          ON session.id = t.cli_session_id
+        JOIN characters AS character
+          ON character.id = session.character_id
+        WHERE (
+          $1::text IS NULL
+          OR concat_ws(
+            ' ',
+            character.name,
+            t.prompt,
+            t.backend,
+            t.model,
+            t.effort,
+            session.external_id,
+            (
+              SELECT text
+              FROM messages
+              WHERE turn_id = t.id
+                AND role = 'assistant'
+              ORDER BY received_at DESC
+              LIMIT 1
+            )
+          ) ILIKE '%' || $1 || '%'
+        )
+      `,
+      [query],
+    ),
+  ]);
+  return {
+    turns,
+    total: countResult.rows[0]?.total ?? 0,
+  };
 }
 
 function withSessionContext(turn) {
@@ -999,6 +1091,18 @@ async function liveFeed(response, url) {
   send(response, 200, {
     turns: await queryLiveFeed({ limit }),
   });
+}
+
+async function archiveFeed(response, url) {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? 12);
+  const requestedOffset = Number(url.searchParams.get("offset") ?? 0);
+  const query = url.searchParams.get("query")?.trim() || null;
+  const limit = Math.max(1, Math.min(requestedLimit, 50));
+  const offset = Math.max(
+    0,
+    Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0,
+  );
+  send(response, 200, await queryArchiveFeed({ query, limit, offset }));
 }
 
 async function liveFeedTurn(response, turnID) {
@@ -1525,6 +1629,11 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/live-feed"
     ) {
       await liveFeed(response, url);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/archive-feed"
+    ) {
+      await archiveFeed(response, url);
     } else if (request.method === "GET" && liveFeedTurnID) {
       await liveFeedTurn(response, liveFeedTurnID);
     } else if (workspaceReviewRoute) {
