@@ -1023,7 +1023,11 @@ export class AgentRuntime {
       crlfDelay: Infinity,
     });
     for await (const line of lines) {
-      const event = parseAgentEvent(line, state.character.backend);
+      const event = parseAgentEvent(
+        line,
+        state.character.backend,
+        state.workdir,
+      );
       if (!event) {
         continue;
       }
@@ -1172,6 +1176,7 @@ export class AgentRuntime {
       event.activity.text = fileChangeActivityText(
         fileChange.changes,
         statistics,
+        state.workdir,
       );
     }
   }

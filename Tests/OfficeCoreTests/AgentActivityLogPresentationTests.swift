@@ -315,10 +315,139 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertFalse(target.selectsItem)
     }
 
-    func testFinderTargetRejectsCompactedLegacyPath() {
+    func testFinderTargetResolvesCompactedLegacyPath() throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let file = workspace.appendingPathComponent("Sources/Feed.swift")
+        try fileManager.createDirectory(
+            at: file.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(fileManager.createFile(atPath: file.path, contents: Data()))
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let target = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "…/Sources/Feed.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(target.url, file.standardizedFileURL)
+        XCTAssertTrue(target.selectsItem)
+    }
+
+    func testFinderTargetRecoversLegacyWorktreeRootWithoutGuessing() throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let rootFile = workspace.appendingPathComponent("Package.swift")
+        let deepFile = workspace.appendingPathComponent(
+            "packages/app/Sources/Feed.swift"
+        )
+        try fileManager.createDirectory(
+            at: deepFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(
+            fileManager.createFile(atPath: rootFile.path, contents: Data())
+        )
+        XCTAssertTrue(
+            fileManager.createFile(atPath: deepFile.path, contents: Data())
+        )
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let rootTarget = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "…/03ffd78858a8/right-woman-70d95def-eae4-441f-b0ec-e5cd2e230dee/Package.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(rootTarget.url, rootFile.standardizedFileURL)
+        XCTAssertTrue(rootTarget.selectsItem)
+
+        let deepTarget = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "…/Sources/Feed.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(deepTarget.url, workspace.standardizedFileURL)
+        XCTAssertFalse(deepTarget.selectsItem)
+    }
+
+    func testFinderTargetDoesNotSelectAmbiguousCompactedPath() throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        for prefix in ["packages/one", "vendor/packages/two"] {
+            let file = workspace.appendingPathComponent(
+                "\(prefix)/Sources/Feed.swift"
+            )
+            try fileManager.createDirectory(
+                at: file.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            XCTAssertTrue(
+                fileManager.createFile(atPath: file.path, contents: Data())
+            )
+        }
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let target = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "…/Sources/Feed.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(target.url, workspace.standardizedFileURL)
+        XCTAssertFalse(target.selectsItem)
+    }
+
+    func testFinderTargetKeepsCompactedDeletedPathInsideWorkspace() throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let existingFolder = workspace.appendingPathComponent(
+            "Sources/OfficeGame",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: existingFolder,
+            withIntermediateDirectories: true
+        )
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let target = try XCTUnwrap(
+            WorkspaceFileRevealTarget.resolve(
+                path: "…/Sources/OfficeGame/Deleted.swift",
+                workspaceDirectory: workspace.path,
+                fileManager: fileManager
+            )
+        )
+        XCTAssertEqual(target.url, existingFolder.standardizedFileURL)
+        XCTAssertFalse(target.selectsItem)
+    }
+
+    func testFinderTargetDoesNotEscapeMissingCompactedWorkspace() {
+        let missingWorkspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        XCTAssertNil(
+            WorkspaceFileRevealTarget.resolve(
+                path: "…/Sources/Deleted.swift",
+                workspaceDirectory: missingWorkspace.path
+            )
+        )
+    }
+
+    func testFinderTargetRejectsUnsafeCompactedPath() {
         XCTAssertNil(
             WorkspaceFileRevealTarget.fileURL(
-                path: "…/Sources/Feed.swift",
+                path: "…/../outside.txt",
                 workspaceDirectory: "/Users/neo/office"
             )
         )

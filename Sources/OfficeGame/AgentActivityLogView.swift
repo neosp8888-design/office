@@ -996,6 +996,41 @@ struct WorkspaceFileRevealTarget: Equatable {
                 selectsItem: true
             )
         }
+        let compactedPath = compactedRelativePath(from: path)
+        if
+            let compactedPath,
+            let matchedURL = existingLegacyWorktreeFileURL(
+                relativePath: compactedPath,
+                workspaceDirectory: workspaceDirectory,
+                fileManager: fileManager
+            )
+        {
+            return WorkspaceFileRevealTarget(
+                url: matchedURL,
+                selectsItem: true
+            )
+        }
+
+        let compactedWorkspaceURL: URL?
+        if compactedPath != nil {
+            let workspaceURL = URL(
+                fileURLWithPath: workspaceDirectory,
+                isDirectory: true
+            ).standardizedFileURL
+            var isDirectory = ObjCBool(false)
+            guard
+                fileManager.fileExists(
+                    atPath: workspaceURL.path,
+                    isDirectory: &isDirectory
+                ),
+                isDirectory.boolValue
+            else {
+                return nil
+            }
+            compactedWorkspaceURL = workspaceURL
+        } else {
+            compactedWorkspaceURL = nil
+        }
 
         var ancestor = requestedURL.deletingLastPathComponent()
         while true {
@@ -1012,6 +1047,9 @@ struct WorkspaceFileRevealTarget: Equatable {
                     selectsItem: false
                 )
             }
+            if ancestor == compactedWorkspaceURL {
+                return nil
+            }
             let parent = ancestor.deletingLastPathComponent()
             guard parent.path != ancestor.path else {
                 return nil
@@ -1025,8 +1063,21 @@ struct WorkspaceFileRevealTarget: Equatable {
         workspaceDirectory: String
     ) -> URL? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let compactedPath = compactedRelativePath(from: trimmed) {
+            guard !workspaceDirectory.isEmpty else {
+                return nil
+            }
+            return URL(
+                fileURLWithPath: workspaceDirectory,
+                isDirectory: true
+            )
+                .appendingPathComponent(compactedPath)
+                .standardizedFileURL
+        }
         guard
-            !trimmed.isEmpty,
             !trimmed.hasPrefix("…"),
             !trimmed.hasPrefix("...")
         else {
@@ -1049,6 +1100,85 @@ struct WorkspaceFileRevealTarget: Equatable {
         )
             .appendingPathComponent(expanded)
             .standardizedFileURL
+    }
+
+    private static func compactedRelativePath(from path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix: String
+        if trimmed.hasPrefix("…/") {
+            prefix = "…/"
+        } else if trimmed.hasPrefix(".../") {
+            prefix = ".../"
+        } else {
+            return nil
+        }
+
+        let relativePath = String(trimmed.dropFirst(prefix.count))
+        let components = relativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        guard
+            !components.isEmpty,
+            components.allSatisfy({
+                !$0.isEmpty && $0 != "." && $0 != ".."
+            })
+        else {
+            return nil
+        }
+        return components.joined(separator: "/")
+    }
+
+    private static func existingLegacyWorktreeFileURL(
+        relativePath: String,
+        workspaceDirectory: String,
+        fileManager: FileManager
+    ) -> URL? {
+        guard !workspaceDirectory.isEmpty else {
+            return nil
+        }
+        let workspaceURL = URL(
+            fileURLWithPath: workspaceDirectory,
+            isDirectory: true
+        ).standardizedFileURL
+        let components = relativePath.split(separator: "/").map(String.init)
+        let repositoryRelativeComponents: ArraySlice<String>
+        if
+            components.count >= 3,
+            isRepositoryWorkspaceIdentifier(components[0]),
+            hasUUIDSuffix(components[1])
+        {
+            repositoryRelativeComponents = components.dropFirst(2)
+        } else if components.count >= 2, hasUUIDSuffix(components[0]) {
+            repositoryRelativeComponents = components.dropFirst()
+        } else {
+            return nil
+        }
+
+        let candidate = workspaceURL
+            .appendingPathComponent(
+                repositoryRelativeComponents.joined(separator: "/")
+            )
+            .standardizedFileURL
+        return fileManager.fileExists(atPath: candidate.path)
+            ? candidate
+            : nil
+    }
+
+    private static func isRepositoryWorkspaceIdentifier(_ value: String) -> Bool {
+        value.range(
+            of: #"^[0-9a-fA-F]{8,64}$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func hasUUIDSuffix(_ value: String) -> Bool {
+        guard value.count > 37 else {
+            return false
+        }
+        let separatorIndex = value.index(value.endIndex, offsetBy: -37)
+        return value[separatorIndex] == "-" &&
+            UUID(uuidString: String(value.suffix(36))) != nil
     }
 }
 
@@ -1073,6 +1203,8 @@ struct WorkspaceFileRevealButton: View {
                     Text(title)
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(foregroundColor)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
                     Image(systemName: "arrow.up.forward.square")
                         .font(.system(size: 8.5, weight: .semibold))
@@ -1090,6 +1222,8 @@ struct WorkspaceFileRevealButton: View {
             Text(title)
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(foregroundColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
