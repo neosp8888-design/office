@@ -11,7 +11,7 @@ struct TaskPromptAttachmentList: View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(attachments, id: \.path) { attachment in
                 Button {
-                    revealTaskAttachment(attachment.path)
+                    openTaskAttachment(attachment.path)
                 } label: {
                     HStack(spacing: 8) {
                         TaskAttachmentThumbnail(
@@ -43,9 +43,13 @@ struct TaskPromptAttachmentList: View {
                         style: .continuous
                     )
                 )
-                .help("\(attachment.path)\nFinder에서 보기")
+                .help(
+                    "\(attachment.path)\n"
+                        + taskAttachmentOpenActionTitle(for: attachment.path)
+                )
                 .accessibilityLabel(
-                    "첨부 파일 \(attachment.name), Finder에서 보기, "
+                    "첨부 파일 \(attachment.name), "
+                        + "\(taskAttachmentOpenActionTitle(for: attachment.path)), "
                         + "경로 \(attachment.path)"
                 )
             }
@@ -151,10 +155,34 @@ private struct TaskAttachmentThumbnail: View {
     }
 }
 
-private func revealTaskAttachment(_ path: String) {
-    NSWorkspace.shared.activateFileViewerSelecting([
-        URL(fileURLWithPath: path),
-    ])
+private func openTaskAttachment(_ path: String) {
+    let url = URL(fileURLWithPath: path)
+    guard taskAttachmentIsImage(path) else {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        return
+    }
+
+    Task { @MainActor in
+        guard let previewURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.Preview"
+        ) else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        do {
+            try await NSWorkspace.shared.open(
+                [url],
+                withApplicationAt: previewURL,
+                configuration: .init()
+            )
+        } catch {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+}
+
+func taskAttachmentOpenActionTitle(for path: String) -> String {
+    taskAttachmentIsImage(path) ? "미리보기에서 열기" : "Finder에서 보기"
 }
 
 private func taskAttachmentIsImage(_ path: String) -> Bool {
