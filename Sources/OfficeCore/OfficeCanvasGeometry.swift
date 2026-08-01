@@ -28,6 +28,17 @@ public enum OfficeCanvasGeometry {
 }
 
 public enum OfficeInteractionGeometry {
+    public static func faceBounds(
+        for character: OfficeCharacter,
+        artStyle: OfficeArtStyle
+    ) -> CGRect? {
+        guard character == .boss, artStyle == .twoD else {
+            return nil
+        }
+
+        return CGRect(x: 758, y: 142, width: 68, height: 72)
+    }
+
     public static func characterHitbox(
         for character: OfficeCharacter,
         artStyle: OfficeArtStyle,

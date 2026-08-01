@@ -240,7 +240,8 @@ struct CharacterInteractionLayer: View {
 
 enum OfficeBubbleLayout {
     static let bossMaximumWidth: CGFloat = 80
-    static let bossLeadingGap: CGFloat = 8
+    static let bossMinimumFaceGap: CGFloat = 4
+    static let bossFaceGapAtDesignScale: CGFloat = 18
 
     static func position(
         for character: OfficeCharacter,
@@ -258,16 +259,30 @@ enum OfficeBubbleLayout {
             return idealPosition
         }
 
-        let bossHitbox = OfficeInteractionGeometry.characterHitbox(
+        let protectedRightEdge: CGFloat
+        if let faceBounds = OfficeInteractionGeometry.faceBounds(
             for: .boss,
-            artStyle: artStyle,
-            fallback: fallbackHitbox
+            artStyle: artStyle
+        ) {
+            protectedRightEdge = fittedFrame.minX
+                + faceBounds.maxX * scale
+        } else {
+            let bossHitbox = OfficeInteractionGeometry.characterHitbox(
+                for: .boss,
+                artStyle: artStyle,
+                fallback: fallbackHitbox
+            )
+            protectedRightEdge = fittedFrame.minX
+                + bossHitbox.maxX * scale
+        }
+        let faceGap = max(
+            bossMinimumFaceGap,
+            bossFaceGapAtDesignScale * scale
         )
-        let bossRightEdge = fittedFrame.minX + bossHitbox.maxX * scale
         return CGPoint(
             x: max(
                 idealPosition.x,
-                bossRightEdge + bossLeadingGap + bossMaximumWidth / 2
+                protectedRightEdge + faceGap + bossMaximumWidth / 2
             ),
             y: idealPosition.y
         )
