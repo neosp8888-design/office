@@ -253,9 +253,9 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
-    func testWorkspaceApprovalRequiresCurrentCompleteDiff() {
-        let missingDiff = makeWorkspace(status: .awaitingApproval)
-        let completeDiff = makeWorkspace(
+    func testWorkspaceApprovalRequiresOnlyCurrentReviewTree() {
+        let unopenedDiff = makeWorkspace(status: .awaitingApproval)
+        let loadedDiff = makeWorkspace(
             status: .awaitingApproval,
             diff: "diff --git a/README.md b/README.md",
             diffTruncated: false
@@ -265,15 +265,17 @@ final class LiveFeedStoreTests: XCTestCase {
             diff: "partial diff",
             diffTruncated: true
         )
-        let unknownCompleteness = makeWorkspace(
+        let blankTree = makeWorkspace(
             status: .awaitingApproval,
-            diff: "diff without completeness metadata"
+            reviewTree: " "
         )
+        let wrongStatus = makeWorkspace(status: .conflict)
 
-        XCTAssertFalse(missingDiff.hasCompleteDiffForApproval)
-        XCTAssertTrue(completeDiff.hasCompleteDiffForApproval)
-        XCTAssertFalse(truncatedDiff.hasCompleteDiffForApproval)
-        XCTAssertFalse(unknownCompleteness.hasCompleteDiffForApproval)
+        XCTAssertTrue(unopenedDiff.canApprove)
+        XCTAssertTrue(loadedDiff.canApprove)
+        XCTAssertTrue(truncatedDiff.canApprove)
+        XCTAssertFalse(blankTree.canApprove)
+        XCTAssertFalse(wrongStatus.canApprove)
     }
 
     func testWorkspaceMergeRetryRequiresConflictReviewTree() {
@@ -344,7 +346,7 @@ final class LiveFeedStoreTests: XCTestCase {
 
         XCTAssertNil(workspace.executionWorkdir)
         XCTAssertNil(workspace.reviewTree)
-        XCTAssertFalse(workspace.hasCompleteDiffForApproval)
+        XCTAssertFalse(workspace.canApprove)
     }
 
     private func makeTurn(
@@ -383,6 +385,7 @@ final class LiveFeedStoreTests: XCTestCase {
 
     private func makeWorkspace(
         status: WorkspaceReviewStatus,
+        reviewTree: String? = "review-tree",
         diff: String? = nil,
         diffTruncated: Bool? = nil
     ) -> TurnWorkspaceReview {
@@ -397,7 +400,7 @@ final class LiveFeedStoreTests: XCTestCase {
             branchName: "officestra/right-man/task",
             baseBranch: "main",
             baseCommit: "base",
-            reviewTree: "review-tree",
+            reviewTree: reviewTree,
             headCommit: "head",
             changedFiles: [
                 WorkspaceChangedFile(status: "M", path: "README.md")
