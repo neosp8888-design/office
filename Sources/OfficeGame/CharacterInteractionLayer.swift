@@ -55,6 +55,7 @@ struct CharacterInteractionLayer: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .officePointingHandCursor()
                     .frame(
                         width: hitbox.width * scale,
                         height: hitbox.height * scale
@@ -81,6 +82,7 @@ struct CharacterInteractionLayer: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .officePointingHandCursor()
                 .frame(
                     width: archiveCabinetHitbox.width * scale,
                     height: archiveCabinetHitbox.height * scale
@@ -104,6 +106,7 @@ struct CharacterInteractionLayer: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .officePointingHandCursor()
                 .frame(
                     width: whiteboardHitbox.width * scale,
                     height: whiteboardHitbox.height * scale
@@ -132,6 +135,7 @@ struct CharacterInteractionLayer: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .officePointingHandCursor()
                     .frame(
                         width: monitorHitbox.width * scale,
                         height: monitorHitbox.height * scale
@@ -202,6 +206,7 @@ struct CharacterInteractionLayer: View {
                                 + bubbleAnchor.y * scale
                         )
                         .allowsHitTesting(!isThinking)
+                        .officePointingHandCursor(isEnabled: !isThinking)
                         .transition(
                             .scale(scale: 0.88).combined(with: .opacity)
                         )
