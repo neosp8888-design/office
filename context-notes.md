@@ -1109,3 +1109,11 @@
 - 통합 검증 DB는 삭제했고 fixture는 `/Users/neo/.Trash/officestra-e2e-final-20260801`에 보존했다
 - 작업 브랜치 `agent/task-worktree-approval`을 게시하고 PR `#7`을 검토 가능 상태로 전환한 뒤 헤드 `1878b9e`를 고정해 병합했다
 - 원격 `main`과 로컬 `main`은 병합 커밋 `bb798a6`에서 일치하며 작업 트리는 깨끗하다
+
+## 2026-08-01 2D 기본 표시 방식 테스트 회귀 수정
+
+- `74613dd`는 표시 방식 기본값을 3D에서 2D로 바꿨고, 2D는 현대 낮·밤 테마만 지원한다
+- `PixelOfficeAssetTests.testAllFourThemesLoadFromBundle`는 스타일을 생략한 `resourceURL(for:)`을 우드 테마까지 호출해 2D 지원 검사에서 `fatalError`가 난다
+- 성공 기준은 네 테마 리소스 검증이 3D 스타일을 명시해 통과하고, 2D 지원 범위를 검증하는 테스트는 유지하는 것이다
+- `swift test --filter PixelOfficeAssetTests`에서 30개 테스트가 모두 통과했고 `git diff --check`도 통과했다
+- `swift test` 전체 119개 테스트도 모두 통과했다
