@@ -5,13 +5,26 @@ import XCTest
 @testable import OfficeGame
 
 final class TaskPromptPresentationTests: XCTestCase {
-    func testImageAttachmentUsesPreviewAction() {
+    func testOnlyImageThumbnailUsesPreviewAction() {
         XCTAssertEqual(
-            taskAttachmentOpenActionTitle(for: "/tmp/screenshot.png"),
+            taskAttachmentOpenActionTitle(
+                for: "/tmp/screenshot.png",
+                isThumbnail: true
+            ),
             "미리보기에서 열기"
         )
         XCTAssertEqual(
-            taskAttachmentOpenActionTitle(for: "/tmp/report.pdf"),
+            taskAttachmentOpenActionTitle(
+                for: "/tmp/screenshot.png",
+                isThumbnail: false
+            ),
+            "Finder에서 보기"
+        )
+        XCTAssertEqual(
+            taskAttachmentOpenActionTitle(
+                for: "/tmp/report.pdf",
+                isThumbnail: true
+            ),
             "Finder에서 보기"
         )
     }
