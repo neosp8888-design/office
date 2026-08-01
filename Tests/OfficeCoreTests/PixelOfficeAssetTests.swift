@@ -8,7 +8,7 @@ final class PixelOfficeAssetTests: XCTestCase {
     func testArtStyleMetadataAndSupportedThemesAreStable() {
         XCTAssertEqual(OfficeArtStyle.twoD.rawValue, "2d")
         XCTAssertEqual(OfficeArtStyle.threeD.rawValue, "3d")
-        XCTAssertEqual(OfficeArtStyle.defaultValue, .threeD)
+        XCTAssertEqual(OfficeArtStyle.defaultValue, .twoD)
         XCTAssertEqual(OfficeArtStyle.twoD.title, "2D")
         XCTAssertEqual(OfficeArtStyle.threeD.title, "3D")
         XCTAssertEqual(
