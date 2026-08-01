@@ -576,7 +576,7 @@ test("원본 최신 변경과 충돌하면 main을 바꾸지 않고 중단한다
   }
 });
 
-test("동결된 루트 작업 기록도 병렬 변경이면 일반 충돌로 차단한다", async () => {
+test("동결된 루트 작업 기록 변경은 검토 준비 전에 명확히 차단한다", async () => {
   const fixture = createRepository();
   try {
     const checklistBase = "# 체크리스트\n\n## 공통 기록\n- 기준\n";
@@ -601,36 +601,52 @@ test("동결된 루트 작업 기록도 병렬 변경이면 일반 충돌로 차
       join(workspace.worktreePath, "context-notes.md"),
       `${contextBase}\n## 직원 컨텍스트\n- 직원 변경\n`,
     );
-    const review = await manager.prepareReview(workspace);
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
 
-    writeFileSync(
-      join(fixture.repositoryRoot, "checklist.md"),
-      `${checklistBase}\n## main 기록\n- main 변경\n`,
+    await assert.rejects(
+      manager.prepareReview(workspace),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "invalid-state" &&
+        /v1\.0 동결 작업 기록은 변경할 수 없습니다/.test(error.message) &&
+        /checklist\.md/.test(error.message) &&
+        /context-notes\.md/.test(error.message),
     );
+    assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
+    assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("기존 검토 tree의 동결 작업 기록 변경도 승인 직전에 차단한다", async () => {
+  const fixture = createRepository();
+  try {
+    writeFileSync(join(fixture.repositoryRoot, "checklist.md"), "# 동결본\n");
+    git(fixture.repositoryRoot, "add", "checklist.md");
+    git(fixture.repositoryRoot, "commit", "-m", "add frozen work record");
+
+    const { manager, workspace } = await fixture.provision();
     writeFileSync(
-      join(fixture.repositoryRoot, "context-notes.md"),
-      `${contextBase}\n## main 컨텍스트\n- main 변경\n`,
+      join(workspace.worktreePath, "checklist.md"),
+      "# 동결본\n\n수정하면 안 되는 기록\n",
     );
-    git(fixture.repositoryRoot, "add", "-A");
-    git(fixture.repositoryRoot, "commit", "-m", "change frozen work records");
+    git(workspace.worktreePath, "add", "checklist.md");
+    const legacyReviewTree = git(workspace.worktreePath, "write-tree");
     const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
 
     await assert.rejects(
       manager.approve(workspace, {
-        expectedReviewTree: review.reviewTree,
-        commitMessage: "test: reject parallel frozen work records",
+        expectedReviewTree: legacyReviewTree,
+        commitMessage: "test: reject legacy frozen work record review",
       }),
       (error) => error instanceof GitWorkspaceError &&
-        error.code === "conflict",
+        error.code === "invalid-state" &&
+        /checklist\.md/.test(error.message),
     );
     assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
-    assert.doesNotMatch(
+    assert.equal(
       readFileSync(join(fixture.repositoryRoot, "checklist.md"), "utf8"),
-      /직원 변경/,
-    );
-    assert.doesNotMatch(
-      readFileSync(join(fixture.repositoryRoot, "context-notes.md"), "utf8"),
-      /직원 변경/,
+      "# 동결본\n",
     );
     assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
   } finally {
