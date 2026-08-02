@@ -5,12 +5,17 @@ import XCTest
 
 final class CharacterFullBodyProfileLayoutTests: XCTestCase {
     func testImageUsesHalfOfProfileContentWidth() {
-        let contentWidth = CharacterFullBodyProfileLayout.sheetWidth
-            - (CharacterFullBodyProfileLayout.horizontalPadding * 2)
-
         XCTAssertEqual(
             CharacterFullBodyProfileLayout.imageWidth,
-            contentWidth * 0.5
+            CharacterFullBodyProfileLayout.referenceContentWidth * 0.5
+        )
+    }
+
+    func testSheetUsesOnlyProfileImageWidthAndPadding() {
+        XCTAssertEqual(
+            CharacterFullBodyProfileLayout.sheetWidth,
+            CharacterFullBodyProfileLayout.imageWidth
+                + (CharacterFullBodyProfileLayout.horizontalPadding * 2)
         )
     }
 

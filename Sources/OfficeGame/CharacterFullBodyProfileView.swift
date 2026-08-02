@@ -5,17 +5,19 @@ import OfficeCore
 import SwiftUI
 
 enum CharacterFullBodyProfileLayout {
-    static let sheetWidth: CGFloat = 430
-    static let horizontalPadding: CGFloat = 22
+    static let referenceContentWidth: CGFloat = 386
+    static let horizontalPadding: CGFloat = 16
     static let imageWidthRatio: CGFloat = 0.5
     static let imageAspectRatio: CGFloat = 0.5
 
-    static var imageWidth: CGFloat {
-        (sheetWidth - (horizontalPadding * 2)) * imageWidthRatio
-    }
+    static let imageWidth = referenceContentWidth * imageWidthRatio
 
     static var imageHeight: CGFloat {
         imageWidth / imageAspectRatio
+    }
+
+    static var sheetWidth: CGFloat {
+        imageWidth + (horizontalPadding * 2)
     }
 }
 
@@ -51,20 +53,6 @@ struct CharacterFullBodyProfileView: View {
                     .frame(
                         width: CharacterFullBodyProfileLayout.imageWidth,
                         height: CharacterFullBodyProfileLayout.imageHeight
-                    )
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        Color(red: 0.985, green: 0.96, blue: 0.94),
-                        in: RoundedRectangle(
-                            cornerRadius: 22,
-                            style: .continuous
-                        )
-                    )
-                    .clipShape(
-                        RoundedRectangle(
-                            cornerRadius: 22,
-                            style: .continuous
-                        )
                     )
             }
         }
