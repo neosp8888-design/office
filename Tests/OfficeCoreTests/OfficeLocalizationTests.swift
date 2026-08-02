@@ -21,4 +21,13 @@ final class OfficeLocalizationTests: XCTestCase {
             "en"
         )
     }
+
+    func testEnglishDefaultIdentityPromptReturnsToCanonicalKoreanValue() {
+        XCTAssertEqual(
+            OfficeLocalization.canonicalIdentityPrompt(
+                "Understand work instructions precisely and report the execution plan and results concisely."
+            ),
+            "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다."
+        )
+    }
 }
