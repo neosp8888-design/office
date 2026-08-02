@@ -26,10 +26,10 @@ final class OfficePanelControlLayoutTests: XCTestCase {
         )
     }
 
-    func testArtStyleControlUsesSquareTouchAreaForCircularAppearance() {
+    func testArtStyleAndBackendControlsUseCompactCircularTouchArea() {
         XCTAssertEqual(
             OfficePanelControlLayout.artStyleControlDiameter,
-            42
+            36
         )
     }
 
