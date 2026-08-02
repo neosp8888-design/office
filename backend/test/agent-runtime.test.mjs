@@ -2642,6 +2642,45 @@ test("자동 승인 설정은 검토 tree를 system actor로 바로 승인한다
   }]);
 });
 
+test("원본 main이 dirty면 직원을 호출하지 않고 다음 직접 승인을 기다린다", async () => {
+  let repairCount = 0;
+  let startCount = 0;
+  const approvalError = new Error(
+    "원본 Git 작업 트리에 변경사항이 있어 병합할 수 없습니다.",
+  );
+  approvalError.code = "not-clean";
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => ({
+        rowCount: 1,
+        rows: [{ enabled: true }],
+      }),
+    },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.approveWorkspace = async () => {
+    throw approvalError;
+  };
+  runtime.resumeWorkspaceForAutomaticRepair = async () => {
+    repairCount += 1;
+    return null;
+  };
+  runtime.start = async () => {
+    startCount += 1;
+  };
+
+  await runtime.handleAutomaticWorkspaceApproval(
+    { turnID: "turn-1", character: { id: "boss" } },
+    { hasChanges: true, reviewTree: "review-tree" },
+  );
+
+  assert.equal(repairCount, 0);
+  assert.equal(startCount, 0);
+  assert.equal(runtime.automaticApprovalCharacters.has("boss"), false);
+});
+
 test("자동 승인 설정 행이 아직 없어도 기본값은 활성화다", async () => {
   const runtime = new AgentRuntime({
     pool: {

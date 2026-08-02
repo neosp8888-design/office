@@ -2192,6 +2192,9 @@ export class AgentRuntime {
         }
         return;
       } catch (error) {
+        if (automaticApprovalErrorCode(error) === "not-clean") {
+          return;
+        }
         let repair;
         try {
           repair = await this.resumeWorkspaceForAutomaticRepair(

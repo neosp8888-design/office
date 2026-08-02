@@ -119,3 +119,20 @@ test("백엔드 시작은 중단 복구 뒤 기존 자동 승인 대기를 이�
   assert.ok(approvalIndex > wakeIndex);
   assert.ok(listenIndex > approvalIndex);
 });
+
+test("백엔드는 대기 중 자동 승인을 주기적으로 겹치지 않게 재시도한다", () => {
+  assert.match(
+    serverSource,
+    /automaticWorkspaceApprovalRetryIntervalMs = 10_000/,
+  );
+  assert.match(
+    serverSource,
+    /if \(!runtime \|\| automaticWorkspaceApprovalRetryInFlight\)/,
+  );
+  assert.match(
+    serverSource,
+    /runtime\.resumePendingAutomaticWorkspaceApprovals\(\)/,
+  );
+  assert.match(serverSource, /timer\.unref\(\)/);
+  assert.match(serverSource, /startAutomaticWorkspaceApprovalRetryLoop\(\)/);
+});
