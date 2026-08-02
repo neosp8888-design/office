@@ -4374,7 +4374,7 @@ test("worktree가 없는 활성 CLI 세션은 종료하지 않고 다음 업무�
   );
 });
 
-test("검토 대기 workspace가 있으면 같은 직원의 다음 턴을 차단한다", async () => {
+test("검토 대기 workspace가 있어도 기존 CLI 세션으로 다음 업무를 시작한다", async () => {
   const queries = [];
   const query = async (text, values) => {
     queries.push({ text, values });
@@ -4404,7 +4404,8 @@ test("검토 대기 workspace가 있으면 같은 직원의 다음 턴을 차단
           id: "session-1",
           externalSessionID: "external-1",
           conversationID: "11111111-1111-1111-1111-111111111111",
-          workspaceStatus: "awaiting_approval",
+          workspaceID: null,
+          workspaceStatus: null,
         }],
       };
     }
@@ -4417,22 +4418,23 @@ test("검토 대기 workspace가 있으면 같은 직원의 다음 턴을 차단
     broadcast: () => {},
   });
 
-  await assert.rejects(
-    runtime.prepareTurn({
-      characterID: "boss",
-      prompt: "다음 업무",
-      conversationID: "11111111-1111-1111-1111-111111111111",
-    }),
-    AgentBusyError,
-  );
+  const prepared = await runtime.prepareTurn({
+    characterID: "boss",
+    prompt: "다음 업무",
+    conversationID: "11111111-1111-1111-1111-111111111111",
+  });
+  assert.equal(prepared.sessionID, "session-1");
+  assert.equal(prepared.externalSessionID, "external-1");
+  assert.equal(prepared.reusedSession, true);
+  assert.equal(prepared.workspace, null);
   assert.match(queries[0].text, /pg_advisory_xact_lock/);
   assert.deepEqual(queries[0].values, ["officestra:character:boss"]);
 });
 
-test("자동 복구 claim은 일반 업무를 막고 해당 복구 turn만 재개한다", async () => {
+test("자동 복구 claim과 일반 업무는 같은 CLI 세션에서 workspace를 분리한다", async () => {
   const workspaceID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const reviewTurnID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-  const query = async (text) => {
+  const query = async (text, values) => {
     if (/FROM characters/.test(text)) {
       return {
         rowCount: 1,
@@ -4452,17 +4454,19 @@ test("자동 복구 claim은 일반 업무를 막고 해당 복구 turn만 재�
     if (/turn\.status IN/.test(text)) {
       return { rowCount: 0, rows: [] };
     }
-    if (
-      /FROM task_workspaces AS workspace/.test(text) &&
-      /auto_repair_paused = true/.test(text) &&
-      !/active_cli_sessions/.test(text)
-    ) {
-      return {
-        rowCount: 1,
-        rows: [{ workspaceID, reviewTurnID }],
-      };
-    }
     if (/FROM active_cli_sessions AS active/.test(text)) {
+      if (values?.[1] !== workspaceID) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "session-1",
+            externalSessionID: "external-1",
+            conversationID: "11111111-1111-1111-1111-111111111111",
+            workspaceID: null,
+            workspaceStatus: null,
+          }],
+        };
+      }
       return {
         rowCount: 1,
         rows: [{
@@ -4496,14 +4500,14 @@ test("자동 복구 claim은 일반 업무를 막고 해당 복구 turn만 재�
     broadcast: () => {},
   });
 
-  await assert.rejects(
-    runtime.prepareTurn({
-      characterID: "boss",
-      prompt: "새 일반 업무",
-      conversationID: "11111111-1111-1111-1111-111111111111",
-    }),
-    AgentBusyError,
-  );
+  const ordinary = await runtime.prepareTurn({
+    characterID: "boss",
+    prompt: "새 일반 업무",
+    conversationID: "11111111-1111-1111-1111-111111111111",
+  });
+  assert.equal(ordinary.sessionID, "session-1");
+  assert.equal(ordinary.externalSessionID, "external-1");
+  assert.equal(ordinary.workspace, null);
 
   const prepared = await runtime.prepareTurn({
     characterID: "boss",
@@ -4515,7 +4519,7 @@ test("자동 복구 claim은 일반 업무를 막고 해당 복구 turn만 재�
   assert.equal(prepared.workspace.autoRepairPaused, true);
 });
 
-test("외부 CLI 세션 ID가 없어도 직원의 검토 대기 workspace가 다음 턴을 막는다", async () => {
+test("활성 CLI 세션이 없으면 검토 대기 workspace와 분리해 새 세션을 만든다", async () => {
   const query = async (text) => {
     if (/FROM characters/.test(text)) {
       return {
@@ -4536,21 +4540,11 @@ test("외부 CLI 세션 ID가 없어도 직원의 검토 대기 workspace가 다
     if (/turn\.status IN/.test(text)) {
       return { rowCount: 0, rows: [] };
     }
-    if (
-      /FROM task_workspaces/.test(text) &&
-      /character_id/.test(text) &&
-      !/active_cli_sessions/.test(text)
-    ) {
-      return {
-        rowCount: 1,
-        rows: [{ status: "awaiting_approval" }],
-      };
-    }
     if (/FROM active_cli_sessions AS active/.test(text)) {
       return { rowCount: 0, rows: [] };
     }
     if (/INSERT INTO cli_sessions/.test(text)) {
-      return { rowCount: 1, rows: [{ id: "unexpected-session" }] };
+      return { rowCount: 1, rows: [{ id: "new-session" }] };
     }
     return { rowCount: 0, rows: [] };
   };
@@ -4561,14 +4555,13 @@ test("외부 CLI 세션 ID가 없어도 직원의 검토 대기 workspace가 다
     broadcast: () => {},
   });
 
-  await assert.rejects(
-    runtime.prepareTurn({
-      characterID: "boss",
-      prompt: "다음 업무",
-      conversationID: "11111111-1111-1111-1111-111111111111",
-    }),
-    AgentBusyError,
-  );
+  const prepared = await runtime.prepareTurn({
+    characterID: "boss",
+    prompt: "다음 업무",
+    conversationID: "11111111-1111-1111-1111-111111111111",
+  });
+  assert.equal(prepared.sessionID, "new-session");
+  assert.equal(prepared.reusedSession, false);
 });
 
 test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토 턴도 고정한다", () => {
