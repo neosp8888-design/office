@@ -1653,6 +1653,7 @@ private struct CharacterSettingsView: View {
     @State private var settingsDrafts:
         [OfficeCharacter: CharacterAgentSettings] = [:]
     @State private var identityPromptDrafts: [OfficeCharacter: String] = [:]
+    @State private var autoApproveAndMergeDraft = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1662,6 +1663,31 @@ private struct CharacterSettingsView: View {
             Text("이름, 역할·업무 지침, CLI 실행 방식을 직원마다 설정합니다.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Toggle(
+                    OfficeLocalization.string(
+                        "작업 완료 후 자동 승인·병합"
+                    ),
+                    isOn: $autoApproveAndMergeDraft
+                )
+                .font(.system(size: 12, weight: .semibold))
+
+                Text(
+                    OfficeLocalization.string(
+                        "기존 안전 검사 후 자동 병합합니다. 동료 충돌은 "
+                            + "완료까지 기다렸다 재개하고, 해결 실패는 최대 "
+                            + "3회 재질의합니다."
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(0.045))
+            )
 
             ScrollView {
                 VStack(spacing: 10) {
@@ -1683,7 +1709,11 @@ private struct CharacterSettingsView: View {
                 Text(OfficeLocalization.string(status))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(
-                        status == "설정을 저장했습니다."
+                        [
+                            "설정을 저장했습니다.",
+                            "자동 승인 설정을 저장했고 대기 중 변경사항을 처리합니다.",
+                            "자동 승인 설정을 꺼서 저장했습니다. 기존 변경사항은 검토 대기합니다.",
+                        ].contains(status)
                             ? Color.green
                             : Color.red
                     )
@@ -1701,7 +1731,8 @@ private struct CharacterSettingsView: View {
                             settings: settingsDrafts,
                             identityPrompts: identityPromptDrafts.mapValues {
                                 OfficeLocalization.canonicalIdentityPrompt($0)
-                            }
+                            },
+                            autoApproveAndMerge: autoApproveAndMergeDraft
                         )
                     }
                 }
@@ -1731,6 +1762,7 @@ private struct CharacterSettingsView: View {
                     )
                 }
             )
+            autoApproveAndMergeDraft = director.autoApproveAndMerge
         }
     }
 

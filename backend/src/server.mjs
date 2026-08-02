@@ -189,6 +189,58 @@ async function listActiveSessions(response) {
   send(response, 200, { sessions: result.rows });
 }
 
+async function readAutomationSettings(response) {
+  const result = await pool.query(
+    `
+      SELECT
+        auto_approve_workspaces AS "autoApproveAndMerge"
+      FROM automation_settings
+      WHERE singleton = true
+    `,
+  );
+  send(response, 200, {
+    autoApproveAndMerge:
+      result.rows?.[0]?.autoApproveAndMerge ?? true,
+  });
+}
+
+async function updateAutomationSettings(response, body) {
+  if (typeof body.autoApproveAndMerge !== "boolean") {
+    send(response, 400, {
+      error: "자동 승인·병합 설정은 boolean 값이어야 합니다.",
+    });
+    return;
+  }
+  const result = await pool.query(
+    `
+      INSERT INTO automation_settings (
+        singleton,
+        auto_approve_workspaces,
+        updated_at
+      )
+      VALUES (true, $1, now())
+      ON CONFLICT (singleton) DO UPDATE
+      SET
+        auto_approve_workspaces = EXCLUDED.auto_approve_workspaces,
+        updated_at = now()
+      RETURNING
+        auto_approve_workspaces AS "autoApproveAndMerge"
+    `,
+    [body.autoApproveAndMerge],
+  );
+  send(response, 200, result.rows[0]);
+  if (body.autoApproveAndMerge) {
+    void runtime?.resumePendingAutomaticWorkspaceApprovals().catch(
+      (error) => {
+        console.warn(
+          "자동 승인·병합 활성화 뒤 대기 업무를 재개하지 못했습니다.",
+          error instanceof Error ? error.message : String(error),
+        );
+      },
+    );
+  }
+}
+
 async function updateCharacterName(response, characterID, body) {
   const name = String(body.name ?? "").trim();
   if (name.length === 0 || name.length > 30) {
@@ -915,7 +967,8 @@ async function queryTurnFeed({
           'headCommit', task_workspace.head_commit,
           'changedFiles', task_workspace.changed_files,
           'mergedCommit', task_workspace.merged_commit,
-          'errorMessage', task_workspace.error_message
+          'errorMessage', task_workspace.error_message,
+          'autoRetryCount', task_workspace.auto_retry_count
         ) AS review
         FROM task_workspaces AS task_workspace
         WHERE task_workspace.review_turn_id = t.id
@@ -1607,6 +1660,22 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/active-sessions"
     ) {
       await listActiveSessions(response);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/automation-settings"
+    ) {
+      await readAutomationSettings(response);
+    } else if (
+      request.method === "PUT" &&
+      url.pathname === "/api/automation-settings"
+    ) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await updateAutomationSettings(
+        response,
+        await readJSON(request),
+      );
     } else if (request.method === "GET" && historyCharacterID) {
       await characterHistory(response, historyCharacterID);
     } else if (
@@ -1777,6 +1846,8 @@ try {
     broadcast,
   });
   await runtime.recoverInterruptedJobs();
+  await runtime.wakePeerWaitingAutomaticApprovals({ resume: false });
+  await runtime.resumePendingAutomaticWorkspaceApprovals();
   server.listen(port, "127.0.0.1", () => {
     console.log(`사무실 백엔드 실행 중 http://127.0.0.1:${port}`);
   });

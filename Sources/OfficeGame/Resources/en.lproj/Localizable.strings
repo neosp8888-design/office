@@ -75,6 +75,8 @@
 "Fast 모드 켜기" = "Turn on Fast mode";
 "직원별 설정" = "Teammate Settings";
 "이름, 역할·업무 지침, CLI 실행 방식을 직원마다 설정합니다." = "Configure each teammate's name, role, work instructions, and CLI behavior.";
+"작업 완료 후 자동 승인·병합" = "Automatically approve and merge completed work";
+"기존 안전 검사 후 자동 병합합니다. 동료 충돌은 완료까지 기다렸다 재개하고, 해결 실패는 최대 3회 재질의합니다." = "Merge automatically after existing safety checks. Conflicts with teammates wait for their work to finish, then resume; unresolved failures are retried up to three times.";
 "이름" = "Name";
 "역할·업무 지침" = "Role and work instructions";
 "모델" = "Model";
@@ -230,5 +232,8 @@
 "변경사항 검토를 마친 뒤 설정할 수 있습니다." = "Settings are available after the change review finishes.";
 "다른 설정을 저장하는 중입니다." = "Saving another setting.";
 "설정을 저장했습니다." = "Settings saved.";
+"자동 승인 설정을 저장했고 대기 중 변경사항을 처리합니다." = "Automatic approval was enabled and pending changes are being processed.";
+"자동 승인 설정을 꺼서 저장했습니다. 기존 변경사항은 검토 대기합니다." = "Automatic approval was disabled. Existing changes remain pending review.";
+"변경사항 검토를 마친 뒤 직원 설정을 바꿀 수 있습니다." = "Teammate settings can be changed after the pending change review is complete.";
 "직원 이름을 입력하세요." = "Enter a teammate name.";
 "직원별 역할·업무 지침을 입력하세요." = "Enter role and work instructions for each teammate.";
