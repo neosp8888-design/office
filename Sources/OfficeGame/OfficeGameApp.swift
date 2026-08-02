@@ -82,6 +82,7 @@ private struct OfficeGameView: View {
     @State private var command = ""
     @State private var attachments: [URL] = []
     @State private var showsCharacterSettings = false
+    @State private var profileCharacter: OfficeCharacter?
     @State private var historyTarget: ConversationHistoryTarget?
     @State private var bubbleDetail: BubbleDetail?
     @State private var detailSelection = OfficeDetailSelection.archive
@@ -197,6 +198,16 @@ private struct OfficeGameView: View {
                 isFailure: detail.isFailure,
                 isOffDuty: detail.isOffDuty
             )
+        }
+        .sheet(item: $profileCharacter) { characterID in
+            if let character = director.characters.first(where: {
+                $0.id == characterID
+            }) {
+                CharacterFullBodyProfileView(
+                    character: character,
+                    name: director.displayName(for: characterID)
+                )
+            }
         }
         .onAppear {
             director.selectDefaultCharacterIfNeeded()
@@ -656,6 +667,24 @@ private struct OfficeGameView: View {
                         director: director,
                         character: character
                     )
+
+                    if PixelOfficeAsset.fullBodyProfileURL(
+                        for: character.id
+                    ) != nil {
+                        Button {
+                            profileCharacter = character.id
+                        } label: {
+                            Label(
+                                "프로필",
+                                systemImage: "person.crop.rectangle"
+                            )
+                            .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DashboardPalette.accent)
+                        .accessibilityLabel("직원 프로필")
+                        .help("직원 프로필 보기")
+                    }
 
                     Spacer(minLength: 0)
                 }

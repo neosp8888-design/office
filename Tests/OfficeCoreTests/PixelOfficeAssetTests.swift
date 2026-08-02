@@ -78,6 +78,21 @@ final class PixelOfficeAssetTests: XCTestCase {
         }
     }
 
+    func testFullBodyProfilesExistOnlyForConfiguredWomen() throws {
+        let expected: Set<OfficeCharacter> = [.boss, .leftWoman, .rightWoman]
+
+        for character in OfficeCharacter.allCases {
+            let profileURL = PixelOfficeAsset.fullBodyProfileURL(for: character)
+            if expected.contains(character) {
+                let url = try XCTUnwrap(profileURL)
+                let image = try XCTUnwrap(NSImage(contentsOf: url))
+                XCTAssertFalse(image.representations.isEmpty)
+            } else {
+                XCTAssertNil(profileURL)
+            }
+        }
+    }
+
     func testAllThemesUseTheRetinaV4Canvas() throws {
         for style in OfficeArtStyle.allCases {
             for theme in style.supportedThemes {

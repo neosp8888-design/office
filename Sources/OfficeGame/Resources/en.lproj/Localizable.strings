@@ -237,3 +237,6 @@
 "변경사항 검토를 마친 뒤 직원 설정을 바꿀 수 있습니다." = "Teammate settings can be changed after the pending change review is complete.";
 "직원 이름을 입력하세요." = "Enter a teammate name.";
 "직원별 역할·업무 지침을 입력하세요." = "Enter role and work instructions for each teammate.";
+"프로필" = "Profile";
+"직원 프로필" = "Teammate profile";
+"직원 프로필 보기" = "Show teammate profile";
