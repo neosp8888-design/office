@@ -19,6 +19,13 @@ final class OfficePanelControlLayoutTests: XCTestCase {
         )
     }
 
+    func testArtStyleControlUsesSquareTouchAreaForCircularAppearance() {
+        XCTAssertEqual(
+            OfficePanelControlLayout.artStyleControlDiameter,
+            42
+        )
+    }
+
     func testSettingsControlUsesTopTrailingCorner() {
         XCTAssertEqual(
             OfficePanelControlLayout.alignment(for: .settings),
