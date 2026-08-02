@@ -85,7 +85,7 @@ enum OfficePanelControl {
 }
 
 enum OfficePanelControlLayout {
-    static let artStyleControlDiameter: CGFloat = 42
+    static let artStyleControlDiameter: CGFloat = 36
 
     static func alignment(for control: OfficePanelControl) -> Alignment {
         switch control {
@@ -662,9 +662,9 @@ private struct OfficeGameView: View {
         .foregroundStyle(.white)
         .background(
             backendController.status == .running
-                ? Color.green.opacity(0.88)
+                ? Color(red: 0.43, green: 0.72, blue: 0.58)
                 : backendController.status == .stopped
-                    ? Color.red.opacity(0.88)
+                    ? Color(red: 0.87, green: 0.53, blue: 0.53)
                     : Color.gray.opacity(0.78),
             in: Circle()
         )
