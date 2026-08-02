@@ -377,6 +377,28 @@ export class GitWorkspaceManager {
       workspace.worktreePath,
       ["write-tree"],
     );
+    if (currentTree !== expectedReviewTree) {
+      throw new GitWorkspaceError(
+        "changed-after-review",
+        "검토 후 업무 변경사항이 달라졌습니다. 변경사항을 다시 확인하세요.",
+      );
+    }
+
+    await this.validateSource(workspace);
+    const workspaceHead = await gitText(
+      workspace.worktreePath,
+      ["rev-parse", "HEAD"],
+    );
+    await requireBaseAncestor(workspace, workspaceHead);
+    const sourceHead = await gitText(
+      workspace.repositoryRoot,
+      ["rev-parse", "HEAD"],
+    );
+    const taskBaseCommit = await taskApprovalBase(
+      workspace,
+      workspaceHead,
+      sourceHead,
+    );
     requireUnchangedFrozenWorkRecords(
       parseChangedFiles(
         (await gitBuffer(workspace.worktreePath, [
@@ -385,21 +407,14 @@ export class GitWorkspaceManager {
           "--name-status",
           "-z",
           "--find-renames",
-          workspace.baseCommit,
+          taskBaseCommit,
           "--",
         ])).stdout,
       ),
     );
-    if (currentTree !== expectedReviewTree) {
-      throw new GitWorkspaceError(
-        "changed-after-review",
-        "검토 후 업무 변경사항이 달라졌습니다. 변경사항을 다시 확인하세요.",
-      );
-    }
-
     const baseTree = await gitText(
       workspace.repositoryRoot,
-      ["rev-parse", `${workspace.baseCommit}^{tree}`],
+      ["rev-parse", `${taskBaseCommit}^{tree}`],
     );
     if (currentTree === baseTree) {
       throw new GitWorkspaceError(
@@ -408,11 +423,10 @@ export class GitWorkspaceManager {
       );
     }
 
-    await this.validateSource(workspace);
     await gitText(workspace.worktreePath, [
       "reset",
       "--soft",
-      workspace.baseCommit,
+      taskBaseCommit,
     ]);
     const message = String(commitMessage ?? "").trim() ||
       "OFFICESTRA: approve workspace changes";
@@ -451,7 +465,7 @@ export class GitWorkspaceManager {
     ).split(/\s+/);
     if (
       taskLineage.length !== 2 ||
-      taskLineage[1] !== workspace.baseCommit
+      taskLineage[1] !== taskBaseCommit
     ) {
       throw new GitWorkspaceError(
         "invalid-state",
@@ -464,10 +478,6 @@ export class GitWorkspaceManager {
       "changed-after-review",
     );
 
-    const sourceHead = await gitText(
-      workspace.repositoryRoot,
-      ["rev-parse", "HEAD"],
-    );
     const mergeCheck = await gitResult(
       workspace.repositoryRoot,
       ["merge-tree", "--write-tree", sourceHead, taskCommit],
@@ -998,6 +1008,35 @@ async function requireBaseAncestor(workspace, headCommit) {
       "업무 브랜치가 생성 기준 커밋에서 이어지지 않습니다.",
     );
   }
+}
+
+async function taskApprovalBase(workspace, workspaceHead, sourceHead) {
+  const mergeBaseResult = await gitResult(
+    workspace.worktreePath,
+    ["merge-base", "--all", workspaceHead, sourceHead],
+    { allowedExitCodes: [1] },
+  );
+  const mergeBases = mergeBaseResult.stdout.trim().split(/\s+/).filter(Boolean);
+  if (mergeBaseResult.exitCode !== 0 || mergeBases.length !== 1) {
+    throw new GitWorkspaceError(
+      "invalid-state",
+      "업무 변경과 원본 브랜치의 공통 기준 커밋을 하나로 확인할 수 없습니다.",
+    );
+  }
+
+  const taskBaseCommit = mergeBases[0];
+  const originalBaseResult = await gitResult(
+    workspace.worktreePath,
+    ["merge-base", "--is-ancestor", workspace.baseCommit, taskBaseCommit],
+    { allowedExitCodes: [1] },
+  );
+  if (originalBaseResult.exitCode !== 0) {
+    throw new GitWorkspaceError(
+      "invalid-state",
+      "업무 승인 기준이 생성 기준 커밋에서 이어지지 않습니다.",
+    );
+  }
+  return taskBaseCommit;
 }
 
 function workspaceBranchName(characterID, workspaceID) {

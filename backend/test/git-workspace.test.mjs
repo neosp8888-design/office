@@ -576,6 +576,143 @@ test("원본 최신 변경과 충돌하면 main을 바꾸지 않고 중단한다
   }
 });
 
+test("최신 main을 병합해 해결한 작업은 그 공통 기준으로 다시 승인한다", async () => {
+  const fixture = createRepository();
+  try {
+    const { manager, workspace } = await fixture.provision();
+    const sharedPath = join(workspace.worktreePath, "response-footer.swift");
+    writeFileSync(sharedPath, "copy below timestamp\n");
+    const initialReview = await manager.prepareReview(workspace);
+
+    writeFileSync(
+      join(fixture.repositoryRoot, "response-footer.swift"),
+      "medium timestamp\n",
+    );
+    git(fixture.repositoryRoot, "add", "response-footer.swift");
+    git(fixture.repositoryRoot, "commit", "-m", "main footer layout");
+    const repairBase = git(fixture.repositoryRoot, "rev-parse", "HEAD");
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: initialReview.reviewTree,
+        commitMessage: "test: conflicting footer",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "conflict",
+    );
+    const originalTaskCommit = git(workspace.worktreePath, "rev-parse", "HEAD");
+
+    assert.throws(() => git(workspace.worktreePath, "merge", "main"));
+    writeFileSync(
+      sharedPath,
+      "copy below timestamp\nmedium timestamp\n",
+    );
+    git(workspace.worktreePath, "add", "response-footer.swift");
+    git(workspace.worktreePath, "commit", "-m", "resolve footer layout");
+    const resolvedReview = await manager.prepareReview(workspace);
+
+    writeFileSync(join(fixture.repositoryRoot, "later.txt"), "later main change\n");
+    git(fixture.repositoryRoot, "add", "later.txt");
+    git(fixture.repositoryRoot, "commit", "-m", "later main change");
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
+
+    const result = await manager.approve(workspace, {
+      expectedReviewTree: resolvedReview.reviewTree,
+      commitMessage: "test: resolved footer",
+    });
+
+    assert.deepEqual(
+      git(
+        fixture.repositoryRoot,
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        result.taskCommit,
+      ).split(" "),
+      [result.taskCommit, repairBase],
+    );
+    assert.deepEqual(
+      git(
+        fixture.repositoryRoot,
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        result.mergedCommit,
+      ).split(" "),
+      [result.mergedCommit, sourceHead, result.taskCommit],
+    );
+    assert.equal(
+      readFileSync(
+        join(fixture.repositoryRoot, "response-footer.swift"),
+        "utf8",
+      ),
+      "copy below timestamp\nmedium timestamp\n",
+    );
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, "later.txt"), "utf8"),
+      "later main change\n",
+    );
+    assert.throws(() => git(
+      fixture.repositoryRoot,
+      "merge-base",
+      "--is-ancestor",
+      originalTaskCommit,
+      "main",
+    ));
+    assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("최신 main만 남긴 충돌 해결은 업무 변경으로 승인하지 않는다", async () => {
+  const fixture = createRepository();
+  try {
+    const { manager, workspace } = await fixture.provision();
+    const taskPath = join(workspace.worktreePath, "tracked.txt");
+    writeFileSync(taskPath, "task side\n");
+    const initialReview = await manager.prepareReview(workspace);
+
+    writeFileSync(join(fixture.repositoryRoot, "tracked.txt"), "main side\n");
+    git(fixture.repositoryRoot, "add", "tracked.txt");
+    git(fixture.repositoryRoot, "commit", "-m", "main side");
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: initialReview.reviewTree,
+        commitMessage: "test: conflicting task",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "conflict",
+    );
+
+    assert.throws(() => git(workspace.worktreePath, "merge", "main"));
+    writeFileSync(taskPath, "main side\n");
+    git(workspace.worktreePath, "add", "tracked.txt");
+    git(workspace.worktreePath, "commit", "-m", "keep main side");
+    const resolvedReview = await manager.prepareReview(workspace);
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: resolvedReview.reviewTree,
+        commitMessage: "test: no task change",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "invalid-state" &&
+        error.message === "병합할 변경사항이 없습니다.",
+    );
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"),
+      "main side\n",
+    );
+    assert.equal(git(fixture.repositoryRoot, "status", "--porcelain"), "");
+  } finally {
+    fixture.remove();
+  }
+});
+
 test("동결된 루트 작업 기록 변경은 검토 준비 전에 명확히 차단한다", async () => {
   const fixture = createRepository();
   try {
