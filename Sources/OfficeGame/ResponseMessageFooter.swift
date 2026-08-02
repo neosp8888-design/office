@@ -3,6 +3,8 @@
 import SwiftUI
 
 struct ResponseMessageFooter: View {
+    static let timestampFontWeight: Font.Weight = .medium
+
     let occurredAt: Date
     let copied: Bool
     let accentColor: Color
@@ -12,7 +14,11 @@ struct ResponseMessageFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(occurredAt.formatted(date: .omitted, time: .standard))
-                .font(.system(size: 8.5, design: .monospaced))
+                .font(.system(
+                    size: 8.5,
+                    weight: Self.timestampFontWeight,
+                    design: .monospaced
+                ))
                 .foregroundStyle(.tertiary)
 
             Button(action: copy) {
