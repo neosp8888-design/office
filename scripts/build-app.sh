@@ -23,6 +23,14 @@ cp "$BIN_DIR/OfficeLLM" "$MACOS_DIR/OfficeLLM"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
 
+# SwiftUI의 고정 문구는 앱 주 번들의 Localizable.strings를 조회하므로,
+# 패키지 리소스의 언어 디렉터리도 최종 앱 번들에 넣는다.
+/usr/bin/rsync \
+    -a \
+    --delete \
+    "$PROJECT_DIR/Sources/OfficeGame/Resources/" \
+    "$RESOURCES_DIR/"
+
 cp \
     "$PROJECT_DIR/Sources/OfficeCore/Resources/characters.json" \
     "$RESOURCE_STAGE_BUNDLE/characters.json"

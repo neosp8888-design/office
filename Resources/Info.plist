@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>ko</string>
+	<string>en</string>
     <key>CFBundleDisplayName</key>
     <string>OFFICESTRA</string>
     <key>CFBundleExecutable</key>
@@ -14,9 +14,14 @@
     <string>com.neo.office-game</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>OFFICESTRA</string>
-    <key>CFBundlePackageType</key>
+	<key>CFBundleName</key>
+	<string>OFFICESTRA</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ko</string>
+	</array>
+	<key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0.1</string>
