@@ -33,6 +33,7 @@ let package = Package(
             resources: [
                 .copy("Resources/office-retina-v1"),
                 .copy("Resources/avatars"),
+                .copy("Resources/profiles"),
                 .copy("Resources/characters.json")
             ],
             linkerSettings: [

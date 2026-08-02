@@ -49,6 +49,13 @@ mkdir -p "$RESOURCE_STAGE_BUNDLE/avatars"
     "$PROJECT_DIR/Sources/OfficeCore/Resources/avatars/" \
     "$RESOURCE_STAGE_BUNDLE/avatars/"
 
+mkdir -p "$RESOURCE_STAGE_BUNDLE/profiles"
+/usr/bin/rsync \
+    -a \
+    --delete \
+    "$PROJECT_DIR/Sources/OfficeCore/Resources/profiles/" \
+    "$RESOURCE_STAGE_BUNDLE/profiles/"
+
 /usr/bin/rsync \
     -a \
     --delete \

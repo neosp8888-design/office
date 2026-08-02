@@ -191,6 +191,28 @@ public enum PixelOfficeAsset {
         )
     }
 
+    public static func fullBodyProfileURL(
+        for character: OfficeCharacter
+    ) -> URL? {
+        let filename: String
+        switch character {
+        case .boss:
+            filename = "profile-boss"
+        case .leftWoman:
+            filename = "profile-left-woman"
+        case .rightWoman:
+            filename = "profile-right-woman"
+        case .leftMan, .rightMan:
+            return nil
+        }
+
+        return Bundle.module.url(
+            forResource: filename,
+            withExtension: "png",
+            subdirectory: "profiles"
+        )
+    }
+
     public static func image(
         for theme: OfficeTheme,
         style: OfficeArtStyle = .defaultValue
