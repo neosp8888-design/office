@@ -198,12 +198,14 @@ public enum PixelOfficeAsset {
         switch character {
         case .boss:
             filename = "profile-boss"
+        case .leftMan:
+            filename = "profile-left-man"
         case .leftWoman:
             filename = "profile-left-woman"
+        case .rightMan:
+            filename = "profile-right-man"
         case .rightWoman:
             filename = "profile-right-woman"
-        case .leftMan, .rightMan:
-            return nil
         }
 
         return OfficeCoreResourceBundle.bundle.url(
