@@ -25,6 +25,7 @@ import {
   claudeSessionPath,
   claudeSessionResumable,
   codexUsageDelta,
+  executionEnvironment,
   latestClaudeUsageFromSession,
   latestCodexUsageFromRollout,
   recoverInterruptedUsage,
@@ -239,6 +240,34 @@ test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달
   );
   assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
   assert.equal(argumentsList.includes("--resume"), true);
+});
+
+test("Claude 실행 환경만 250K 자동 압축 한도를 강제한다", () => {
+  const baseEnvironment = {
+    PATH: "/tmp/bin",
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: "999999",
+  };
+  const claudeEnvironment = executionEnvironment(
+    { backend: "claude" },
+    baseEnvironment,
+  );
+
+  assert.notEqual(claudeEnvironment, baseEnvironment);
+  assert.equal(claudeEnvironment.PATH, "/tmp/bin");
+  assert.equal(
+    claudeEnvironment.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    "250000",
+  );
+
+  const codexEnvironment = { PATH: "/tmp/bin" };
+  assert.equal(
+    executionEnvironment({ backend: "codex" }, codexEnvironment),
+    codexEnvironment,
+  );
+  assert.equal(
+    Object.hasOwn(codexEnvironment, "CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
+    false,
+  );
 });
 
 test("검색된 작업 기록은 비신뢰 사용자 자료로만 CLI에 전달한다", () => {
