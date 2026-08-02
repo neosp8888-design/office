@@ -215,6 +215,7 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var isReadyForSubmissions = false
     @Published private(set) var sessionRestoreError: String?
     @Published private(set) var isUpdatingConfiguration = false
+    @Published private(set) var autoApproveAndMerge = true
     @Published private(set) var turnPersistenceErrors:
         [OfficeCharacter: String] = [:]
     @Published var selectedCharacterID: OfficeCharacter? = .boss
@@ -802,7 +803,8 @@ final class AgentDirector: ObservableObject {
     func saveConfiguration(
         names nameDrafts: [OfficeCharacter: String],
         settings settingsDrafts: [OfficeCharacter: CharacterAgentSettings],
-        identityPrompts identityPromptDrafts: [OfficeCharacter: String]
+        identityPrompts identityPromptDrafts: [OfficeCharacter: String],
+        autoApproveAndMerge autoApproveAndMergeDraft: Bool
     ) async {
         settingsStatus = nil
         guard isReadyForSubmissions else {
@@ -814,10 +816,6 @@ final class AgentDirector: ObservableObject {
             settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
             return
         }
-        guard pendingWorkspaceReviewCharacters.isEmpty else {
-            settingsStatus = "변경사항 검토를 마친 뒤 설정할 수 있습니다."
-            return
-        }
         guard !isUpdatingConfiguration else {
             settingsStatus = "다른 설정을 저장하는 중입니다."
             return
@@ -827,6 +825,27 @@ final class AgentDirector: ObservableObject {
             isUpdatingConfiguration = false
         }
         do {
+            let automationChanged =
+                autoApproveAndMergeDraft != autoApproveAndMerge
+            if automationChanged {
+                let automationSettings =
+                    try await database.updateAutomationSettings(
+                        autoApproveAndMerge: autoApproveAndMergeDraft
+                    )
+                autoApproveAndMerge =
+                    automationSettings.autoApproveAndMerge
+            }
+            guard pendingWorkspaceReviewCharacters.isEmpty else {
+                if automationChanged {
+                    settingsStatus = autoApproveAndMerge
+                        ? "자동 승인 설정을 저장했고 대기 중 변경사항을 처리합니다."
+                        : "자동 승인 설정을 꺼서 저장했습니다. 기존 변경사항은 검토 대기합니다."
+                } else {
+                    settingsStatus =
+                        "변경사항 검토를 마친 뒤 직원 설정을 바꿀 수 있습니다."
+                }
+                return
+            }
             for character in characters {
                 let name =
                     nameDrafts[character.id]?
@@ -1072,6 +1091,8 @@ final class AgentDirector: ObservableObject {
         while !Task.isCancelled {
             do {
                 let storedCharacters = try await database.fetchCharacters()
+                let automationSettings =
+                    try await database.fetchAutomationSettings()
                 for stored in storedCharacters {
                     guard let character = OfficeCharacter(rawValue: stored.id)
                     else {
@@ -1095,6 +1116,8 @@ final class AgentDirector: ObservableObject {
                         to: character
                     )
                 }
+                autoApproveAndMerge =
+                    automationSettings.autoApproveAndMerge
 
                 let activeSessions = try await database.fetchActiveSessions()
                 var restoredConversationIDs:
