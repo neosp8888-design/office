@@ -4,6 +4,21 @@ import AppKit
 import OfficeCore
 import SwiftUI
 
+enum CharacterFullBodyProfileLayout {
+    static let sheetWidth: CGFloat = 430
+    static let horizontalPadding: CGFloat = 22
+    static let imageWidthRatio: CGFloat = 0.5
+    static let imageAspectRatio: CGFloat = 0.5
+
+    static var imageWidth: CGFloat {
+        (sheetWidth - (horizontalPadding * 2)) * imageWidthRatio
+    }
+
+    static var imageHeight: CGFloat {
+        imageWidth / imageAspectRatio
+    }
+}
+
 struct CharacterFullBodyProfileView: View {
     let character: CharacterConfiguration
     let name: String
@@ -17,13 +32,8 @@ struct CharacterFullBodyProfileView: View {
     var body: some View {
         VStack(spacing: 16) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(name)
-                        .font(.system(size: 22, weight: .bold))
-                    Text(OfficeLocalization.string(character.seat))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
+                Text(name)
+                    .font(.system(size: 22, weight: .bold))
 
                 Spacer()
 
@@ -38,7 +48,10 @@ struct CharacterFullBodyProfileView: View {
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
-                    .frame(maxHeight: 520)
+                    .frame(
+                        width: CharacterFullBodyProfileLayout.imageWidth,
+                        height: CharacterFullBodyProfileLayout.imageHeight
+                    )
                     .frame(maxWidth: .infinity)
                     .background(
                         Color(red: 0.985, green: 0.96, blue: 0.94),
@@ -55,8 +68,8 @@ struct CharacterFullBodyProfileView: View {
                     )
             }
         }
-        .padding(22)
-        .frame(width: 430)
+        .padding(CharacterFullBodyProfileLayout.horizontalPadding)
+        .frame(width: CharacterFullBodyProfileLayout.sheetWidth)
     }
 }
 
