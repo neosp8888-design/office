@@ -11,18 +11,18 @@ enum OfficeDetailSelection: String {
     var title: String {
         switch self {
         case .archive:
-            "대화 보관함"
+            OfficeLocalization.string("대화 보관함")
         case .usage:
-            "화이트보드"
+            OfficeLocalization.string("화이트보드")
         }
     }
 
     var subtitle: String {
         switch self {
         case .archive:
-            "검색하고 빠르게 여는 직원 업무 기록"
+            OfficeLocalization.string("검색하고 빠르게 여는 직원 업무 기록")
         case .usage:
-            "Codex와 Claude의 현재 사용 가능량"
+            OfficeLocalization.string("Codex와 Claude의 현재 사용 가능량")
         }
     }
 

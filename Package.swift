@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "OfficeLLM",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14)
     ],
@@ -46,6 +47,9 @@ let package = Package(
                     name: "MarkdownUI",
                     package: "swift-markdown-ui"
                 )
+            ],
+            resources: [
+                .process("Resources")
             ],
             linkerSettings: [
                 .linkedFramework("AppKit"),

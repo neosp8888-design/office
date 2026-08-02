@@ -372,7 +372,11 @@ private struct OfficeGameView: View {
                 Text("실시간 대화")
                     .font(.system(size: 17, weight: .bold))
                 Text(
-                    "\(director.selectedName ?? "백부장")의 대화와 진행 기록"
+                    String(
+                        format: OfficeLocalization.string("%@의 대화와 진행 기록"),
+                        director.selectedName
+                            ?? OfficeLocalization.string("백부장")
+                    )
                 )
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
