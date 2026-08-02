@@ -236,6 +236,10 @@ final class AgentDirector: ObservableObject {
         configuration.workdir
     }
 
+    var databaseBaseURL: URL {
+        configuration.databaseBaseURL
+    }
+
     private let configuration: OfficeAgentConfiguration
     private let database: OfficeDatabaseClient
     private var conversationIDs: [OfficeCharacter: UUID] = [:]

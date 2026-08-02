@@ -79,6 +79,7 @@ enum OfficeSplitLayout {
 
 enum OfficePanelControl {
     case theme
+    case backend
     case artStyle
     case settings
 }
@@ -90,6 +91,8 @@ enum OfficePanelControlLayout {
         switch control {
         case .theme:
             .topLeading
+        case .backend:
+            .bottomLeading
         case .artStyle:
             .bottomTrailing
         case .settings:
@@ -100,6 +103,7 @@ enum OfficePanelControlLayout {
 
 private struct OfficeGameView: View {
     @ObservedObject var director: AgentDirector
+    @StateObject private var backendController = OfficeBackendController()
     @State private var command = ""
     @State private var attachments: [URL] = []
     @State private var showsCharacterSettings = false
@@ -364,6 +368,12 @@ private struct OfficeGameView: View {
             .padding(12)
         }
         .overlay(
+            alignment: OfficePanelControlLayout.alignment(for: .backend)
+        ) {
+            backendToggle
+                .padding(12)
+        }
+        .overlay(
             alignment: OfficePanelControlLayout.alignment(for: .artStyle)
         ) {
             artStyleToggle
@@ -376,6 +386,12 @@ private struct OfficeGameView: View {
                 .padding(12)
         }
         .officePanelStyle()
+        .onAppear {
+            backendController.activate(
+                workdir: director.workspaceDirectory,
+                healthURL: director.databaseBaseURL.appending(path: "health")
+            )
+        }
     }
 
     private var liveWorkspacePanel: some View {
@@ -627,6 +643,49 @@ private struct OfficeGameView: View {
             artStyle == .twoD
                 ? "3D 오피스로 전환"
                 : "2D 오피스로 전환"
+        )
+    }
+
+    private var backendToggle: some View {
+        Button {
+            backendController.toggle()
+        } label: {
+            Image(systemName: backendController.status.systemImage)
+                .font(.system(size: 15, weight: .bold))
+                .frame(
+                    width: OfficePanelControlLayout.artStyleControlDiameter,
+                    height: OfficePanelControlLayout.artStyleControlDiameter
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(backendController.status == .changing)
+        .foregroundStyle(.white)
+        .background(
+            backendController.status == .running
+                ? Color.green.opacity(0.88)
+                : backendController.status == .stopped
+                    ? Color.red.opacity(0.88)
+                    : Color.gray.opacity(0.78),
+            in: Circle()
+        )
+        .overlay {
+            Circle()
+                .stroke(Color.white.opacity(0.32))
+        }
+        .shadow(color: .black.opacity(0.16), radius: 7, y: 3)
+        .accessibilityLabel("백엔드 서버")
+        .accessibilityValue(
+            backendController.status == .running
+                ? "실행 중"
+                : backendController.status == .stopped
+                    ? "중지됨"
+                    : "상태 확인 중"
+        )
+        .accessibilityIdentifier("officeBackendToggle")
+        .help(
+            backendController.status == .running
+                ? "백엔드 중지. 실행 중인 업무도 중단될 수 있습니다."
+                : "백엔드 시작"
         )
     }
 
