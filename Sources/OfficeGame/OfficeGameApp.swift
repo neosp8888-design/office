@@ -84,6 +84,8 @@ enum OfficePanelControl {
 }
 
 enum OfficePanelControlLayout {
+    static let artStyleControlDiameter: CGFloat = 42
+
     static func alignment(for control: OfficePanelControl) -> Alignment {
         switch control {
         case .theme:
@@ -585,36 +587,32 @@ private struct OfficeGameView: View {
     }
 
     private var artStyleToggle: some View {
-        HStack(spacing: 6) {
-            Text("3D")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-
-            Toggle(
-                "3D 오피스",
-                isOn: Binding(
-                    get: { artStyle == .threeD },
-                    set: { isThreeD in
-                        setArtStyle(isThreeD ? .threeD : .twoD)
-                    }
-                )
+        Button {
+            setArtStyle(
+                artStyle == .twoD
+                    ? .threeD
+                    : .twoD
             )
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .tint(DashboardPalette.accent)
+        } label: {
+            Text(artStyle.title)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .frame(
+                    width: OfficePanelControlLayout.artStyleControlDiameter,
+                    height: OfficePanelControlLayout.artStyleControlDiameter
+                )
         }
+        .buttonStyle(.plain)
         .disabled(outgoingArtStyle != nil)
         .environment(\.colorScheme, theme.isNight ? .dark : .light)
-        .padding(.horizontal, 9)
-        .frame(height: 32)
+        .foregroundStyle(theme.isNight ? Color.white : Color.black.opacity(0.72))
         .background(
             theme.isNight
                 ? Color.black.opacity(0.72)
                 : Color.white.opacity(0.92),
-            in: Capsule()
+            in: Circle()
         )
         .overlay {
-            Capsule()
+            Circle()
                 .stroke(
                     theme.isNight
                         ? Color.white.opacity(0.25)
@@ -622,7 +620,6 @@ private struct OfficeGameView: View {
                 )
         }
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
-        .fixedSize()
         .accessibilityLabel("오피스 표현 방식")
         .accessibilityValue(artStyle.title)
         .accessibilityIdentifier("officeArtStyleToggle")
