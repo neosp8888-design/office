@@ -238,10 +238,10 @@ for current provider-specific details.
 #### 5. Download and configure OFFICESTRA
 
 Run the clone command only when `~/OFFICESTRA` does not already exist. If it
-does exist, keep it and follow [Update an existing installation](#update-an-existing-installation)
-instead. A release tag intentionally opens in Git's detached-head state; this
-is normal for an installation that should run published code without local
-development commits.
+does exist, do not delete or overwrite it; ask Codex or Claude to inspect the
+existing installation first. A release tag intentionally opens in Git's
+detached-head state; this is normal for an installation that should run
+published code without local development commits.
 
 ```sh
 git clone --branch v1.0.1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
@@ -268,13 +268,9 @@ cd "$HOME/OFFICESTRA"
 ./scripts/start-backend.sh
 ```
 
-The first run downloads the PostgreSQL image and Node packages. The script waits
-up to 60 seconds for the `postgres` service to accept connections as database
-user `office`, then runs migrations and starts the backend. Leave this Terminal
-open. If PostgreSQL never becomes ready, the script prints the container status
-and exits instead of attempting migrations against an unavailable database.
-
-In another Terminal tab, wait for the health check to return `{"ok":true}`.
+The first run downloads the PostgreSQL image and Node packages, so it can take a
+while. The startup script waits for PostgreSQL, then runs the database migrations
+and backend. It is ready when the health check returns `{"ok":true}`.
 
 ```sh
 curl -fsS http://127.0.0.1:4317/health
@@ -294,109 +290,6 @@ and a compatible model to all five coworkers before starting work.
 
 </details>
 
-<details>
-<summary><strong>Existing v1.0.0 update and backup guide</strong></summary>
-
-Skip the following sections for a fresh v1.0.1 installation. They are only for
-preserving conversations and work records from an existing v1.0.0 installation.
-
-### Back up the database and verify recovery
-
-Back up before every update and before deleting Docker data. Keep the backend and
-PostgreSQL running, open a new Terminal in the OFFICESTRA folder, and create a
-PostgreSQL custom-format dump outside the Git repository.
-
-```sh
-cd "$HOME/OFFICESTRA"
-BACKUP_DIR="$HOME/OFFICESTRA-backups"
-BACKUP_FILE="$BACKUP_DIR/office-$(date +%Y%m%d-%H%M%S).dump"
-mkdir -p "$BACKUP_DIR"
-docker compose -f infra/compose.yaml exec -T postgres \
-  pg_dump -U office -d office -Fc > "$BACKUP_FILE"
-test -s "$BACKUP_FILE"
-docker compose -f infra/compose.yaml exec -T postgres \
-  pg_restore -l < "$BACKUP_FILE" >/dev/null
-printf 'Verified backup: %s\n' "$BACKUP_FILE"
-```
-
-`test -s` checks that a nonempty file was written, and `pg_restore -l` checks
-that PostgreSQL can read its archive table of contents. A successful command
-block ends by printing the exact backup path.
-
-For stronger verification, restore the dump into a disposable database. This
-does not replace or modify the active `office` database. Run it in the same
-Terminal so `BACKUP_FILE` still points to the file printed above.
-
-```sh
-cd "$HOME/OFFICESTRA"
-(
-  set -e
-  VERIFY_DB="office_restore_check"
-  docker compose -f infra/compose.yaml exec -T postgres \
-    dropdb --if-exists --force -U office "$VERIFY_DB"
-  docker compose -f infra/compose.yaml exec -T postgres \
-    createdb -U office "$VERIFY_DB"
-  cleanup_restore_check() {
-    docker compose -f infra/compose.yaml exec -T postgres \
-      dropdb --if-exists --force -U office "$VERIFY_DB" >/dev/null
-  }
-  trap cleanup_restore_check EXIT
-  docker compose -f infra/compose.yaml exec -T postgres \
-    pg_restore --exit-on-error -U office -d "$VERIFY_DB" < "$BACKUP_FILE"
-  docker compose -f infra/compose.yaml exec -T postgres \
-    psql -U office -d "$VERIFY_DB" -c \
-    "SELECT count(*) AS restored_tables FROM pg_catalog.pg_tables WHERE schemaname = 'public';"
-)
-```
-
-The final query should report one or more restored tables. The temporary
-`office_restore_check` database is removed automatically even if verification
-fails. Keep at least one verified dump somewhere outside this Mac before any
-destructive maintenance. Restoring over the active database is intentionally
-not automated here; ask Codex or Claude to preserve the current database and
-perform a verified replacement if disaster recovery is actually required.
-
-### Update an existing installation
-
-The following procedure updates a clean v1.0.0 installation to v1.0.1 while
-preserving the configured coworker workspace. First create and verify a backup
-using the section above. Then stop the app and backend with `Control + C`, but
-leave Docker Desktop and PostgreSQL running.
-
-Inspect the Git state before changing versions.
-
-```sh
-cd "$HOME/OFFICESTRA"
-git status --short
-```
-
-Continue only if there is no output, or the only path shown is
-`Sources/OfficeCore/Resources/characters.json`. If any other file appears, do
-not discard it; ask Codex or Claude to inspect and preserve those changes.
-
-Save the current workspace path, restore only the tracked public configuration,
-fetch the release, and switch to v1.0.1.
-
-```sh
-cd "$HOME/OFFICESTRA"
-WORKDIR_PATH="$(node -p "require('./Sources/OfficeCore/Resources/characters.json').workdir")"
-test -n "$WORKDIR_PATH"
-git restore -- Sources/OfficeCore/Resources/characters.json
-git fetch --tags origin
-git switch --detach v1.0.1
-node -e 'const fs=require("fs"); const p="Sources/OfficeCore/Resources/characters.json"; const c=JSON.parse(fs.readFileSync(p,"utf8")); c.workdir=process.argv[1]; fs.writeFileSync(p, JSON.stringify(c,null,2)+"\n");' "$WORKDIR_PATH"
-grep '"workdir"' Sources/OfficeCore/Resources/characters.json
-```
-
-The final line must show the same absolute workspace path you used before the
-update. Start the backend again with `./scripts/start-backend.sh`; it installs
-the Node dependencies, waits for PostgreSQL, and applies new migrations.
-In a second Terminal, verify `curl -fsS http://127.0.0.1:4317/health`, then run
-`swift run OfficeLLM`. Keep the verified dump until you have confirmed your
-coworkers, history, and work records in the updated app.
-
-</details>
-
 ### Stop and restart
 
 Press `Control + C` in each Terminal running the app or backend. To stop the
@@ -407,11 +300,9 @@ OFFICESTRA folder.
 docker compose -f infra/compose.yaml down
 ```
 
-Do not add `-v`. Running `docker compose -f infra/compose.yaml down -v`
-permanently deletes the PostgreSQL volume and all stored conversations, sessions,
-work records, and RAG data. Use `-v` only when you deliberately want a blank
-database and already have a verified backup. To start again without deleting
-data, open Docker Desktop, then rerun the backend and app commands above.
+Adding `-v` also deletes the saved conversation database, so use it only when
+you intentionally want a full reset. To start again without deleting data, open
+Docker Desktop, then rerun the backend and app commands above.
 
 ### Troubleshooting
 
