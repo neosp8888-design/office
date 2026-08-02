@@ -606,8 +606,7 @@ final class AgentDirector: ObservableObject {
             isReadyForSubmissions,
             !isUpdatingConfiguration,
             !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !runningCharacters.contains(character.id),
-            !pendingWorkspaceReviewCharacters.contains(character.id)
+            !runningCharacters.contains(character.id)
         else {
             return
         }

@@ -491,13 +491,13 @@ test("검토 뒤 변경된 tree는 승인하지 않는다", async () => {
   }
 });
 
-test("검토 후 원본 작업 트리가 dirty면 병합을 막고 업무를 보존한다", async () => {
+test("검토 후 원본 tracked 파일이 dirty면 병합을 막고 업무를 보존한다", async () => {
   const fixture = createRepository();
   try {
     const { manager, workspace } = await fixture.provision();
     writeFileSync(join(workspace.worktreePath, "tracked.txt"), "reviewed\n");
     const review = await manager.prepareReview(workspace);
-    writeFileSync(join(fixture.repositoryRoot, "local.txt"), "local\n");
+    writeFileSync(join(fixture.repositoryRoot, "tracked.txt"), "local\n");
 
     await assert.rejects(
       manager.approve(workspace, {
@@ -507,8 +507,170 @@ test("검토 후 원본 작업 트리가 dirty면 병합을 막고 업무를 보
       (error) => error instanceof GitWorkspaceError &&
         error.code === "not-clean",
     );
-    assert.equal(readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"), "base\n");
+    assert.equal(readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"), "local\n");
     assert.equal(readFileSync(join(workspace.worktreePath, "tracked.txt"), "utf8"), "reviewed\n");
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("원본의 관련 없는 미추적 파일을 보존하며 승인 변경을 병합한다", async () => {
+  const fixture = createRepository();
+  try {
+    const { manager, workspace } = await fixture.provision();
+    writeFileSync(join(workspace.worktreePath, "tracked.txt"), "reviewed\n");
+    const review = await manager.prepareReview(workspace);
+    const localFile = "제목 없음.png";
+    writeFileSync(join(fixture.repositoryRoot, localFile), "keep local\n");
+
+    const result = await manager.approve(workspace, {
+      expectedReviewTree: review.reviewTree,
+      commitMessage: "test: preserve unrelated untracked file",
+    });
+
+    assert.equal(result.mergedCommit, git(fixture.repositoryRoot, "rev-parse", "HEAD"));
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, "tracked.txt"), "utf8"),
+      "reviewed\n",
+    );
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, localFile), "utf8"),
+      "keep local\n",
+    );
+    assert.equal(
+      git(
+        fixture.repositoryRoot,
+        "-c",
+        "core.quotePath=false",
+        "status",
+        "--porcelain",
+      ),
+      `?? "${localFile}"`,
+    );
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("원본 미추적 파일과 승인 변경의 경로가 겹치면 병합하지 않는다", async () => {
+  const fixture = createRepository();
+  try {
+    const { manager, workspace } = await fixture.provision();
+    writeFileSync(join(workspace.worktreePath, "local.txt"), "reviewed\n");
+    const review = await manager.prepareReview(workspace);
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
+    writeFileSync(join(fixture.repositoryRoot, "local.txt"), "keep local\n");
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: review.reviewTree,
+        commitMessage: "test: reject untracked path collision",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "not-clean" &&
+        /local\.txt/.test(error.message),
+    );
+    assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, "local.txt"), "utf8"),
+      "keep local\n",
+    );
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("원본 ignored 파일과 강제 추가한 승인 경로가 겹치면 병합하지 않는다", async () => {
+  const fixture = createRepository();
+  try {
+    writeFileSync(join(fixture.repositoryRoot, ".gitignore"), "local.txt\n");
+    git(fixture.repositoryRoot, "add", ".gitignore");
+    git(fixture.repositoryRoot, "commit", "-m", "ignore local file");
+    const { manager, workspace } = await fixture.provision();
+    writeFileSync(join(workspace.worktreePath, "local.txt"), "reviewed\n");
+    git(workspace.worktreePath, "add", "-f", "local.txt");
+    const review = await manager.prepareReview(workspace);
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
+    writeFileSync(join(fixture.repositoryRoot, "local.txt"), "keep ignored\n");
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: review.reviewTree,
+        commitMessage: "test: reject ignored path collision",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "not-clean" &&
+        /local\.txt/.test(error.message),
+    );
+    assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, "local.txt"), "utf8"),
+      "keep ignored\n",
+    );
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("원본 미추적 파일이 승인 경로의 부모이면 병합하지 않는다", async () => {
+  const fixture = createRepository();
+  try {
+    const { manager, workspace } = await fixture.provision();
+    mkdirSync(join(workspace.worktreePath, "assets"));
+    writeFileSync(join(workspace.worktreePath, "assets", "icon.txt"), "reviewed\n");
+    const review = await manager.prepareReview(workspace);
+    const sourceHead = git(fixture.repositoryRoot, "rev-parse", "HEAD");
+    writeFileSync(join(fixture.repositoryRoot, "assets"), "keep local\n");
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: review.reviewTree,
+        commitMessage: "test: reject untracked parent collision",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "not-clean" &&
+        /assets/.test(error.message),
+    );
+    assert.equal(git(fixture.repositoryRoot, "rev-parse", "HEAD"), sourceHead);
+    assert.equal(
+      readFileSync(join(fixture.repositoryRoot, "assets"), "utf8"),
+      "keep local\n",
+    );
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("원본에 활성 Git hook이 있으면 업무 commit 전에 미추적 파일을 보호한다", async () => {
+  const fixture = createRepository();
+  try {
+    const { manager, workspace } = await fixture.provision();
+    writeFileSync(join(workspace.worktreePath, "tracked.txt"), "reviewed\n");
+    const review = await manager.prepareReview(workspace);
+    const localPath = join(fixture.repositoryRoot, "local.png");
+    writeFileSync(localPath, "keep local\n");
+    const hookPath = join(
+      fixture.repositoryRoot,
+      ".git",
+      "hooks",
+      "pre-commit",
+    );
+    writeFileSync(
+      hookPath,
+      "#!/bin/sh\nprintf 'hook changed\\n' > local.png\n",
+    );
+    chmodSync(hookPath, 0o755);
+
+    await assert.rejects(
+      manager.approve(workspace, {
+        expectedReviewTree: review.reviewTree,
+        commitMessage: "test: block hook around untracked file",
+      }),
+      (error) => error instanceof GitWorkspaceError &&
+        error.code === "not-clean" &&
+        /pre-commit/.test(error.message),
+    );
+    assert.equal(readFileSync(localPath, "utf8"), "keep local\n");
   } finally {
     fixture.remove();
   }

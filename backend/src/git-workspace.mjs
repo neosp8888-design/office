@@ -2,7 +2,14 @@
 
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, realpath } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import {
+  access,
+  lstat,
+  mkdir,
+  readlink,
+  realpath,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -372,6 +379,19 @@ export class GitWorkspaceManager {
       return recoveredMerge;
     }
     await this.validateWorkspace(workspace);
+    const sourceUntrackedPaths = await this.validateSource(
+      workspace,
+      null,
+      { allowUntracked: true },
+    );
+    await requireNoActiveApprovalHooks(
+      workspace.repositoryRoot,
+      sourceUntrackedPaths,
+    );
+    const sourceUntrackedFingerprints = await fingerprintUntrackedPaths(
+      workspace.repositoryRoot,
+      sourceUntrackedPaths,
+    );
     await gitText(workspace.worktreePath, ["add", "-A", "--", "."]);
     const currentTree = await gitText(
       workspace.worktreePath,
@@ -384,7 +404,6 @@ export class GitWorkspaceManager {
       );
     }
 
-    await this.validateSource(workspace);
     const workspaceHead = await gitText(
       workspace.worktreePath,
       ["rev-parse", "HEAD"],
@@ -498,7 +517,27 @@ export class GitWorkspaceManager {
         "Git 병합 결과 tree를 확인할 수 없습니다.",
       );
     }
-    await this.validateSource(workspace, sourceHead);
+    await requireMergeTreePathsAvailable(
+      workspace.repositoryRoot,
+      sourceHead,
+      expectedMergeTree,
+    );
+    await this.validateSource(
+      workspace,
+      sourceHead,
+      {
+        allowUntracked: true,
+        expectedUntrackedPaths: sourceUntrackedPaths,
+      },
+    );
+    await requireNoActiveApprovalHooks(
+      workspace.repositoryRoot,
+      sourceUntrackedPaths,
+    );
+    await requireUntrackedFingerprints(
+      workspace.repositoryRoot,
+      sourceUntrackedFingerprints,
+    );
     const mergeResult = await gitResult(
       workspace.repositoryRoot,
       [
@@ -552,18 +591,24 @@ export class GitWorkspaceManager {
           mergedCommit,
         ])
       ).split(/\s+/);
-      const sourceStatus = await gitBuffer(workspace.repositoryRoot, [
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-      ]);
+      await requireSourceReady(
+        workspace.repositoryRoot,
+        "병합 중 원본 Git 작업 트리의 변경사항이 달라졌습니다.",
+        {
+          allowUntracked: true,
+          expectedUntrackedPaths: sourceUntrackedPaths,
+          trackedChangesCode: "command-failed",
+        },
+      );
+      await requireUntrackedFingerprints(
+        workspace.repositoryRoot,
+        sourceUntrackedFingerprints,
+      );
       if (
         mergedTree !== expectedMergeTree ||
         mergedLineage.length !== 3 ||
         mergedLineage[1] !== sourceHead ||
-        mergedLineage[2] !== taskCommit ||
-        sourceStatus.stdout.length > 0
+        mergedLineage[2] !== taskCommit
       ) {
         throw new GitWorkspaceError(
           "command-failed",
@@ -573,7 +618,11 @@ export class GitWorkspaceManager {
     } catch (error) {
       let rollback;
       try {
-        rollback = await rollbackSourceMerge(workspace, sourceHead);
+        rollback = await rollbackSourceMerge(
+          workspace,
+          sourceHead,
+          { baselineUntrackedPaths: sourceUntrackedPaths },
+        );
       } catch (rollbackError) {
         throw new GitWorkspaceError(
           "command-failed",
@@ -589,6 +638,13 @@ export class GitWorkspaceManager {
         throw new GitWorkspaceError(
           "not-clean",
           "병합 hook의 미추적 산출물은 보존했습니다. 원본 브랜치는 되돌렸으니 파일을 확인한 뒤 다시 승인하세요.",
+          { cause: error },
+        );
+      }
+      if (error instanceof GitWorkspaceError && error.code === "not-clean") {
+        throw new GitWorkspaceError(
+          "not-clean",
+          error.message,
           { cause: error },
         );
       }
@@ -716,7 +772,11 @@ export class GitWorkspaceManager {
   async validateSource(
     workspace,
     expectedHead = null,
-    { allowDirty = false } = {},
+    {
+      allowDirty = false,
+      allowUntracked = false,
+      expectedUntrackedPaths = null,
+    } = {},
   ) {
     if (await currentBranch(workspace.repositoryRoot) !== workspace.baseBranch) {
       throw new GitWorkspaceError(
@@ -724,10 +784,12 @@ export class GitWorkspaceManager {
         "원본 작업 트리의 브랜치가 변경됐습니다.",
       );
     }
+    let untrackedPaths = [];
     if (!allowDirty) {
-      await requireClean(
+      untrackedPaths = await requireSourceReady(
         workspace.repositoryRoot,
         "원본 Git 작업 트리에 변경사항이 있어 병합할 수 없습니다.",
+        { allowUntracked, expectedUntrackedPaths },
       );
     }
     if (expectedHead) {
@@ -742,6 +804,7 @@ export class GitWorkspaceManager {
         );
       }
     }
+    return untrackedPaths;
   }
 }
 
@@ -830,8 +893,13 @@ async function cleanupFailedProvision({
   }
 }
 
-async function rollbackSourceMerge(workspace, sourceHead) {
+async function rollbackSourceMerge(
+  workspace,
+  sourceHead,
+  { baselineUntrackedPaths = [] } = {},
+) {
   const repositoryRoot = await canonicalDirectory(workspace.repositoryRoot);
+  const baselineUntracked = new Set(baselineUntrackedPaths);
   const untrackedBefore = new Set(parseNullSeparated(
     (await gitBuffer(repositoryRoot, [
       "ls-files",
@@ -907,6 +975,12 @@ async function rollbackSourceMerge(workspace, sourceHead) {
       "병합 hook의 미추적 산출물을 보존하지 못했습니다.",
     );
   }
+  if ([...baselineUntracked].some((path) => !untrackedAfter.has(path))) {
+    throw new GitWorkspaceError(
+      "command-failed",
+      "병합 전 원본의 미추적 파일을 보존하지 못했습니다.",
+    );
+  }
   const restoredStatus = parseNullSeparated(
     (await gitBuffer(repositoryRoot, [
       "status",
@@ -927,7 +1001,7 @@ async function rollbackSourceMerge(workspace, sourceHead) {
   return {
     hasUntrackedChanges:
       hasUntrackedCollision ||
-      restoredStatus.some((entry) => entry.startsWith("?? ")),
+      [...untrackedAfter].some((path) => !baselineUntracked.has(path)),
   };
 }
 
@@ -994,6 +1068,227 @@ async function requireClean(directory, message, code = "not-clean") {
   if (status.stdout.length > 0) {
     throw new GitWorkspaceError(code, message);
   }
+}
+
+async function requireSourceReady(
+  directory,
+  message,
+  {
+    allowUntracked = false,
+    expectedUntrackedPaths = null,
+    trackedChangesCode = "not-clean",
+  } = {},
+) {
+  const status = parseNullSeparated(
+    (await gitBuffer(directory, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+    ])).stdout,
+  );
+  const hasTrackedChanges = status.some((entry) => !entry.startsWith("?? "));
+  const untrackedPaths = status
+    .filter((entry) => entry.startsWith("?? "))
+    .map((entry) => entry.slice(3));
+  if (hasTrackedChanges || (!allowUntracked && untrackedPaths.length > 0)) {
+    throw new GitWorkspaceError(trackedChangesCode, message);
+  }
+  if (
+    expectedUntrackedPaths &&
+    !samePaths(untrackedPaths, expectedUntrackedPaths)
+  ) {
+    throw new GitWorkspaceError(
+      "not-clean",
+      "병합 준비 중 원본 Git의 미추적 파일 목록이 달라졌습니다.",
+    );
+  }
+  return untrackedPaths;
+}
+
+async function requireMergeTreePathsAvailable(
+  directory,
+  sourceTree,
+  mergedTree,
+) {
+  const [sourcePaths, mergedPaths, localPaths, ignoreCaseResult] =
+    await Promise.all([
+      treePaths(directory, sourceTree),
+      treePaths(directory, mergedTree),
+      mergeBlockingLocalPaths(directory),
+      gitResult(
+        directory,
+        ["config", "--bool", "core.ignorecase"],
+        { allowedExitCodes: [1] },
+      ),
+    ]);
+  const sourcePathSet = new Set(sourcePaths);
+  const addedPaths = mergedPaths.filter((path) => !sourcePathSet.has(path));
+  const ignoreCase = ignoreCaseResult.stdout.trim() === "true";
+  const collision = localPaths.find((localPath) =>
+    addedPaths.some((addedPath) =>
+      normalizedPathsOverlap(localPath, addedPath, ignoreCase)
+    )
+  );
+  if (collision) {
+    throw new GitWorkspaceError(
+      "not-clean",
+      `원본 로컬 파일이 승인할 변경 경로와 겹칩니다: ${collision}`,
+    );
+  }
+}
+
+function samePaths(left, right) {
+  const rightPaths = new Set(right);
+  return left.length === rightPaths.size &&
+    left.every((path) => rightPaths.has(path));
+}
+
+async function treePaths(directory, tree) {
+  return parseNullSeparated(
+    (await gitBuffer(directory, [
+      "ls-tree",
+      "-r",
+      "--name-only",
+      "-z",
+      tree,
+    ])).stdout,
+  );
+}
+
+async function mergeBlockingLocalPaths(directory) {
+  const results = await Promise.all([
+    gitBuffer(directory, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    ]),
+    gitBuffer(directory, [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    ]),
+  ]);
+  return [...new Set(results.flatMap((result) =>
+    parseNullSeparated(result.stdout).map((path) =>
+      path.endsWith("/") ? path.slice(0, -1) : path
+    )
+  ))];
+}
+
+function normalizedPathsOverlap(left, right, ignoreCase) {
+  const normalize = (path) => {
+    const normalized = path.normalize("NFC");
+    return ignoreCase ? normalized.toLocaleLowerCase("en-US") : normalized;
+  };
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return normalizedLeft === normalizedRight ||
+    normalizedLeft.startsWith(`${normalizedRight}/`) ||
+    normalizedRight.startsWith(`${normalizedLeft}/`);
+}
+
+async function lstatIfPresent(path) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function requireNoActiveApprovalHooks(directory, untrackedPaths) {
+  if (untrackedPaths.length === 0) {
+    return;
+  }
+  const hookNames = [
+    "post-index-change",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "post-merge",
+    "reference-transaction",
+  ];
+  for (const hookName of hookNames) {
+    const hookPath = await gitText(directory, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      `hooks/${hookName}`,
+    ]);
+    const info = await lstatIfPresent(hookPath);
+    if (
+      info &&
+      (info.isFile() || info.isSymbolicLink()) &&
+      (info.mode & 0o111) !== 0
+    ) {
+      throw new GitWorkspaceError(
+        "not-clean",
+        `원본에 미추적 파일과 활성 Git hook이 함께 있어 자동 병합할 수 없습니다: ${hookName}`,
+      );
+    }
+  }
+}
+
+async function fingerprintUntrackedPaths(directory, paths) {
+  const fingerprints = new Map();
+  for (const path of paths) {
+    fingerprints.set(
+      path,
+      await localPathFingerprint(resolve(directory, path)),
+    );
+  }
+  return fingerprints;
+}
+
+async function requireUntrackedFingerprints(directory, fingerprints) {
+  for (const [path, expected] of fingerprints) {
+    let actual;
+    try {
+      actual = await localPathFingerprint(resolve(directory, path));
+    } catch (error) {
+      throw new GitWorkspaceError(
+        "not-clean",
+        `병합 중 원본 미추적 파일이 달라졌습니다: ${path}`,
+        { cause: error },
+      );
+    }
+    if (actual !== expected) {
+      throw new GitWorkspaceError(
+        "not-clean",
+        `병합 중 원본 미추적 파일이 달라졌습니다: ${path}`,
+      );
+    }
+  }
+}
+
+async function localPathFingerprint(path) {
+  const info = await lstat(path);
+  const mode = (info.mode & 0o7777).toString(8);
+  if (info.isSymbolicLink()) {
+    const target = await readlink(path);
+    return `symlink:${mode}:${createHash("sha256").update(target).digest("hex")}`;
+  }
+  if (!info.isFile()) {
+    throw new GitWorkspaceError(
+      "not-clean",
+      `지원하지 않는 미추적 파일 종류입니다: ${path}`,
+    );
+  }
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) {
+    hash.update(chunk);
+  }
+  return `file:${mode}:${hash.digest("hex")}`;
 }
 
 async function requireBaseAncestor(workspace, headCommit) {

@@ -1061,43 +1061,6 @@ export class AgentRuntime {
         );
       }
 
-      const blockedWorkspace = await client.query(
-        `
-          SELECT
-            workspace.id AS "workspaceID",
-            workspace.review_turn_id AS "reviewTurnID"
-          FROM task_workspaces AS workspace
-          JOIN cli_sessions AS session
-            ON session.id = workspace.cli_session_id
-          WHERE session.character_id = $1
-            AND (
-              workspace.status IN (
-                'awaiting_approval',
-                'merging',
-                'conflict'
-              )
-              OR (
-                workspace.status = 'active'
-                AND workspace.auto_repair_paused = true
-              )
-            )
-          ORDER BY workspace.updated_at DESC
-          LIMIT 1
-        `,
-        [characterID],
-      );
-      const blocked = blockedWorkspace.rows?.[0] ?? null;
-      const resumesClaimedRepair = Boolean(
-        automaticRepair &&
-          blocked?.workspaceID === automaticRepair.workspaceID &&
-          blocked?.reviewTurnID === automaticRepair.reviewTurnID,
-      );
-      if (blockedWorkspace.rowCount > 0 && !resumesClaimedRepair) {
-        throw new AgentBusyError(
-          "이 직원의 변경사항을 먼저 검토하고 승인하거나 거절하세요.",
-        );
-      }
-
       const activeResult = await client.query(
         `
           SELECT
@@ -1135,12 +1098,19 @@ export class AgentRuntime {
             SELECT candidate.*
             FROM task_workspaces AS candidate
             WHERE candidate.cli_session_id = session.id
-              AND candidate.status IN (
-                'provisioning',
-                'active',
-                'awaiting_approval',
-                'merging',
-                'conflict'
+              AND (
+                (
+                  $2::uuid IS NOT NULL
+                  AND candidate.id = $2::uuid
+                )
+                OR (
+                  $2::uuid IS NULL
+                  AND candidate.status IN ('provisioning', 'active')
+                  AND NOT (
+                    candidate.status = 'active'
+                    AND candidate.auto_repair_paused = true
+                  )
+                )
               )
             ORDER BY candidate.updated_at DESC
             LIMIT 1
@@ -1149,7 +1119,7 @@ export class AgentRuntime {
             AND session.ended_at IS NULL
           LIMIT 1
         `,
-        [characterID],
+        [characterID, automaticRepair?.workspaceID ?? null],
       );
 
       let sessionID;
@@ -1157,14 +1127,6 @@ export class AgentRuntime {
       let effectiveConversationID;
       let workspace = null;
       const active = activeResult.rows[0] ?? null;
-      if (
-        active?.workspaceStatus &&
-        BLOCKED_WORKSPACE_STATUSES.has(active.workspaceStatus)
-      ) {
-        throw new AgentBusyError(
-          "이 직원의 변경사항을 먼저 검토하고 승인하거나 거절하세요.",
-        );
-      }
       const reusedSession = Boolean(active);
       if (active) {
         sessionID = active.id;
