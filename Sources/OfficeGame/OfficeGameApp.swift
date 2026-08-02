@@ -1060,6 +1060,8 @@ private struct BubbleDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        let presentation = AgentQuestionPresentation(text: message)
+
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
@@ -1088,7 +1090,10 @@ private struct BubbleDetailView: View {
             Divider()
 
             ScrollView {
-                ConversationMarkdownView(source: message, fontSize: 13)
+                ConversationMarkdownView(
+                    source: isQuestion ? presentation.question : message,
+                    fontSize: 13
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
             }
@@ -1097,7 +1102,11 @@ private struct BubbleDetailView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("답변")
+                    Text(
+                        presentation.choices.isEmpty
+                            ? "답변"
+                            : "선택지"
+                    )
                         .font(.system(size: 13, weight: .bold))
 
                     if
@@ -1111,6 +1120,89 @@ private struct BubbleDetailView: View {
                         )
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.red)
+                    }
+
+                    if !presentation.choices.isEmpty {
+                        VStack(spacing: 8) {
+                            ForEach(
+                                Array(presentation.choices.enumerated()),
+                                id: \.offset
+                            ) { index, choice in
+                                Button {
+                                    submitAnswer(choice.response)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Text("\(index + 1)")
+                                            .font(
+                                                .system(
+                                                    size: 11,
+                                                    weight: .bold,
+                                                    design: .rounded
+                                                )
+                                            )
+                                            .foregroundStyle(Color.accentColor)
+                                            .frame(width: 24, height: 24)
+                                            .background(
+                                                Circle()
+                                                    .fill(
+                                                        Color.accentColor
+                                                            .opacity(0.12)
+                                                    )
+                                            )
+                                        Text(choice.title)
+                                            .font(.system(size: 13))
+                                            .multilineTextAlignment(.leading)
+                                        Spacer(minLength: 8)
+                                        Image(systemName: "arrow.right")
+                                            .font(
+                                                .system(
+                                                    size: 11,
+                                                    weight: .semibold
+                                                )
+                                            )
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 9)
+                                    .frame(
+                                        maxWidth: .infinity,
+                                        alignment: .leading
+                                    )
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .background(
+                                    RoundedRectangle(
+                                        cornerRadius: 9,
+                                        style: .continuous
+                                    )
+                                    .fill(Color.accentColor.opacity(0.055))
+                                )
+                                .overlay {
+                                    RoundedRectangle(
+                                        cornerRadius: 9,
+                                        style: .continuous
+                                    )
+                                    .stroke(Color.accentColor.opacity(0.22))
+                                }
+                                .disabled(
+                                    director.runningCharacters.contains(
+                                        character
+                                    )
+                                )
+                                .accessibilityIdentifier(
+                                    "needsInputChoice.\(index + 1)"
+                                )
+                                .accessibilityLabel(
+                                    "\(index + 1)번 \(choice.title)"
+                                )
+                            }
+                        }
+
+                        Divider()
+
+                        Text("직접 입력")
+                            .font(.system(size: 13, weight: .bold))
                     }
 
                     TextEditor(text: $answer)
@@ -1139,7 +1231,7 @@ private struct BubbleDetailView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("답변 보내기", action: submitAnswer)
+                        Button("답변 보내기", action: submitTypedAnswer)
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.defaultAction)
                             .disabled(
@@ -1162,11 +1254,16 @@ private struct BubbleDetailView: View {
         )
         .onAppear {
             answerIsFocused = isQuestion
+                && presentation.choices.isEmpty
         }
     }
 
-    private func submitAnswer() {
-        let value = answer.trimmingCharacters(
+    private func submitTypedAnswer() {
+        submitAnswer(answer)
+    }
+
+    private func submitAnswer(_ response: String) {
+        let value = response.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
         guard !value.isEmpty else {
