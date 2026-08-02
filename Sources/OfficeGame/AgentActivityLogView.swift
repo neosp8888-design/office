@@ -176,20 +176,31 @@ struct CodexFileChangeSummary: Equatable {
     var title: String {
         if status == .running {
             if let reportedFileCount {
-                return "파일 \(reportedFileCount)개를 편집하는 중"
+                return OfficeLocalization.format(
+                    "파일 %d개를 편집하는 중",
+                    reportedFileCount
+                )
             }
-            return "파일 변경을 적용하는 중"
+            return OfficeLocalization.string("파일 변경을 적용하는 중")
         }
         if status == .failed {
             if let reportedFileCount {
-                return "파일 \(reportedFileCount)개 변경에 실패했습니다"
+                return OfficeLocalization.format(
+                    "파일 %d개 변경에 실패했습니다",
+                    reportedFileCount
+                )
             }
-            return "파일 변경에 실패했습니다"
+            return OfficeLocalization.string("파일 변경에 실패했습니다")
         }
         if let reportedFileCount {
-            return "파일 \(reportedFileCount)개를 편집했습니다"
+            return OfficeLocalization.format(
+                "파일 %d개를 편집했습니다",
+                reportedFileCount
+            )
         }
-        return files.isEmpty ? "파일 변경을 반영했습니다" : "파일 변경 결과"
+        return files.isEmpty
+            ? OfficeLocalization.string("파일 변경을 반영했습니다")
+            : OfficeLocalization.string("파일 변경 결과")
     }
 
     var copyText: String {
@@ -584,7 +595,7 @@ private struct CodexNarrativeActivityView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(activity.text)
+                Text(OfficeLocalization.string(activity.text))
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -681,7 +692,10 @@ private struct CodexOperationGroupView: View {
 
                 Spacer(minLength: 6)
 
-                Text("\(group.activities.count)개")
+                Text(OfficeLocalization.format(
+                    "%d개",
+                    group.activities.count
+                ))
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
@@ -735,7 +749,7 @@ private struct CodexOperationGroupView: View {
                 .foregroundStyle(.tertiary)
                 .frame(width: 14)
 
-            Text(activity.text)
+            Text(OfficeLocalization.string(activity.text))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
@@ -757,14 +771,18 @@ private struct CodexOperationGroupView: View {
         let tools = group.activities.count - commands
         if group.isRunning {
             if commands > 0, tools > 0 {
-                return "명령과 도구를 사용하는 중"
+                return OfficeLocalization.string("명령과 도구를 사용하는 중")
             }
-            return commands > 0 ? "명령을 실행하는 중" : "도구를 사용하는 중"
+            return commands > 0
+                ? OfficeLocalization.string("명령을 실행하는 중")
+                : OfficeLocalization.string("도구를 사용하는 중")
         }
         if commands > 0, tools > 0 {
-            return "명령과 도구를 사용했습니다"
+            return OfficeLocalization.string("명령과 도구를 사용했습니다")
         }
-        return commands > 0 ? "명령을 실행했습니다" : "도구를 사용했습니다"
+        return commands > 0
+            ? OfficeLocalization.string("명령을 실행했습니다")
+            : OfficeLocalization.string("도구를 사용했습니다")
     }
 
     private var groupIcon: String {
@@ -919,7 +937,9 @@ private struct CodexFileChangeSummaryView: View {
                     ForEach(Array(summary.files.enumerated()), id: \.offset) {
                         index, file in
                         WorkspaceFileRevealButton(
-                            title: file,
+                            title: CodexFileChangeSummary.filePath(
+                                from: file
+                            ) ?? file,
                             path: CodexFileChangeSummary.filePath(from: file),
                             workspaceDirectory: workspaceDirectory,
                             foregroundColor: .secondary,

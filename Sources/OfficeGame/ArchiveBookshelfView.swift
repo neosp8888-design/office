@@ -33,6 +33,7 @@ private struct ArchiveRecordTile: View {
     let onSelect: () -> Void
 
     var body: some View {
+        let characterName = OfficeLocalization.string(turn.characterName)
         Button(action: onSelect) {
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -41,7 +42,7 @@ private struct ArchiveRecordTile: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 6) {
-                        Text(String(turn.characterName.prefix(1)))
+                        Text(String(characterName.prefix(1)))
                             .font(
                                 .system(
                                     size: 10,
@@ -56,7 +57,7 @@ private struct ArchiveRecordTile: View {
                                 in: Circle()
                             )
 
-                        Text(turn.characterName)
+                        Text(characterName)
                             .font(.system(size: 10, weight: .bold))
 
                         if turn.status.isRunning {

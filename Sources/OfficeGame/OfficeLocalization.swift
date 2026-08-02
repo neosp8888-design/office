@@ -3,12 +3,22 @@
 import Foundation
 
 enum OfficeLocalization {
-    static func string(_ key: String) -> String {
-        let localization = Locale.preferredLanguages.contains {
-            $0.lowercased().hasPrefix("ko")
-        }
+    static var usesKorean: Bool {
+        languageIdentifier(for: preferredLanguages) == "ko"
+    }
+
+    static var locale: Locale {
+        Locale(identifier: languageIdentifier(for: preferredLanguages))
+    }
+
+    static func languageIdentifier(for languages: [String]) -> String {
+        languages.contains { $0.lowercased().hasPrefix("ko") }
             ? "ko"
             : "en"
+    }
+
+    static func string(_ key: String) -> String {
+        let localization = languageIdentifier(for: preferredLanguages)
 
         guard
             let path = Bundle.module.path(
@@ -24,5 +34,18 @@ enum OfficeLocalization {
         }
 
         return translations[key] ?? key
+    }
+
+    static func format(_ key: String, _ arguments: CVarArg...) -> String {
+        String(
+            format: string(key),
+            locale: locale,
+            arguments: arguments
+        )
+    }
+
+    private static var preferredLanguages: [String] {
+        UserDefaults.standard.stringArray(forKey: "AppleLanguages")
+            ?? Locale.preferredLanguages
     }
 }

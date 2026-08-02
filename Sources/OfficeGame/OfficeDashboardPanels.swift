@@ -247,7 +247,7 @@ private struct ArchiveShelfContent: View {
                     .controlSize(.mini)
                     .frame(width: 22, height: 22)
             } else {
-                Text("\(totalTurnCount)건")
+                Text(OfficeLocalization.format("%d건", totalTurnCount))
                     .font(.system(size: 9, weight: .bold, design: .rounded))
                     .foregroundStyle(DashboardPalette.accent)
                     .padding(.horizontal, 7)
@@ -1647,7 +1647,7 @@ private struct LiveTurnCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             CharacterBadge(
-                name: turn.characterName,
+                name: OfficeLocalization.string(turn.characterName),
                 characterID: turn.characterId,
                 size: 38
             )
@@ -1728,7 +1728,7 @@ private struct LiveTurnCard: View {
 
     private var metadata: some View {
         HStack(spacing: 7) {
-            Text(turn.characterName)
+            Text(OfficeLocalization.string(turn.characterName))
                 .font(.system(size: 13, weight: .bold))
 
             if let backend = turn.backend {
@@ -1854,15 +1854,17 @@ private struct LiveTurnCard: View {
     private var statusTitle: String {
         switch turn.status {
         case .pending:
-            "대기"
+            OfficeLocalization.string("대기")
         case .running:
-            "업무 중"
+            OfficeLocalization.string("업무 중")
         case .completed:
-            turn.needsInput ? "답변 필요" : "완료"
+            turn.needsInput
+                ? OfficeLocalization.string("답변 필요")
+                : OfficeLocalization.string("완료")
         case .failed:
-            "중단"
+            OfficeLocalization.string("중단")
         case .interrupted:
-            "연결 종료"
+            OfficeLocalization.string("연결 종료")
         }
     }
 
@@ -1891,19 +1893,33 @@ private struct LiveTurnElapsedStatusView: View {
         VStack(alignment: .trailing, spacing: 2) {
             if status.isRunning {
                 TimelineView(.periodic(from: .now, by: 5)) { context in
-                    Text("\(elapsedText(at: context.date))째 진행 중")
+                    Text(OfficeLocalization.format(
+                        "%@째 진행 중",
+                        elapsedText(at: context.date)
+                    ))
                         .font(statusFont)
                         .foregroundStyle(DashboardPalette.accent)
                         .accessibilityLabel(
-                            "\(elapsedText(at: context.date))째 진행 중"
+                            OfficeLocalization.format(
+                                "%@째 진행 중",
+                                elapsedText(at: context.date)
+                            )
                         )
                 }
             } else if let endedAt {
-                Text("\(elapsedText(at: endedAt))에 \(terminalTitle)")
+                Text(OfficeLocalization.format(
+                    "%@에 %@",
+                    elapsedText(at: endedAt),
+                    terminalTitle
+                ))
                     .font(statusFont)
                     .foregroundStyle(terminalColor)
                     .accessibilityLabel(
-                        "\(elapsedText(at: endedAt))에 \(terminalTitle)"
+                        OfficeLocalization.format(
+                            "%@에 %@",
+                            elapsedText(at: endedAt),
+                            terminalTitle
+                        )
                     )
 
                 if let estimatedCostUsd {
@@ -1956,13 +1972,13 @@ private struct LiveTurnElapsedStatusView: View {
     private var terminalTitle: String {
         switch status {
         case .completed:
-            "완료"
+            OfficeLocalization.string("완료")
         case .failed:
-            "실패"
+            OfficeLocalization.string("실패")
         case .interrupted:
-            "중단"
+            OfficeLocalization.string("중단")
         case .pending, .running:
-            "진행 중"
+            OfficeLocalization.string("진행 중")
         }
     }
 
@@ -1980,21 +1996,32 @@ private struct LiveTurnElapsedStatusView: View {
     private func elapsedText(at date: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(startedAt)))
         if seconds < 60 {
-            return "\(seconds)초"
+            return OfficeLocalization.format("%d초", seconds)
         }
 
         let minutes = seconds / 60
         if minutes < 60 {
-            return "\(minutes)분 \(seconds % 60)초"
+            return OfficeLocalization.format(
+                "%d분 %d초",
+                minutes,
+                seconds % 60
+            )
         }
 
-        return "\(minutes / 60)시간 \(minutes % 60)분"
+        return OfficeLocalization.format(
+            "%d시간 %d분",
+            minutes / 60,
+            minutes % 60
+        )
     }
 }
 
 func estimatedTokenCostText(_ costUsd: Double) -> String {
     let precision = costUsd < 0.0001 ? 8 : costUsd < 1 ? 6 : 4
-    return "토큰 환산 비용(추정) \(String(format: "$%.\(precision)f", costUsd))"
+    return OfficeLocalization.format(
+        "토큰 환산 비용(추정) %@",
+        String(format: "$%.\(precision)f", costUsd)
+    )
 }
 
 func sessionContextRemainingText(_ usage: SessionContextUsage) -> String {
@@ -2002,8 +2029,12 @@ func sessionContextRemainingText(_ usage: SessionContextUsage) -> String {
         format: "%.1f",
         usage.remainingRatio * 100
     )
-    return "컨텍스트 잔량 \(groupedTokenCount(usage.remainingTokens))"
-        + " / \(groupedTokenCount(usage.limitTokens)) (\(percent)%)"
+    return OfficeLocalization.format(
+        "컨텍스트 잔량 %@ / %@ (%@%%)",
+        groupedTokenCount(usage.remainingTokens),
+        groupedTokenCount(usage.limitTokens),
+        percent
+    )
 }
 
 private func groupedTokenCount(_ value: Int) -> String {

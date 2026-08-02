@@ -82,7 +82,7 @@ private struct ResponseSourceRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
-            Text(source.sourceKind.title)
+            Text(OfficeLocalization.string(source.sourceKind.title))
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundStyle(sourceColor)
                 .padding(.horizontal, 6)
