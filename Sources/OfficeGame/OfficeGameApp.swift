@@ -324,25 +324,6 @@ private struct OfficeGameView: View {
         .clipShape(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
         )
-        .overlay(alignment: .topLeading) {
-            Label("OFFICE", systemImage: "building.2.fill")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .tracking(0.8)
-                .foregroundStyle(
-                    theme.isNight
-                        ? Color.white.opacity(0.80)
-                        : Color.black.opacity(0.62)
-                )
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(
-                    theme.isNight
-                        ? Color.black.opacity(0.52)
-                        : Color.white.opacity(0.78),
-                    in: Capsule()
-                )
-                .padding(12)
-        }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 7) {
                 themeToggle
