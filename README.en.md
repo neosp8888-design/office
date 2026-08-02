@@ -6,7 +6,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
-  <img src="https://img.shields.io/badge/version-1.0.1-5B5BD6" alt="OFFICESTRA 1.0.1">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -126,9 +125,9 @@ OFFICESTRA requires macOS 14 or later, Swift 5.10 or later, Node.js with npm,
 Docker Desktop, and at least one authenticated Codex CLI or Claude Code CLI.
 Available models depend on the installed CLI version and account entitlements.
 
-**For a new installation, install v1.0.1 and you are done.** You do not need to
-run database backup, restore, or migration commands. The startup script waits
-for PostgreSQL and applies the migrations automatically.
+**For a new installation, install the latest version and you are done.** You do
+not need to run database backup, restore, or migration commands. The startup
+script waits for PostgreSQL and applies the migrations automatically.
 
 ### Easiest path
 
@@ -136,10 +135,11 @@ If you already use Codex or Claude Code, paste the prompt below into a new
 conversation.
 
 ```text
-Install OFFICESTRA v1.0.1 on this Mac and verify that it actually runs.
+Install the latest version of OFFICESTRA on this Mac and verify that it actually
+runs.
 Repository: https://github.com/neosp8888-design/office.git
 
-Install only missing prerequisites and clone the v1.0.1 tag into ~/OFFICESTRA.
+Install only missing prerequisites and clone the latest version into ~/OFFICESTRA.
 Ask me which coworker workspace to use, or use ~/Projects if I have no preference.
 Write that absolute path to characters.json as workdir. If only one AI CLI is
 available, set all five coworkers to provider and model values supported by that
@@ -239,12 +239,11 @@ for current provider-specific details.
 
 Run the clone command only when `~/OFFICESTRA` does not already exist. If it
 does exist, do not delete or overwrite it; ask Codex or Claude to inspect the
-existing installation first. A release tag intentionally opens in Git's
-detached-head state; this is normal for an installation that should run
-published code without local development commits.
+existing installation first. This command downloads the latest version from
+the default branch.
 
 ```sh
-git clone --branch v1.0.1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
 ```
 
@@ -381,7 +380,7 @@ Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. 
 ## Data and security boundaries
 
 - Tasks, responses, sessions, activities, source-of-truth `work_records`, and response sources are stored in a local PostgreSQL Docker volume.
-- `checklist.md` and `context-notes.md` are frozen snapshots from the v1.0 transition. They are neither regenerated nor edited; current work records are available through the read-only `GET /api/work-records` endpoint.
+- `checklist.md` and `context-notes.md` are frozen snapshots from the work-record database transition. They are neither regenerated nor edited; current work records are available through the read-only `GET /api/work-records` endpoint.
 - Attachments are copied into `.office-attachments/` under the configured workspace. When `workdir` points to another Git repository, add this directory to that repository's `.gitignore` as well.
 - Approved worktrees are cleaned up after merging, while rejected worktrees and branches are retained for recovery and must be removed manually when no longer needed.
 - OFFICESTRA does not store API keys. It uses each CLI's existing local authentication.

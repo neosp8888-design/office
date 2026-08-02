@@ -6,7 +6,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
-  <img src="https://img.shields.io/badge/version-1.0.1-5B5BD6" alt="OFFICESTRA 1.0.1">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -155,7 +154,7 @@ OFFICESTRA는 macOS 14 이상에서 동작한다. Codex CLI 또는 Claude Code C
 Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수
 있다.
 
-**처음 설치하는 사용자는 v1.0.1만 설치하면 끝이다.** 별도의 DB 백업·복원·
+**처음 설치하는 사용자는 최신 버전만 설치하면 끝이다.** 별도의 DB 백업·복원·
 마이그레이션 명령은 필요 없다. 시작 스크립트가 PostgreSQL 준비와 DB 마이그레이션을
 자동으로 처리한다.
 
@@ -165,10 +164,10 @@ Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한�
 붙여 넣는다.
 
 ```text
-이 Mac에 OFFICESTRA v1.0.1을 설치하고 실제 실행까지 확인해줘.
+이 Mac에 OFFICESTRA 최신 버전을 설치하고 실제 실행까지 확인해줘.
 저장소는 https://github.com/neosp8888-design/office.git 이야.
 
-필요한 도구만 설치하고 v1.0.1 태그를 ~/OFFICESTRA에 내려받아. 직원 작업 폴더는
+필요한 도구만 설치하고 저장소의 최신 버전을 ~/OFFICESTRA에 내려받아. 직원 작업 폴더는
 나에게 물어보고, 정하지 않으면 ~/Projects를 사용해. 선택한 절대 경로를
 characters.json의 workdir에 설정해. AI CLI가 하나뿐이면 다섯 직원의 provider와
 model을 그 CLI에서 사용 가능한 값으로 맞춰. 기존 로그인은 유지하고 Docker,
@@ -267,11 +266,10 @@ claude
 
 아래 clone 명령은 `~/OFFICESTRA` 폴더가 없을 때만 실행한다. 이미 있다면 삭제하거나
 덮어쓰지 말고 Codex나 Claude에게 기존 설치 상태 확인을 맡긴다.
-릴리스 태그는 Git에서 `detached HEAD`로 표시되며 공개 버전을 실행하는 설치에서는
-정상이다.
+이 명령은 기본 브랜치의 최신 버전을 내려받는다.
 
 ```sh
-git clone --branch v1.0.1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
 ```
 
@@ -426,7 +424,7 @@ API를 이용한 직원 주도 오케스트레이션은 가능하다. 다만 직
 
 - 업무·응답·세션·활동, 완료 업무 원본 `work_records`와 응답 근거는 로컬
   PostgreSQL Docker 볼륨에 저장된다.
-- `checklist.md`와 `context-notes.md`는 v1.0 전환 당시의 동결본이다. 이 두
+- `checklist.md`와 `context-notes.md`는 작업 기록 DB 전환 당시의 동결본이다. 이 두
   파일은 재생성하거나 편집하지 않으며, 현재 작업 기록은 읽기 전용
   `GET /api/work-records`로 조회한다.
 - 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사된다. 다른 Git 저장소를 `workdir`로 사용한다면 해당 저장소의 `.gitignore`에도 이 폴더를 추가해야 한다.
