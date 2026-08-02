@@ -155,35 +155,29 @@ OFFICESTRA는 macOS 14 이상에서 동작한다. Codex CLI 또는 Claude Code C
 Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수
 있다.
 
-### 가장 쉬운 방법 · 사용 중인 AI에게 맡기기
+**처음 설치하는 사용자는 v1.0.1만 설치하면 끝이다.** 별도의 DB 백업·복원·
+마이그레이션 명령은 필요 없다. 시작 스크립트가 PostgreSQL 준비와 DB 마이그레이션을
+자동으로 처리한다.
+
+### 가장 쉬운 방법
 
 이미 Codex나 Claude Code를 쓰고 있다면 그 도구의 새 대화에 아래 요청을 그대로
-붙여 넣는 방법을 권장한다. 설치 도중 관리자 암호나 Docker 첫 실행 화면처럼
-사람이 직접 처리해야 하는 단계만 AI가 설명하고 기다리게 된다.
+붙여 넣는다.
 
 ```text
 이 Mac에 OFFICESTRA v1.0.1을 설치하고 실제 실행까지 확인해줘.
 저장소는 https://github.com/neosp8888-design/office.git 이야.
 
-1. macOS 버전과 CPU 종류를 확인하고 Git, Swift 5.10+, Node.js/npm, Docker Compose,
-   현재 내가 쓰는 Codex CLI 또는 Claude Code CLI의 설치·로그인 상태를 먼저 점검해.
-2. 없는 필수 도구만 공식 설치 방법으로 설치해. 기존 AI CLI 로그인은 건드리지 말고,
-   내가 사용하지 않는 다른 AI CLI는 억지로 설치하지 마.
-3. 관리자 암호 입력이나 macOS/Docker 화면 클릭이 필요하면 이유와 누를 항목을
-   한국어로 정확히 설명한 뒤 기다려.
-4. ~/OFFICESTRA가 없으면 v1.0.1 태그를 그 폴더에 clone해. 폴더가 이미 있으면
-   삭제하거나 덮어쓰지 말고 Git 상태를 확인한 뒤 안전한 방법을 제안해.
-5. AI 직원들이 작업할 폴더를 나에게 물어보고 characters.json의 workdir를 그
-   절대 경로로 바꿔. 정하지 못하면 ~/Projects를 새로 만들어 사용해.
-6. AI CLI가 하나만 설치되어 있으면 다섯 직원의 provider·model 기본값을 그 CLI에
-   맞게 설정해.
-7. Docker Desktop과 백엔드를 시작해. 시작 스크립트가 PostgreSQL 준비를 기다린
-   뒤 DB 마이그레이션을 실행하는지 확인하고 /health가 {"ok":true}인지 확인해.
-8. Node 구문 검사와 테스트, Swift 테스트를 실행하고 OFFICESTRA 앱을 빌드해 열어.
-9. 기존 폴더, Git 변경, Docker 데이터는 삭제하지 마. PostgreSQL 백업을 만들고
-   읽을 수 있는지도 검증해. 완료하면 설치 위치, 버전, 실행 중인 항목, 다시
-   실행하고 업데이트하는 방법, 백업 위치와 검증 결과만 쉽게 정리해줘.
+필요한 도구만 설치하고 v1.0.1 태그를 ~/OFFICESTRA에 내려받아. 직원 작업 폴더는
+나에게 물어보고, 정하지 않으면 ~/Projects를 사용해. 선택한 절대 경로를
+characters.json의 workdir에 설정해. AI CLI가 하나뿐이면 다섯 직원의 provider와
+model을 그 CLI에서 사용 가능한 값으로 맞춰. 기존 로그인은 유지하고 Docker,
+백엔드, 앱을 실행한 뒤 /health가 {"ok":true}인지 확인해. 기존 폴더나 Docker
+데이터가 있으면 삭제하지 말고 먼저 나에게 알려줘.
 ```
+
+<details>
+<summary><strong>직접 설치 명령 보기</strong></summary>
 
 ### 새 Mac에서 직접 설치하기
 
@@ -322,6 +316,8 @@ SwiftPM 제품명은 호환성을 위해 `OfficeLLM`을 유지한다. AI CLI를 
 설치했다면 앱 우측 상단 설정에서 다섯 직원 모두 그 CLI와 사용 가능한 모델로
 바꾼 뒤 업무를 시작한다.
 
+</details>
+
 ### 종료와 다시 실행
 
 앱과 백엔드를 실행한 각 터미널에서 `Control + C`를 누르면 종료된다. PostgreSQL
@@ -334,6 +330,12 @@ docker compose -f infra/compose.yaml down
 `down -v`는 저장된 대화 DB까지 삭제하므로 초기화를 원할 때만 사용한다. 다시
 실행할 때는 Docker Desktop을 먼저 열고, 위의 백엔드 명령과 앱 명령을 각각 다시
 실행한다.
+
+<details>
+<summary><strong>기존 v1.0.0 업데이트·백업 안내</strong></summary>
+
+처음부터 v1.0.1을 설치한 사용자는 아래 절차가 필요 없다. 기존 v1.0.0의 대화와
+작업 기록을 유지하며 업데이트할 때만 사용한다.
 
 ### v1.0.0에서 v1.0.1로 업데이트
 
@@ -446,6 +448,8 @@ BACKUP_FILE="$(ls -t "$HOME"/OFFICESTRA-backups/office-*.dump | head -1)"
 필요하면 백업 파일을 보존한 채 Codex나 Claude에게 운영 DB 정지와 복구 순서를
 점검시킨다. `docker compose down -v`는 백업 명령이 아니라 PostgreSQL 볼륨 삭제
 명령이므로 사용하지 않는다.
+
+</details>
 
 ### 막힐 때 확인할 것
 

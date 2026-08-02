@@ -126,39 +126,30 @@ OFFICESTRA requires macOS 14 or later, Swift 5.10 or later, Node.js with npm,
 Docker Desktop, and at least one authenticated Codex CLI or Claude Code CLI.
 Available models depend on the installed CLI version and account entitlements.
 
-### Easiest path · ask your coding agent
+**For a new installation, install v1.0.1 and you are done.** You do not need to
+run database backup, restore, or migration commands. The startup script waits
+for PostgreSQL and applies the migrations automatically.
+
+### Easiest path
 
 If you already use Codex or Claude Code, paste the prompt below into a new
-conversation. The agent can handle the terminal work and stop only when macOS
-needs your password or a Docker first-run confirmation.
+conversation.
 
 ```text
 Install OFFICESTRA v1.0.1 on this Mac and verify that it actually runs.
 Repository: https://github.com/neosp8888-design/office.git
 
-1. Check the macOS version and CPU architecture, then verify Git, Swift 5.10+,
-   Node.js/npm, Docker Compose, and the Codex CLI or Claude Code CLI I already use.
-2. Install only missing prerequisites through their official installation paths.
-   Preserve my existing AI CLI login and do not install another AI provider unless needed.
-3. If an administrator password or a macOS/Docker GUI action is required, explain
-   exactly why and what I should click, then wait for me.
-4. If ~/OFFICESTRA does not exist, clone the v1.0.1 tag there. If it exists, do not
-   delete or overwrite it; inspect its Git state, preserve its configured workdir,
-   create a verified database backup, and update it safely. Stop if unrelated local
-   changes require my decision.
-5. For a new installation, ask which folder the AI coworkers should work in and set
-   the absolute workdir in characters.json. If I have no preference, create and use
-   ~/Projects.
-6. If only one AI provider is installed, set all five coworkers to compatible
-   provider and model defaults before building.
-7. Start Docker Desktop and the backend. Confirm that the startup script waits for
-   PostgreSQL readiness before running database migrations, then verify that /health
-   returns {"ok":true}.
-8. Run the Node checks and tests plus the Swift tests, build OFFICESTRA, and open it.
-9. Do not delete existing folders, Git changes, or Docker data. Create and verify a
-   PostgreSQL backup, then report the install path, versions, running components,
-   restart and update instructions, backup location, and verification results.
+Install only missing prerequisites and clone the v1.0.1 tag into ~/OFFICESTRA.
+Ask me which coworker workspace to use, or use ~/Projects if I have no preference.
+Write that absolute path to characters.json as workdir. If only one AI CLI is
+available, set all five coworkers to provider and model values supported by that
+CLI. Preserve my existing login, start Docker, the backend, and the app, then
+verify that /health returns {"ok":true}. Do not delete an existing folder or
+Docker data; tell me first if either already exists.
 ```
+
+<details>
+<summary><strong>Show manual installation commands</strong></summary>
 
 ### Manual setup on a new Mac
 
@@ -301,6 +292,14 @@ the Swift package product remains `OfficeLLM` for compatibility. If you installe
 only one AI provider, use the upper-right settings screen to assign that provider
 and a compatible model to all five coworkers before starting work.
 
+</details>
+
+<details>
+<summary><strong>Existing v1.0.0 update and backup guide</strong></summary>
+
+Skip the following sections for a fresh v1.0.1 installation. They are only for
+preserving conversations and work records from an existing v1.0.0 installation.
+
 ### Back up the database and verify recovery
 
 Back up before every update and before deleting Docker data. Keep the backend and
@@ -395,6 +394,8 @@ the Node dependencies, waits for PostgreSQL, and applies new migrations.
 In a second Terminal, verify `curl -fsS http://127.0.0.1:4317/health`, then run
 `swift run OfficeLLM`. Keep the verified dump until you have confirmed your
 coworkers, history, and work records in the updated app.
+
+</details>
 
 ### Stop and restart
 
