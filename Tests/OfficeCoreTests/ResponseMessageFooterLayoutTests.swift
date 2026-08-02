@@ -7,6 +7,13 @@ import XCTest
 
 @MainActor
 final class ResponseMessageFooterLayoutTests: XCTestCase {
+    func testTimestampUsesMediumWeight() {
+        XCTAssertEqual(
+            ResponseMessageFooter.timestampFontWeight,
+            .medium
+        )
+    }
+
     func testCopyButtonStaysBelowTimeAtNarrowWidth() {
         let footer = ResponseMessageFooter(
             occurredAt: Date(timeIntervalSince1970: 1_000),
