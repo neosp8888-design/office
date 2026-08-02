@@ -825,32 +825,13 @@ private struct CodexMessageView: View {
             )
             .textSelection(.enabled)
 
-            HStack(spacing: 7) {
-                Text(message.occurredAt.formatted(
-                    date: .omitted,
-                    time: .standard
-                ))
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-
-                Spacer(minLength: 6)
-
-                Button {
-                    copyMessage()
-                } label: {
-                    Label(
-                        copied ? "복사됨" : "복사",
-                        systemImage: copied ? "checkmark" : "doc.on.doc"
-                    )
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(
-                        copied ? DashboardPalette.accent : Color.secondary
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(copied ? "메시지 복사됨" : "메시지 복사")
-                .accessibilityIdentifier("copyMessage-\(message.id)")
-            }
+            ResponseMessageFooter(
+                occurredAt: message.occurredAt,
+                copied: copied,
+                accentColor: DashboardPalette.accent,
+                accessibilityID: "copyMessage-\(message.id)",
+                copy: copyMessage
+            )
         }
         .padding(.vertical, 2)
         .onChange(of: message.text) { _, _ in
