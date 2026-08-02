@@ -172,7 +172,7 @@ public enum PixelOfficeAsset {
             subdirectory: "office-retina-v1/backgrounds/\(style.rawValue)"
         )
 
-        guard let url = Bundle.module.url(
+        guard let url = OfficeCoreResourceBundle.bundle.url(
             forResource: resource.name,
             withExtension: "png",
             subdirectory: resource.subdirectory
@@ -184,7 +184,7 @@ public enum PixelOfficeAsset {
     }
 
     public static func avatarURL(for character: OfficeCharacter) -> URL? {
-        Bundle.module.url(
+        OfficeCoreResourceBundle.bundle.url(
             forResource: "avatar-\(character.rawValue)",
             withExtension: "png",
             subdirectory: "avatars"
@@ -206,7 +206,7 @@ public enum PixelOfficeAsset {
             return nil
         }
 
-        return Bundle.module.url(
+        return OfficeCoreResourceBundle.bundle.url(
             forResource: filename,
             withExtension: "png",
             subdirectory: "profiles"
@@ -235,7 +235,7 @@ public enum PixelOfficeAsset {
             style.rawValue,
             theme.rawValue
         ].joined(separator: "/")
-        guard let url = Bundle.module.url(
+        guard let url = OfficeCoreResourceBundle.bundle.url(
             forResource: filename,
             withExtension: "png",
             subdirectory: subdirectory
