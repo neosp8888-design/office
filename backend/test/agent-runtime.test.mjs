@@ -25,7 +25,9 @@ import {
   claudeSessionPath,
   claudeSessionResumable,
   codexUsageDelta,
+  latestClaudeUsageFromSession,
   latestCodexUsageFromRollout,
+  recoverInterruptedUsage,
   promptWithAttachments,
   stageAttachments,
 } from "../src/agent-runtime.mjs";
@@ -1293,6 +1295,88 @@ test("Codex rollout 끝에서 직전 누적 사용량을 찾는다", () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("Claude 세션 기록 끝에서 마지막 사용량을 읽는다", () => {
+  const directory = mkdtempSync(join(tmpdir(), "office-claude-usage-"));
+  try {
+    const path = join(directory, "session.jsonl");
+    writeFileSync(path, [
+      JSON.stringify({
+        type: "assistant",
+        message: { usage: { input_tokens: 1, output_tokens: 2 } },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 11,
+            output_tokens: 826,
+            cache_read_input_tokens: 635_024,
+            cache_creation_input_tokens: 888,
+            cache_creation: {
+              ephemeral_5m_input_tokens: 0,
+              ephemeral_1h_input_tokens: 888,
+            },
+            service_tier: "standard",
+          },
+        },
+      }),
+      JSON.stringify({ type: "user", message: { content: [] } }),
+      "",
+    ].join("\n"));
+
+    const usage = latestClaudeUsageFromSession(path);
+
+    assert.equal(usage.inputTokens, 11);
+    assert.equal(usage.outputTokens, 826);
+    assert.equal(usage.cachedInputTokens, 635_024);
+    assert.equal(usage.cacheWriteInputTokens, 888);
+    assert.equal(usage.cacheWrite1hInputTokens, 888);
+    assert.equal(usage.serviceTier, "standard");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("중단된 Claude 턴의 사용량을 세션 기록에서 되살린다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const path = writeClaudeSession(workdir, "session-1");
+    writeFileSync(path, `${JSON.stringify({
+      type: "assistant",
+      message: { usage: { input_tokens: 5, output_tokens: 7 } },
+    })}\n`);
+    const state = {
+      character: { backend: "claude", model: "claude-sonnet-5" },
+      workdir,
+      externalSessionID: "session-1",
+    };
+
+    const usage = recoverInterruptedUsage(state);
+
+    assert.equal(usage.inputTokens, 5);
+    assert.equal(state.usage.outputTokens, 7);
+  });
+});
+
+test("이미 사용량이 있는 턴은 세션 기록으로 덮어쓰지 않는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const path = writeClaudeSession(workdir, "session-1");
+    writeFileSync(path, `${JSON.stringify({
+      type: "assistant",
+      message: { usage: { input_tokens: 5, output_tokens: 7 } },
+    })}\n`);
+    const existing = { inputTokens: 99, outputTokens: 99 };
+    const state = {
+      character: { backend: "claude", model: "claude-sonnet-5" },
+      workdir,
+      externalSessionID: "session-1",
+      usage: existing,
+    };
+
+    assert.equal(recoverInterruptedUsage(state), null);
+    assert.equal(state.usage, existing);
+  });
 });
 
 test("Codex 재개 세션의 누적 사용량을 현재 턴 증분으로 바꾼다", () => {
