@@ -41,9 +41,31 @@ import {
 } from "./work-record-memory.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
+const automaticWorkspaceApprovalRetryIntervalMs = 10_000;
 const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
+let automaticWorkspaceApprovalRetryInFlight = false;
+
+function startAutomaticWorkspaceApprovalRetryLoop() {
+  const timer = setInterval(() => {
+    if (!runtime || automaticWorkspaceApprovalRetryInFlight) {
+      return;
+    }
+    automaticWorkspaceApprovalRetryInFlight = true;
+    void runtime.resumePendingAutomaticWorkspaceApprovals()
+      .catch((error) => {
+        console.warn(
+          "대기 중인 자동 승인·병합을 다시 시도하지 못했습니다.",
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .finally(() => {
+        automaticWorkspaceApprovalRetryInFlight = false;
+      });
+  }, automaticWorkspaceApprovalRetryIntervalMs);
+  timer.unref();
+}
 
 function broadcast(event) {
   const payload = JSON.stringify(event);
@@ -1848,6 +1870,7 @@ try {
   await runtime.recoverInterruptedJobs();
   await runtime.wakePeerWaitingAutomaticApprovals({ resume: false });
   await runtime.resumePendingAutomaticWorkspaceApprovals();
+  startAutomaticWorkspaceApprovalRetryLoop();
   server.listen(port, "127.0.0.1", () => {
     console.log(`사무실 백엔드 실행 중 http://127.0.0.1:${port}`);
   });
