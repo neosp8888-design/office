@@ -1680,10 +1680,12 @@ private struct CharacterSettingsView: View {
             .frame(maxHeight: 560)
 
             if let status = director.settingsStatus {
-                Text(status)
+                Text(OfficeLocalization.string(status))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(
-                        status.contains("저장") ? Color.green : Color.red
+                        status == "설정을 저장했습니다."
+                            ? Color.green
+                            : Color.red
                     )
             }
 
@@ -1697,7 +1699,9 @@ private struct CharacterSettingsView: View {
                         await director.saveConfiguration(
                             names: nameDrafts,
                             settings: settingsDrafts,
-                            identityPrompts: identityPromptDrafts
+                            identityPrompts: identityPromptDrafts.mapValues {
+                                OfficeLocalization.canonicalIdentityPrompt($0)
+                            }
                         )
                     }
                 }
@@ -1719,7 +1723,12 @@ private struct CharacterSettingsView: View {
             )
             identityPromptDrafts = Dictionary(
                 uniqueKeysWithValues: director.characters.map {
-                    ($0.id, director.identityPrompt(for: $0.id))
+                    (
+                        $0.id,
+                        OfficeLocalization.displayIdentityPrompt(
+                            director.identityPrompt(for: $0.id)
+                        )
+                    )
                 }
             )
         }
@@ -1765,7 +1774,7 @@ private struct CharacterSettingsEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text(seat)
+                Text(OfficeLocalization.string(seat))
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.secondary)
                     .frame(width: 70, alignment: .leading)

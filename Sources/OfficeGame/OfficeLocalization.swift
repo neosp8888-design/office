@@ -3,6 +3,11 @@
 import Foundation
 
 enum OfficeLocalization {
+    private static let koreanDefaultIdentityPrompt =
+        "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다."
+    private static let englishDefaultIdentityPrompt =
+        "Understand work instructions precisely and report the execution plan and results concisely."
+
     static var usesKorean: Bool {
         languageIdentifier(for: preferredLanguages) == "ko"
     }
@@ -42,6 +47,18 @@ enum OfficeLocalization {
             locale: locale,
             arguments: arguments
         )
+    }
+
+    static func displayIdentityPrompt(_ prompt: String) -> String {
+        guard prompt == koreanDefaultIdentityPrompt else {
+            return prompt
+        }
+
+        return usesKorean ? koreanDefaultIdentityPrompt : englishDefaultIdentityPrompt
+    }
+
+    static func canonicalIdentityPrompt(_ prompt: String) -> String {
+        prompt == englishDefaultIdentityPrompt ? koreanDefaultIdentityPrompt : prompt
     }
 
     private static var preferredLanguages: [String] {

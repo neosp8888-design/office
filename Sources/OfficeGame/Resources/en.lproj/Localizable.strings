@@ -220,3 +220,15 @@
 "답장 픽" = "Reply needed";
 "오늘 마감" = "Off duty today";
 "앗차" = "Something went wrong";
+"상단" = "Top";
+"좌측 아래" = "Lower left";
+"좌측 위" = "Upper left";
+"우측 위" = "Upper right";
+"우측 아래" = "Lower right";
+"세션 복구가 끝난 뒤 설정할 수 있습니다." = "Settings are available after session restoration finishes.";
+"진행 중인 업무가 끝난 뒤 설정할 수 있습니다." = "Settings are available after the active work finishes.";
+"변경사항 검토를 마친 뒤 설정할 수 있습니다." = "Settings are available after the change review finishes.";
+"다른 설정을 저장하는 중입니다." = "Saving another setting.";
+"설정을 저장했습니다." = "Settings saved.";
+"직원 이름을 입력하세요." = "Enter a teammate name.";
+"직원별 역할·업무 지침을 입력하세요." = "Enter role and work instructions for each teammate.";
