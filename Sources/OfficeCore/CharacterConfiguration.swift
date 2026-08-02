@@ -301,7 +301,7 @@ public struct OfficeAgentConfiguration: Codable, Sendable {
 
 public enum CharacterConfigurationAsset {
     public static func load() throws -> OfficeAgentConfiguration {
-        guard let url = Bundle.module.url(
+        guard let url = OfficeCoreResourceBundle.bundle.url(
             forResource: "characters",
             withExtension: "json"
         ) else {

@@ -26,7 +26,7 @@ enum OfficeLocalization {
         let localization = languageIdentifier(for: preferredLanguages)
 
         guard
-            let path = Bundle.module.path(
+            let path = OfficeGameResourceBundle.bundle.path(
                 forResource: "Localizable",
                 ofType: "strings",
                 inDirectory: nil,

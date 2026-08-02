@@ -50,7 +50,7 @@ public enum BossCharacterAsset {
     )
 
     private static func load(_ filename: String) -> NSImage {
-        guard let url = Bundle.module.url(
+        guard let url = OfficeCoreResourceBundle.bundle.url(
             forResource: filename,
             withExtension: "png"
         ),

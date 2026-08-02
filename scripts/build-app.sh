@@ -4,21 +4,47 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_BUNDLE="$PROJECT_DIR/dist/OFFICESTRA.app"
-CONTENTS_DIR="$APP_BUNDLE/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
+DIST_DIR="$PROJECT_DIR/dist"
+APP_BUNDLE="$DIST_DIR/OFFICESTRA.app"
 
 cd "$PROJECT_DIR"
 swift build -c release --product OfficeLLM
 BIN_DIR="$(swift build -c release --show-bin-path)"
-RESOURCE_STAGE_DIR="$(mktemp -d /tmp/officellm-resources.XXXXXX)"
-RESOURCE_STAGE_BUNDLE="$RESOURCE_STAGE_DIR/OfficeLLM_OfficeCore.bundle"
+CORE_RESOURCE_BUNDLE="$BIN_DIR/OfficeLLM_OfficeCore.bundle"
+GAME_RESOURCE_BUNDLE="$BIN_DIR/OfficeLLM_OfficeGame.bundle"
 
-trap 'rm -rf "$RESOURCE_STAGE_DIR"' EXIT
+for required_path in \
+    "$BIN_DIR/OfficeLLM" \
+    "$CORE_RESOURCE_BUNDLE/Info.plist" \
+    "$CORE_RESOURCE_BUNDLE/characters.json" \
+    "$CORE_RESOURCE_BUNDLE/office-retina-v1" \
+    "$CORE_RESOURCE_BUNDLE/avatars" \
+    "$CORE_RESOURCE_BUNDLE/profiles" \
+    "$GAME_RESOURCE_BUNDLE/Info.plist" \
+    "$GAME_RESOURCE_BUNDLE/en.lproj/Localizable.strings" \
+    "$GAME_RESOURCE_BUNDLE/ko.lproj/Localizable.strings"; do
+    if [[ ! -e "$required_path" ]]; then
+        print -u2 "필수 빌드 결과가 없습니다. $required_path"
+        exit 1
+    fi
+done
+
+mkdir -p "$DIST_DIR"
+STAGING_ROOT="$(mktemp -d "$DIST_DIR/.officestra-build.XXXXXX")"
+STAGED_APP="$STAGING_ROOT/OFFICESTRA.app"
+CONTENTS_DIR="$STAGED_APP/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+
+cleanup() {
+    if [[ -d "$STAGING_ROOT" ]]; then
+        rm -rf "$STAGING_ROOT"
+    fi
+}
+
+trap cleanup EXIT
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-mkdir -p "$RESOURCE_STAGE_BUNDLE"
 cp "$BIN_DIR/OfficeLLM" "$MACOS_DIR/OfficeLLM"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 
@@ -32,37 +58,67 @@ cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
 
-cp \
-    "$PROJECT_DIR/Sources/OfficeCore/Resources/characters.json" \
-    "$RESOURCE_STAGE_BUNDLE/characters.json"
-
-mkdir -p "$RESOURCE_STAGE_BUNDLE/office-retina-v1"
 /usr/bin/rsync \
     -a \
     --delete \
-    "$PROJECT_DIR/Sources/OfficeCore/Resources/office-retina-v1/" \
-    "$RESOURCE_STAGE_BUNDLE/office-retina-v1/"
-
-mkdir -p "$RESOURCE_STAGE_BUNDLE/avatars"
-/usr/bin/rsync \
-    -a \
-    --delete \
-    "$PROJECT_DIR/Sources/OfficeCore/Resources/avatars/" \
-    "$RESOURCE_STAGE_BUNDLE/avatars/"
-
-mkdir -p "$RESOURCE_STAGE_BUNDLE/profiles"
-/usr/bin/rsync \
-    -a \
-    --delete \
-    "$PROJECT_DIR/Sources/OfficeCore/Resources/profiles/" \
-    "$RESOURCE_STAGE_BUNDLE/profiles/"
-
-/usr/bin/rsync \
-    -a \
-    --delete \
-    "$RESOURCE_STAGE_BUNDLE/" \
+    "$CORE_RESOURCE_BUNDLE/" \
     "$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/"
+
+/usr/bin/rsync \
+    -a \
+    --delete \
+    "$GAME_RESOURCE_BUNDLE/" \
+    "$RESOURCES_DIR/OfficeLLM_OfficeGame.bundle/"
+
+RUNTIME_CONFIG="$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/characters.json"
+OFFICESTRA_PROJECT_DIR="$PROJECT_DIR" \
+OFFICESTRA_RUNTIME_CONFIG="$RUNTIME_CONFIG" \
+OFFICESTRA_CONFIGURED_WORKDIR="${OFFICESTRA_WORKDIR:-}" \
+/usr/bin/env node <<'NODE'
+const fs = require("node:fs");
+const nodePath = require("node:path");
+
+const configPath = process.env.OFFICESTRA_RUNTIME_CONFIG;
+const configuration = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const configuredWorkdir = process.env.OFFICESTRA_CONFIGURED_WORKDIR?.trim();
+
+if (configuredWorkdir) {
+  configuration.workdir = configuredWorkdir;
+} else if (configuration.workdir === "/Users/your-name/Projects") {
+  configuration.workdir = process.env.OFFICESTRA_PROJECT_DIR;
+}
+
+if (
+  !nodePath.isAbsolute(configuration.workdir) ||
+  !fs.statSync(configuration.workdir).isDirectory()
+) {
+  throw new Error(`업무 폴더가 올바른 디렉터리가 아닙니다. ${configuration.workdir}`);
+}
+
+fs.writeFileSync(configPath, `${JSON.stringify(configuration, null, 2)}\n`);
+NODE
+
 chmod 755 "$MACOS_DIR/OfficeLLM"
-codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --force --deep --sign - "$STAGED_APP"
+codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+
+if [[ -e "$APP_BUNDLE" ]]; then
+    /usr/bin/swift -e '
+        import Darwin
+
+        let installedApp = CommandLine.arguments[1]
+        let stagedApp = CommandLine.arguments[2]
+        guard renamex_np(
+            installedApp,
+            stagedApp,
+            UInt32(RENAME_SWAP)
+        ) == 0 else {
+            perror("OFFICESTRA.app 원자적 교체")
+            exit(1)
+        }
+    ' "$APP_BUNDLE" "$STAGED_APP"
+else
+    mv "$STAGED_APP" "$APP_BUNDLE"
+fi
 
 echo "$APP_BUNDLE"

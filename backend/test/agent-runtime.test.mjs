@@ -169,6 +169,10 @@ test("Codex 재개는 현재 역할 지침을 같은 세션에 전달한다", ()
   assert.match(instructions, /v1\.0 이전 작업 기록/);
   assert.match(instructions, /새 내용을 추가하거나 수정하지 않는다/);
   assert.match(instructions, /GET \/api\/work-records/);
+  assert.match(instructions, /원본 작업 폴더의 dist\/OFFICESTRA\.app/);
+  assert.match(instructions, /4317 백엔드와 launchctl 작업/);
+  assert.match(instructions, /현재 업무 worktree 안에서만 수행/);
+  assert.match(instructions, /변경이 main에 병합된 뒤/);
   assert.equal(argumentsList.at(-1), "계속해줘.");
 });
 
@@ -224,6 +228,14 @@ test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달
   assert.match(
     argumentsList[identityIndex + 1],
     /checklist\.md와 context-notes\.md/,
+  );
+  assert.match(
+    argumentsList[identityIndex + 1],
+    /원본 작업 폴더의 dist\/OFFICESTRA\.app/,
+  );
+  assert.match(
+    argumentsList[identityIndex + 1],
+    /변경이 main에 병합된 뒤/,
   );
   assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
   assert.equal(argumentsList.includes("--resume"), true);

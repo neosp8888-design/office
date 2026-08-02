@@ -65,6 +65,9 @@ const RESPONSE_INSTRUCTION = `
 v1.0 이전 작업 기록인 checklist.md와 context-notes.md는 동결본이다. 읽을 수 있지만 새 내용을 추가하거나 수정하지 않는다. 또한 재생성하지 않는다.
 현재 작업 기록은 읽기 전용 GET /api/work-records로 조회한다.
 
+격리된 업무 worktree에서는 원본 작업 폴더의 dist/OFFICESTRA.app, 실행 중인 OfficeLLM 앱, 4317 백엔드와 launchctl 작업을 수정·종료·재시작하지 않는다.
+빌드와 테스트는 현재 업무 worktree 안에서만 수행한다. 중앙 앱 배포와 운영 프로세스 재시작은 변경이 main에 병합된 뒤 사용자가 명시적으로 요청한 경우에만 수행한다.
+
 RAG, 데이터베이스, 파일, 웹, 도구 또는 스킬에서 내용을 실제 근거로 사용했다면 일반 최종 응답 맨 끝에 아래 기계 판독용 블록을 붙인다. 사용하지 않았거나 [NEED_INPUT] 응답이면 블록을 붙이지 않는다.
 [OFFICE_SOURCES]
 [{"kind":"file","title":"근거 이름","locator":"실제 경로 또는 식별자","excerpt":"필요한 경우 짧은 근거"}]
