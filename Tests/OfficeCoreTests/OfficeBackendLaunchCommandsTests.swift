@@ -54,6 +54,9 @@ final class OfficeBackendLaunchCommandsTests: XCTestCase {
             "CHARACTER_CONFIG_PATH='/Applications/OFFICESTRA.app/Contents/Resources/OfficeLLM_OfficeCore.bundle/characters.json'"
         ) == true)
         XCTAssertTrue(command.arguments.last?.contains(
+            "OFFICE_WORKDIR='/Users/neo/office'"
+        ) == true)
+        XCTAssertTrue(command.arguments.last?.contains(
             "cd '/Users/neo/office/backend'"
         ) == true)
     }

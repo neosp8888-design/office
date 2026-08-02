@@ -71,9 +71,18 @@ cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
     "$RESOURCES_DIR/OfficeLLM_OfficeGame.bundle/"
 
 RUNTIME_CONFIG="$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/characters.json"
-OFFICESTRA_PROJECT_DIR="$PROJECT_DIR" \
+RUNTIME_WORKDIR="${OFFICESTRA_WORKDIR:-}"
+if [[ -z "$RUNTIME_WORKDIR" ]]; then
+    if GIT_COMMON_DIR="$(git -C "$PROJECT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+        && [[ "${GIT_COMMON_DIR:t}" == ".git" ]]; then
+        RUNTIME_WORKDIR="${GIT_COMMON_DIR:h}"
+    else
+        RUNTIME_WORKDIR="$PROJECT_DIR"
+    fi
+fi
+
 OFFICESTRA_RUNTIME_CONFIG="$RUNTIME_CONFIG" \
-OFFICESTRA_CONFIGURED_WORKDIR="${OFFICESTRA_WORKDIR:-}" \
+OFFICESTRA_CONFIGURED_WORKDIR="$RUNTIME_WORKDIR" \
 /usr/bin/env node <<'NODE'
 const fs = require("node:fs");
 const nodePath = require("node:path");
@@ -82,11 +91,7 @@ const configPath = process.env.OFFICESTRA_RUNTIME_CONFIG;
 const configuration = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const configuredWorkdir = process.env.OFFICESTRA_CONFIGURED_WORKDIR?.trim();
 
-if (configuredWorkdir) {
-  configuration.workdir = configuredWorkdir;
-} else if (configuration.workdir === "/Users/your-name/Projects") {
-  configuration.workdir = process.env.OFFICESTRA_PROJECT_DIR;
-}
+configuration.workdir = configuredWorkdir;
 
 if (
   !nodePath.isAbsolute(configuration.workdir) ||

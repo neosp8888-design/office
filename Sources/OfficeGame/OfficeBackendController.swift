@@ -66,6 +66,7 @@ enum OfficeBackendLaunchCommands {
         nodeExecutableURL: URL
     ) -> OfficeBackendLaunchCommand {
         let command = """
+        export OFFICE_WORKDIR=\(shellQuoted(configuration.workdir.path)); \
         export CHARACTER_CONFIG_PATH=\(shellQuoted(configuration.runtimeConfigurationURL.path)); \
         cd \(shellQuoted(configuration.workdir.appending(path: "backend").path)); \
         exec \(shellQuoted(nodeExecutableURL.path)) src/server.mjs

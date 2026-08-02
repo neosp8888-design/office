@@ -19,7 +19,22 @@ export function characterConfigPath() {
 
 export async function readCharacterConfiguration() {
   const source = await readFile(characterConfigPath(), "utf8");
-  return JSON.parse(source);
+  return configurationWithRuntimeWorkdir(
+    JSON.parse(source),
+    process.env.OFFICE_WORKDIR,
+  );
+}
+
+export function configurationWithRuntimeWorkdir(
+  configuration,
+  runtimeWorkdir,
+) {
+  const normalizedWorkdir = String(runtimeWorkdir ?? "").trim();
+  if (!normalizedWorkdir) return configuration;
+  return {
+    ...configuration,
+    workdir: resolve(normalizedWorkdir),
+  };
 }
 
 export function characterSettingsRequireNewSession(previous, next) {
