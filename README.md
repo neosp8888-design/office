@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
-  <img src="https://img.shields.io/badge/version-1.0.0-5B5BD6" alt="OFFICESTRA 1.0.0">
+  <img src="https://img.shields.io/badge/version-1.0.1-5B5BD6" alt="OFFICESTRA 1.0.1">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -162,7 +162,7 @@ Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한�
 사람이 직접 처리해야 하는 단계만 AI가 설명하고 기다리게 된다.
 
 ```text
-이 Mac에 OFFICESTRA v1.0.0을 설치하고 실제 실행까지 확인해줘.
+이 Mac에 OFFICESTRA v1.0.1을 설치하고 실제 실행까지 확인해줘.
 저장소는 https://github.com/neosp8888-design/office.git 이야.
 
 1. macOS 버전과 CPU 종류를 확인하고 Git, Swift 5.10+, Node.js/npm, Docker Compose,
@@ -171,17 +171,18 @@ Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한�
    내가 사용하지 않는 다른 AI CLI는 억지로 설치하지 마.
 3. 관리자 암호 입력이나 macOS/Docker 화면 클릭이 필요하면 이유와 누를 항목을
    한국어로 정확히 설명한 뒤 기다려.
-4. ~/OFFICESTRA가 없으면 v1.0.0 태그를 그 폴더에 clone해. 폴더가 이미 있으면
+4. ~/OFFICESTRA가 없으면 v1.0.1 태그를 그 폴더에 clone해. 폴더가 이미 있으면
    삭제하거나 덮어쓰지 말고 Git 상태를 확인한 뒤 안전한 방법을 제안해.
 5. AI 직원들이 작업할 폴더를 나에게 물어보고 characters.json의 workdir를 그
    절대 경로로 바꿔. 정하지 못하면 ~/Projects를 새로 만들어 사용해.
 6. AI CLI가 하나만 설치되어 있으면 다섯 직원의 provider·model 기본값을 그 CLI에
    맞게 설정해.
-7. Docker Desktop을 실행한 뒤 백엔드와 DB 마이그레이션을 시작하고 /health가
-   {"ok":true}인지 확인해.
+7. Docker Desktop과 백엔드를 시작해. 시작 스크립트가 PostgreSQL 준비를 기다린
+   뒤 DB 마이그레이션을 실행하는지 확인하고 /health가 {"ok":true}인지 확인해.
 8. Node 구문 검사와 테스트, Swift 테스트를 실행하고 OFFICESTRA 앱을 빌드해 열어.
-9. 기존 폴더, Git 변경, Docker 데이터는 삭제하지 마. 완료하면 설치 위치, 버전,
-   실행 중인 항목, 다시 실행하는 방법과 검증 결과만 쉽게 정리해줘.
+9. 기존 폴더, Git 변경, Docker 데이터는 삭제하지 마. PostgreSQL 백업을 만들고
+   읽을 수 있는지도 검증해. 완료하면 설치 위치, 버전, 실행 중인 항목, 다시
+   실행하고 업데이트하는 방법, 백업 위치와 검증 결과만 쉽게 정리해줘.
 ```
 
 ### 새 Mac에서 직접 설치하기
@@ -270,8 +271,13 @@ claude
 
 #### 5. OFFICESTRA 내려받기
 
+아래 clone 명령은 `~/OFFICESTRA` 폴더가 없을 때만 실행한다. 이미 있다면 삭제하거나
+덮어쓰지 말고 [기존 설치 업데이트](#v100에서-v101로-업데이트) 절차를 따른다.
+릴리스 태그는 Git에서 `detached HEAD`로 표시되며 공개 버전을 실행하는 설치에서는
+정상이다.
+
 ```sh
-git clone --branch v1.0.0 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone --branch v1.0.1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
 ```
 
@@ -296,7 +302,9 @@ cd "$HOME/OFFICESTRA"
 ```
 
 처음 실행할 때 PostgreSQL 이미지와 Node 패키지를 받으므로 시간이 걸릴 수 있다.
-다른 터미널 탭에서 상태를 확인했을 때 `{"ok":true}`가 나오면 준비된 것이다.
+시작 스크립트는 PostgreSQL이 실제로 요청을 받을 수 있을 때까지 기다린 뒤 DB
+마이그레이션과 백엔드를 실행한다. 다른 터미널 탭에서 상태를 확인했을 때
+`{"ok":true}`가 나오면 준비된 것이다.
 
 ```sh
 curl -fsS http://127.0.0.1:4317/health
@@ -326,6 +334,118 @@ docker compose -f infra/compose.yaml down
 `down -v`는 저장된 대화 DB까지 삭제하므로 초기화를 원할 때만 사용한다. 다시
 실행할 때는 Docker Desktop을 먼저 열고, 위의 백엔드 명령과 앱 명령을 각각 다시
 실행한다.
+
+### v1.0.0에서 v1.0.1로 업데이트
+
+먼저 아래의 **데이터베이스 백업과 복구 검증** 절차로 백업 파일을 만든다. 그다음
+앱과 백엔드를 실행한 터미널에서 각각 `Control + C`를 눌러 종료한다. PostgreSQL
+컨테이너는 업데이트 중 그대로 두어도 된다.
+
+설치 폴더로 이동해 개인 작업 폴더 경로를 별도 파일에 보관하고 Git 상태를
+확인한다.
+
+```sh
+cd "$HOME/OFFICESTRA"
+node -p "require('./Sources/OfficeCore/Resources/characters.json').workdir" \
+  > "$HOME/OFFICESTRA-workdir.txt"
+git status --short
+```
+
+`characters.json` 한 파일만 보이면 아래 업데이트를 계속해도 된다. 다른 파일도
+나오면 삭제하거나 덮어쓰지 말고, 그 변경을 만든 AI에게 먼저 확인을 맡긴다.
+
+```sh
+git restore -- Sources/OfficeCore/Resources/characters.json
+git fetch origin --tags
+git switch --detach v1.0.1
+```
+
+태그 전환 뒤 작업 폴더가 공개 예시 경로로 돌아갔다면 보관한 경로를 다시 넣는다.
+아래 명령은 공백이 들어간 경로도 JSON 문자열로 안전하게 저장한다.
+
+```sh
+OFFICESTRA_WORKDIR="$(cat "$HOME/OFFICESTRA-workdir.txt")"
+node -e '
+const fs = require("node:fs");
+const file = "Sources/OfficeCore/Resources/characters.json";
+const config = JSON.parse(fs.readFileSync(file, "utf8"));
+config.workdir = process.argv[1];
+fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+' "$OFFICESTRA_WORKDIR"
+grep '"workdir"' Sources/OfficeCore/Resources/characters.json
+```
+
+백엔드와 앱을 다시 실행하고 버전과 상태를 확인한다.
+
+```sh
+./scripts/start-backend.sh
+```
+
+다른 터미널 탭에서 실행한다.
+
+```sh
+cd "$HOME/OFFICESTRA"
+git describe --tags --exact-match
+curl -fsS http://127.0.0.1:4317/health
+swift run OfficeLLM
+```
+
+태그 전환이 로컬 변경 때문에 중단되면 강제로 초기화하지 않는다. 기존 폴더를
+`OFFICESTRA-v1.0.0`처럼 이름만 바꾸고 v1.0.1을 새 `OFFICESTRA` 폴더에 clone한
+뒤, 위에서 보관한 작업 폴더 경로만 새 설정에 적용하는 재설치가 가장 안전하다.
+두 폴더와 Docker 볼륨은 새 설치가 정상 동작하는 것을 확인할 때까지 삭제하지
+않는다.
+
+### 데이터베이스 백업과 비파괴 복구 검증
+
+대화·작업 기록은 Docker의 PostgreSQL 볼륨에 있으므로 코드 업데이트와 별도로
+백업한다. 아래 명령은 현재 DB를 custom format 파일로 저장하고, 백업 목록을
+읽을 수 있는지 확인한다.
+
+```sh
+cd "$HOME/OFFICESTRA"
+mkdir -p "$HOME/OFFICESTRA-backups"
+BACKUP_FILE="$HOME/OFFICESTRA-backups/office-$(date +%Y%m%d-%H%M%S).dump"
+
+docker compose -f infra/compose.yaml up -d postgres
+until docker compose -f infra/compose.yaml exec -T postgres \
+  pg_isready -U office -d office >/dev/null 2>&1; do sleep 1; done
+docker compose -f infra/compose.yaml exec -T postgres \
+  pg_dump -U office -d office -Fc > "$BACKUP_FILE"
+test -s "$BACKUP_FILE"
+docker compose -f infra/compose.yaml exec -T postgres \
+  pg_restore -l < "$BACKUP_FILE" >/dev/null
+ls -lh "$BACKUP_FILE"
+```
+
+더 확실한 검증은 운영 DB를 건드리지 않고 같은 PostgreSQL 컨테이너에 임시 DB를
+만들어 실제 복원해 보는 것이다. 다음 블록은 복원 결과의 핵심 테이블 수를
+확인하고 임시 DB만 삭제한다.
+
+```sh
+cd "$HOME/OFFICESTRA"
+BACKUP_FILE="$(ls -t "$HOME"/OFFICESTRA-backups/office-*.dump | head -1)"
+(
+  set -e
+  VERIFY_DB="office_restore_verify_$(date +%Y%m%d%H%M%S)"
+  docker compose -f infra/compose.yaml exec -T postgres \
+    createdb -U office "$VERIFY_DB"
+  trap 'docker compose -f infra/compose.yaml exec -T postgres dropdb --if-exists --force -U office "$VERIFY_DB" >/dev/null' EXIT
+  docker compose -f infra/compose.yaml exec -T postgres \
+    pg_restore --exit-on-error -U office -d "$VERIFY_DB" \
+    --no-owner --no-privileges < "$BACKUP_FILE"
+  docker compose -f infra/compose.yaml exec -T postgres \
+    psql -U office -d "$VERIFY_DB" -c \
+    "SELECT count(*) AS restored_tables FROM pg_catalog.pg_tables WHERE schemaname = 'public';"
+)
+```
+
+마지막 조회에서 복원된 테이블이 한 개 이상 보여야 하며, 임시 DB는 성공·실패와
+관계없이 자동으로 삭제된다. 운영 `office` DB에 직접 복원하면 기존 데이터를
+덮거나 중복시킬 수 있으므로 이 문서에서는 실행하지 않는다. 실제 장애 복구가
+필요하면 백업 파일을 보존한 채 Codex나 Claude에게 운영 DB 정지와 복구 순서를
+점검시킨다. `docker compose down -v`는 백업 명령이 아니라 PostgreSQL 볼륨 삭제
+명령이므로 사용하지 않는다.
 
 ### 막힐 때 확인할 것
 
@@ -376,6 +496,7 @@ Standard로 표시한다.
 | 활성 세션 | `GET /api/active-sessions` |
 | 전체·직원별 기록 | `GET /api/history`, `GET /api/characters/:id/history` |
 | 실시간 피드 | `GET /api/live-feed`, `GET /api/live-feed/:turnId` |
+| 전체 보관함 피드 | `GET /api/archive-feed` |
 | 변경 알림 | `WS /ws` |
 | 직원 설정 | `PUT /api/characters/:id/name`, `PUT /api/characters/:id/settings` |
 | 역할 지침 | `PUT /api/characters/:id/identity-prompt` |
