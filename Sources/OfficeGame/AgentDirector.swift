@@ -265,7 +265,7 @@ final class AgentDirector: ObservableObject {
     private static let idleChatterQuietDelaySeconds = 5 ... 12
     private static let workingBubbleRotationDelay =
         Duration.milliseconds(1_400)
-    private static let workingBubbleMessages = [
+    private static let koreanWorkingBubbleMessages = [
         "🫡 오더 접수, 바로 갑니다",
         "🧠 뇌풀가동 ON",
         "⚡ 속도감 미쳤다",
@@ -317,7 +317,7 @@ final class AgentDirector: ObservableObject {
         "🧋 당충전 상상 중",
         "✅ 결과물 곧 도착",
     ]
-    private static let idleChatterMessages = [
+    private static let koreanIdleChatterMessages = [
         "☕ 카페인 1%로 버티는 중",
         "👀 새 업무 뜨면 바로 탑승",
         "🧠 뇌는 이미 출근 완료",
@@ -379,6 +379,44 @@ final class AgentDirector: ObservableObject {
         "🏃 일정이 저보다 빠름",
         "🛌 오늘의 목표, 무사 퇴근"
     ]
+    private static let englishWorkingBubbleMessages = [
+        "🫡 Got it, on it",
+        "🧠 Thinking it through",
+        "⚡ Moving quickly",
+        "🧩 Putting the pieces together",
+        "👀 Checking the details",
+        "🛠️ Working on it",
+        "🔎 Tracing the issue",
+        "🧪 Verifying the result",
+        "🎯 Focusing on the key point",
+        "⌨️ Coding away",
+        "📌 Setting priorities",
+        "✅ Result coming soon",
+    ]
+    private static let englishIdleChatterMessages = [
+        "☕ Ready for the next task",
+        "👀 Standing by",
+        "🧠 Thinking ahead",
+        "🌱 Growing new ideas",
+        "🎧 Finding focus",
+        "🚀 Waiting for the next request",
+        "📌 Organizing today's work",
+        "🔍 Checking for missed details",
+        "🧩 Looking for improvements",
+        "🛠️ Watching the workflow",
+        "📚 Exploring new ideas",
+        "🎯 Ready when you are",
+    ]
+    private static var workingBubbleMessages: [String] {
+        OfficeLocalization.usesKorean
+            ? koreanWorkingBubbleMessages
+            : englishWorkingBubbleMessages
+    }
+    private static var idleChatterMessages: [String] {
+        OfficeLocalization.usesKorean
+            ? koreanIdleChatterMessages
+            : englishIdleChatterMessages
+    }
 
     init() {
         do {
@@ -496,7 +534,7 @@ final class AgentDirector: ObservableObject {
     }
 
     func displayName(for character: OfficeCharacter) -> String {
-        names[character] ?? character.rawValue
+        OfficeLocalization.string(names[character] ?? character.rawValue)
     }
 
     func identityPrompt(for character: OfficeCharacter) -> String {

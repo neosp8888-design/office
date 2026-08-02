@@ -11,6 +11,7 @@ struct OfficeGameApp: App {
     var body: some Scene {
         WindowGroup("OFFICESTRA") {
             OfficeGameView(director: director)
+                .environment(\.locale, OfficeLocalization.locale)
         }
         .defaultSize(width: 1_440, height: 900)
         .windowResizability(.contentMinSize)
@@ -927,43 +928,63 @@ private struct OfficeGameView: View {
 
     private var commandPlaceholder: String {
         if let restoreError = director.sessionRestoreError {
-            return "세션 복구 실패 · \(restoreError)"
+            return OfficeLocalization.format(
+                "세션 복구 실패 · %@",
+                restoreError
+            )
         }
         if !director.isReadyForSubmissions {
-            return "저장된 세션을 복구하는 중입니다"
+            return OfficeLocalization.string("저장된 세션을 복구하는 중입니다")
         }
         if director.selectedCharacterNeedsWorkspaceReview {
-            return "변경사항을 승인하거나 거절한 뒤 새 업무를 보내세요"
+            return OfficeLocalization.string(
+                "변경사항을 승인하거나 거절한 뒤 새 업무를 보내세요"
+            )
         }
         if
             let selectedCharacterID = director.selectedCharacterID,
             let persistenceError =
                 director.turnPersistenceErrors[selectedCharacterID]
         {
-            return "대화 기록 저장 실패 · \(persistenceError)"
+            return OfficeLocalization.format(
+                "대화 기록 저장 실패 · %@",
+                persistenceError
+            )
         }
         if let selectedName = director.selectedName {
             if
                 let selectedCharacterID = director.selectedCharacterID,
                 director.pendingQuestion(for: selectedCharacterID) != nil
             {
-                return "\(selectedName)의 질문에 답변하세요"
+                return OfficeLocalization.format(
+                    "%@의 질문에 답변하세요",
+                    selectedName
+                )
             }
             if
                 let selectedCharacterID = director.selectedCharacterID,
                 director.offDutyReason(for: selectedCharacterID) != nil
             {
-                return "\(selectedName)은 모델 한도 소진으로 퇴근했습니다"
+                return OfficeLocalization.format(
+                    "%@은 모델 한도 소진으로 퇴근했습니다",
+                    selectedName
+                )
             }
             if
                 let selectedCharacterID = director.selectedCharacterID,
                 director.failureMessage(for: selectedCharacterID) != nil
             {
-                return "\(selectedName)에게 새 업무를 보내 다시 시작하세요"
+                return OfficeLocalization.format(
+                    "%@에게 새 업무를 보내 다시 시작하세요",
+                    selectedName
+                )
             }
-            return "\(selectedName)에게 업무를 입력하세요"
+            return OfficeLocalization.format(
+                "%@에게 업무를 입력하세요",
+                selectedName
+            )
         }
-        return "캐릭터를 선택하세요"
+        return OfficeLocalization.string("캐릭터를 선택하세요")
     }
 
     private var commandIsDisabled: Bool {
@@ -1476,15 +1497,18 @@ private struct AgentQuickSettingsView: View {
                         apply(updated)
                     } label: {
                         if settings.permission == permission {
-                            Label(permission.title, systemImage: "checkmark")
+                            Label(
+                                OfficeLocalization.string(permission.title),
+                                systemImage: "checkmark"
+                            )
                         } else {
-                            Text(permission.title)
+                            Text(OfficeLocalization.string(permission.title))
                         }
                     }
                 }
             } label: {
                 QuickSettingLabel(
-                    text: settings.permission.title,
+                    text: OfficeLocalization.string(settings.permission.title),
                     systemImage: "shield"
                 )
             }
@@ -1704,7 +1728,8 @@ private struct CharacterSettingsEditor: View {
                 settingPickerLabel("권한")
                 Picker("권한", selection: $settings.permission) {
                     ForEach(AgentPermission.allCases) { permission in
-                        Text(permission.title).tag(permission)
+                        Text(OfficeLocalization.string(permission.title))
+                            .tag(permission)
                     }
                 }
                 .labelsHidden()
