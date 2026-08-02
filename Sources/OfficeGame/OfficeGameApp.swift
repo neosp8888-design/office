@@ -77,6 +77,25 @@ enum OfficeSplitLayout {
     }
 }
 
+enum OfficePanelControl {
+    case theme
+    case artStyle
+    case settings
+}
+
+enum OfficePanelControlLayout {
+    static func alignment(for control: OfficePanelControl) -> Alignment {
+        switch control {
+        case .theme:
+            .topLeading
+        case .artStyle:
+            .bottomTrailing
+        case .settings:
+            .topTrailing
+        }
+    }
+}
+
 private struct OfficeGameView: View {
     @ObservedObject var director: AgentDirector
     @State private var command = ""
@@ -336,13 +355,23 @@ private struct OfficeGameView: View {
         .clipShape(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
         )
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 7) {
-                themeToggle
-                artStyleToggle
-                characterSettingsButton
-            }
+        .overlay(
+            alignment: OfficePanelControlLayout.alignment(for: .theme)
+        ) {
+            themeToggle
             .padding(12)
+        }
+        .overlay(
+            alignment: OfficePanelControlLayout.alignment(for: .artStyle)
+        ) {
+            artStyleToggle
+                .padding(12)
+        }
+        .overlay(
+            alignment: OfficePanelControlLayout.alignment(for: .settings)
+        ) {
+            characterSettingsButton
+                .padding(12)
         }
         .officePanelStyle()
     }
@@ -556,24 +585,27 @@ private struct OfficeGameView: View {
     }
 
     private var artStyleToggle: some View {
-        Button {
-            toggleArtStyle()
-        } label: {
-            HStack(spacing: 2) {
-                artStyleSegment(
-                    title: "2D",
-                    isSelected: artStyle == .twoD
+        HStack(spacing: 6) {
+            Text("3D")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+
+            Toggle(
+                "3D 오피스",
+                isOn: Binding(
+                    get: { artStyle == .threeD },
+                    set: { isThreeD in
+                        setArtStyle(isThreeD ? .threeD : .twoD)
+                    }
                 )
-                artStyleSegment(
-                    title: "3D",
-                    isSelected: artStyle == .threeD
-                )
-            }
-            .padding(2)
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .tint(DashboardPalette.accent)
         }
-        .buttonStyle(.plain)
         .disabled(outgoingArtStyle != nil)
         .environment(\.colorScheme, theme.isNight ? .dark : .light)
+        .padding(.horizontal, 9)
         .frame(height: 32)
         .background(
             theme.isNight
@@ -601,14 +633,12 @@ private struct OfficeGameView: View {
         )
     }
 
-    private func toggleArtStyle() {
-        guard outgoingArtStyle == nil else {
+    private func setArtStyle(_ nextStyle: OfficeArtStyle) {
+        guard outgoingArtStyle == nil, artStyle != nextStyle else {
             return
         }
 
         let previousStyle = artStyle
-        let nextStyle: OfficeArtStyle =
-            previousStyle == .twoD ? .threeD : .twoD
 
         guard !reduceMotion else {
             selectedArtStyleRawValue = nextStyle.rawValue
@@ -631,30 +661,6 @@ private struct OfficeGameView: View {
             outgoingArtStyle = nil
             artStyleRevealProgress = 1
         }
-    }
-
-    private func artStyleSegment(
-        title: String,
-        isSelected: Bool
-    ) -> some View {
-        Text(title)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(
-                isSelected
-                    ? DashboardPalette.accent
-                    : theme.isNight
-                    ? Color.white.opacity(0.52)
-                    : Color.black.opacity(0.42)
-            )
-            .frame(width: 25, height: 26)
-            .background(
-                isSelected
-                    ? DashboardPalette.accent.opacity(
-                        theme.isNight ? 0.25 : 0.13
-                    )
-                    : Color.clear,
-                in: Capsule()
-            )
     }
 
     private var commandBar: some View {
