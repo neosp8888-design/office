@@ -78,18 +78,18 @@ final class PixelOfficeAssetTests: XCTestCase {
         }
     }
 
-    func testFullBodyProfilesExistOnlyForConfiguredWomen() throws {
-        let expected: Set<OfficeCharacter> = [.boss, .leftWoman, .rightWoman]
-
+    func testFullBodyProfilesExistForAllCharactersAtProfileSize() throws {
         for character in OfficeCharacter.allCases {
-            let profileURL = PixelOfficeAsset.fullBodyProfileURL(for: character)
-            if expected.contains(character) {
-                let url = try XCTUnwrap(profileURL)
-                let image = try XCTUnwrap(NSImage(contentsOf: url))
-                XCTAssertFalse(image.representations.isEmpty)
-            } else {
-                XCTAssertNil(profileURL)
-            }
+            let url = try XCTUnwrap(
+                PixelOfficeAsset.fullBodyProfileURL(for: character)
+            )
+            let image = try XCTUnwrap(NSImage(contentsOf: url))
+            let representation = try XCTUnwrap(
+                image.representations.first as? NSBitmapImageRep
+            )
+
+            XCTAssertEqual(representation.pixelsWide, 1_774)
+            XCTAssertEqual(representation.pixelsHigh, 3_548)
         }
     }
 
