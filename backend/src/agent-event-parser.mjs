@@ -424,6 +424,21 @@ function normalizedUsage(value, backend, options = {}) {
   return hasTokenOrCost ? usage : null;
 }
 
+// Claude 세션 기록 한 줄에서 사용량을 읽는다. 중단으로 결과 이벤트를
+// 받지 못한 턴의 사용량을 디스크에서 복구할 때 쓴다.
+export function claudeSessionUsage(line) {
+  let object;
+  try {
+    object = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
+    return null;
+  }
+  return normalizedUsage(object.message?.usage, "claude");
+}
+
 function tokenCount(value) {
   const number = nonnegativeNumber(value);
   return number === null ? null : Math.trunc(number);

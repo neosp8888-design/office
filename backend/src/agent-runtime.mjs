@@ -30,6 +30,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 
 import {
+  claudeSessionUsage,
   decodeAgentResponse,
   fileChangeActivityText,
   parseAgentEvent,
@@ -761,6 +762,7 @@ export class AgentRuntime {
           [state.sessionID],
         );
       }
+      recoverInterruptedUsage(state);
       await this.persistUsageRecord(this.pool, state);
     } finally {
       if (this.running.get(characterID) === state) {
@@ -2791,6 +2793,16 @@ function findRolloutPath(sessionID) {
 }
 
 export function latestCodexUsageFromRollout(path) {
+  return latestUsageFromTail(path, codexRolloutUsage);
+}
+
+// 중단된 Claude 턴은 결과 이벤트를 받지 못하므로 세션 기록 끝에서
+// 마지막 사용량을 읽어 복구한다.
+export function latestClaudeUsageFromSession(path) {
+  return latestUsageFromTail(path, claudeSessionUsage);
+}
+
+function latestUsageFromTail(path, extractUsage) {
   if (!path) {
     return null;
   }
@@ -2816,14 +2828,14 @@ export function latestCodexUsageFromRollout(path) {
       ).split("\n");
       leadingFragment = lines.shift() ?? "";
       for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const usage = codexRolloutUsage(lines[index]);
+        const usage = extractUsage(lines[index]);
         if (usage) {
           return usage;
         }
       }
       end = start;
     }
-    return codexRolloutUsage(leadingFragment);
+    return extractUsage(leadingFragment);
   } catch {
     return null;
   } finally {
@@ -2863,6 +2875,27 @@ export function codexUsageDelta(usage, baseline) {
     result[field] = current - previous;
   }
   return result;
+}
+
+// 중단된 턴은 결과 이벤트를 받기 전에 프로세스가 끝나 사용량이 비어 있다.
+// CLI가 디스크에 남긴 세션 기록에서 마지막 사용량을 되살린다.
+export function recoverInterruptedUsage(state) {
+  if (state.usage || !state.externalSessionID) {
+    return null;
+  }
+  const recorded = state.character?.backend === "codex"
+    ? latestCodexUsageFromRollout(findRolloutPath(state.externalSessionID))
+    : latestClaudeUsageFromSession(
+      claudeSessionPath(state.workdir, state.externalSessionID),
+    );
+  if (!recorded) {
+    return null;
+  }
+  const usage = usageForTurn(state, recorded);
+  if (usage) {
+    state.usage = usage;
+  }
+  return usage ?? null;
 }
 
 function usageForTurn(state, usage) {
