@@ -54,6 +54,9 @@ import {
   syncWorkRecordRAGDocuments,
   transitionTurnWorkRecordReview,
 } from "./work-record-memory.mjs";
+import {
+  CLAUDE_AUTO_COMPACT_WINDOW,
+} from "./session-context-usage.mjs";
 
 const RESPONSE_INSTRUCTION = `
 사용자 판단이 반드시 필요해 더 진행할 수 없을 때만 최종 응답을 정확히 다음 형식으로 작성한다.
@@ -1279,7 +1282,7 @@ export class AgentRuntime {
     });
     const child = spawn(executable, cliArguments, {
       cwd: state.workdir,
-      env: process.env,
+      env: executionEnvironment(state.character),
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
       detached: process.platform !== "win32",
@@ -4192,6 +4195,21 @@ export function buildArguments({
       previousSessionID,
       workdir,
     );
+}
+
+export function executionEnvironment(
+  character,
+  baseEnvironment = process.env,
+) {
+  if (character.backend !== "claude") {
+    return baseEnvironment;
+  }
+  return {
+    ...baseEnvironment,
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(
+      CLAUDE_AUTO_COMPACT_WINDOW,
+    ),
+  };
 }
 
 function locateExecutable(character) {
