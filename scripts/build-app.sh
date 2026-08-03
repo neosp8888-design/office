@@ -8,6 +8,8 @@ DIST_DIR="$PROJECT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/OFFICESTRA.app"
 
 cd "$PROJECT_DIR"
+# 병합으로 제거된 프레임워크 참조가 증분 산출물에 남지 않도록 배포 빌드를 깨끗하게 시작한다.
+swift package clean
 swift build -c release --product OfficeLLM
 BIN_DIR="$(swift build -c release --show-bin-path)"
 CORE_RESOURCE_BUNDLE="$BIN_DIR/OfficeLLM_OfficeCore.bundle"
