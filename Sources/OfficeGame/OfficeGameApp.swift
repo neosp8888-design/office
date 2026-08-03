@@ -730,9 +730,10 @@ private struct OfficeGameView: View {
                         character: character
                     )
 
-                    if PixelOfficeAsset.fullBodyProfileURL(
-                        for: character.id
-                    ) != nil {
+                    if PixelOfficeAsset.fullBodyProfileURL(for: character.id) != nil
+                        || PixelOfficeAsset.fullBodyProfileVideoURL(
+                            for: character.id
+                        ) != nil {
                         Button {
                             profileCharacter = character.id
                         } label: {

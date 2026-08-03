@@ -1,6 +1,8 @@
 // 이 파일은 선택한 직원의 전신 프로필을 별도 시트로 표시한다.
 
 import AppKit
+import AVFoundation
+import AVKit
 import OfficeCore
 import SwiftUI
 
@@ -31,6 +33,10 @@ struct CharacterFullBodyProfileView: View {
         CharacterFullBodyProfileImageCache.image(for: character.id)
     }
 
+    private var videoURL: URL? {
+        PixelOfficeAsset.fullBodyProfileVideoURL(for: character.id)
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             HStack(alignment: .top) {
@@ -45,7 +51,9 @@ struct CharacterFullBodyProfileView: View {
                 .keyboardShortcut(.cancelAction)
             }
 
-            if let image {
+            if let videoURL {
+                CharacterFullBodyProfileVideo(url: videoURL)
+            } else if let image {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)
@@ -58,6 +66,46 @@ struct CharacterFullBodyProfileView: View {
         }
         .padding(CharacterFullBodyProfileLayout.horizontalPadding)
         .frame(width: CharacterFullBodyProfileLayout.sheetWidth)
+    }
+}
+
+private struct CharacterFullBodyProfileVideo: View {
+    let url: URL
+
+    @State private var player: AVPlayer
+
+    init(url: URL) {
+        self.url = url
+        _player = State(initialValue: AVPlayer(url: url))
+    }
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .scaledToFit()
+            .frame(
+                width: CharacterFullBodyProfileLayout.imageWidth,
+                height: CharacterFullBodyProfileLayout.imageHeight
+            )
+            .disabled(true)
+            .onAppear {
+                player.isMuted = true
+                player.play()
+            }
+            .onDisappear {
+                player.pause()
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: .AVPlayerItemDidPlayToEndTime
+                )
+            ) { notification in
+                guard notification.object as? AVPlayerItem === player.currentItem else {
+                    return
+                }
+                player.seek(to: .zero)
+                player.play()
+            }
+            .accessibilityLabel("직원 전신 프로필 동영상")
     }
 }
 
