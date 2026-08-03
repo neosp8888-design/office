@@ -13,9 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  CLAUDE_AUTO_COMPACT_WINDOW,
   claudeContextEntry,
-  claudeEffectiveContextWindow,
   claudeContextWindow,
   codexContextEntry,
   sessionContextUsage,
@@ -127,18 +125,7 @@ test("Claude 모델 문자열로 컨텍스트 한도를 찾는다", () => {
   assert.equal(claudeContextWindow(null), null);
 });
 
-test("Claude 유효 컨텍스트 한도는 Opus와 Sonnet을 250K로 제한한다", () => {
-  assert.equal(CLAUDE_AUTO_COMPACT_WINDOW, 250_000);
-  assert.equal(claudeEffectiveContextWindow("claude-opus-5"), 250_000);
-  assert.equal(claudeEffectiveContextWindow("claude-sonnet-5"), 250_000);
-  assert.equal(
-    claudeEffectiveContextWindow("claude-haiku-4-5-20251001"),
-    200_000,
-  );
-  assert.equal(claudeEffectiveContextWindow("gpt-5.6-sol"), null);
-});
-
-test("Claude 세션은 마지막 기록을 250K 유효 한도에서 고정한다", () => {
+test("Claude 세션은 모델 기본 컨텍스트 한도를 사용한다", () => {
   const root = mkdtempSync(join(tmpdir(), "officellm-claude-"));
   try {
     const project = join(root, "-Users-neo-office");
@@ -176,7 +163,7 @@ test("Claude 세션은 마지막 기록을 250K 유효 한도에서 고정한다
         at: "2026-07-31T19:40:23.259Z",
         claudeRoot: root,
       }),
-      { usedTokens: 250_000, limitTokens: 250_000 },
+      { usedTokens: 268_544, limitTokens: 1_000_000 },
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -23,8 +23,6 @@ const CLAUDE_CONTEXT_WINDOWS = [
   ["claude-haiku-4-5", 200_000],
 ];
 
-export const CLAUDE_AUTO_COMPACT_WINDOW = 250_000;
-
 const MAX_READ_BYTES = 64 * 1024 * 1024;
 const MISSING_PATH_RETRY_MS = 30_000;
 
@@ -42,13 +40,6 @@ export function claudeContextWindow(model) {
     }
   }
   return null;
-}
-
-export function claudeEffectiveContextWindow(model) {
-  const modelWindow = claudeContextWindow(model);
-  return modelWindow === null
-    ? null
-    : Math.min(modelWindow, CLAUDE_AUTO_COMPACT_WINDOW);
 }
 
 export function sessionContextUsage({
@@ -83,9 +74,7 @@ export function sessionContextUsage({
   if (!entry) {
     return null;
   }
-  const limitTokens = kind === "claude"
-    ? claudeEffectiveContextWindow(model)
-    : entry.limitTokens;
+  const limitTokens = entry.limitTokens ?? claudeContextWindow(model);
   if (!limitTokens || limitTokens <= 0) {
     return null;
   }

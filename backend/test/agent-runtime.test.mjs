@@ -242,10 +242,11 @@ test("Claude 재개도 현재 역할 지침과 권한을 같은 세션에 전달
   assert.equal(argumentsList.includes("--resume"), true);
 });
 
-test("Claude 실행 환경만 250K 자동 압축 한도를 강제한다", () => {
+test("Claude 실행은 자동 압축 오버라이드 없이 기본 환경을 사용한다", () => {
   const baseEnvironment = {
     PATH: "/tmp/bin",
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW: "999999",
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: "250000",
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "65",
   };
   const claudeEnvironment = executionEnvironment(
     { backend: "claude" },
@@ -255,18 +256,24 @@ test("Claude 실행 환경만 250K 자동 압축 한도를 강제한다", () => 
   assert.notEqual(claudeEnvironment, baseEnvironment);
   assert.equal(claudeEnvironment.PATH, "/tmp/bin");
   assert.equal(
-    claudeEnvironment.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
-    "250000",
+    Object.hasOwn(
+      claudeEnvironment,
+      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    ),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(
+      claudeEnvironment,
+      "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+    ),
+    false,
   );
 
   const codexEnvironment = { PATH: "/tmp/bin" };
   assert.equal(
     executionEnvironment({ backend: "codex" }, codexEnvironment),
     codexEnvironment,
-  );
-  assert.equal(
-    Object.hasOwn(codexEnvironment, "CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
-    false,
   );
 });
 
