@@ -107,6 +107,33 @@ flowchart LR
 
 As long as the backend remains running, tasks continue after the app window closes. On relaunch, the app loads persisted snapshots and reconnects to WebSocket updates.
 
+## Run coworkers from Slack
+
+Slack Socket Mode lets you run all five coworkers from mobile Slack without
+exposing port 4317. Use `/office` to select a default coworker, then send the bot
+a direct message or mention it in a channel to start that coworker's CLI task.
+
+- Coworker names and selection buttons come from the current PostgreSQL settings.
+- Each Slack thread keeps its OFFICESTRA conversation ID for follow-up messages.
+- One status message is updated with live activity, and final replies stay in the thread.
+- Tasks that need input continue in the same coworker session when you reply in the thread.
+- Pending Git workspace changes can be approved or rejected from Slack.
+- Only explicitly allowed Slack user IDs may start CLI tasks.
+
+To configure the integration.
+
+1. Import `integrations/slack/manifest.yaml` when creating the Slack app.
+2. Install the app to obtain its `xoxb-` Bot Token.
+3. Create an App Token with `connections:write` and copy its `xapp-` value.
+4. Copy the values described by `integrations/slack/slack.env.example` into
+   `~/.officestra/slack.env`, then set that file's permissions to `600`.
+5. Restart the backend and confirm that its log reports
+   `OFFICESTRA Slack Socket Mode 연결 완료`.
+
+The token file stays outside the repository and must not be committed. If the
+tokens are absent, only the Slack integration is disabled; the macOS app and
+existing backend continue to work normally.
+
 ## Parallel development and Git safety
 
 When `workdir` is a Git repository, OFFICESTRA creates a dedicated branch and worktree for each reviewable task workspace. Worktrees isolate file changes and have a lifecycle independent from Codex threads and Claude sessions. Approving, merging, or rejecting a workspace does not replace the coworker's active CLI session.

@@ -39,6 +39,7 @@ import {
   syncWorkRecordRAGDocuments,
   workRecordSearchTSQuery,
 } from "./work-record-memory.mjs";
+import { startSlackBridge } from "./slack-bridge.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const automaticWorkspaceApprovalRetryIntervalMs = 10_000;
@@ -1873,6 +1874,15 @@ try {
   startAutomaticWorkspaceApprovalRetryLoop();
   server.listen(port, "127.0.0.1", () => {
     console.log(`사무실 백엔드 실행 중 http://127.0.0.1:${port}`);
+    void startSlackBridge({
+      pool,
+      backendURL: `http://127.0.0.1:${port}`,
+    }).catch((error) => {
+      console.error(
+        "Slack 연동을 시작하지 못했습니다.",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
   });
 } catch (error) {
   console.error(error);

@@ -119,6 +119,31 @@ flowchart LR
 백엔드가 계속 실행 중이면 앱 창을 닫아도 직원 업무는 이어진다. 앱을 다시
 열면 저장된 스냅샷을 읽고 WebSocket에 재연결한다.
 
+## Slack에서 직원 호출
+
+Slack Socket Mode를 켜면 4317 포트를 외부에 공개하지 않고도 모바일 Slack에서
+다섯 직원을 호출할 수 있다. `/office`로 기본 직원을 선택하고 봇에게 DM을
+보내거나 채널에서 봇을 멘션하면 해당 직원의 CLI 업무가 시작된다.
+
+- 직원 이름과 선택 버튼은 PostgreSQL의 현재 설정을 사용한다.
+- Slack 스레드마다 OFFICESTRA 대화 ID를 보존해 후속 답변을 같은 대화로 전달한다.
+- 진행 중인 활동은 한 상태 메시지에서 갱신하고 최종 응답은 같은 스레드에 남긴다.
+- 사용자 답변이 필요한 업무는 같은 스레드에 답하면 기존 직원 세션으로 이어진다.
+- Git 변경이 승인 대기 상태이면 Slack에서 승인·거절할 수 있다.
+- 허용된 Slack 사용자 ID만 CLI 업무를 시작할 수 있다.
+
+설정 방법은 다음과 같다.
+
+1. Slack 앱 생성 화면에서 `integrations/slack/manifest.yaml`을 가져온다.
+2. 앱을 워크스페이스에 설치해 `xoxb-` Bot Token을 발급한다.
+3. `connections:write` App Token을 만들어 `xapp-` 값을 발급한다.
+4. `integrations/slack/slack.env.example`을 참고해
+   `~/.officestra/slack.env`를 만들고 파일 권한을 `600`으로 설정한다.
+5. 백엔드를 재시작한 뒤 로그에서 `OFFICESTRA Slack Socket Mode 연결 완료`를 확인한다.
+
+토큰 파일은 저장소 밖에 두며 Git에 커밋하지 않는다. 토큰이 없으면 Slack 기능만
+비활성화되고 macOS 앱과 기존 백엔드는 그대로 동작한다.
+
 ## 병렬 개발과 Git 안전 수칙
 
 Git 저장소를 `workdir`로 지정하면 OFFICESTRA가 검토 단위 업무마다 전용
