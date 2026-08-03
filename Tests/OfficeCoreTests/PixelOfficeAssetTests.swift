@@ -1,6 +1,7 @@
 // 이 파일은 V4 네 테마의 파일 형식과 동일한 화면 규격을 검증한다.
 
 import AppKit
+import AVFoundation
 import XCTest
 @testable import OfficeCore
 
@@ -90,6 +91,24 @@ final class PixelOfficeAssetTests: XCTestCase {
 
             XCTAssertEqual(representation.pixelsWide, 1_774)
             XCTAssertEqual(representation.pixelsHigh, 3_548)
+        }
+    }
+
+    func testOnlyLeftWomanHasASilentFullBodyProfileVideo() async throws {
+        let videoURL = try XCTUnwrap(
+            PixelOfficeAsset.fullBodyProfileVideoURL(for: .leftWoman)
+        )
+        let asset = AVURLAsset(url: videoURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+
+        XCTAssertEqual(videoURL.pathExtension, "mp4")
+        XCTAssertEqual(videoURL.lastPathComponent, "profile-left-woman-loop.mp4")
+        XCTAssertFalse(videoTracks.isEmpty)
+        XCTAssertTrue(audioTracks.isEmpty)
+
+        for character in OfficeCharacter.allCases where character != .leftWoman {
+            XCTAssertNil(PixelOfficeAsset.fullBodyProfileVideoURL(for: character))
         }
     }
 

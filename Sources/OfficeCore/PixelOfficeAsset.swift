@@ -215,6 +215,20 @@ public enum PixelOfficeAsset {
         )
     }
 
+    public static func fullBodyProfileVideoURL(
+        for character: OfficeCharacter
+    ) -> URL? {
+        guard character == .leftWoman else {
+            return nil
+        }
+
+        return OfficeCoreResourceBundle.bundle.url(
+            forResource: "profile-left-woman-loop",
+            withExtension: "mp4",
+            subdirectory: "profiles"
+        )
+    }
+
     public static func image(
         for theme: OfficeTheme,
         style: OfficeArtStyle = .defaultValue
