@@ -52,6 +52,10 @@ struct CharacterFullBodyProfileView: View {
 
             if let videoURL {
                 CharacterFullBodyProfileVideo(url: videoURL)
+                    .frame(
+                        width: CharacterFullBodyProfileLayout.imageWidth,
+                        height: CharacterFullBodyProfileLayout.imageHeight
+                    )
             } else if let image {
                 Image(nsImage: image)
                     .resizable()
