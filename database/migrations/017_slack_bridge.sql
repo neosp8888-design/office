@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS slack_threads (
     PRIMARY KEY (team_id, channel_id, thread_ts)
 );
 
+ALTER TABLE slack_threads
+ADD COLUMN IF NOT EXISTS status_message_ts text;
+
+ALTER TABLE slack_threads
+ADD COLUMN IF NOT EXISTS delivery_completed_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS slack_threads_user_updated_idx
 ON slack_threads (team_id, user_id, updated_at DESC);
 
