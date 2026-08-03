@@ -2,7 +2,6 @@
 
 import AppKit
 import AVFoundation
-import AVKit
 import OfficeCore
 import SwiftUI
 
@@ -69,43 +68,78 @@ struct CharacterFullBodyProfileView: View {
     }
 }
 
-private struct CharacterFullBodyProfileVideo: View {
+private struct CharacterFullBodyProfileVideo: NSViewRepresentable {
     let url: URL
 
-    @State private var player: AVPlayer
-
-    init(url: URL) {
-        self.url = url
-        _player = State(initialValue: AVPlayer(url: url))
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
     }
 
-    var body: some View {
-        VideoPlayer(player: player)
-            .scaledToFit()
-            .frame(
-                width: CharacterFullBodyProfileLayout.imageWidth,
-                height: CharacterFullBodyProfileLayout.imageHeight
-            )
-            .disabled(true)
-            .onAppear {
-                player.isMuted = true
-                player.play()
+    func makeNSView(context: Context) -> PlayerLayerView {
+        let player = AVPlayer(url: url)
+        player.isMuted = true
+
+        let view = PlayerLayerView(player: player)
+        view.setAccessibilityLabel("직원 전신 프로필 동영상")
+        context.coordinator.startLooping(player)
+        player.play()
+        return view
+    }
+
+    func updateNSView(_ nsView: PlayerLayerView, context: Context) {}
+
+    static func dismantleNSView(_ nsView: PlayerLayerView, coordinator: Coordinator) {
+        coordinator.stopLooping()
+        nsView.player.pause()
+    }
+
+    final class Coordinator {
+        private var endObserver: NSObjectProtocol?
+
+        func startLooping(_ player: AVPlayer) {
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: player.currentItem,
+                queue: .main
+            ) { [weak player] _ in
+                player?.seek(to: .zero)
+                player?.play()
             }
-            .onDisappear {
-                player.pause()
+        }
+
+        func stopLooping() {
+            if let endObserver {
+                NotificationCenter.default.removeObserver(endObserver)
             }
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: .AVPlayerItemDidPlayToEndTime
-                )
-            ) { notification in
-                guard notification.object as? AVPlayerItem === player.currentItem else {
-                    return
-                }
-                player.seek(to: .zero)
-                player.play()
-            }
-            .accessibilityLabel("직원 전신 프로필 동영상")
+            endObserver = nil
+        }
+
+        deinit {
+            stopLooping()
+        }
+    }
+
+    final class PlayerLayerView: NSView {
+        let player: AVPlayer
+        private let playerLayer: AVPlayerLayer
+
+        init(player: AVPlayer) {
+            self.player = player
+            playerLayer = AVPlayerLayer(player: player)
+            super.init(frame: .zero)
+            wantsLayer = true
+            playerLayer.videoGravity = .resizeAspect
+            layer?.addSublayer(playerLayer)
+        }
+
+        required init?(coder: NSCoder) {
+            nil
+        }
+
+        override func layout() {
+            super.layout()
+            playerLayer.frame = bounds
+        }
     }
 }
 
