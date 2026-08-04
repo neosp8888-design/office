@@ -94,20 +94,27 @@ final class PixelOfficeAssetTests: XCTestCase {
         }
     }
 
-    func testOnlyLeftWomanHasASilentFullBodyProfileVideo() async throws {
-        let videoURL = try XCTUnwrap(
-            PixelOfficeAsset.fullBodyProfileVideoURL(for: .leftWoman)
-        )
-        let asset = AVURLAsset(url: videoURL)
-        let videoTracks = try await asset.loadTracks(withMediaType: .video)
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    func testWomenHaveSilentFullBodyProfileVideos() async throws {
+        let expectedFilenames: [OfficeCharacter: String] = [
+            .leftWoman: "profile-left-woman-loop.mp4",
+            .rightWoman: "profile-right-woman-loop.mp4",
+        ]
 
-        XCTAssertEqual(videoURL.pathExtension, "mp4")
-        XCTAssertEqual(videoURL.lastPathComponent, "profile-left-woman-loop.mp4")
-        XCTAssertFalse(videoTracks.isEmpty)
-        XCTAssertTrue(audioTracks.isEmpty)
+        for (character, expectedFilename) in expectedFilenames {
+            let videoURL = try XCTUnwrap(
+                PixelOfficeAsset.fullBodyProfileVideoURL(for: character)
+            )
+            let asset = AVURLAsset(url: videoURL)
+            let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
 
-        for character in OfficeCharacter.allCases where character != .leftWoman {
+            XCTAssertEqual(videoURL.pathExtension, "mp4")
+            XCTAssertEqual(videoURL.lastPathComponent, expectedFilename)
+            XCTAssertFalse(videoTracks.isEmpty)
+            XCTAssertTrue(audioTracks.isEmpty)
+        }
+
+        for character in OfficeCharacter.allCases where expectedFilenames[character] == nil {
             XCTAssertNil(PixelOfficeAsset.fullBodyProfileVideoURL(for: character))
         }
     }
