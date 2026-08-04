@@ -220,11 +220,13 @@ public enum PixelOfficeAsset {
     ) -> URL? {
         let filename: String
         switch character {
+        case .boss:
+            filename = "profile-boss-loop"
         case .leftWoman:
             filename = "profile-left-woman-loop"
         case .rightWoman:
             filename = "profile-right-woman-loop"
-        case .boss, .leftMan, .rightMan:
+        case .leftMan, .rightMan:
             return nil
         }
 
