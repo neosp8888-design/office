@@ -28,21 +28,23 @@ struct ResponseMessageFooter: View {
                 .foregroundStyle(.tertiary)
 
             HStack(spacing: 7) {
-                Button(action: copy) {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(
-                            copied ? accentColor : Color.secondary
-                        )
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(copied ? "복사됨" : "복사")
-                .accessibilityIdentifier(accessibilityID)
-
                 if showsFeedback {
+                    Button {
+                        toggleFeedback(.disliked)
+                    } label: {
+                        BrokenHeartIcon(isSelected: feedback == .disliked)
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isUpdatingFeedback)
+                    .accessibilityLabel(
+                        feedback == .disliked ? "싫어요 취소" : "싫어요"
+                    )
+                    .accessibilityIdentifier(
+                        "dislikeMessage-\(feedbackAccessibilityIDPrefix)"
+                    )
+
                     Button {
                         toggleFeedback(.liked)
                     } label: {
@@ -67,23 +69,21 @@ struct ResponseMessageFooter: View {
                     .accessibilityIdentifier(
                         "likeMessage-\(feedbackAccessibilityIDPrefix)"
                     )
-
-                    Button {
-                        toggleFeedback(.disliked)
-                    } label: {
-                        BrokenHeartIcon(isSelected: feedback == .disliked)
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isUpdatingFeedback)
-                    .accessibilityLabel(
-                        feedback == .disliked ? "싫어요 취소" : "싫어요"
-                    )
-                    .accessibilityIdentifier(
-                        "dislikeMessage-\(feedbackAccessibilityIDPrefix)"
-                    )
                 }
+
+                Button(action: copy) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(
+                            copied ? accentColor : Color.secondary
+                        )
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "복사됨" : "복사")
+                .accessibilityIdentifier(accessibilityID)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -112,21 +112,11 @@ private struct BrokenHeartIcon: View {
     var body: some View {
         ZStack {
             brokenHalf(mask: BrokenHeartLeftMask())
-                .offset(
-                    x: isSelected ? -1.7 : -0.25,
-                    y: isSelected ? 0.8 : 0
-                )
+                .offset(x: -0.25)
             brokenHalf(mask: BrokenHeartRightMask())
-                .offset(
-                    x: isSelected ? 1.7 : 0.25,
-                    y: isSelected ? -0.8 : 0
-                )
+                .offset(x: 0.25)
         }
-        .frame(width: 14, height: 14)
-        .animation(
-            .spring(response: 0.24, dampingFraction: 0.62),
-            value: isSelected
-        )
+        .frame(width: 12.5, height: 12.5)
     }
 
     private func brokenHalf<Mask: Shape>(mask: Mask) -> some View {
