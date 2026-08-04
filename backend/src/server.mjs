@@ -39,6 +39,11 @@ import {
   syncWorkRecordRAGDocuments,
   workRecordSearchTSQuery,
 } from "./work-record-memory.mjs";
+import {
+  TurnFeedbackValidationError,
+  normalizeTurnFeedback,
+  replaceTurnFeedback,
+} from "./turn-feedback.mjs";
 import { startSlackBridge } from "./slack-bridge.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
@@ -150,6 +155,11 @@ function routeLiveFeedTurn(pathname) {
 
 function routeTurnSources(pathname) {
   const match = pathname.match(/^\/api\/turns\/([^/]+)\/sources$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function routeTurnFeedback(pathname) {
+  const match = pathname.match(/^\/api\/turns\/([^/]+)\/feedback$/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
@@ -831,6 +841,28 @@ async function replaceTurnSources(response, turnID, body) {
   send(response, 200, { sources: stored.records });
 }
 
+async function updateTurnFeedback(response, turnID, body) {
+  if (!isUUID(turnID)) {
+    throw new TurnFeedbackValidationError("turnId 값은 UUID여야 합니다.");
+  }
+  const feedback = normalizeTurnFeedback(body?.feedback);
+  const stored = await withTransaction((client) =>
+    replaceTurnFeedback(client, turnID, feedback)
+  );
+  if (stored.outcome === "missing") {
+    send(response, 404, { error: "대화를 찾을 수 없습니다." });
+    return;
+  }
+  if (stored.outcome === "unavailable") {
+    send(response, 409, {
+      error: "완료된 대화 응답만 평가할 수 있습니다.",
+    });
+    return;
+  }
+  broadcast({ type: "feed.changed", turnId: turnID });
+  send(response, 200, { feedback: stored.feedback });
+}
+
 async function queryTurnFeed({
   turnID = null,
   query = null,
@@ -910,6 +942,7 @@ async function queryTurnFeed({
         t.needs_input AS "needsInput",
         t.error_message AS "errorMessage",
         t.response_source_warning AS "responseSourceWarning",
+        turn_feedback.feedback,
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
         t.updated_at AS "updatedAt",
@@ -973,6 +1006,8 @@ async function queryTurnFeed({
         ON c.id = s.character_id
       LEFT JOIN usage_records AS usage
         ON usage.turn_id = t.id
+      LEFT JOIN turn_response_feedback AS turn_feedback
+        ON turn_feedback.turn_id = t.id
       LEFT JOIN LATERAL (
         SELECT json_build_object(
           'status', task_workspace.status,
@@ -1668,6 +1703,7 @@ const server = createServer(async (request, response) => {
     const jobCharacterID = routeAgentJob(url.pathname);
     const liveFeedTurnID = routeLiveFeedTurn(url.pathname);
     const turnSourcesID = routeTurnSources(url.pathname);
+    const turnFeedbackID = routeTurnFeedback(url.pathname);
     const workspaceReviewRoute = routeWorkspaceReview(url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
@@ -1720,6 +1756,15 @@ const server = createServer(async (request, response) => {
       await replaceTurnSources(
         response,
         turnSourcesID,
+        await readJSON(request),
+      );
+    } else if (request.method === "PUT" && turnFeedbackID) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await updateTurnFeedback(
+        response,
+        turnFeedbackID,
         await readJSON(request),
       );
     } else if (
@@ -1788,7 +1833,10 @@ const server = createServer(async (request, response) => {
       send(response, 404, { error: "경로를 찾을 수 없습니다." });
     }
   } catch (error) {
-    if (error instanceof ProvenanceValidationError) {
+    if (
+      error instanceof ProvenanceValidationError ||
+      error instanceof TurnFeedbackValidationError
+    ) {
       send(response, 400, { error: error.message });
       return;
     }
