@@ -218,12 +218,18 @@ public enum PixelOfficeAsset {
     public static func fullBodyProfileVideoURL(
         for character: OfficeCharacter
     ) -> URL? {
-        guard character == .leftWoman else {
+        let filename: String
+        switch character {
+        case .leftWoman:
+            filename = "profile-left-woman-loop"
+        case .rightWoman:
+            filename = "profile-right-woman-loop"
+        case .boss, .leftMan, .rightMan:
             return nil
         }
 
         return OfficeCoreResourceBundle.bundle.url(
-            forResource: "profile-left-woman-loop",
+            forResource: filename,
             withExtension: "mp4",
             subdirectory: "profiles"
         )
