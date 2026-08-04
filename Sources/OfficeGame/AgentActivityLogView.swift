@@ -437,6 +437,8 @@ struct CodexTranscriptView: View {
     let isRunning: Bool
     let isCompleted: Bool
     let needsInput: Bool
+    let responseFeedback: TurnResponseFeedback?
+    let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -527,9 +529,12 @@ struct CodexTranscriptView: View {
             CodexOperationGroupView(group: group)
         case .message(let message):
             CodexMessageView(
+                turnID: turnID,
                 message: message,
                 isConclusion: isConclusion,
-                needsInput: isConclusion && needsInput
+                needsInput: isConclusion && needsInput,
+                responseFeedback: responseFeedback,
+                updateResponseFeedback: updateResponseFeedback
             )
         case .changes(let summary):
             CodexFileChangeSummaryView(
@@ -797,9 +802,12 @@ private struct CodexOperationGroupView: View {
 }
 
 private struct CodexMessageView: View {
+    let turnID: String
     let message: CodexTranscriptMessage
     let isConclusion: Bool
     let needsInput: Bool
+    let responseFeedback: TurnResponseFeedback?
+    let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
 
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
@@ -830,7 +838,11 @@ private struct CodexMessageView: View {
                 copied: copied,
                 accentColor: DashboardPalette.accent,
                 accessibilityID: "copyMessage-\(message.id)",
-                copy: copyMessage
+                showsFeedback: isConclusion && !needsInput,
+                feedback: responseFeedback,
+                feedbackAccessibilityIDPrefix: turnID,
+                copy: copyMessage,
+                feedbackChanged: updateResponseFeedback
             )
         }
         .padding(.vertical, 2)

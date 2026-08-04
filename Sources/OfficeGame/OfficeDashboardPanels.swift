@@ -730,6 +730,8 @@ struct LiveWorkspaceFeed: View, Equatable {
     private let latestStartedCommandID: UUID?
     private let fetchWorkspaceReview: WorkspaceReviewFetcher
     private let resolveWorkspaceReview: WorkspaceReviewResolver
+    private let updateResponseFeedback:
+        (String, TurnResponseFeedback?) async -> Void
     @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
@@ -759,6 +761,12 @@ struct LiveWorkspaceFeed: View, Equatable {
             try await director.resolveWorkspaceReview(
                 turnID: turnID,
                 decision: decision
+            )
+        }
+        updateResponseFeedback = { turnID, feedback in
+            await director.updateResponseFeedback(
+                turnID: turnID,
+                feedback: feedback
             )
         }
     }
@@ -906,7 +914,9 @@ struct LiveWorkspaceFeed: View, Equatable {
                                         fetchWorkspaceReview:
                                             fetchWorkspaceReview,
                                         resolveWorkspaceReview:
-                                            resolveWorkspaceReview
+                                            resolveWorkspaceReview,
+                                        updateResponseFeedback:
+                                            updateResponseFeedback
                                     ) {
                                         liveFeedStore
                                             .finishResponseAnimation(
@@ -1580,6 +1590,8 @@ private struct EquatableLiveTurnCard: View, Equatable {
     let shouldAnimateResponse: Bool
     let fetchWorkspaceReview: WorkspaceReviewFetcher
     let resolveWorkspaceReview: WorkspaceReviewResolver
+    let updateResponseFeedback:
+        (String, TurnResponseFeedback?) async -> Void
     let finishResponseAnimation: () -> Void
 
     static func == (
@@ -1598,6 +1610,7 @@ private struct EquatableLiveTurnCard: View, Equatable {
             shouldAnimateResponse: shouldAnimateResponse,
             fetchWorkspaceReview: fetchWorkspaceReview,
             resolveWorkspaceReview: resolveWorkspaceReview,
+            updateResponseFeedback: updateResponseFeedback,
             finishResponseAnimation: finishResponseAnimation
         )
     }
@@ -1643,6 +1656,8 @@ private struct LiveTurnCard: View {
     let shouldAnimateResponse: Bool
     let fetchWorkspaceReview: WorkspaceReviewFetcher
     let resolveWorkspaceReview: WorkspaceReviewResolver
+    let updateResponseFeedback:
+        (String, TurnResponseFeedback?) async -> Void
     let finishResponseAnimation: () -> Void
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -1793,6 +1808,10 @@ private struct LiveTurnCard: View {
             isCompleted: turn.status == .completed,
             needsInput: turn.needsInput,
             animatesResponse: shouldAnimateResponse,
+            responseFeedback: turn.feedback,
+            updateResponseFeedback: { feedback in
+                await updateResponseFeedback(turn.id, feedback)
+            },
             onResponsePresented: finishResponseAnimation
         )
     }
@@ -1807,6 +1826,10 @@ private struct LiveTurnCard: View {
             isRunning: turn.status.isRunning,
             isCompleted: turn.status == .completed,
             needsInput: turn.needsInput,
+            responseFeedback: turn.feedback,
+            updateResponseFeedback: { feedback in
+                await updateResponseFeedback(turn.id, feedback)
+            },
             onResponsePresented: finishResponseAnimation
         )
     }

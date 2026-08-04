@@ -228,6 +228,32 @@ struct OfficeDatabaseClient: Sendable {
         .turn
     }
 
+    func updateTurnFeedback(
+        turnID: String,
+        feedback: TurnResponseFeedback?
+    ) async throws -> TurnResponseFeedback? {
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "turns")
+            .appending(path: turnID)
+            .appending(path: "feedback")
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            TurnFeedbackRequest(feedback: feedback)
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(
+            TurnFeedbackResponse.self,
+            from: data
+        ).feedback
+    }
+
     func fetchArchiveFeed(
         query: String?,
         limit: Int,
@@ -560,6 +586,18 @@ enum LiveTurnStatus: String, Decodable, Sendable {
     }
 }
 
+enum TurnResponseFeedback: String, Codable, Equatable, Sendable {
+    case liked
+    case disliked
+
+    static func toggled(
+        current: TurnResponseFeedback?,
+        selection: TurnResponseFeedback
+    ) -> TurnResponseFeedback? {
+        current == selection ? nil : selection
+    }
+}
+
 struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let kind: String
@@ -797,6 +835,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let conversationWorkdir: String?
     let prompt: String
     let response: String
+    let feedback: TurnResponseFeedback?
     let status: LiveTurnStatus
     let needsInput: Bool
     let errorMessage: String?
@@ -828,6 +867,39 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             conversationWorkdir: conversationWorkdir,
             prompt: prompt,
             response: response,
+            feedback: feedback,
+            status: status,
+            needsInput: needsInput,
+            errorMessage: errorMessage,
+            responseSourceWarning: responseSourceWarning,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            updatedAt: updatedAt,
+            estimatedCostUsd: estimatedCostUsd,
+            sessionContext: sessionContext,
+            activities: activities,
+            sources: sources,
+            workspace: workspace
+        )
+    }
+
+    func replacingFeedback(
+        with feedback: TurnResponseFeedback?
+    ) -> LiveFeedTurn {
+        LiveFeedTurn(
+            id: id,
+            characterId: characterId,
+            characterName: characterName,
+            characterBackend: characterBackend,
+            backend: backend,
+            model: model,
+            effort: effort,
+            fastMode: fastMode,
+            externalSessionId: externalSessionId,
+            conversationWorkdir: conversationWorkdir,
+            prompt: prompt,
+            response: response,
+            feedback: feedback,
             status: status,
             needsInput: needsInput,
             errorMessage: errorMessage,
@@ -875,6 +947,27 @@ private struct WorkspaceReviewResponse: Decodable {
 
 private struct WorkspaceReviewApprovalRequest: Encodable {
     let reviewTree: String
+}
+
+private struct TurnFeedbackRequest: Encodable {
+    let feedback: TurnResponseFeedback?
+
+    private enum CodingKeys: String, CodingKey {
+        case feedback
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let feedback {
+            try container.encode(feedback, forKey: .feedback)
+        } else {
+            try container.encodeNil(forKey: .feedback)
+        }
+    }
+}
+
+private struct TurnFeedbackResponse: Decodable {
+    let feedback: TurnResponseFeedback?
 }
 
 private struct StartAgentJobRequest: Encodable {

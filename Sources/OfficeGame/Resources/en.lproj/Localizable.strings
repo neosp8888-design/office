@@ -132,6 +132,10 @@
 "최종 응답" = "Final response";
 "복사됨" = "Copied";
 "복사" = "Copy";
+"좋아요" = "Like";
+"좋아요 취소" = "Remove like";
+"싫어요" = "Dislike";
+"싫어요 취소" = "Remove dislike";
 "메시지 복사됨" = "Message copied";
 "메시지 복사" = "Copy message";
 "Finder에서 보기" = "Show in Finder";

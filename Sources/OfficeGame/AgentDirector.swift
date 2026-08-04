@@ -78,6 +78,21 @@ final class LiveFeedStore: ObservableObject {
         publishMergedTurns()
     }
 
+    func updateFeedback(
+        for turnID: String,
+        to feedback: TurnResponseFeedback?
+    ) {
+        guard let index = persistedTurns.firstIndex(where: {
+            $0.id == turnID
+        }) else {
+            return
+        }
+        persistedTurns[index] = persistedTurns[index].replacingFeedback(
+            with: feedback
+        )
+        publishMergedTurns()
+    }
+
     var optimisticCharacterIDs: Set<String> {
         Set(optimisticTurns.values.map(\.characterId))
     }
@@ -152,6 +167,7 @@ final class ArchiveFeedStore: ObservableObject {
                 + "\($0.workspace?.status.rawValue ?? "")|"
                 + "\($0.workspace?.mergedCommit ?? "")|"
                 + "\($0.responseSourceWarning ?? "")|"
+                + "\($0.feedback?.rawValue ?? "")|"
                 + $0.responseSources.map {
                     "\($0.id),\($0.sourceKind.rawValue),\($0.title),"
                         + "\($0.locator),\($0.excerpt ?? "")"
@@ -648,6 +664,7 @@ final class AgentDirector: ObservableObject {
                     attachmentPaths: attachmentPaths
                 ),
                 response: "",
+                feedback: nil,
                 status: .running,
                 needsInput: false,
                 errorMessage: nil,
@@ -761,6 +778,37 @@ final class AgentDirector: ObservableObject {
         turnID: String
     ) async throws -> TurnWorkspaceReview {
         try await database.fetchWorkspaceReview(turnID: turnID)
+    }
+
+    func updateResponseFeedback(
+        turnID: String,
+        feedback: TurnResponseFeedback?
+    ) async {
+        guard
+            let turn = liveTurns.first(where: { $0.id == turnID }),
+            turn.status == .completed
+        else {
+            return
+        }
+
+        let previousFeedback = turn.feedback
+        liveFeedStore.updateFeedback(for: turnID, to: feedback)
+        do {
+            let storedFeedback = try await database.updateTurnFeedback(
+                turnID: turnID,
+                feedback: feedback
+            )
+            liveFeedStore.updateFeedback(for: turnID, to: storedFeedback)
+        } catch {
+            liveFeedStore.updateFeedback(
+                for: turnID,
+                to: previousFeedback
+            )
+            let message = error.localizedDescription
+            if realtimeConnectionError != message {
+                realtimeConnectionError = message
+            }
+        }
     }
 
     func resolveWorkspaceReview(

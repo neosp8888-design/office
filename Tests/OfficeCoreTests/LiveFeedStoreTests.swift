@@ -537,6 +537,7 @@ final class LiveFeedStoreTests: XCTestCase {
             conversationWorkdir: "/repo",
             prompt: prompt,
             response: response,
+            feedback: nil,
             status: .running,
             needsInput: false,
             errorMessage: nil,

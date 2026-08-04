@@ -60,6 +60,8 @@ struct ClaudeTranscriptView: View {
     let isCompleted: Bool
     let needsInput: Bool
     let animatesResponse: Bool
+    let responseFeedback: TurnResponseFeedback?
+    let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -164,6 +166,8 @@ struct ClaudeTranscriptView: View {
                 needsInput: isConclusion && needsInput,
                 isStreaming: isStreaming,
                 animates: animatesResponse,
+                responseFeedback: responseFeedback,
+                updateResponseFeedback: updateResponseFeedback,
                 onFinishedTyping: onResponsePresented
             )
         }
@@ -663,6 +667,8 @@ private struct ClaudeMessageView: View {
     let needsInput: Bool
     let isStreaming: Bool
     let animates: Bool
+    let responseFeedback: TurnResponseFeedback?
+    let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onFinishedTyping: () -> Void
 
     @State private var copied = false
@@ -704,7 +710,11 @@ private struct ClaudeMessageView: View {
                 copied: copied,
                 accentColor: ClaudePalette.accent,
                 accessibilityID: "copyMessage-\(message.id)",
-                copy: copyMessage
+                showsFeedback: isConclusion && !needsInput,
+                feedback: responseFeedback,
+                feedbackAccessibilityIDPrefix: turnID,
+                copy: copyMessage,
+                feedbackChanged: updateResponseFeedback
             )
         }
         .padding(.vertical, 2)
