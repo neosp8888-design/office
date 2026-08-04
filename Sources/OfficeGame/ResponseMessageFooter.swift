@@ -112,9 +112,9 @@ private struct BrokenHeartIcon: View {
     var body: some View {
         ZStack {
             brokenHalf(mask: BrokenHeartLeftMask())
-                .offset(x: -0.25)
+                .offset(x: -1.7, y: 0.8)
             brokenHalf(mask: BrokenHeartRightMask())
-                .offset(x: 0.25)
+                .offset(x: 1.7, y: -0.8)
         }
         .frame(width: 12.5, height: 12.5)
     }
