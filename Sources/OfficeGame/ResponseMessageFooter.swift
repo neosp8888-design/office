@@ -32,9 +32,20 @@ struct ResponseMessageFooter: View {
                     Button {
                         toggleFeedback(.disliked)
                     } label: {
-                        BrokenHeartIcon(isSelected: feedback == .disliked)
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
+                        Image(
+                            systemName: feedback == .disliked
+                                ? "hand.thumbsdown.fill"
+                                : "hand.thumbsdown"
+                        )
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(
+                            feedback == .disliked
+                                ? Color.gray
+                                : Color.secondary
+                        )
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(isUpdatingFeedback)
@@ -103,59 +114,5 @@ struct ResponseMessageFooter: View {
             await feedbackChanged(nextFeedback)
             isUpdatingFeedback = false
         }
-    }
-}
-
-private struct BrokenHeartIcon: View {
-    let isSelected: Bool
-
-    var body: some View {
-        ZStack {
-            brokenHalf(mask: BrokenHeartLeftMask())
-                .offset(x: -1.7, y: 0.8)
-            brokenHalf(mask: BrokenHeartRightMask())
-                .offset(x: 1.7, y: -0.8)
-        }
-        .frame(width: 12.5, height: 12.5)
-    }
-
-    private func brokenHalf<Mask: Shape>(mask: Mask) -> some View {
-        Image(systemName: isSelected ? "heart.fill" : "heart")
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(isSelected ? Color.gray : Color.secondary)
-            .mask(mask)
-    }
-}
-
-private struct BrokenHeartLeftMask: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX - 1, y: rect.height * 0.27))
-        path.addLine(to: CGPoint(x: rect.midX + 1, y: rect.height * 0.39))
-        path.addLine(to: CGPoint(x: rect.midX - 1, y: rect.height * 0.52))
-        path.addLine(to: CGPoint(x: rect.midX + 0.5, y: rect.height * 0.66))
-        path.addLine(to: CGPoint(x: rect.midX - 1, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-private struct BrokenHeartRightMask: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.midX - 1, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.midX + 0.5, y: rect.height * 0.66))
-        path.addLine(to: CGPoint(x: rect.midX - 1, y: rect.height * 0.52))
-        path.addLine(to: CGPoint(x: rect.midX + 1, y: rect.height * 0.39))
-        path.addLine(to: CGPoint(x: rect.midX - 1, y: rect.height * 0.27))
-        path.closeSubpath()
-        return path
     }
 }
