@@ -96,6 +96,7 @@ final class PixelOfficeAssetTests: XCTestCase {
 
     func testWomenHaveSilentFullBodyProfileVideos() async throws {
         let expectedFilenames: [OfficeCharacter: String] = [
+            .boss: "profile-boss-loop.mp4",
             .leftWoman: "profile-left-woman-loop.mp4",
             .rightWoman: "profile-right-woman-loop.mp4",
         ]
