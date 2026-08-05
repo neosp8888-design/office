@@ -61,6 +61,82 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.showsWaiting)
     }
 
+    func testCodexTranscriptFindsLatestMessageAcrossOtherEntries() throws {
+        let first = try makeActivity(
+            id: "message-1",
+            kind: "message",
+            text: "첫 응답",
+            status: "completed"
+        )
+        let command = try makeActivity(
+            id: "command-1",
+            kind: "command",
+            text: "swift test",
+            status: "completed"
+        )
+        let latest = try makeActivity(
+            id: "message-2",
+            kind: "message",
+            text: "최신 응답",
+            status: "completed"
+        )
+        let tool = try makeActivity(
+            id: "tool-1",
+            kind: "tool",
+            text: "검증 완료",
+            status: "completed"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [first, command, latest, tool],
+            response: "첫 응답\n\n최신 응답",
+            responseUpdatedAt: Date(timeIntervalSince1970: 1_000),
+            isRunning: true
+        )
+
+        XCTAssertEqual(
+            presentation.latestMessage?.id,
+            "activity:message-2"
+        )
+        XCTAssertEqual(presentation.latestMessage?.text, "최신 응답")
+    }
+
+    func testCodexWaterfallPacingIsVisibleAndBounded() {
+        XCTAssertEqual(
+            CodexWaterfallRevealPacing.revealDuration(
+                forContentHeight: 20
+            ),
+            1.35,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CodexWaterfallRevealPacing.revealDuration(
+                forContentHeight: 640
+            ),
+            2,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CodexWaterfallRevealPacing.revealDuration(
+                forContentHeight: 2_000
+            ),
+            2.8,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CodexWaterfallRevealPacing.featherHeight(
+                forVisibleHeight: 24
+            ),
+            24
+        )
+        XCTAssertEqual(
+            CodexWaterfallRevealPacing.featherHeight(
+                forVisibleHeight: 120
+            ),
+            72
+        )
+    }
+
     func testCodexTranscriptKeepsMessagesBetweenOperationGroups() throws {
         let activities = try [
             makeActivity(
