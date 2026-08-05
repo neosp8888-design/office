@@ -56,6 +56,37 @@ struct CoreAnimationRunningIndicator: NSViewRepresentable {
     }
 }
 
+struct CoreAnimationWaterfallMaskView: NSViewRepresentable {
+    let animationID: UUID
+    let onFinished: () -> Void
+
+    func makeNSView(context: Context) -> CoreAnimationWaterfallMaskNSView {
+        let view = CoreAnimationWaterfallMaskNSView()
+        view.configure(
+            animationID: animationID,
+            onFinished: onFinished
+        )
+        return view
+    }
+
+    func updateNSView(
+        _ nsView: CoreAnimationWaterfallMaskNSView,
+        context: Context
+    ) {
+        nsView.configure(
+            animationID: animationID,
+            onFinished: onFinished
+        )
+    }
+
+    static func dismantleNSView(
+        _ nsView: CoreAnimationWaterfallMaskNSView,
+        coordinator: ()
+    ) {
+        nsView.stopAnimation()
+    }
+}
+
 final class CoreAnimationDotsNSView: NSView {
     private let dotLayers = (0..<3).map { _ in CAShapeLayer() }
     private var dotSize = CGFloat(4)
@@ -317,5 +348,190 @@ final class CoreAnimationRunningIndicatorNSView: NSView {
             name: .easeInEaseOut
         )
         shapeLayer.add(group, forKey: "officestra.pulse")
+    }
+}
+
+final class CoreAnimationWaterfallMaskNSView: NSView, CAAnimationDelegate {
+    private let pendingLayer = CALayer()
+    private let revealLayer = CAGradientLayer()
+
+    private var animationID: UUID?
+    private var onFinished: () -> Void = {}
+    private var hasStarted = false
+    private var didFinish = false
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.isGeometryFlipped = true
+
+        revealLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        revealLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        revealLayer.colors = [
+            NSColor.white.cgColor,
+            NSColor.white.cgColor,
+            NSColor.white.withAlphaComponent(0.9).cgColor,
+            NSColor.white.withAlphaComponent(0.48).cgColor,
+            NSColor.clear.cgColor,
+        ]
+
+        layer?.addSublayer(pendingLayer)
+        layer?.addSublayer(revealLayer)
+        resetLayers()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        updateLayerGeometry()
+        startAnimationIfNeeded()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        startAnimationIfNeeded()
+    }
+
+    func configure(
+        animationID: UUID,
+        onFinished: @escaping () -> Void
+    ) {
+        let identityChanged = self.animationID != animationID
+        self.animationID = animationID
+        self.onFinished = onFinished
+
+        if identityChanged {
+            stopAnimation()
+            hasStarted = false
+            didFinish = false
+            resetLayers()
+        }
+        needsLayout = true
+        startAnimationIfNeeded()
+    }
+
+    func stopAnimation() {
+        revealLayer.removeAnimation(forKey: "officestra.waterfall")
+    }
+
+    func animationDidStop(_ anim: CAAnimation, finished flag: Bool) {
+        guard
+            flag,
+            !didFinish,
+            let animationID,
+            anim.value(forKey: "officestra.animationID") as? String
+                == animationID.uuidString
+        else {
+            return
+        }
+
+        didFinish = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pendingLayer.backgroundColor = NSColor.white.cgColor
+        revealLayer.isHidden = true
+        CATransaction.commit()
+        onFinished()
+    }
+
+    private func updateLayerGeometry() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pendingLayer.frame = bounds
+        revealLayer.frame = bounds
+        CATransaction.commit()
+    }
+
+    private func startAnimationIfNeeded() {
+        guard
+            !hasStarted,
+            !didFinish,
+            window != nil,
+            bounds.width > 0,
+            bounds.height > 0,
+            let animationID
+        else {
+            return
+        }
+        hasStarted = true
+
+        let height = bounds.height
+        let featherFraction = min(
+            1,
+            CodexWaterfallRevealPacing.featherHeight(
+                forVisibleHeight: height
+            ) / height
+        )
+        let startLocations = gradientLocations(
+            boundary: featherFraction,
+            featherFraction: featherFraction
+        )
+        let endLocations = gradientLocations(
+            boundary: 1,
+            featherFraction: featherFraction
+        )
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        revealLayer.locations = endLocations
+        CATransaction.commit()
+
+        let animation = CABasicAnimation(keyPath: "locations")
+        animation.fromValue = startLocations
+        animation.toValue = endLocations
+        animation.beginTime = CACurrentMediaTime()
+            + TimeInterval(
+                CodexWaterfallRevealPacing.startDelayMilliseconds
+            ) / 1_000
+        animation.duration = CodexWaterfallRevealPacing.revealDuration(
+            forContentHeight: height
+        )
+        animation.fillMode = .both
+        animation.isRemovedOnCompletion = false
+        animation.timingFunction = CAMediaTimingFunction(
+            name: .easeInEaseOut
+        )
+        animation.setValue(
+            animationID.uuidString,
+            forKey: "officestra.animationID"
+        )
+        animation.delegate = self
+        revealLayer.add(animation, forKey: "officestra.waterfall")
+    }
+
+    private func gradientLocations(
+        boundary: CGFloat,
+        featherFraction: CGFloat
+    ) -> [NSNumber] {
+        [
+            0,
+            max(0, boundary - featherFraction),
+            max(0, boundary - featherFraction * 0.58),
+            max(0, boundary - featherFraction * 0.24),
+            boundary,
+        ].map { NSNumber(value: Double($0)) }
+    }
+
+    private func resetLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        revealLayer.isHidden = false
+        pendingLayer.backgroundColor = NSColor.white
+            .withAlphaComponent(
+                CGFloat(
+                    CodexWaterfallRevealPacing.pendingContentOpacity
+                )
+            )
+            .cgColor
+        CATransaction.commit()
     }
 }
