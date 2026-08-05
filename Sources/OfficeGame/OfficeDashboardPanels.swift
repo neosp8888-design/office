@@ -2250,6 +2250,7 @@ struct WaterfallResponseRevealView: View {
             ForEach(segments) { segment in
                 if segment.id == revealingSegmentID {
                     WaterfallResponseSegmentView(
+                        animationID: segment.id,
                         source: segment.source,
                         fontSize: fontSize
                     ) {
@@ -2311,15 +2312,10 @@ struct WaterfallResponseRevealView: View {
 }
 
 private struct WaterfallResponseSegmentView: View {
+    let animationID: UUID
     let source: String
     let fontSize: CGFloat
     let onFinished: () -> Void
-
-    @State private var measuredHeight = CGFloat.zero
-    @State private var revealHeight = CGFloat.zero
-    @State private var isRevealing = true
-    @State private var hasStarted = false
-    @State private var completionTask: Task<Void, Never>?
 
     var body: some View {
         ConversationMarkdownView(
@@ -2328,79 +2324,17 @@ private struct WaterfallResponseSegmentView: View {
         )
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
-        .background {
-            GeometryReader { geometry in
-                Color.clear.preference(
-                    key: WaterfallResponseFullHeightKey.self,
-                    value: geometry.size.height
-                )
-            }
-        }
         .mask {
-            if isRevealing {
-                WaterfallResponseMask(revealHeight: revealHeight)
-            } else {
-                Rectangle().fill(.white)
-            }
-        }
-        .onPreferenceChange(
-            WaterfallResponseFullHeightKey.self
-        ) { height in
-            guard height > 0 else {
-                return
-            }
-            measuredHeight = height
-            beginRevealIfNeeded()
+            CoreAnimationWaterfallMaskView(
+                animationID: animationID,
+                onFinished: onFinished
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onDisappear {
-            completionTask?.cancel()
-            completionTask = nil
             onFinished()
         }
     }
-
-    private func beginRevealIfNeeded() {
-        guard !hasStarted else {
-            return
-        }
-
-        completionTask?.cancel()
-        hasStarted = true
-        isRevealing = true
-        revealHeight = 0
-
-        completionTask = Task { @MainActor in
-            try? await Task.sleep(
-                for: .milliseconds(
-                    CodexWaterfallRevealPacing.startDelayMilliseconds
-                )
-            )
-            guard !Task.isCancelled else {
-                return
-            }
-
-            let targetHeight = measuredHeight
-            let duration = CodexWaterfallRevealPacing.revealDuration(
-                forContentHeight: targetHeight
-            )
-            withAnimation(
-                .linear(duration: duration)
-            ) {
-                revealHeight = targetHeight
-            }
-
-            try? await Task.sleep(
-                for: .milliseconds(Int(duration * 1_000))
-            )
-            guard !Task.isCancelled else {
-                return
-            }
-            isRevealing = false
-            revealHeight = measuredHeight
-            onFinished()
-        }
-    }
-
 }
 
 // Markdown은 고정한 채 하나의 마스크 위치만 움직여 렌더링 부하를 제한한다.
@@ -2410,6 +2344,7 @@ enum CodexWaterfallRevealPacing {
     static let maximumDuration = TimeInterval(2.8)
     static let pointsPerSecond = CGFloat(320)
     static let maximumFeatherHeight = CGFloat(72)
+    static let featherHeightFraction = CGFloat(0.48)
     static let pendingContentOpacity = Double(0.12)
 
     static func revealDuration(
@@ -2427,69 +2362,13 @@ enum CodexWaterfallRevealPacing {
     static func featherHeight(
         forVisibleHeight height: CGFloat
     ) -> CGFloat {
-        min(maximumFeatherHeight, max(0, height))
-    }
-}
-
-private struct WaterfallResponseMask: View {
-    let revealHeight: CGFloat
-
-    var body: some View {
-        GeometryReader { geometry in
-            let visibleHeight = min(
-                max(0, revealHeight),
-                geometry.size.height
-            )
-            let featherHeight =
-                CodexWaterfallRevealPacing.featherHeight(
-                    forVisibleHeight: visibleHeight
-                )
-
-            ZStack(alignment: .top) {
-                Color.white.opacity(
-                    CodexWaterfallRevealPacing.pendingContentOpacity
-                )
-
-                VStack(spacing: 0) {
-                    Color.white
-                        .frame(
-                            height: max(
-                                0,
-                                visibleHeight - featherHeight
-                            )
-                        )
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white, location: 0),
-                            .init(
-                                color: .white.opacity(0.9),
-                                location: 0.42
-                            ),
-                            .init(
-                                color: .white.opacity(0.48),
-                                location: 0.76
-                            ),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: featherHeight)
-                    Spacer(minLength: 0)
-                }
-            }
+        guard height > 0 else {
+            return 0
         }
-    }
-}
-
-private struct WaterfallResponseFullHeightKey: PreferenceKey {
-    static var defaultValue = CGFloat.zero
-
-    static func reduce(
-        value: inout CGFloat,
-        nextValue: () -> CGFloat
-    ) {
-        value = max(value, nextValue())
+        return min(
+            maximumFeatherHeight,
+            max(1, height * featherHeightFraction)
+        )
     }
 }
 

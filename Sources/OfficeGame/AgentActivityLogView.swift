@@ -25,34 +25,39 @@ struct CodexTranscriptPresentation: Equatable {
         isRunning: Bool
     ) -> CodexTranscriptPresentation {
         var entries: [CodexTranscriptEntry] = []
-        var operationBuffer: [LiveFeedActivity] = []
+        var groupOrder: [CodexActivityGroupKind] = []
+        var groupedItems: [CodexActivityGroupKind: [CodexActivityGroupItem]] =
+            [:]
 
-        func flushOperations() {
-            guard !operationBuffer.isEmpty else {
-                return
+        func append(
+            _ item: CodexActivityGroupItem,
+            to kind: CodexActivityGroupKind
+        ) {
+            if groupedItems[kind] == nil {
+                groupOrder.append(kind)
+                groupedItems[kind] = []
             }
-            entries.append(
-                .operations(CodexOperationGroup(activities: operationBuffer))
-            )
-            operationBuffer.removeAll(keepingCapacity: true)
+            groupedItems[kind]?.append(item)
+        }
+
+        func flushActivityGroups() {
+            for kind in groupOrder {
+                guard let items = groupedItems[kind], !items.isEmpty else {
+                    continue
+                }
+                entries.append(
+                    .activityGroup(
+                        CodexActivityGroup(kind: kind, items: items)
+                    )
+                )
+            }
+            groupOrder.removeAll(keepingCapacity: true)
+            groupedItems.removeAll(keepingCapacity: true)
         }
 
         for activity in activities {
-            if CodexFileChangeSummary.isFileChange(activity) {
-                flushOperations()
-                if let summary = CodexFileChangeSummary.make(
-                    from: [activity]
-                ) {
-                    entries.append(.changes(summary))
-                }
-                continue
-            }
-
-            switch activity.kind {
-            case "command", "tool":
-                operationBuffer.append(activity)
-            case "message":
-                flushOperations()
+            if activity.kind == "message" {
+                flushActivityGroups()
                 entries.append(
                     .message(
                         CodexTranscriptMessage(
@@ -62,12 +67,25 @@ struct CodexTranscriptPresentation: Equatable {
                         )
                     )
                 )
-            default:
-                flushOperations()
-                entries.append(.narrative(activity))
+                continue
+            }
+
+            if
+                CodexFileChangeSummary.isFileChange(activity),
+                let summary = CodexFileChangeSummary.make(from: [activity])
+            {
+                append(
+                    .changes(activity: activity, summary: summary),
+                    to: .changes
+                )
+            } else {
+                append(
+                    .activity(activity),
+                    to: CodexActivityGroupKind(activity: activity)
+                )
             }
         }
-        flushOperations()
+        flushActivityGroups()
 
         let promotedMessages = activities
             .filter { $0.kind == "message" }
@@ -109,58 +127,106 @@ struct CodexTranscriptPresentation: Equatable {
 
         return CodexTranscriptPresentation(
             entries: entries,
-            showsWaiting:
-                isRunning
-                    && !activities.contains { $0.status == .running }
+            showsWaiting: isRunning
         )
     }
 
 }
 
 enum CodexTranscriptEntry: Identifiable, Equatable {
-    case narrative(LiveFeedActivity)
-    case operations(CodexOperationGroup)
+    case activityGroup(CodexActivityGroup)
     case message(CodexTranscriptMessage)
-    case changes(CodexFileChangeSummary)
 
     var id: String {
         switch self {
-        case .narrative(let activity):
-            "narrative:\(activity.id)"
-        case .operations(let group):
+        case .activityGroup(let group):
             group.id
         case .message(let message):
             message.id
-        case .changes(let summary):
-            summary.id
         }
     }
 }
 
-struct CodexOperationGroup: Identifiable, Equatable {
-    let activities: [LiveFeedActivity]
+enum CodexActivityGroupKind: String, Equatable, Hashable {
+    case reasoning
+    case command
+    case tool
+    case changes
+    case other
+
+    init(activity: LiveFeedActivity) {
+        switch activity.kind {
+        case "thinking":
+            self = .reasoning
+        case "command":
+            self = .command
+        case "tool":
+            self = .tool
+        default:
+            self = .other
+        }
+    }
+}
+
+enum CodexActivityGroupItem: Identifiable, Equatable {
+    case activity(LiveFeedActivity)
+    case changes(
+        activity: LiveFeedActivity,
+        summary: CodexFileChangeSummary
+    )
 
     var id: String {
-        let first = activities.first?.id ?? "empty"
-        return "operations:\(first)"
+        switch self {
+        case .activity(let activity), .changes(let activity, _):
+            activity.id
+        }
+    }
+
+    var activity: LiveFeedActivity {
+        switch self {
+        case .activity(let activity), .changes(let activity, _):
+            activity
+        }
+    }
+
+    var changeSummary: CodexFileChangeSummary? {
+        guard case .changes(_, let summary) = self else {
+            return nil
+        }
+        return summary
+    }
+}
+
+struct CodexActivityGroup: Identifiable, Equatable {
+    let kind: CodexActivityGroupKind
+    let items: [CodexActivityGroupItem]
+
+    var id: String {
+        let first = items.first?.id ?? "empty"
+        return "activity-group:\(kind.rawValue):\(first)"
     }
 
     var isRunning: Bool {
-        activities.contains { $0.status == .running }
+        items.contains { $0.activity.status == .running }
     }
 
-    func visibleActivities(
+    var latestItem: CodexActivityGroupItem? {
+        items.last
+    }
+
+    func visibleHistoryItems(
         showsAll: Bool,
         limit: Int
-    ) -> [LiveFeedActivity] {
-        guard !showsAll, activities.count > limit else {
-            return activities
+    ) -> [CodexActivityGroupItem] {
+        let history = items.dropLast()
+        guard !showsAll, history.count > limit else {
+            return Array(history)
         }
-        return Array(activities.suffix(limit))
+        return Array(history.suffix(limit))
     }
 
-    func hiddenActivityCount(limit: Int) -> Int {
-        max(0, activities.count - limit)
+    func hiddenHistoryItemCount(limit: Int) -> Int {
+        max(0, items.count - 1 - limit)
     }
 }
 
@@ -487,16 +553,7 @@ struct CodexTranscriptView: View {
         let latestMessageRevision = latestMessage.map(
             CodexResponsePresentationRevision.init(message:)
         )
-        let conclusionMessageID: String? = {
-            guard
-                isCompleted,
-                let lastEntry = presentation.entries.last,
-                case .message(let message) = lastEntry
-            else {
-                return nil
-            }
-            return message.id
-        }()
+        let conclusionMessageID = isCompleted ? latestMessage?.id : nil
 
         VStack(alignment: .leading, spacing: 14) {
             if hiddenCount > 0, !showsAllEntries {
@@ -518,8 +575,7 @@ struct CodexTranscriptView: View {
             ForEach(visibleEntries) { entry in
                 transcriptEntry(
                     entry,
-                    isConclusion: entry.id == conclusionMessageID,
-                    latestMessageID: latestMessage?.id
+                    isConclusion: entry.id == conclusionMessageID
                 )
             }
 
@@ -563,14 +619,14 @@ struct CodexTranscriptView: View {
     @ViewBuilder
     private func transcriptEntry(
         _ entry: CodexTranscriptEntry,
-        isConclusion: Bool,
-        latestMessageID: String?
+        isConclusion: Bool
     ) -> some View {
         switch entry {
-        case .narrative(let activity):
-            CodexNarrativeActivityView(activity: activity)
-        case .operations(let group):
-            CodexOperationGroupView(group: group)
+        case .activityGroup(let group):
+            CodexActivityGroupView(
+                group: group,
+                workspaceDirectory: workspaceDirectory
+            )
         case .message(let message):
             CodexMessageView(
                 turnID: turnID,
@@ -578,21 +634,16 @@ struct CodexTranscriptView: View {
                 isConclusion: isConclusion,
                 needsInput: isConclusion && needsInput,
                 animatesResponse:
-                    animatesResponse && message.id == latestMessageID,
+                    animatesResponse && isConclusion,
                 responseFeedback: responseFeedback,
                 updateResponseFeedback: updateResponseFeedback,
                 onResponsePresented: {
-                    guard message.id == latestMessageID else {
+                    guard isConclusion else {
                         return
                     }
                     presentedResponseRevision =
                         CodexResponsePresentationRevision(message: message)
                 }
-            )
-        case .changes(let summary):
-            CodexFileChangeSummaryView(
-                summary: summary,
-                workspaceDirectory: workspaceDirectory
             )
         }
     }
@@ -635,49 +686,6 @@ private struct CodexWaitingView: View {
     }
 }
 
-private struct CodexNarrativeActivityView: View {
-    let activity: LiveFeedActivity
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            if activity.status == .running {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(DashboardPalette.accent)
-                    .frame(width: 18, height: 18)
-            } else {
-                Image(systemName: "book.pages")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(OfficeLocalization.string(activity.text))
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text(activity.occurredAt.formatted(
-                    date: .omitted,
-                    time: .standard
-                ))
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "추론, \(activity.text), "
-                + activity.occurredAt.formatted(
-                    date: .omitted,
-                    time: .standard
-                )
-        )
-    }
-}
-
 /// 실행 상태 변화만으로는 열지 않고 완료 전환에서만 닫는다.
 func transcriptGroupExpansionState(
     current: Bool,
@@ -686,82 +694,70 @@ func transcriptGroupExpansionState(
     isRunning ? current : false
 }
 
-private struct CodexOperationGroupView: View {
-    let group: CodexOperationGroup
-    @State private var isExpanded: Bool
-    @State private var showsAllActivities = false
+private struct CodexActivityGroupView: View {
+    let group: CodexActivityGroup
+    let workspaceDirectory: String
 
-    private static let compactActivityLimit = 20
+    @State private var isExpanded = false
+    @State private var showsAllHistory = false
 
-    init(group: CodexOperationGroup) {
-        self.group = group
-        _isExpanded = State(initialValue: false)
-    }
+    private static let compactHistoryLimit = 20
 
     var body: some View {
-        let hiddenCount = group.hiddenActivityCount(
-            limit: Self.compactActivityLimit
+        let historyCount = max(0, group.items.count - 1)
+        let hiddenCount = group.hiddenHistoryItemCount(
+            limit: Self.compactHistoryLimit
         )
-        let visibleActivities = group.visibleActivities(
-            showsAll: showsAllActivities,
-            limit: Self.compactActivityLimit
+        let visibleHistory = group.visibleHistoryItems(
+            showsAll: showsAllHistory,
+            limit: Self.compactHistoryLimit
         )
 
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 0) {
-                if hiddenCount > 0, !showsAllActivities {
-                    Button {
-                        showsAllActivities = true
-                    } label: {
-                        Label(
-                            "이전 작업 \(hiddenCount)개 보기",
-                            systemImage: "clock.arrow.circlepath"
-                        )
+        VStack(alignment: .leading, spacing: 8) {
+            groupHeader
+
+            if let latestItem = group.latestItem {
+                itemView(latestItem, isLatest: true)
+            }
+
+            if historyCount > 0 {
+                DisclosureGroup(isExpanded: $isExpanded) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        if hiddenCount > 0, !showsAllHistory {
+                            Button {
+                                showsAllHistory = true
+                            } label: {
+                                Label(
+                                    "더 이전 기록 \(hiddenCount)개 보기",
+                                    systemImage: "clock.arrow.circlepath"
+                                )
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.vertical, 5)
+                        }
+
+                        ForEach(visibleHistory) { item in
+                            itemView(item, isLatest: false)
+                        }
+                    }
+                    .padding(.top, 5)
+                } label: {
+                    Text(
+                        isExpanded
+                            ? "이전 \(historyNoun) 숨기기"
+                            : "이전 \(historyNoun) \(historyCount)개 보기"
+                    )
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                 }
-
-                ForEach(visibleActivities) { activity in
-                    operationRow(activity)
-                }
+                .tint(.secondary)
             }
-            .padding(.top, 7)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: groupIcon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(group.isRunning
-                        ? DashboardPalette.accent
-                        : Color.secondary)
-                    .frame(width: 18)
-
-                Text(groupTitle)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                if group.isRunning {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(DashboardPalette.accent)
-                }
-
-                Spacer(minLength: 6)
-
-                Text(OfficeLocalization.format(
-                    "%d개",
-                    group.activities.count
-                ))
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
         }
-        .tint(.secondary)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
         .background(
             Color.primary.opacity(0.035),
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -770,48 +766,64 @@ private struct CodexOperationGroupView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.primary.opacity(0.06))
         }
-        .onChange(of: group.isRunning) { _, running in
-            isExpanded = transcriptGroupExpansionState(
-                current: isExpanded,
-                isRunning: running
+    }
+
+    private var groupHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: groupIcon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(group.isRunning ? groupColor : .secondary)
+                .frame(width: 18)
+
+            Text(groupTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            if group.isRunning {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(groupColor)
+            }
+
+            Spacer(minLength: 6)
+
+            Text(OfficeLocalization.format("%d개", group.items.count))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func itemView(
+        _ item: CodexActivityGroupItem,
+        isLatest: Bool
+    ) -> some View {
+        switch item {
+        case .activity(let activity):
+            activityRow(activity, isLatest: isLatest)
+        case .changes(_, let summary):
+            CodexFileChangeSummaryView(
+                summary: summary,
+                workspaceDirectory: workspaceDirectory
             )
         }
     }
 
-    private func operationRow(_ activity: LiveFeedActivity) -> some View {
+    private func activityRow(
+        _ activity: LiveFeedActivity,
+        isLatest: Bool
+    ) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Group {
-                if activity.status == .running {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(operationColor(activity))
-                } else {
-                    Image(
-                        systemName: activity.status == .failed
-                            ? "xmark.circle.fill"
-                            : "checkmark.circle.fill"
-                    )
-                    .foregroundStyle(
-                        activity.status == .failed
-                            ? Color.red
-                            : operationColor(activity)
-                    )
-                }
-            }
-            .frame(width: 15, height: 15)
-
-            Image(systemName: activity.kind == "command"
-                ? "terminal"
-                : "wrench.and.screwdriver")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-                .frame(width: 14)
+            statusView(activity.status)
+                .frame(width: 15, height: 15)
 
             Text(OfficeLocalization.string(activity.text))
-                .font(.system(size: 10.5, design: .monospaced))
+                .font(activityFont)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-                .lineLimit(4)
+                .lineLimit(
+                    isLatest && group.kind == .reasoning ? nil : 4
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(activity.occurredAt.formatted(
@@ -821,36 +833,99 @@ private struct CodexOperationGroupView: View {
                 .font(.system(size: 8.5, design: .monospaced))
                 .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, isLatest ? 4 : 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(groupTitle), \(activity.text), "
+                + activity.occurredAt.formatted(
+                    date: .omitted,
+                    time: .standard
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func statusView(
+        _ status: LiveFeedActivityStatus
+    ) -> some View {
+        if status == .running {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(groupColor)
+        } else {
+            Image(
+                systemName: status == .failed
+                    ? "xmark.circle.fill"
+                    : "checkmark.circle.fill"
+            )
+            .foregroundStyle(status == .failed ? Color.red : groupColor)
+        }
+    }
+
+    private var activityFont: Font {
+        group.kind == .reasoning
+            ? .system(size: 12.5, weight: .medium)
+            : .system(size: 10.5, design: .monospaced)
     }
 
     private var groupTitle: String {
-        let commands = group.activities.filter { $0.kind == "command" }.count
-        let tools = group.activities.count - commands
-        if group.isRunning {
-            if commands > 0, tools > 0 {
-                return OfficeLocalization.string("명령과 도구를 사용하는 중")
-            }
-            return commands > 0
-                ? OfficeLocalization.string("명령을 실행하는 중")
-                : OfficeLocalization.string("도구를 사용하는 중")
+        switch group.kind {
+        case .reasoning:
+            OfficeLocalization.string("추론")
+        case .command:
+            OfficeLocalization.string("명령 실행")
+        case .tool:
+            OfficeLocalization.string("도구 사용")
+        case .changes:
+            OfficeLocalization.string("파일 변경")
+        case .other:
+            OfficeLocalization.string("기타 작업")
         }
-        if commands > 0, tools > 0 {
-            return OfficeLocalization.string("명령과 도구를 사용했습니다")
+    }
+
+    private var historyNoun: String {
+        switch group.kind {
+        case .reasoning:
+            "추론"
+        case .command:
+            "명령"
+        case .tool:
+            "도구 사용"
+        case .changes:
+            "파일 변경"
+        case .other:
+            "작업"
         }
-        return commands > 0
-            ? OfficeLocalization.string("명령을 실행했습니다")
-            : OfficeLocalization.string("도구를 사용했습니다")
     }
 
     private var groupIcon: String {
-        group.activities.contains { $0.kind == "command" }
-            ? "terminal"
-            : "wrench.and.screwdriver"
+        switch group.kind {
+        case .reasoning:
+            "brain.head.profile"
+        case .command:
+            "terminal"
+        case .tool:
+            "wrench.and.screwdriver"
+        case .changes:
+            "doc.badge.gearshape"
+        case .other:
+            "ellipsis.circle"
+        }
     }
 
-    private func operationColor(_ activity: LiveFeedActivity) -> Color {
-        activity.kind == "command" ? .indigo : .orange
+    private var groupColor: Color {
+        switch group.kind {
+        case .reasoning:
+            DashboardPalette.accent
+        case .command:
+            .indigo
+        case .tool:
+            .orange
+        case .changes:
+            .green
+        case .other:
+            .secondary
+        }
     }
 }
 

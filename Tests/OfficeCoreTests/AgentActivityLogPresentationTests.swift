@@ -26,7 +26,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
     }
 
-    func testLargeOperationGroupUsesRecentRowsUntilExpanded() throws {
+    func testLargeActivityGroupKeepsLatestVisibleAndCapsHistory() throws {
         let activities = try (0..<50).map { index in
             try makeActivity(
                 id: "command-\(index)",
@@ -35,16 +35,23 @@ final class AgentActivityLogPresentationTests: XCTestCase {
                 status: "completed"
             )
         }
-        let group = CodexOperationGroup(activities: activities)
+        let group = CodexActivityGroup(
+            kind: .command,
+            items: activities.map(CodexActivityGroupItem.activity)
+        )
 
-        XCTAssertEqual(group.hiddenActivityCount(limit: 20), 30)
+        XCTAssertEqual(group.latestItem?.id, "command-49")
+        XCTAssertEqual(group.hiddenHistoryItemCount(limit: 20), 29)
         XCTAssertEqual(
-            group.visibleActivities(showsAll: false, limit: 20).map(\.id),
-            activities.suffix(20).map(\.id)
+            group.visibleHistoryItems(
+                showsAll: false,
+                limit: 20
+            ).map(\.id),
+            activities.dropLast().suffix(20).map(\.id)
         )
         XCTAssertEqual(
-            group.visibleActivities(showsAll: true, limit: 20).count,
-            50
+            group.visibleHistoryItems(showsAll: true, limit: 20).count,
+            49
         )
     }
 
@@ -59,6 +66,25 @@ final class AgentActivityLogPresentationTests: XCTestCase {
 
         XCTAssertTrue(presentation.entries.isEmpty)
         XCTAssertTrue(presentation.showsWaiting)
+    }
+
+    func testCodexTranscriptKeepsWaitingBelowRunningActivity() throws {
+        let activity = try makeActivity(
+            id: "command-1",
+            kind: "command",
+            text: "swift test",
+            status: "running"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [activity],
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 1_000),
+            isRunning: true
+        )
+
+        XCTAssertTrue(presentation.showsWaiting)
+        XCTAssertEqual(presentation.entries.count, 1)
     }
 
     func testCodexTranscriptFindsLatestMessageAcrossOtherEntries() throws {
@@ -103,6 +129,12 @@ final class AgentActivityLogPresentationTests: XCTestCase {
 
     func testCodexWaterfallPacingIsVisibleAndBounded() {
         XCTAssertEqual(
+            CodexWaterfallRevealPacing.featherHeight(
+                forVisibleHeight: 0
+            ),
+            0
+        )
+        XCTAssertEqual(
             CodexWaterfallRevealPacing.revealDuration(
                 forContentHeight: 20
             ),
@@ -127,13 +159,22 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             CodexWaterfallRevealPacing.featherHeight(
                 forVisibleHeight: 24
             ),
-            24
+            11.52,
+            accuracy: 0.001
         )
         XCTAssertEqual(
             CodexWaterfallRevealPacing.featherHeight(
                 forVisibleHeight: 120
             ),
-            72
+            57.6,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CodexWaterfallRevealPacing.featherHeight(
+                forVisibleHeight: 200
+            ),
+            72,
+            accuracy: 0.001
         )
     }
 
@@ -158,6 +199,12 @@ final class AgentActivityLogPresentationTests: XCTestCase {
                 status: "completed"
             ),
             makeActivity(
+                id: "reason-2",
+                kind: "thinking",
+                text: "검증 범위를 확정합니다.",
+                status: "completed"
+            ),
+            makeActivity(
                 id: "message-1",
                 kind: "message",
                 text: "첫 확인을 마쳤습니다.",
@@ -179,19 +226,33 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             isRunning: false
         )
 
-        XCTAssertEqual(presentation.entries.count, 5)
+        XCTAssertEqual(presentation.entries.count, 6)
         guard
-            case .narrative = presentation.entries[0],
-            case .operations(let firstGroup) = presentation.entries[1],
-            case .message(let firstMessage) = presentation.entries[2],
-            case .operations(let secondGroup) = presentation.entries[3],
-            case .message(let finalMessage) = presentation.entries[4]
+            case .activityGroup(let reasoningGroup) =
+                presentation.entries[0],
+            case .activityGroup(let commandGroup) =
+                presentation.entries[1],
+            case .activityGroup(let toolGroup) = presentation.entries[2],
+            case .message(let firstMessage) = presentation.entries[3],
+            case .activityGroup(let secondCommandGroup) =
+                presentation.entries[4],
+            case .message(let finalMessage) = presentation.entries[5]
         else {
             return XCTFail("Codex 타임라인 순서가 다릅니다.")
         }
-        XCTAssertEqual(firstGroup.activities.map(\.id), ["command-1", "tool-1"])
+        XCTAssertEqual(reasoningGroup.kind, .reasoning)
+        XCTAssertEqual(
+            reasoningGroup.items.map(\.id),
+            ["reason-1", "reason-2"]
+        )
+        XCTAssertEqual(reasoningGroup.latestItem?.id, "reason-2")
+        XCTAssertEqual(commandGroup.kind, .command)
+        XCTAssertEqual(commandGroup.items.map(\.id), ["command-1"])
+        XCTAssertEqual(toolGroup.kind, .tool)
+        XCTAssertEqual(toolGroup.items.map(\.id), ["tool-1"])
         XCTAssertEqual(firstMessage.text, "첫 확인을 마쳤습니다.")
-        XCTAssertEqual(secondGroup.activities.map(\.id), ["command-2"])
+        XCTAssertEqual(secondCommandGroup.kind, .command)
+        XCTAssertEqual(secondCommandGroup.items.map(\.id), ["command-2"])
         XCTAssertEqual(finalMessage.text, "최종 검증도 통과했습니다.")
         XCTAssertFalse(presentation.showsWaiting)
     }
@@ -302,11 +363,15 @@ final class AgentActivityLogPresentationTests: XCTestCase {
 
         guard
             presentation.entries.count == 2,
-            case .changes(let changes) = presentation.entries[0],
+            case .activityGroup(let changeGroup) = presentation.entries[0],
             case .message = presentation.entries[1]
         else {
             return XCTFail("파일 변경 카드가 실제 위치에 없습니다.")
         }
+        XCTAssertEqual(changeGroup.kind, .changes)
+        let changes = try XCTUnwrap(
+            changeGroup.latestItem?.changeSummary
+        )
         XCTAssertEqual(
             changes.files,
             [
@@ -610,12 +675,16 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         guard
             runningPresentation.entries.count == 3,
             case .message = runningPresentation.entries[0],
-            case .changes(let runningChanges) =
+            case .activityGroup(let runningChangeGroup) =
                 runningPresentation.entries[1],
             case .message = runningPresentation.entries[2]
         else {
             return XCTFail("실행 중 파일 변경의 타임라인 위치가 다릅니다.")
         }
+        XCTAssertEqual(runningChangeGroup.kind, .changes)
+        let runningChanges = try XCTUnwrap(
+            runningChangeGroup.latestItem?.changeSummary
+        )
         XCTAssertEqual(
             runningChanges.title,
             "파일 2개를 편집하는 중"
@@ -642,18 +711,21 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             completedPresentation.entries.map(\.id)
         )
         guard
-            case .changes(let completedChanges) =
+            case .activityGroup(let completedChangeGroup) =
                 completedPresentation.entries[1]
         else {
             return XCTFail("완료 파일 변경 카드가 기존 위치를 잃었습니다.")
         }
+        let completedChanges = try XCTUnwrap(
+            completedChangeGroup.latestItem?.changeSummary
+        )
         XCTAssertEqual(completedChanges.status, .completed)
         XCTAssertEqual(completedChanges.files, ["수정 A.swift", "수정 B.swift"])
         XCTAssertEqual(completedChanges.additions, 3)
         XCTAssertEqual(completedChanges.deletions, 1)
     }
 
-    func testSeparatedFileChangesKeepIndependentPositions() throws {
+    func testSamePhaseFileChangesShareCategoryGroup() throws {
         let first = try makeActivity(
             id: "files-1",
             kind: "tool",
@@ -682,13 +754,25 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
 
         guard
-            presentation.entries.count == 3,
-            case .changes(let firstChanges) = presentation.entries[0],
-            case .operations = presentation.entries[1],
-            case .changes(let secondChanges) = presentation.entries[2]
+            presentation.entries.count == 2,
+            case .activityGroup(let changeGroup) =
+                presentation.entries[0],
+            case .activityGroup(let commandGroup) = presentation.entries[1]
         else {
-            return XCTFail("여러 파일 변경의 실제 순서를 잃었습니다.")
+            return XCTFail("같은 구간의 파일 변경 그룹이 다릅니다.")
         }
+        XCTAssertEqual(changeGroup.kind, .changes)
+        XCTAssertEqual(changeGroup.items.map(\.id), ["files-1", "files-2"])
+        XCTAssertEqual(commandGroup.kind, .command)
+        let firstChanges = try XCTUnwrap(
+            changeGroup.visibleHistoryItems(
+                showsAll: true,
+                limit: 20
+            ).first?.changeSummary
+        )
+        let secondChanges = try XCTUnwrap(
+            changeGroup.latestItem?.changeSummary
+        )
         XCTAssertEqual(firstChanges.files, ["수정 A.swift"])
         XCTAssertEqual(secondChanges.files, ["수정 B.swift"])
     }
@@ -769,10 +853,13 @@ final class AgentActivityLogPresentationTests: XCTestCase {
 
         guard
             presentation.entries.count == 2,
-            case .changes(let changes) = presentation.entries[0]
+            case .activityGroup(let changeGroup) = presentation.entries[0]
         else {
             return XCTFail("이전 파일 변경 기록의 위치가 다릅니다.")
         }
+        let changes = try XCTUnwrap(
+            changeGroup.latestItem?.changeSummary
+        )
         XCTAssertEqual(changes.files, [])
         XCTAssertEqual(changes.title, "파일 변경을 반영했습니다")
     }
