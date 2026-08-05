@@ -1826,6 +1826,7 @@ private struct LiveTurnCard: View {
             isRunning: turn.status.isRunning,
             isCompleted: turn.status == .completed,
             needsInput: turn.needsInput,
+            animatesResponse: shouldAnimateResponse,
             responseFeedback: turn.feedback,
             updateResponseFeedback: { feedback in
                 await updateResponseFeedback(turn.id, feedback)
@@ -2220,7 +2221,7 @@ private struct WaterfallResponseSegment: Identifiable, Equatable {
     let source: String
 }
 
-private struct WaterfallResponseRevealView: View {
+struct WaterfallResponseRevealView: View {
     let source: String
     let fontSize: CGFloat
     let onFinished: () -> Void
@@ -2369,21 +2370,21 @@ private struct WaterfallResponseSegmentView: View {
         revealHeight = 0
 
         completionTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(240))
+            try? await Task.sleep(
+                for: .milliseconds(
+                    CodexWaterfallRevealPacing.startDelayMilliseconds
+                )
+            )
             guard !Task.isCancelled else {
                 return
             }
 
             let targetHeight = measuredHeight
-            let duration = revealDuration(for: targetHeight)
+            let duration = CodexWaterfallRevealPacing.revealDuration(
+                forContentHeight: targetHeight
+            )
             withAnimation(
-                .timingCurve(
-                    0.18,
-                    0.72,
-                    0.24,
-                    1,
-                    duration: duration
-                )
+                .linear(duration: duration)
             ) {
                 revealHeight = targetHeight
             }
@@ -2400,8 +2401,33 @@ private struct WaterfallResponseSegmentView: View {
         }
     }
 
-    private func revealDuration(for height: CGFloat) -> TimeInterval {
-        min(1.8, max(0.72, TimeInterval(height / 520)))
+}
+
+// Markdown은 고정한 채 하나의 마스크 위치만 움직여 렌더링 부하를 제한한다.
+enum CodexWaterfallRevealPacing {
+    static let startDelayMilliseconds = 40
+    static let minimumDuration = TimeInterval(1.35)
+    static let maximumDuration = TimeInterval(2.8)
+    static let pointsPerSecond = CGFloat(320)
+    static let maximumFeatherHeight = CGFloat(72)
+    static let pendingContentOpacity = Double(0.12)
+
+    static func revealDuration(
+        forContentHeight height: CGFloat
+    ) -> TimeInterval {
+        min(
+            maximumDuration,
+            max(
+                minimumDuration,
+                TimeInterval(max(0, height) / pointsPerSecond)
+            )
+        )
+    }
+
+    static func featherHeight(
+        forVisibleHeight height: CGFloat
+    ) -> CGFloat {
+        min(maximumFeatherHeight, max(0, height))
     }
 }
 
@@ -2414,22 +2440,43 @@ private struct WaterfallResponseMask: View {
                 max(0, revealHeight),
                 geometry.size.height
             )
-            let featherHeight = min(24, visibleHeight)
-
-            VStack(spacing: 0) {
-                Color.white
-                    .frame(height: max(0, visibleHeight - featherHeight))
-                LinearGradient(
-                    colors: [
-                        .white,
-                        .white.opacity(0.72),
-                        .clear,
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
+            let featherHeight =
+                CodexWaterfallRevealPacing.featherHeight(
+                    forVisibleHeight: visibleHeight
                 )
-                .frame(height: featherHeight)
-                Spacer(minLength: 0)
+
+            ZStack(alignment: .top) {
+                Color.white.opacity(
+                    CodexWaterfallRevealPacing.pendingContentOpacity
+                )
+
+                VStack(spacing: 0) {
+                    Color.white
+                        .frame(
+                            height: max(
+                                0,
+                                visibleHeight - featherHeight
+                            )
+                        )
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white, location: 0),
+                            .init(
+                                color: .white.opacity(0.9),
+                                location: 0.42
+                            ),
+                            .init(
+                                color: .white.opacity(0.48),
+                                location: 0.76
+                            ),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: featherHeight)
+                    Spacer(minLength: 0)
+                }
             }
         }
     }

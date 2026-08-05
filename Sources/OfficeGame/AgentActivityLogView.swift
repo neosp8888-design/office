@@ -8,6 +8,15 @@ struct CodexTranscriptPresentation: Equatable {
     let entries: [CodexTranscriptEntry]
     let showsWaiting: Bool
 
+    var latestMessage: CodexTranscriptMessage? {
+        for entry in entries.reversed() {
+            if case .message(let message) = entry {
+                return message
+            }
+        }
+        return nil
+    }
+
     static func make(
         turnID: String,
         activities: [LiveFeedActivity],
@@ -159,6 +168,16 @@ struct CodexTranscriptMessage: Identifiable, Equatable {
     let id: String
     let text: String
     let occurredAt: Date
+}
+
+private struct CodexResponsePresentationRevision: Equatable {
+    let messageID: String
+    let text: String
+
+    init(message: CodexTranscriptMessage) {
+        messageID = message.id
+        text = message.text
+    }
 }
 
 struct CodexFileChangeSummary: Equatable {
@@ -437,12 +456,15 @@ struct CodexTranscriptView: View {
     let isRunning: Bool
     let isCompleted: Bool
     let needsInput: Bool
+    let animatesResponse: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsAllEntries = false
+    @State private var presentedResponseRevision:
+        CodexResponsePresentationRevision?
 
     private static let compactEntryLimit = 18
 
@@ -461,6 +483,10 @@ struct CodexTranscriptView: View {
         let visibleEntries = showsAllEntries
             ? presentation.entries
             : Array(presentation.entries.suffix(Self.compactEntryLimit))
+        let latestMessage = presentation.latestMessage
+        let latestMessageRevision = latestMessage.map(
+            CodexResponsePresentationRevision.init(message:)
+        )
         let conclusionMessageID: String? = {
             guard
                 isCompleted,
@@ -492,7 +518,8 @@ struct CodexTranscriptView: View {
             ForEach(visibleEntries) { entry in
                 transcriptEntry(
                     entry,
-                    isConclusion: entry.id == conclusionMessageID
+                    isConclusion: entry.id == conclusionMessageID,
+                    latestMessageID: latestMessage?.id
                 )
             }
 
@@ -510,8 +537,24 @@ struct CodexTranscriptView: View {
             reduceMotion ? nil : .easeOut(duration: 0.18),
             value: presentation.showsWaiting
         )
-        .task(id: response) {
-            if !response.isEmpty {
+        .onChange(of: isRunning) { _, running in
+            if
+                !running,
+                presentedResponseRevision == latestMessageRevision
+            {
+                onResponsePresented()
+            }
+        }
+        .onChange(of: presentedResponseRevision) { _, revision in
+            if
+                !isRunning,
+                revision == latestMessageRevision
+            {
+                onResponsePresented()
+            }
+        }
+        .onDisappear {
+            if !isRunning {
                 onResponsePresented()
             }
         }
@@ -520,7 +563,8 @@ struct CodexTranscriptView: View {
     @ViewBuilder
     private func transcriptEntry(
         _ entry: CodexTranscriptEntry,
-        isConclusion: Bool
+        isConclusion: Bool,
+        latestMessageID: String?
     ) -> some View {
         switch entry {
         case .narrative(let activity):
@@ -533,8 +577,17 @@ struct CodexTranscriptView: View {
                 message: message,
                 isConclusion: isConclusion,
                 needsInput: isConclusion && needsInput,
+                animatesResponse:
+                    animatesResponse && message.id == latestMessageID,
                 responseFeedback: responseFeedback,
-                updateResponseFeedback: updateResponseFeedback
+                updateResponseFeedback: updateResponseFeedback,
+                onResponsePresented: {
+                    guard message.id == latestMessageID else {
+                        return
+                    }
+                    presentedResponseRevision =
+                        CodexResponsePresentationRevision(message: message)
+                }
             )
         case .changes(let summary):
             CodexFileChangeSummaryView(
@@ -806,9 +859,12 @@ private struct CodexMessageView: View {
     let message: CodexTranscriptMessage
     let isConclusion: Bool
     let needsInput: Bool
+    let animatesResponse: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
+    let onResponsePresented: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
 
@@ -827,11 +883,20 @@ private struct CodexMessageView: View {
                 )
             }
 
-            ConversationMarkdownView(
-                source: message.text,
-                fontSize: 14
-            )
-            .textSelection(.enabled)
+            if animatesResponse, !reduceMotion {
+                WaterfallResponseRevealView(
+                    source: message.text,
+                    fontSize: 14,
+                    onFinished: onResponsePresented
+                )
+            } else if animatesResponse {
+                renderedMessage
+                    .task(id: message.text) {
+                        onResponsePresented()
+                    }
+            } else {
+                renderedMessage
+            }
 
             ResponseMessageFooter(
                 occurredAt: message.occurredAt,
@@ -853,6 +918,14 @@ private struct CodexMessageView: View {
         .onDisappear {
             copyResetTask?.cancel()
         }
+    }
+
+    private var renderedMessage: some View {
+        ConversationMarkdownView(
+            source: message.text,
+            fontSize: 14
+        )
+        .textSelection(.enabled)
     }
 
     private func copyMessage() {
