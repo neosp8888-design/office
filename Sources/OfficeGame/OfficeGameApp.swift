@@ -897,14 +897,7 @@ private struct OfficeGameView: View {
                     )
 
                 Button {
-                    withAnimation(
-                        .spring(
-                            response: 0.28,
-                            dampingFraction: 0.84
-                        )
-                    ) {
-                        director.select(character)
-                    }
+                    director.select(character)
                 } label: {
                     HStack(spacing: 7) {
                         CharacterAvatar(
@@ -1019,6 +1012,12 @@ private struct OfficeGameView: View {
                     .stroke(Color.primary.opacity(0.055))
                 }
         }
+        .animation(
+            reduceMotion
+                ? nil
+                : .spring(response: 0.28, dampingFraction: 0.84),
+            value: director.selectedCharacterID
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("직원 선택")
     }
