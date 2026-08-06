@@ -24,6 +24,8 @@ enum CharacterFullBodyProfileLayout {
 
 enum CharacterFullBodyProfileSelection {
     static let dragThreshold: CGFloat = 36
+    static let loopsBeforeAutomaticAdvance = 2
+    static let crossfadeDuration: TimeInterval = 1.2
 
     static func previousIndex(from index: Int, count: Int) -> Int {
         guard count > 1 else {
@@ -52,6 +54,12 @@ enum CharacterFullBodyProfileSelection {
         }
         return index
     }
+
+    static func shouldAutomaticallyAdvance(
+        afterCompletedLoops completedLoops: Int
+    ) -> Bool {
+        completedLoops >= loopsBeforeAutomaticAdvance
+    }
 }
 
 struct CharacterFullBodyProfileView: View {
@@ -60,6 +68,9 @@ struct CharacterFullBodyProfileView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedVideoIndex = 0
+    @State private var completedLoopCount = 0
+    @State private var outgoingVideoURL: URL?
+    @State private var crossfadeProgress = 1.0
 
     private var image: NSImage? {
         CharacterFullBodyProfileImageCache.image(for: character.id)
@@ -76,6 +87,16 @@ struct CharacterFullBodyProfileView: View {
         return videoURLs[selectedVideoIndex % videoURLs.count]
     }
 
+    private var visibleVideoURLs: [URL] {
+        guard let selectedVideoURL else {
+            return []
+        }
+        if let outgoingVideoURL, outgoingVideoURL != selectedVideoURL {
+            return [outgoingVideoURL, selectedVideoURL]
+        }
+        return [selectedVideoURL]
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             HStack(alignment: .top) {
@@ -90,13 +111,17 @@ struct CharacterFullBodyProfileView: View {
                 .keyboardShortcut(.cancelAction)
             }
 
-            if let selectedVideoURL {
+            if selectedVideoURL != nil {
                 ZStack {
-                    CharacterFullBodyProfileVideo(url: selectedVideoURL)
-                        .id(selectedVideoURL)
-
-                    if videoURLs.count > 1 {
-                        profileNavigationControls
+                    ForEach(visibleVideoURLs, id: \.self) { videoURL in
+                        CharacterFullBodyProfileVideo(
+                            url: videoURL,
+                            onLoopCompleted: {
+                                handleLoopCompleted(for: videoURL)
+                            }
+                        )
+                        .id(videoURL)
+                        .opacity(opacity(for: videoURL))
                     }
                 }
                 .frame(
@@ -116,6 +141,9 @@ struct CharacterFullBodyProfileView: View {
                             )
                         }
                 )
+                .task(id: outgoingVideoURL) {
+                    await completeCrossfadeIfNeeded()
+                }
             } else if let image {
                 Image(nsImage: image)
                     .resizable()
@@ -131,68 +159,85 @@ struct CharacterFullBodyProfileView: View {
         .frame(width: CharacterFullBodyProfileLayout.sheetWidth)
     }
 
-    private var profileNavigationControls: some View {
-        HStack {
-            profileNavigationButton(
-                systemName: "chevron.left",
-                accessibilityLabel: "이전 프로필"
-            ) {
-                selectVideo(
-                    CharacterFullBodyProfileSelection.previousIndex(
-                        from: selectedVideoIndex,
-                        count: videoURLs.count
-                    )
-                )
-            }
-
-            Spacer()
-
-            profileNavigationButton(
-                systemName: "chevron.right",
-                accessibilityLabel: "다음 프로필"
-            ) {
-                selectVideo(
-                    CharacterFullBodyProfileSelection.nextIndex(
-                        from: selectedVideoIndex,
-                        count: videoURLs.count
-                    )
-                )
-            }
+    private func opacity(for videoURL: URL) -> Double {
+        if videoURL == outgoingVideoURL {
+            return 1 - crossfadeProgress
         }
-        .padding(.horizontal, 8)
-    }
-
-    private func profileNavigationButton(
-        systemName: String,
-        accessibilityLabel: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 32, height: 32)
-                .background(.black.opacity(0.58), in: Circle())
+        if outgoingVideoURL != nil {
+            return crossfadeProgress
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
+        return 1
     }
 
     private func selectVideo(_ index: Int) {
-        guard index != selectedVideoIndex else {
+        guard
+            outgoingVideoURL == nil,
+            index != selectedVideoIndex,
+            let selectedVideoURL
+        else {
             return
         }
-        withAnimation(.easeInOut(duration: 0.18)) {
-            selectedVideoIndex = index
+
+        outgoingVideoURL = selectedVideoURL
+        crossfadeProgress = 0
+        completedLoopCount = 0
+        selectedVideoIndex = index
+    }
+
+    private func handleLoopCompleted(for videoURL: URL) {
+        guard
+            outgoingVideoURL == nil,
+            videoURL == selectedVideoURL,
+            videoURLs.count > 1
+        else {
+            return
         }
+
+        completedLoopCount += 1
+        if CharacterFullBodyProfileSelection.shouldAutomaticallyAdvance(
+            afterCompletedLoops: completedLoopCount
+        ) {
+            selectVideo(
+                CharacterFullBodyProfileSelection.nextIndex(
+                    from: selectedVideoIndex,
+                    count: videoURLs.count
+                )
+            )
+        }
+    }
+
+    private func completeCrossfadeIfNeeded() async {
+        guard outgoingVideoURL != nil else {
+            return
+        }
+
+        await Task.yield()
+        withAnimation(
+            .easeInOut(
+                duration: CharacterFullBodyProfileSelection.crossfadeDuration
+            )
+        ) {
+            crossfadeProgress = 1
+        }
+
+        try? await Task.sleep(
+            for: .seconds(
+                CharacterFullBodyProfileSelection.crossfadeDuration
+            )
+        )
+        guard !Task.isCancelled else {
+            return
+        }
+        outgoingVideoURL = nil
     }
 }
 
 private struct CharacterFullBodyProfileVideo: NSViewRepresentable {
     let url: URL
+    let onLoopCompleted: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onLoopCompleted: onLoopCompleted)
     }
 
     func makeNSView(context: Context) -> PlayerLayerView {
@@ -206,7 +251,9 @@ private struct CharacterFullBodyProfileVideo: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: PlayerLayerView, context: Context) {}
+    func updateNSView(_ nsView: PlayerLayerView, context: Context) {
+        context.coordinator.onLoopCompleted = onLoopCompleted
+    }
 
     static func dismantleNSView(_ nsView: PlayerLayerView, coordinator: Coordinator) {
         coordinator.stopLooping()
@@ -214,14 +261,20 @@ private struct CharacterFullBodyProfileVideo: NSViewRepresentable {
     }
 
     final class Coordinator {
+        var onLoopCompleted: () -> Void
         private var endObserver: NSObjectProtocol?
+
+        init(onLoopCompleted: @escaping () -> Void) {
+            self.onLoopCompleted = onLoopCompleted
+        }
 
         func startLooping(_ player: AVPlayer) {
             endObserver = NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
                 object: player.currentItem,
                 queue: .main
-            ) { [weak player] _ in
+            ) { [weak self, weak player] _ in
+                self?.onLoopCompleted()
                 player?.seek(to: .zero)
                 player?.play()
             }

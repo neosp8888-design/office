@@ -65,4 +65,21 @@ final class CharacterFullBodyProfileLayoutTests: XCTestCase {
             0
         )
     }
+
+    func testProfileAdvancesAfterExactlyTwoCompletedLoops() {
+        XCTAssertFalse(
+            CharacterFullBodyProfileSelection.shouldAutomaticallyAdvance(
+                afterCompletedLoops: 1
+            )
+        )
+        XCTAssertTrue(
+            CharacterFullBodyProfileSelection.shouldAutomaticallyAdvance(
+                afterCompletedLoops: 2
+            )
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.crossfadeDuration,
+            1.2
+        )
+    }
 }
