@@ -5,6 +5,13 @@ import XCTest
 @testable import OfficeGame
 
 final class ConversationMarkdownVideoLayoutTests: XCTestCase {
+    func testInlinePlayerUsesBoundedWidth() {
+        XCTAssertEqual(
+            ConversationMarkdownVideoLayout.maximumWidth,
+            420
+        )
+    }
+
     func testPortraitVideoUsesItsSourceAspectRatio() {
         XCTAssertEqual(
             ConversationMarkdownVideoLayout.aspectRatio(
