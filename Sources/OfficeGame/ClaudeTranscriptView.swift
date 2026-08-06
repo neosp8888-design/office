@@ -160,6 +160,7 @@ struct ClaudeTranscriptView: View {
             ClaudeThoughtView(thought: thought)
         case .tools(let run):
             ClaudeToolRunView(run: run)
+                .equatable()
         case .edits(let run):
             ClaudeEditRunView(
                 run: run,
@@ -286,7 +287,7 @@ private struct ClaudeThoughtView: View {
 }
 
 /// 연속된 도구 호출은 실제로 사용한 도구 이름을 제목으로 묶는다.
-private struct ClaudeToolRunView: View {
+private struct ClaudeToolRunView: View, Equatable {
     let run: ClaudeToolRun
 
     @State private var isExpanded = false
@@ -294,35 +295,39 @@ private struct ClaudeToolRunView: View {
 
     private static let compactStepLimit = 20
 
+    static func == (
+        lhs: ClaudeToolRunView,
+        rhs: ClaudeToolRunView
+    ) -> Bool {
+        lhs.run == rhs.run
+    }
+
     var body: some View {
         let hiddenCount = run.hiddenStepCount(limit: Self.compactStepLimit)
-        let visibleSteps = run.visibleSteps(
-            showsAll: showsAllSteps,
-            limit: Self.compactStepLimit
-        )
-
         DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 0) {
-                if hiddenCount > 0, !showsAllSteps {
-                    Button {
-                        showsAllSteps = true
-                    } label: {
-                        Label(
-                            "이전 호출 \(hiddenCount)개 보기",
-                            systemImage: "clock.arrow.circlepath"
-                        )
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
+            if isExpanded {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if hiddenCount > 0, !showsAllSteps {
+                        Button {
+                            showsAllSteps = true
+                        } label: {
+                            Label(
+                                "이전 호출 \(hiddenCount)개 보기",
+                                systemImage: "clock.arrow.circlepath"
+                            )
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 6)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 6)
-                }
 
-                ForEach(visibleSteps) { step in
-                    stepRow(step)
+                    ForEach(visibleSteps) { step in
+                        stepRow(step)
+                    }
                 }
+                .padding(.top, 7)
             }
-            .padding(.top, 7)
         } label: {
             HStack(spacing: 8) {
                 ClaudeToolBadge(
@@ -407,9 +412,16 @@ private struct ClaudeToolRunView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 5)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(step.call.displayName), \(detailText(step))"
+        )
+    }
+
+    private var visibleSteps: [ClaudeToolStep] {
+        run.visibleSteps(
+            showsAll: showsAllSteps,
+            limit: Self.compactStepLimit
         )
     }
 

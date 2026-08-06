@@ -128,7 +128,7 @@ struct OfficeDetailPanel: View {
 }
 
 private struct ArchiveShelfContent: View {
-    @ObservedObject var director: AgentDirector
+    let director: AgentDirector
     @State private var searchText = ""
     @State private var selectedTurnID: String?
     @State private var turns: [LiveFeedTurn] = []
@@ -761,6 +761,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var visibleTurnLimit = Self.pageSize
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
+    @State private var usesSinglePassInitialScroll = false
 
     private static let bottomTolerance = CGFloat(20)
     private static let topLoadThreshold = CGFloat(120)
@@ -1007,13 +1008,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                         scrollMetrics.bottomMarkerOffset = bottomOffset
                         if didPerformInitialScroll {
                             updateBottomState()
-                            if
-                                followState.isFollowingLatest,
-                                distanceFromBottom
-                                    > Self.bottomTolerance
-                            {
-                                scheduleScrollToLatest(proxy)
-                            }
                         } else {
                             performInitialScrollIfNeeded(
                                 proxy: proxy
@@ -1054,10 +1048,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                         }
                         scheduleScrollToLatest(proxy)
                     }
-                    .onChange(of: selectedCharacterID) {
-                        _, _ in
-                        resetForSelectedCharacter(proxy: proxy)
-                    }
                     .overlay(alignment: .bottom) {
                         Group {
                             if hasContentBelow {
@@ -1083,6 +1073,10 @@ struct LiveWorkspaceFeed: View, Equatable {
                         scrollMetrics.submittedScrollTask = nil
                     }
                 }
+            }
+            .onChange(of: selectedCharacterID) {
+                _, _ in
+                resetForSelectedCharacter(proxy: proxy)
             }
         }
     }
@@ -1142,6 +1136,31 @@ struct LiveWorkspaceFeed: View, Equatable {
 
         markAtBottom()
         scrollMetrics.initialScrollTask = Task { @MainActor in
+            if usesSinglePassInitialScroll {
+                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(16))
+                guard !Task.isCancelled else {
+                    return
+                }
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+                try? await Task.sleep(for: .milliseconds(40))
+                guard !Task.isCancelled else {
+                    return
+                }
+                if distanceFromBottom > Self.bottomTolerance {
+                    proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+                    await Task.yield()
+                    guard !Task.isCancelled else {
+                        return
+                    }
+                }
+                markAtBottom()
+                didPerformInitialScroll = true
+                usesSinglePassInitialScroll = false
+                scrollMetrics.initialScrollTask = nil
+                return
+            }
+
             var policy = LiveWorkspaceFeedScrollPolicy()
             for _ in 0..<LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts {
                 guard !Task.isCancelled else {
@@ -1193,6 +1212,9 @@ struct LiveWorkspaceFeed: View, Equatable {
         visibleTurnLimit = Self.pageSize
         isLoadingOlderTurns = false
         didPerformInitialScroll = false
+        usesSinglePassInitialScroll = true
+        scrollMetrics.followScrollTask?.cancel()
+        scrollMetrics.followScrollTask = nil
         scrollMetrics.initialScrollTask?.cancel()
         scrollMetrics.initialScrollTask = nil
         scrollMetrics.submittedScrollTask?.cancel()

@@ -873,6 +873,7 @@ struct CodexTranscriptView: View {
                     group: group,
                     workspaceDirectory: workspaceDirectory
                 )
+                .equatable()
             }
         case .message(let message):
             CodexMessageView(
@@ -1324,7 +1325,7 @@ private func collaborationPreview(_ text: String) -> String {
         .joined(separator: " ")
 }
 
-private struct CodexActivityGroupView: View {
+private struct CodexActivityGroupView: View, Equatable {
     let group: CodexActivityGroup
     let workspaceDirectory: String
 
@@ -1333,16 +1334,19 @@ private struct CodexActivityGroupView: View {
 
     private static let compactHistoryLimit = 20
 
+    static func == (
+        lhs: CodexActivityGroupView,
+        rhs: CodexActivityGroupView
+    ) -> Bool {
+        lhs.group == rhs.group
+            && lhs.workspaceDirectory == rhs.workspaceDirectory
+    }
+
     var body: some View {
         let historyCount = max(0, group.items.count - 1)
         let hiddenCount = group.hiddenHistoryItemCount(
             limit: Self.compactHistoryLimit
         )
-        let visibleHistory = group.visibleHistoryItems(
-            showsAll: showsAllHistory,
-            limit: Self.compactHistoryLimit
-        )
-
         VStack(alignment: .leading, spacing: 8) {
             groupHeader
 
@@ -1352,27 +1356,34 @@ private struct CodexActivityGroupView: View {
 
             if historyCount > 0 {
                 DisclosureGroup(isExpanded: $isExpanded) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        if hiddenCount > 0, !showsAllHistory {
-                            Button {
-                                showsAllHistory = true
-                            } label: {
-                                Label(
-                                    "더 이전 기록 \(hiddenCount)개 보기",
-                                    systemImage: "clock.arrow.circlepath"
-                                )
-                                .font(.system(size: 9.5, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                    if isExpanded {
+                        LazyVStack(alignment: .leading, spacing: 5) {
+                            if hiddenCount > 0, !showsAllHistory {
+                                Button {
+                                    showsAllHistory = true
+                                } label: {
+                                    Label(
+                                        "더 이전 기록 \(hiddenCount)개 보기",
+                                        systemImage: "clock.arrow.circlepath"
+                                    )
+                                    .font(
+                                        .system(
+                                            size: 9.5,
+                                            weight: .semibold
+                                        )
+                                    )
+                                    .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.vertical, 5)
                             }
-                            .buttonStyle(.plain)
-                            .padding(.vertical, 5)
-                        }
 
-                        ForEach(visibleHistory) { item in
-                            itemView(item, isLatest: false)
+                            ForEach(visibleHistory) { item in
+                                itemView(item, isLatest: false)
+                            }
                         }
+                        .padding(.top, 5)
                     }
-                    .padding(.top, 5)
                 } label: {
                     Text(
                         isExpanded
@@ -1447,7 +1458,7 @@ private struct CodexActivityGroupView: View {
             statusView(activity.status)
                 .frame(width: 15, height: 15)
 
-            Text(OfficeLocalization.string(activity.text))
+            Text(activity.text)
                 .font(activityFont)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
@@ -1464,13 +1475,20 @@ private struct CodexActivityGroupView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, isLatest ? 4 : 3)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(groupTitle), \(activity.text), "
                 + activity.occurredAt.formatted(
                     date: .omitted,
                     time: .standard
                 )
+        )
+    }
+
+    private var visibleHistory: [CodexActivityGroupItem] {
+        group.visibleHistoryItems(
+            showsAll: showsAllHistory,
+            limit: Self.compactHistoryLimit
         )
     }
 

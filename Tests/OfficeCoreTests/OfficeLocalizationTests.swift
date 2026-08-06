@@ -22,6 +22,30 @@ final class OfficeLocalizationTests: XCTestCase {
         )
     }
 
+    func testLocalizedStringsReuseLoadedLanguageTables() {
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "대화 보관함",
+                languages: ["ko-KR"]
+            ),
+            "대화 보관함"
+        )
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "대화 보관함",
+                languages: ["en-US"]
+            ),
+            "Conversation Archive"
+        )
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "번역에 없는 동적 명령",
+                languages: ["en-US"]
+            ),
+            "번역에 없는 동적 명령"
+        )
+    }
+
     func testEnglishDefaultIdentityPromptReturnsToCanonicalKoreanValue() {
         XCTAssertEqual(
             OfficeLocalization.canonicalIdentityPrompt(
