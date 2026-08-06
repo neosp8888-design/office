@@ -265,7 +265,7 @@ private struct LocalMarkdownFileVideo: View {
 }
 
 enum ConversationMarkdownVideoLayout {
-    static let maximumWidth: CGFloat = 420
+    static let maximumWidth: CGFloat = 294
     static let fallbackAspectRatio: CGFloat = 9 / 16
 
     static func aspectRatio(
