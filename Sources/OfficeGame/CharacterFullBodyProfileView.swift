@@ -29,6 +29,14 @@ enum CharacterFullBodyProfileCloseButtonMetrics {
     static let pressedScale = 0.88
 }
 
+enum CharacterFullBodyProfilePresentationMetrics {
+    static let initialScale = 0.82
+    static let initialRotation = 7.0
+    static let initialVerticalOffset: CGFloat = 18
+    static let avatarHoverScale = 1.08
+    static let avatarPressedScale = 0.90
+}
+
 enum CharacterFullBodyProfileSelection {
     static let dragThreshold: CGFloat = 36
     static let loopsBeforeAutomaticAdvance = 2
@@ -74,10 +82,12 @@ struct CharacterFullBodyProfileView: View {
     let name: String
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedVideoIndex = 0
     @State private var completedLoopCount = 0
     @State private var outgoingVideoURL: URL?
     @State private var crossfadeProgress = 1.0
+    @State private var isPresented = false
 
     private var image: NSImage? {
         CharacterFullBodyProfileImageCache.image(for: character.id)
@@ -164,6 +174,38 @@ struct CharacterFullBodyProfileView: View {
         }
         .padding(CharacterFullBodyProfileLayout.horizontalPadding)
         .frame(width: CharacterFullBodyProfileLayout.sheetWidth)
+        .opacity(isPresented ? 1 : 0)
+        .scaleEffect(
+            isPresented
+                ? 1
+                : CharacterFullBodyProfilePresentationMetrics.initialScale
+        )
+        .rotation3DEffect(
+            .degrees(
+                isPresented
+                    ? 0
+                    : CharacterFullBodyProfilePresentationMetrics
+                        .initialRotation
+            ),
+            axis: (x: 0.72, y: -0.38, z: 0)
+        )
+        .offset(
+            y: isPresented
+                ? 0
+                : CharacterFullBodyProfilePresentationMetrics
+                    .initialVerticalOffset
+        )
+        .onAppear {
+            if reduceMotion {
+                isPresented = true
+            } else {
+                withAnimation(
+                    .spring(response: 0.56, dampingFraction: 0.74)
+                ) {
+                    isPresented = true
+                }
+            }
+        }
     }
 
     private func opacity(for videoURL: URL) -> Double {

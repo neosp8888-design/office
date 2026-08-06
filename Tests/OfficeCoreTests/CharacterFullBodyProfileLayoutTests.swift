@@ -101,4 +101,31 @@ final class CharacterFullBodyProfileLayoutTests: XCTestCase {
             0.88
         )
     }
+
+    func testProfilePresentationUsesSubtleSpringStartingPose() {
+        XCTAssertEqual(
+            CharacterFullBodyProfilePresentationMetrics.initialScale,
+            0.82
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfilePresentationMetrics.initialRotation,
+            7
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfilePresentationMetrics
+                .initialVerticalOffset,
+            18
+        )
+    }
+
+    func testConversationAvatarHasHoverAndPressFeedback() {
+        XCTAssertEqual(
+            CharacterFullBodyProfilePresentationMetrics.avatarHoverScale,
+            1.08
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfilePresentationMetrics.avatarPressedScale,
+            0.90
+        )
+    }
 }

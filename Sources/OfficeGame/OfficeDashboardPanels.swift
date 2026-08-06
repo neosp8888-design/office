@@ -2415,12 +2415,92 @@ struct CharacterBadge: View {
     let characterID: String
     let size: CGFloat
 
+    @Environment(\.presentCharacterProfile) private var presentProfile
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    @ViewBuilder
     var body: some View {
+        if let presentProfile {
+            Button {
+                presentProfile(characterID)
+            } label: {
+                avatar
+                    .scaleEffect(
+                        isHovered
+                            ? CharacterFullBodyProfilePresentationMetrics
+                                .avatarHoverScale
+                            : 1
+                    )
+                    .overlay {
+                        Circle()
+                            .stroke(
+                                DashboardPalette.characterAccent(
+                                    for: characterID
+                                ).opacity(isHovered ? 0.78 : 0),
+                                lineWidth: 1.5
+                            )
+                            .scaleEffect(isHovered ? 1.12 : 0.92)
+                    }
+                    .shadow(
+                        color: DashboardPalette.characterAccent(
+                            for: characterID
+                        ).opacity(isHovered ? 0.42 : 0),
+                        radius: isHovered ? 9 : 0
+                    )
+            }
+            .buttonStyle(CharacterProfileBadgeButtonStyle())
+            .onHover { hovered in
+                if reduceMotion {
+                    isHovered = hovered
+                } else {
+                    withAnimation(
+                        .spring(response: 0.32, dampingFraction: 0.68)
+                    ) {
+                        isHovered = hovered
+                    }
+                }
+            }
+            .help("\(name) 프로필 보기")
+            .accessibilityLabel("\(name) 프로필 보기")
+        } else {
+            avatar
+        }
+    }
+
+    private var avatar: some View {
         CharacterAvatar(
             name: name,
             characterID: characterID,
             size: size
         )
+    }
+}
+
+private struct CharacterProfileBadgeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(
+                configuration.isPressed
+                    ? CharacterFullBodyProfilePresentationMetrics
+                        .avatarPressedScale
+                    : 1
+            )
+            .animation(
+                .spring(response: 0.22, dampingFraction: 0.60),
+                value: configuration.isPressed
+            )
+    }
+}
+
+private struct CharacterProfilePresentationActionKey: EnvironmentKey {
+    static let defaultValue: ((String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var presentCharacterProfile: ((String) -> Void)? {
+        get { self[CharacterProfilePresentationActionKey.self] }
+        set { self[CharacterProfilePresentationActionKey.self] = newValue }
     }
 }
 
