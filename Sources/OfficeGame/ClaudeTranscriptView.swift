@@ -161,6 +161,7 @@ struct ClaudeTranscriptView: View {
         case .message(let message):
             ClaudeMessageView(
                 turnID: turnID,
+                workspaceDirectory: workspaceDirectory,
                 message: message,
                 isConclusion: isConclusion,
                 needsInput: isConclusion && needsInput,
@@ -662,6 +663,7 @@ private struct ClaudePlanBoardView: View {
 /// 진행 중인 마지막 응답만 Claude가 주는 글자 단위 흐름으로 표시한다.
 private struct ClaudeMessageView: View {
     let turnID: String
+    let workspaceDirectory: String
     let message: ClaudeTranscriptMessage
     let isConclusion: Bool
     let needsInput: Bool
@@ -692,6 +694,7 @@ private struct ClaudeMessageView: View {
                     turnID: turnID,
                     backend: .claude,
                     source: message.text,
+                    fileBaseDirectory: workspaceDirectory,
                     animates: animates,
                     isStreaming: true,
                     onFinishedTyping: onFinishedTyping
@@ -700,7 +703,8 @@ private struct ClaudeMessageView: View {
             } else {
                 ConversationMarkdownView(
                     source: message.text,
-                    fontSize: 14
+                    fontSize: 14,
+                    fileBaseDirectory: workspaceDirectory
                 )
                 .textSelection(.enabled)
             }

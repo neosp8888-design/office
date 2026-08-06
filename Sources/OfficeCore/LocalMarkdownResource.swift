@@ -13,6 +13,10 @@ public enum LocalMarkdownResource {
         pattern: #"((?:file://)?/[^\n`<>]*?\.(?:bmp|gif|heic|jpe?g|png|tiff?|webp))(?=$|[\s`>)\]},;:])"#,
         options: [.caseInsensitive]
     )
+    private static let bareVideoExpression = try? NSRegularExpression(
+        pattern: #"((?:file://)?/[^\n`<>]*?\.(?:m4v|mov|mp4))(?=$|[\s`>)\]},;:])"#,
+        options: [.caseInsensitive]
+    )
     private static let imageExtensions: Set<String> = [
         "bmp",
         "gif",
@@ -23,6 +27,11 @@ public enum LocalMarkdownResource {
         "tif",
         "tiff",
         "webp",
+    ]
+    private static let videoExtensions: Set<String> = [
+        "m4v",
+        "mov",
+        "mp4",
     ]
 
     public static func fileURL(from url: URL) -> URL? {
@@ -37,8 +46,49 @@ public enum LocalMarkdownResource {
     }
 
     public static func imageFileURL(from url: URL) -> URL? {
+        imageFileURL(from: url, fallbackDirectory: nil)
+    }
+
+    public static func existingFileURL(
+        from url: URL,
+        fallbackDirectory: URL?
+    ) -> URL? {
+        guard let requestedURL = fileURL(from: url) else {
+            return nil
+        }
+        if FileManager.default.fileExists(atPath: requestedURL.path) {
+            return requestedURL
+        }
+
         guard
-            let fileURL = fileURL(from: url),
+            let fallbackDirectory,
+            let relativeComponents = worktreeRelativePathComponents(
+                in: requestedURL
+            )
+        else {
+            return nil
+        }
+
+        let fallbackURL = relativeComponents.reduce(
+            fallbackDirectory.standardizedFileURL
+        ) { currentURL, component in
+            currentURL.appendingPathComponent(component)
+        }
+        guard FileManager.default.fileExists(atPath: fallbackURL.path) else {
+            return nil
+        }
+        return fallbackURL.standardizedFileURL
+    }
+
+    public static func imageFileURL(
+        from url: URL,
+        fallbackDirectory: URL?
+    ) -> URL? {
+        guard
+            let fileURL = existingFileURL(
+                from: url,
+                fallbackDirectory: fallbackDirectory
+            ),
             imageExtensions.contains(fileURL.pathExtension.lowercased()),
             FileManager.default.fileExists(atPath: fileURL.path)
         else {
@@ -47,8 +97,41 @@ public enum LocalMarkdownResource {
         return fileURL
     }
 
+    public static func videoFileURLs(
+        in markdown: String,
+        fallbackDirectory: URL?
+    ) -> [URL] {
+        let linkedVideos = destinations(
+            in: markdown,
+            expression: linkedImageExpression
+        )
+        let bareVideos = destinations(
+            in: markdown,
+            expression: bareVideoExpression
+        )
+
+        var includedPaths = Set<String>()
+        return (linkedVideos + bareVideos).compactMap { destination in
+            guard
+                let url = destinationURL(for: destination),
+                let fileURL = existingFileURL(
+                    from: url,
+                    fallbackDirectory: fallbackDirectory
+                ),
+                videoExtensions.contains(
+                    fileURL.pathExtension.lowercased()
+                ),
+                includedPaths.insert(fileURL.path).inserted
+            else {
+                return nil
+            }
+            return fileURL
+        }
+    }
+
     public static func addingLinkedImagePreviews(
-        to markdown: String
+        to markdown: String,
+        fallbackDirectory: URL? = nil
     ) -> String {
         let existingImages = destinations(
             in: markdown,
@@ -64,10 +147,20 @@ public enum LocalMarkdownResource {
         )
 
         var previewedPaths = Set(
-            existingImages.compactMap(imagePath(for:))
+            existingImages.compactMap {
+                imagePath(
+                    for: $0,
+                    fallbackDirectory: fallbackDirectory
+                )
+            }
         )
         let paths = (linkedImages + bareImages)
-            .compactMap(imagePath(for:))
+            .compactMap {
+                imagePath(
+                    for: $0,
+                    fallbackDirectory: fallbackDirectory
+                )
+            }
             .filter {
                 previewedPaths.insert($0).inserted
             }
@@ -103,13 +196,41 @@ public enum LocalMarkdownResource {
         }
     }
 
-    private static func imagePath(for destination: String) -> String? {
-        let url: URL?
+    private static func destinationURL(for destination: String) -> URL? {
         if destination.hasPrefix("/") {
-            url = URL(fileURLWithPath: destination)
-        } else {
-            url = URL(string: destination)
+            return URL(fileURLWithPath: destination)
         }
-        return url.flatMap(imageFileURL(from:))?.path
+        return URL(string: destination)
+    }
+
+    private static func imagePath(
+        for destination: String,
+        fallbackDirectory: URL?
+    ) -> String? {
+        destinationURL(for: destination).flatMap {
+            imageFileURL(
+                from: $0,
+                fallbackDirectory: fallbackDirectory
+            )
+        }?.path
+    }
+
+    private static func worktreeRelativePathComponents(
+        in url: URL
+    ) -> [String]? {
+        let components = url.pathComponents
+        guard
+            let officestraIndex = components.firstIndex(of: ".officestra"),
+            components.indices.contains(officestraIndex + 3),
+            components[officestraIndex + 1] == "worktrees"
+        else {
+            return nil
+        }
+
+        let relativeStart = officestraIndex + 4
+        guard components.indices.contains(relativeStart) else {
+            return nil
+        }
+        return Array(components[relativeStart...])
     }
 }

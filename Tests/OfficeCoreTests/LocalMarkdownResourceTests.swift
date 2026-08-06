@@ -24,6 +24,70 @@ final class LocalMarkdownResourceTests: XCTestCase {
         XCTAssertNil(LocalMarkdownResource.fileURL(from: webURL))
     }
 
+    func testMissingWorktreeLinkFallsBackToMergedRepositoryFile() throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let mergedFile = repository
+            .appending(path: "Sources/OfficeCore/sample.mp4")
+        try FileManager.default.createDirectory(
+            at: mergedFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([0]).write(to: mergedFile)
+        defer {
+            try? FileManager.default.removeItem(at: repository)
+        }
+
+        let staleURL = URL(
+            fileURLWithPath:
+                "/Users/example/.officestra/worktrees/project/task/"
+                    + "Sources/OfficeCore/sample.mp4"
+        )
+
+        XCTAssertEqual(
+            LocalMarkdownResource.existingFileURL(
+                from: staleURL,
+                fallbackDirectory: repository
+            ),
+            mergedFile.standardizedFileURL
+        )
+        XCTAssertEqual(
+            LocalMarkdownResource.videoFileURLs(
+                in: "[영상 보기](<\(staleURL.path)>)",
+                fallbackDirectory: repository
+            ),
+            [mergedFile.standardizedFileURL]
+        )
+    }
+
+    func testLocalVideoLinkProvidesOneInlinePreviewURL() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let videoURL = directory.appending(path: "sample video.mp4")
+        try Data([0]).write(to: videoURL)
+        let markdown = """
+        [영상 보기](<\(videoURL.path)>)
+
+        \(videoURL.path)
+        """
+
+        XCTAssertEqual(
+            LocalMarkdownResource.videoFileURLs(
+                in: markdown,
+                fallbackDirectory: nil
+            ),
+            [videoURL.standardizedFileURL]
+        )
+    }
+
     func testLocalImageLinkAddsInlinePreview() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)

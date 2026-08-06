@@ -2077,6 +2077,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
     let turnID: String
     let backend: AgentBackend
     let source: String
+    let fileBaseDirectory: String?
     let animates: Bool
     let isStreaming: Bool
     let onFinishedTyping: () -> Void
@@ -2088,6 +2089,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
         lhs.turnID == rhs.turnID
             && lhs.backend == rhs.backend
             && lhs.source == rhs.source
+            && lhs.fileBaseDirectory == rhs.fileBaseDirectory
             && lhs.animates == rhs.animates
             && lhs.isStreaming == rhs.isStreaming
     }
@@ -2097,6 +2099,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
             turnID: turnID,
             backend: backend,
             source: source,
+            fileBaseDirectory: fileBaseDirectory,
             animates: animates,
             isStreaming: isStreaming,
             onFinishedTyping: onFinishedTyping
@@ -2108,6 +2111,7 @@ struct LiveTypingResponseView: View {
     let turnID: String
     let backend: AgentBackend
     let source: String
+    let fileBaseDirectory: String?
     let animates: Bool
     let isStreaming: Bool
     let onFinishedTyping: () -> Void
@@ -2120,6 +2124,7 @@ struct LiveTypingResponseView: View {
         turnID: String,
         backend: AgentBackend,
         source: String,
+        fileBaseDirectory: String? = nil,
         animates: Bool,
         isStreaming: Bool,
         onFinishedTyping: @escaping () -> Void
@@ -2127,6 +2132,7 @@ struct LiveTypingResponseView: View {
         self.turnID = turnID
         self.backend = backend
         self.source = source
+        self.fileBaseDirectory = fileBaseDirectory
         self.animates = animates
         self.isStreaming = isStreaming
         self.onFinishedTyping = onFinishedTyping
@@ -2142,7 +2148,8 @@ struct LiveTypingResponseView: View {
                 if reduceMotion {
                     ConversationMarkdownView(
                         source: source,
-                        fontSize: Self.responseFontSize
+                        fontSize: Self.responseFontSize,
+                        fileBaseDirectory: fileBaseDirectory
                     )
                     .textSelection(.enabled)
                     .task { onFinishedTyping() }
@@ -2150,6 +2157,7 @@ struct LiveTypingResponseView: View {
                     WaterfallResponseRevealView(
                         source: source,
                         fontSize: Self.responseFontSize,
+                        fileBaseDirectory: fileBaseDirectory,
                         onFinished: onFinishedTyping
                     )
                 }
@@ -2161,7 +2169,8 @@ struct LiveTypingResponseView: View {
                     if !segments.settledMarkdown.isEmpty {
                         ConversationMarkdownView(
                             source: segments.settledMarkdown,
-                            fontSize: Self.responseFontSize
+                            fontSize: Self.responseFontSize,
+                            fileBaseDirectory: fileBaseDirectory
                         )
                         .textSelection(.enabled)
                     }
@@ -2170,7 +2179,8 @@ struct LiveTypingResponseView: View {
                     if !segments.activeMarkdown.isEmpty {
                         ConversationMarkdownView(
                             source: segments.activeMarkdown,
-                            fontSize: Self.responseFontSize
+                            fontSize: Self.responseFontSize,
+                            fileBaseDirectory: fileBaseDirectory
                         )
                         .textSelection(.enabled)
                     }
@@ -2198,7 +2208,8 @@ struct LiveTypingResponseView: View {
             } else {
                 ConversationMarkdownView(
                     source: source,
-                    fontSize: Self.responseFontSize
+                    fontSize: Self.responseFontSize,
+                    fileBaseDirectory: fileBaseDirectory
                 )
                 .textSelection(.enabled)
             }
@@ -2224,6 +2235,7 @@ private struct WaterfallResponseSegment: Identifiable, Equatable {
 struct WaterfallResponseRevealView: View {
     let source: String
     let fontSize: CGFloat
+    let fileBaseDirectory: String?
     let onFinished: () -> Void
 
     @State private var segments: [WaterfallResponseSegment]
@@ -2233,10 +2245,12 @@ struct WaterfallResponseRevealView: View {
     init(
         source: String,
         fontSize: CGFloat,
+        fileBaseDirectory: String? = nil,
         onFinished: @escaping () -> Void
     ) {
         self.source = source
         self.fontSize = fontSize
+        self.fileBaseDirectory = fileBaseDirectory
         self.onFinished = onFinished
 
         let initialSegment = WaterfallResponseSegment(source: source)
@@ -2252,14 +2266,16 @@ struct WaterfallResponseRevealView: View {
                     WaterfallResponseSegmentView(
                         animationID: segment.id,
                         source: segment.source,
-                        fontSize: fontSize
+                        fontSize: fontSize,
+                        fileBaseDirectory: fileBaseDirectory
                     ) {
                         finishReveal(for: segment.id)
                     }
                 } else {
                     ConversationMarkdownView(
                         source: segment.source,
-                        fontSize: fontSize
+                        fontSize: fontSize,
+                        fileBaseDirectory: fileBaseDirectory
                     )
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2315,12 +2331,14 @@ private struct WaterfallResponseSegmentView: View {
     let animationID: UUID
     let source: String
     let fontSize: CGFloat
+    let fileBaseDirectory: String?
     let onFinished: () -> Void
 
     var body: some View {
         ConversationMarkdownView(
             source: source,
-            fontSize: fontSize
+            fontSize: fontSize,
+            fileBaseDirectory: fileBaseDirectory
         )
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)

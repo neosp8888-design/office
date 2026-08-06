@@ -1,6 +1,7 @@
 // 이 파일은 대화 원문의 Markdown 블록을 선택 가능한 SwiftUI 콘텐츠로 표시한다.
 
 import AppKit
+import AVFoundation
 import MarkdownUI
 import OfficeCore
 import SwiftUI
@@ -8,16 +9,23 @@ import SwiftUI
 struct ConversationMarkdownView: View {
     let source: String
     let fontSize: CGFloat
+    let fileBaseDirectory: String?
 
-    init(source: String, fontSize: CGFloat = 12) {
+    init(
+        source: String,
+        fontSize: CGFloat = 12,
+        fileBaseDirectory: String? = nil
+    ) {
         self.source = source
         self.fontSize = fontSize
+        self.fileBaseDirectory = fileBaseDirectory
     }
 
     var body: some View {
         ConversationMarkdownContent(
             source: source,
-            fontSize: fontSize
+            fontSize: fontSize,
+            fileBaseDirectory: fileBaseDirectory
         )
         .equatable()
     }
@@ -26,12 +34,29 @@ struct ConversationMarkdownView: View {
 private struct ConversationMarkdownContent: View, Equatable {
     let source: String
     let fontSize: CGFloat
+    let fileBaseDirectory: String?
 
     var body: some View {
-        Markdown(
-            ConversationMarkdownCache.shared.content(for: source)
+        let fallbackDirectory = fileBaseDirectory.flatMap {
+            $0.isEmpty ? nil : URL(fileURLWithPath: $0)
+        }
+        let videoURLs = LocalMarkdownResource.videoFileURLs(
+            in: source,
+            fallbackDirectory: fallbackDirectory
         )
-            .markdownImageProvider(LocalMarkdownImageProvider())
+
+        VStack(alignment: .leading, spacing: 9) {
+            Markdown(
+                ConversationMarkdownCache.shared.content(
+                    for: source,
+                    fallbackDirectory: fallbackDirectory
+                )
+            )
+            .markdownImageProvider(
+                LocalMarkdownImageProvider(
+                    fallbackDirectory: fallbackDirectory
+                )
+            )
             .markdownInlineImageProvider(.asset)
             .markdownTextStyle(\.text) {
                 FontSize(fontSize)
@@ -75,20 +100,22 @@ private struct ConversationMarkdownContent: View, Equatable {
                 .markdownMargin(top: 0, bottom: 16)
             }
             .markdownTheme(.gitHub)
+            ForEach(Array(videoURLs.prefix(4)), id: \.self) { videoURL in
+                LocalMarkdownFileVideo(url: videoURL)
+            }
+        }
             .environment(
                 \.openURL,
                 OpenURLAction { url in
                     guard
-                        let fileURL = LocalMarkdownResource.fileURL(
-                            from: url
+                        let fileURL = LocalMarkdownResource.existingFileURL(
+                            from: url,
+                            fallbackDirectory: fallbackDirectory
                         )
                     else {
-                        return .systemAction
-                    }
-                    guard FileManager.default.fileExists(
-                        atPath: fileURL.path
-                    ) else {
-                        return .discarded
+                        return LocalMarkdownResource.fileURL(from: url) == nil
+                            ? .systemAction
+                            : .discarded
                     }
 
                     if !NSWorkspace.shared.open(fileURL) {
@@ -123,14 +150,18 @@ private final class ConversationMarkdownCache {
         storage.totalCostLimit = 4 * 1_024 * 1_024
     }
 
-    func content(for source: String) -> MarkdownContent {
+    func content(
+        for source: String,
+        fallbackDirectory: URL?
+    ) -> MarkdownContent {
         let trimmed = source.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
         let rendered = trimmed.isEmpty
             ? "내용 없음"
             : LocalMarkdownResource.addingLinkedImagePreviews(
-                to: trimmed
+                to: trimmed,
+                fallbackDirectory: fallbackDirectory
             )
         let key = rendered as NSString
         if let entry = storage.object(forKey: key) {
@@ -148,11 +179,16 @@ private final class ConversationMarkdownCache {
 }
 
 private struct LocalMarkdownImageProvider: ImageProvider {
+    let fallbackDirectory: URL?
+
     @ViewBuilder
     func makeImage(url: URL?) -> some View {
         if
             let url,
-            let fileURL = LocalMarkdownResource.imageFileURL(from: url)
+            let fileURL = LocalMarkdownResource.imageFileURL(
+                from: url,
+                fallbackDirectory: fallbackDirectory
+            )
         {
             LocalMarkdownFileImage(url: fileURL)
         } else if
@@ -162,6 +198,131 @@ private struct LocalMarkdownImageProvider: ImageProvider {
             let image = NSImage(named: url.lastPathComponent)
         {
             LocalMarkdownThumbnail(image: image)
+        }
+    }
+}
+
+private struct LocalMarkdownFileVideo: View {
+    let url: URL
+    @State private var isPlaying = false
+
+    var body: some View {
+        ZStack {
+            LocalMarkdownVideoSurface(
+                url: url,
+                isPlaying: isPlaying
+            )
+            .frame(width: 320, height: 240)
+            .background(Color.black.opacity(0.86))
+            .clipShape(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+            Button {
+                isPlaying.toggle()
+            } label: {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(.black.opacity(0.58), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isPlaying ? "영상 일시 정지" : "영상 재생")
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.10))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onDisappear {
+            isPlaying = false
+        }
+    }
+}
+
+private struct LocalMarkdownVideoSurface: NSViewRepresentable {
+    let url: URL
+    let isPlaying: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> PlayerLayerView {
+        let player = AVPlayer(url: url)
+        player.isMuted = true
+        let view = PlayerLayerView(player: player)
+        view.setAccessibilityLabel("대화 로컬 동영상")
+        context.coordinator.startLooping(player)
+        return view
+    }
+
+    func updateNSView(
+        _ nsView: PlayerLayerView,
+        context: Context
+    ) {
+        if isPlaying {
+            nsView.player.play()
+        } else {
+            nsView.player.pause()
+        }
+    }
+
+    static func dismantleNSView(
+        _ nsView: PlayerLayerView,
+        coordinator: Coordinator
+    ) {
+        coordinator.stopLooping()
+        nsView.player.pause()
+    }
+
+    final class Coordinator {
+        private var endObserver: NSObjectProtocol?
+
+        func startLooping(_ player: AVPlayer) {
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: player.currentItem,
+                queue: .main
+            ) { [weak player] _ in
+                player?.seek(to: .zero)
+                player?.play()
+            }
+        }
+
+        func stopLooping() {
+            if let endObserver {
+                NotificationCenter.default.removeObserver(endObserver)
+            }
+            endObserver = nil
+        }
+
+        deinit {
+            stopLooping()
+        }
+    }
+
+    final class PlayerLayerView: NSView {
+        let player: AVPlayer
+        private let playerLayer: AVPlayerLayer
+
+        init(player: AVPlayer) {
+            self.player = player
+            playerLayer = AVPlayerLayer(player: player)
+            super.init(frame: .zero)
+            wantsLayer = true
+            playerLayer.videoGravity = .resizeAspect
+            layer?.addSublayer(playerLayer)
+        }
+
+        required init?(coder: NSCoder) {
+            nil
+        }
+
+        override func layout() {
+            super.layout()
+            playerLayer.frame = bounds
         }
     }
 }
