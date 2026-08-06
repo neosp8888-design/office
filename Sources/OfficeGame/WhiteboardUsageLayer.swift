@@ -63,7 +63,9 @@ struct WhiteboardUsageLayer: View {
     private func refresh() async {
         isLoading = snapshot == nil
         do {
-            snapshot = try await CodexBarUsageReader.fetch()
+            snapshot = try await CodexBarUsageReader.fetch(
+                scope: .limits
+            )
             refreshFailed = false
         } catch {
             refreshFailed = true
@@ -253,6 +255,27 @@ struct AIUsageActivitySnapshot: Equatable, Sendable {
     let last30DaysTokens: Int64?
 }
 
+enum AIUsageFetchScope: Hashable, Sendable {
+    case limits
+    case limitsAndActivity
+
+    var costCommandArguments: [String]? {
+        switch self {
+        case .limits:
+            nil
+        case .limitsAndActivity:
+            [
+                "cost",
+                "--provider",
+                "both",
+                "--days",
+                "30",
+                "--json-only",
+            ]
+        }
+    }
+}
+
 enum CodexBarUsageReader {
     private static let executablePaths = [
         "/opt/homebrew/bin/codexbar",
@@ -261,12 +284,14 @@ enum CodexBarUsageReader {
     private static let coordinator = UsageFetchCoordinator()
 
     static func fetch(
-        force: Bool = false
+        force: Bool = false,
+        scope: AIUsageFetchScope
     ) async throws -> AIUsageSnapshot {
-        try await coordinator.fetch(force: force)
+        try await coordinator.fetch(force: force, scope: scope)
     }
 
     fileprivate static func fetchUncoordinated(
+        scope: AIUsageFetchScope
     ) throws -> AIUsageSnapshot {
         let executable = try locateExecutable()
         let codexResult: Result<UsageProviderPayload, Error> = Result {
@@ -300,9 +325,12 @@ enum CodexBarUsageReader {
             )
         }
 
-        let costProviders = try? fetchCostProviders(
-            executable: executable
-        )
+        let costProviders = scope.costCommandArguments.flatMap {
+            try? fetchCostProviders(
+                executable: executable,
+                arguments: $0
+            )
+        }
         let codexUsage = codex?.usage
         let claudeUsage = claude?.usage
 
@@ -385,18 +413,12 @@ enum CodexBarUsageReader {
     }
 
     private static func fetchCostProviders(
-        executable: URL
+        executable: URL,
+        arguments: [String]
     ) throws -> [CostProviderPayload] {
         let data = try run(
             executable: executable,
-            arguments: [
-                "cost",
-                "--provider",
-                "both",
-                "--days",
-                "30",
-                "--json-only",
-            ]
+            arguments: arguments
         )
         return try JSONDecoder().decode(
             [CostProviderPayload].self,
@@ -451,37 +473,49 @@ enum CodexBarUsageReader {
 
 private actor UsageFetchCoordinator {
     private let cacheLifetime = TimeInterval(30)
-    private var cachedSnapshot: AIUsageSnapshot?
-    private var inFlight: Task<AIUsageSnapshot, Error>?
+    private var cachedSnapshots: [AIUsageFetchScope: AIUsageSnapshot] = [:]
+    private var inFlightTasks: [
+        AIUsageFetchScope: Task<AIUsageSnapshot, Error>
+    ] = [:]
 
     func fetch(
-        force: Bool
+        force: Bool,
+        scope: AIUsageFetchScope
     ) async throws -> AIUsageSnapshot {
         if
             !force,
-            let cachedSnapshot,
+            let cachedSnapshot = cachedSnapshots[scope],
             Date().timeIntervalSince(cachedSnapshot.fetchedAt)
                 < cacheLifetime
         {
             return cachedSnapshot
         }
-        if let inFlight {
+        if let inFlight = inFlightTasks[scope] {
             return try await inFlight.value
+        }
+        if
+            scope == .limits,
+            let detailedInFlight = inFlightTasks[.limitsAndActivity]
+        {
+            return try await detailedInFlight.value
         }
 
         let task = Task.detached(priority: .utility) {
-            try CodexBarUsageReader.fetchUncoordinated()
+            try CodexBarUsageReader.fetchUncoordinated(scope: scope)
         }
-        inFlight = task
+        inFlightTasks[scope] = task
 
         do {
             let snapshot = try await task.value
-            cachedSnapshot = snapshot
-            inFlight = nil
+            cachedSnapshots[scope] = snapshot
+            if scope == .limitsAndActivity {
+                cachedSnapshots[.limits] = snapshot
+            }
+            inFlightTasks[scope] = nil
             return snapshot
         } catch {
-            inFlight = nil
-            if let cachedSnapshot {
+            inFlightTasks[scope] = nil
+            if let cachedSnapshot = cachedSnapshots[scope] {
                 return cachedSnapshot
             }
             throw error

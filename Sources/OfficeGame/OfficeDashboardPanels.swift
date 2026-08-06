@@ -475,7 +475,10 @@ private struct UsageBoardContent: View {
         }
 
         do {
-            snapshot = try await CodexBarUsageReader.fetch(force: force)
+            snapshot = try await CodexBarUsageReader.fetch(
+                force: force,
+                scope: .limitsAndActivity
+            )
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
