@@ -101,8 +101,8 @@ final class PixelOfficeAssetTests: XCTestCase {
                 "profile-boss-freyja-v16-palmier-klingv3-mid40s-natural-loop-v3-silent.mp4",
             ],
             .leftWoman: [
-                "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent.mp4",
                 "profile-left-woman-loop.mp4",
+                "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent.mp4",
             ],
             .rightWoman: [
                 "profile-right-woman-loop.mp4",
