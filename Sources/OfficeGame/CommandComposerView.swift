@@ -3,6 +3,174 @@
 import AppKit
 import SwiftUI
 
+struct CommandEntryDraft: Equatable {
+    var text = ""
+
+    func submissionPrompt(
+        hasAttachments: Bool,
+        isSubmissionAllowed: Bool
+    ) -> String? {
+        guard isSubmissionAllowed else {
+            return nil
+        }
+        let enteredPrompt = text.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !enteredPrompt.isEmpty || hasAttachments else {
+            return nil
+        }
+        return enteredPrompt.isEmpty
+            ? "첨부 파일을 확인해줘."
+            : enteredPrompt
+    }
+
+    mutating func clearAfterSubmission(accepted: Bool) {
+        if accepted {
+            text = ""
+        }
+    }
+}
+
+struct CommandEntryAvailability: Equatable {
+    let isReady: Bool
+    let isUpdatingConfiguration: Bool
+    let hasSelectedCharacter: Bool
+    let isSelectedCharacterRunning: Bool
+
+    var canSubmit: Bool {
+        isReady
+            && !isUpdatingConfiguration
+            && hasSelectedCharacter
+            && !isSelectedCharacterRunning
+    }
+
+    func canChooseAttachments(currentCount: Int) -> Bool {
+        canSubmit && currentCount < 20
+    }
+}
+
+struct CommandEntryRow: View {
+    @ObservedObject var director: AgentDirector
+    let placeholder: String
+    let attachmentCount: Int
+    let onChooseAttachments: () -> Void
+    let onSubmit: (String) -> Bool
+
+    @State private var draft = CommandEntryDraft()
+
+    private var availability: CommandEntryAvailability {
+        CommandEntryAvailability(
+            isReady: director.isReadyForSubmissions,
+            isUpdatingConfiguration: director.isUpdatingConfiguration,
+            hasSelectedCharacter: director.selectedCharacter != nil,
+            isSelectedCharacterRunning: director.isSelectedCharacterRunning
+        )
+    }
+
+    private var submissionPrompt: String? {
+        draft.submissionPrompt(
+            hasAttachments: attachmentCount > 0,
+            isSubmissionAllowed: availability.canSubmit
+        )
+    }
+
+    private var attachmentSelectionIsDisabled: Bool {
+        !availability.canChooseAttachments(currentCount: attachmentCount)
+    }
+
+    var body: some View {
+        let canSubmit = submissionPrompt != nil
+
+        HStack(spacing: 9) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(DashboardPalette.accent)
+
+            CommandComposerView(
+                text: $draft.text,
+                placeholder: placeholder,
+                isEnabled:
+                    director.isReadyForSubmissions
+                        && !director.isUpdatingConfiguration,
+                onSubmit: submitDraft
+            )
+            .frame(height: 40)
+
+            Button(action: onChooseAttachments) {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 32, height: 32)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("파일 첨부")
+            .help("파일 첨부 · 한 번에 최대 20개")
+            .disabled(attachmentSelectionIsDisabled)
+            .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
+
+            if director.isSelectedCharacterRunning {
+                Button(action: director.cancelSelectedJob) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Color.red.opacity(0.88),
+                            in: RoundedRectangle(
+                                cornerRadius: 11,
+                                style: .continuous
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("대화 중단")
+                .help("현재 직원의 업무 중단")
+                .disabled(director.isCancellingSelectedCharacter)
+                .opacity(
+                    director.isCancellingSelectedCharacter ? 0.42 : 1
+                )
+            } else {
+                Button(action: submitDraft) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            DashboardPalette.accent,
+                            in: RoundedRectangle(
+                                cornerRadius: 11,
+                                style: .continuous
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("보내기")
+                .disabled(!canSubmit)
+                .opacity(canSubmit ? 1 : 0.42)
+            }
+        }
+        .padding(.leading, 13)
+        .padding(.trailing, 7)
+        .padding(.vertical, 6)
+        .background(
+            Color.primary.opacity(0.045),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+
+    private func submitDraft() {
+        guard let submissionPrompt else {
+            return
+        }
+        let accepted = onSubmit(submissionPrompt)
+        draft.clearAfterSubmission(accepted: accepted)
+    }
+}
+
 struct CommandComposerView: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -49,6 +217,7 @@ struct CommandComposerView: NSViewRepresentable {
         textView.font = .systemFont(ofSize: 14, weight: .medium)
         textView.textColor = .labelColor
         textView.insertionPointColor = .labelColor
+        textView.isSelectable = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -69,13 +238,19 @@ struct CommandComposerView: NSViewRepresentable {
     }
 
     private func updateTextView(_ textView: CommandComposerTextView) {
-        textView.placeholder = placeholder
         textView.onSubmit = onSubmit
-        textView.isEditable = isEnabled
-        textView.isSelectable = true
-        textView.textColor = isEnabled
+        if textView.placeholder != placeholder {
+            textView.placeholder = placeholder
+        }
+        if textView.isEditable != isEnabled {
+            textView.isEditable = isEnabled
+        }
+        let desiredTextColor: NSColor = isEnabled
             ? .labelColor
             : .disabledControlTextColor
+        if textView.textColor != desiredTextColor {
+            textView.textColor = desiredTextColor
+        }
 
         guard textView.string != text else {
             return
@@ -105,11 +280,15 @@ struct CommandComposerView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else {
                 return
             }
-            textView.needsDisplay = true
             guard parent.text != textView.string else {
                 return
             }
+            let changesPlaceholderVisibility =
+                parent.text.isEmpty != textView.string.isEmpty
             parent.text = textView.string
+            if changesPlaceholderVisibility {
+                textView.needsDisplay = true
+            }
         }
     }
 }
@@ -117,7 +296,9 @@ struct CommandComposerView: NSViewRepresentable {
 private final class CommandComposerTextView: NSTextView {
     var placeholder = "" {
         didSet {
-            needsDisplay = true
+            if placeholder != oldValue {
+                needsDisplay = true
+            }
         }
     }
     var onSubmit: (() -> Void)?
