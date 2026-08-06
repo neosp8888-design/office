@@ -724,6 +724,26 @@ struct LiveWorkspaceFeedFollowState: Equatable {
     }
 }
 
+struct LiveWorkspaceFeedScrollPolicy: Equatable {
+    static let initialMaximumAttempts = 4
+    static let submittedMaximumAttempts = 3
+    static let stablePassesRequired = 2
+
+    private(set) var stablePassCount = 0
+
+    mutating func shouldStop(
+        distanceFromBottom: CGFloat,
+        tolerance: CGFloat
+    ) -> Bool {
+        if distanceFromBottom <= tolerance {
+            stablePassCount += 1
+        } else {
+            stablePassCount = 0
+        }
+        return stablePassCount >= Self.stablePassesRequired
+    }
+}
+
 struct LiveWorkspaceFeed: View, Equatable {
     @ObservedObject private var liveFeedStore: LiveFeedStore
     private let workspaceDirectory: String
@@ -818,10 +838,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                 Self.maximumVisibleTurnCount,
                 selectedTurns.count
             )
-    }
-
-    private var latestActivityUpdate: Date? {
-        selectedTurns.first?.updatedAt
     }
 
     private var initialLayoutRevision:
@@ -1021,13 +1037,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                         }
                         scheduleScrollToLatest(proxy)
                     }
-                    .onChange(of: latestActivityUpdate) {
-                        _, _ in
-                        guard followState.isFollowingLatest else {
-                            return
-                        }
-                        scheduleScrollToLatest(proxy)
-                    }
                     .onChange(of: latestSubmittedTurnID) {
                         _, turnID in
                         guard let turnID else {
@@ -1102,8 +1111,10 @@ struct LiveWorkspaceFeed: View, Equatable {
         guard followState.isFollowingLatest else {
             return
         }
-        scrollMetrics.followScrollTask?.cancel()
         markAtBottom()
+        guard scrollMetrics.followScrollTask == nil else {
+            return
+        }
         scrollMetrics.followScrollTask = Task { @MainActor in
             await Task.yield()
             try? await Task.sleep(for: .milliseconds(16))
@@ -1131,8 +1142,8 @@ struct LiveWorkspaceFeed: View, Equatable {
 
         markAtBottom()
         scrollMetrics.initialScrollTask = Task { @MainActor in
-            var stablePassCount = 0
-            for pass in 0..<12 {
+            var policy = LiveWorkspaceFeedScrollPolicy()
+            for _ in 0..<LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts {
                 guard !Task.isCancelled else {
                     return
                 }
@@ -1143,13 +1154,11 @@ struct LiveWorkspaceFeed: View, Equatable {
                     scrollMetrics.bottomMarkerOffset
                         - scrollMetrics.viewportHeight
                 )
-                if distanceFromBottom <= Self.bottomTolerance {
-                    stablePassCount += 1
-                    if pass >= 6, stablePassCount >= 4 {
-                        break
-                    }
-                } else {
-                    stablePassCount = 0
+                if policy.shouldStop(
+                    distanceFromBottom: distanceFromBottom,
+                    tolerance: Self.bottomTolerance
+                ) {
+                    break
                 }
             }
             guard !Task.isCancelled else {
@@ -1157,6 +1166,9 @@ struct LiveWorkspaceFeed: View, Equatable {
             }
             proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
             await Task.yield()
+            guard !Task.isCancelled else {
+                return
+            }
             markAtBottom()
             didPerformInitialScroll = true
             scrollMetrics.initialScrollTask = nil
@@ -1164,11 +1176,12 @@ struct LiveWorkspaceFeed: View, Equatable {
     }
 
     private func restartInitialScroll(proxy: ScrollViewProxy) {
-        guard !didPerformInitialScroll else {
+        guard
+            !didPerformInitialScroll,
+            scrollMetrics.initialScrollTask == nil
+        else {
             return
         }
-        scrollMetrics.initialScrollTask?.cancel()
-        scrollMetrics.initialScrollTask = nil
         DispatchQueue.main.async {
             performInitialScrollIfNeeded(proxy: proxy)
         }
@@ -1199,19 +1212,34 @@ struct LiveWorkspaceFeed: View, Equatable {
         scrollMetrics.submittedScrollTask?.cancel()
         markAtBottom()
         scrollMetrics.submittedScrollTask = Task { @MainActor in
-            for _ in 0..<10 {
+            await Task.yield()
+            guard !Task.isCancelled else {
+                return
+            }
+            proxy.scrollTo(turnID, anchor: .bottom)
+
+            var policy = LiveWorkspaceFeedScrollPolicy()
+            for _ in 0..<LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts {
                 guard !Task.isCancelled else {
                     return
                 }
-                await Task.yield()
-                proxy.scrollTo(turnID, anchor: .bottom)
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
                 try? await Task.sleep(for: .milliseconds(40))
+                let distanceFromBottom = max(
+                    0,
+                    scrollMetrics.bottomMarkerOffset
+                        - scrollMetrics.viewportHeight
+                )
+                if policy.shouldStop(
+                    distanceFromBottom: distanceFromBottom,
+                    tolerance: Self.bottomTolerance
+                ) {
+                    break
+                }
             }
             guard !Task.isCancelled else {
                 return
             }
-            proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
             markAtBottom()
             scrollMetrics.submittedScrollTask = nil
         }

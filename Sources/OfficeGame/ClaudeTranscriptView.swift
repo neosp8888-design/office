@@ -70,13 +70,22 @@ struct ClaudeTranscriptView: View {
     private static let compactEntryLimit = 18
 
     var body: some View {
-        let presentation = ClaudeTranscriptPresentation.make(
+        let presentation = TranscriptPresentationCache.shared.presentation(
+            provider: .claude,
             turnID: turnID,
             activities: activities,
             response: response,
             responseUpdatedAt: responseUpdatedAt,
             isRunning: isRunning
-        )
+        ) {
+            ClaudeTranscriptPresentation.make(
+                turnID: turnID,
+                activities: activities,
+                response: response,
+                responseUpdatedAt: responseUpdatedAt,
+                isRunning: isRunning
+            )
+        }
         let hiddenCount = max(
             0,
             presentation.entries.count - Self.compactEntryLimit

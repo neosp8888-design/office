@@ -3,9 +3,58 @@
 import OfficeCore
 import SwiftUI
 
-struct CharacterInteractionLayer: View {
-    @ObservedObject var director: AgentDirector
+struct CharacterInteractionPresentationState: Equatable {
+    let characters: [CharacterConfiguration]
+    let displayNames: [OfficeCharacter: String]
+    let archiveCabinetHitbox: CharacterHitbox
+    let runningCharacters: Set<OfficeCharacter>
+    let questionCharacters: Set<OfficeCharacter>
+    let failedCharacters: Set<OfficeCharacter>
+    let offDutyCharacters: Set<OfficeCharacter>
+
+    init(
+        characters: [CharacterConfiguration],
+        displayNames: [OfficeCharacter: String],
+        archiveCabinetHitbox: CharacterHitbox,
+        runningCharacters: Set<OfficeCharacter>,
+        questionCharacters: Set<OfficeCharacter>,
+        failedCharacters: Set<OfficeCharacter>,
+        offDutyCharacters: Set<OfficeCharacter>
+    ) {
+        self.characters = characters
+        self.displayNames = displayNames
+        self.archiveCabinetHitbox = archiveCabinetHitbox
+        self.runningCharacters = runningCharacters
+        self.questionCharacters = questionCharacters
+        self.failedCharacters = failedCharacters
+        self.offDutyCharacters = offDutyCharacters
+    }
+
+    @MainActor
+    init(director: AgentDirector) {
+        self.init(
+            characters: director.characters,
+            displayNames: Dictionary(uniqueKeysWithValues:
+                director.characters.map { character in
+                    (
+                        character.id,
+                        director.displayName(for: character.id)
+                    )
+                }
+            ),
+            archiveCabinetHitbox: director.archiveCabinetHitbox,
+            runningCharacters: director.runningCharacters,
+            questionCharacters: Set(director.pendingQuestions.keys),
+            failedCharacters: Set(director.failedCharacters.keys),
+            offDutyCharacters: Set(director.offDutyCharacters.keys)
+        )
+    }
+}
+
+struct CharacterInteractionLayer: View, Equatable {
     @ObservedObject private var speechBubbleStore: SpeechBubbleStore
+    private let presentation: CharacterInteractionPresentationState
+    private let selectCharacter: (CharacterConfiguration) -> Void
     let artStyle: OfficeArtStyle
     let onMonitorTapped: (OfficeCharacter) -> Void
     let onArchiveCabinetTapped: () -> Void
@@ -20,15 +69,29 @@ struct CharacterInteractionLayer: View {
         onWhiteboardTapped: @escaping () -> Void,
         onBubbleTapped: @escaping (OfficeCharacter, String) -> Void
     ) {
-        self.director = director
         _speechBubbleStore = ObservedObject(
             wrappedValue: director.speechBubbleStore
         )
+        presentation = CharacterInteractionPresentationState(
+            director: director
+        )
+        selectCharacter = { character in
+            director.select(character)
+        }
         self.artStyle = artStyle
         self.onMonitorTapped = onMonitorTapped
         self.onArchiveCabinetTapped = onArchiveCabinetTapped
         self.onWhiteboardTapped = onWhiteboardTapped
         self.onBubbleTapped = onBubbleTapped
+    }
+
+    static func == (
+        lhs: CharacterInteractionLayer,
+        rhs: CharacterInteractionLayer
+    ) -> Bool {
+        lhs.speechBubbleStore === rhs.speechBubbleStore
+            && lhs.presentation == rhs.presentation
+            && lhs.artStyle == rhs.artStyle
     }
 
     var body: some View {
@@ -40,7 +103,7 @@ struct CharacterInteractionLayer: View {
                 fittedFrame.width / OfficeCanvasGeometry.designSize.width
 
             ZStack {
-                ForEach(director.characters) { character in
+                ForEach(presentation.characters) { character in
                     let hitbox =
                         OfficeInteractionGeometry.characterHitbox(
                             for: character.id,
@@ -49,7 +112,7 @@ struct CharacterInteractionLayer: View {
                         )
 
                     Button {
-                        director.select(character)
+                        selectCharacter(character)
                     } label: {
                         Color.clear
                             .contentShape(Rectangle())
@@ -66,14 +129,14 @@ struct CharacterInteractionLayer: View {
                             + hitbox.midY * scale
                     )
                     .accessibilityLabel(
-                        "\(director.displayName(for: character.id)) 선택"
+                        "\(presentation.displayNames[character.id] ?? character.name) 선택"
                     )
                 }
 
                 let archiveCabinetHitbox =
                     OfficeInteractionGeometry.archiveCabinetHitbox(
                         artStyle: artStyle,
-                        fallback: director.archiveCabinetHitbox.rect
+                        fallback: presentation.archiveCabinetHitbox.rect
                     )
 
                 Button(action: onArchiveCabinetTapped) {
@@ -117,7 +180,7 @@ struct CharacterInteractionLayer: View {
                 .accessibilityLabel("화이트보드 상세 열기")
                 .help("CLI 한도 상세")
 
-                ForEach(director.characters) { character in
+                ForEach(presentation.characters) { character in
                     let monitorHitbox =
                         OfficeInteractionGeometry.monitorHitbox(
                             for: character.id,
@@ -143,26 +206,33 @@ struct CharacterInteractionLayer: View {
                             + monitorHitbox.midY * scale
                     )
                     .accessibilityLabel(
-                        "\(director.displayName(for: character.id)) 대화 열기"
+                        "\(presentation.displayNames[character.id] ?? character.name) 대화 열기"
                     )
                     .help(
-                        "\(director.displayName(for: character.id)) 대화 내역"
+                        "\(presentation.displayNames[character.id] ?? character.name) 대화 내역"
                     )
                 }
 
-                ForEach(director.characters) { character in
+                ForEach(presentation.characters) { character in
                     if let message =
                         speechBubbleStore.bubbles[character.id]
                     {
-                        let isThinking = director.runningCharacters.contains(
-                            character.id
-                        )
+                        let isThinking =
+                            presentation.runningCharacters.contains(
+                                character.id
+                            )
                         let isQuestion =
-                            director.pendingQuestion(for: character.id) != nil
+                            presentation.questionCharacters.contains(
+                                character.id
+                            )
                         let isFailure =
-                            director.failureMessage(for: character.id) != nil
+                            presentation.failedCharacters.contains(
+                                character.id
+                            )
                         let isOffDuty =
-                            director.offDutyReason(for: character.id) != nil
+                            presentation.offDutyCharacters.contains(
+                                character.id
+                            )
                         let bubbleAnchor =
                             OfficeInteractionGeometry.bubbleAnchor(
                                 for: character.id,
@@ -174,7 +244,8 @@ struct CharacterInteractionLayer: View {
                             onBubbleTapped(character.id, message)
                         } label: {
                             CharacterSpeechBubble(
-                                name: director.displayName(for: character.id),
+                                name: presentation.displayNames[character.id]
+                                    ?? character.name,
                                 message: message,
                                 isThinking: isThinking,
                                 isQuestion: isQuestion,
@@ -211,12 +282,12 @@ struct CharacterInteractionLayer: View {
                         )
                         .accessibilityLabel(
                             isQuestion
-                                ? "\(director.displayName(for: character.id)) 질문에 답변하기"
+                                ? "\(presentation.displayNames[character.id] ?? character.name) 질문에 답변하기"
                                 : isOffDuty
-                                ? "\(director.displayName(for: character.id)) 퇴근 사유 보기"
+                                ? "\(presentation.displayNames[character.id] ?? character.name) 퇴근 사유 보기"
                                 : isFailure
-                                ? "\(director.displayName(for: character.id)) 중단 원인 보기"
-                                : "\(director.displayName(for: character.id)) 응답 전문 보기"
+                                ? "\(presentation.displayNames[character.id] ?? character.name) 중단 원인 보기"
+                                : "\(presentation.displayNames[character.id] ?? character.name) 응답 전문 보기"
                         )
                         .help(
                             isQuestion

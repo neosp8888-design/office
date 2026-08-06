@@ -362,6 +362,7 @@ private struct OfficeGameView: View {
                     }
                 }
             )
+            .equatable()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(
