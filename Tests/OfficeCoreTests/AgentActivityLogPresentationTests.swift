@@ -129,6 +129,10 @@ final class AgentActivityLogPresentationTests: XCTestCase {
 
     func testCodexWaterfallPacingIsVisibleAndBounded() {
         XCTAssertEqual(
+            CodexWaterfallRevealPacing.pendingContentOpacity,
+            0
+        )
+        XCTAssertEqual(
             CodexWaterfallRevealPacing.featherHeight(
                 forVisibleHeight: 0
             ),
@@ -138,21 +142,21 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             CodexWaterfallRevealPacing.revealDuration(
                 forContentHeight: 20
             ),
-            1.35,
+            1.755,
             accuracy: 0.001
         )
         XCTAssertEqual(
             CodexWaterfallRevealPacing.revealDuration(
                 forContentHeight: 640
             ),
-            2,
+            2.6,
             accuracy: 0.001
         )
         XCTAssertEqual(
             CodexWaterfallRevealPacing.revealDuration(
                 forContentHeight: 2_000
             ),
-            2.8,
+            3.64,
             accuracy: 0.001
         )
         XCTAssertEqual(

@@ -2357,13 +2357,14 @@ private struct WaterfallResponseSegmentView: View {
 
 // Markdown은 고정한 채 하나의 마스크 위치만 움직여 렌더링 부하를 제한한다.
 enum CodexWaterfallRevealPacing {
+    static let durationScale = TimeInterval(1.3)
     static let startDelayMilliseconds = 40
-    static let minimumDuration = TimeInterval(1.35)
-    static let maximumDuration = TimeInterval(2.8)
-    static let pointsPerSecond = CGFloat(320)
+    static let minimumDuration = TimeInterval(1.35) * durationScale
+    static let maximumDuration = TimeInterval(2.8) * durationScale
+    static let pointsPerSecond = CGFloat(320 / durationScale)
     static let maximumFeatherHeight = CGFloat(72)
     static let featherHeightFraction = CGFloat(0.48)
-    static let pendingContentOpacity = Double(0.12)
+    static let pendingContentOpacity = Double.zero
 
     static func revealDuration(
         forContentHeight height: CGFloat
