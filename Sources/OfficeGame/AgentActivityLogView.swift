@@ -56,6 +56,9 @@ struct CodexTranscriptPresentation: Equatable {
         }
 
         for activity in activities {
+            if CodexCollaborationSummary.isHiddenHousekeeping(activity) {
+                continue
+            }
             if activity.kind == "message" {
                 flushActivityGroups()
                 entries.append(
@@ -152,6 +155,7 @@ enum CodexActivityGroupKind: String, Equatable, Hashable {
     case command
     case tool
     case changes
+    case collaboration
     case other
 
     init(activity: LiveFeedActivity) {
@@ -160,8 +164,12 @@ enum CodexActivityGroupKind: String, Equatable, Hashable {
             self = .reasoning
         case "command":
             self = .command
+        case "collaboration":
+            self = .collaboration
         case "tool":
-            self = .tool
+            self = activity.text.hasPrefix("협업 ·")
+                ? .collaboration
+                : .tool
         default:
             self = .other
         }
@@ -227,6 +235,224 @@ struct CodexActivityGroup: Identifiable, Equatable {
 
     func hiddenHistoryItemCount(limit: Int) -> Int {
         max(0, items.count - 1 - limit)
+    }
+}
+
+struct CodexCollaborationAgentSummary: Identifiable, Equatable {
+    let id: String
+    let label: String?
+    let prompt: String?
+    let followUps: [String]
+    let result: String?
+    let status: LiveFeedActivityStatus
+    let updatedAt: Date
+
+    var previewText: String {
+        result ?? followUps.last ?? prompt ?? "협업 검토를 진행했습니다."
+    }
+}
+
+struct CodexCollaborationLatestEvent: Equatable {
+    let agentID: String
+    let text: String
+    let status: LiveFeedActivityStatus
+    let occurredAt: Date
+}
+
+struct CodexCollaborationSummary: Equatable {
+    let activityIDs: [String]
+    let agents: [CodexCollaborationAgentSummary]
+    let latestEvent: CodexCollaborationLatestEvent?
+
+    var completedCount: Int {
+        agents.filter { $0.status == .completed }.count
+    }
+
+    var failedCount: Int {
+        agents.filter { $0.status == .failed }.count
+    }
+
+    var runningCount: Int {
+        agents.filter { $0.status == .running }.count
+    }
+
+    var finishedCount: Int {
+        completedCount + failedCount
+    }
+
+    var isRunning: Bool {
+        runningCount > 0
+    }
+
+    var progress: Double {
+        guard !agents.isEmpty else {
+            return 0
+        }
+        return Double(finishedCount) / Double(agents.count)
+    }
+
+    var statusText: String {
+        guard !agents.isEmpty else {
+            return "협업 기록"
+        }
+        if failedCount > 0 {
+            return "\(agents.count)명 · \(completedCount)명 완료 · \(failedCount)명 오류"
+        }
+        if runningCount > 0 {
+            return "\(agents.count)명 · \(completedCount)/\(agents.count) 완료"
+        }
+        return "\(agents.count)명 검토 완료"
+    }
+
+    func displayLabel(for agentID: String) -> String {
+        guard let index = agents.firstIndex(where: { $0.id == agentID }) else {
+            return "검토자"
+        }
+        return agents[index].label ?? "검토자 \(index + 1)"
+    }
+
+    static func isHiddenHousekeeping(_ activity: LiveFeedActivity) -> Bool {
+        guard activity.kind == "tool" else {
+            return false
+        }
+        let value = activity.text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return [
+            "협업 · wait",
+            "협업 · wait_agent",
+            "협업 · list_agents",
+            "협업 · close_agent",
+            "협업 · closeagent",
+        ].contains(value)
+    }
+
+    static func make(
+        from items: [CodexActivityGroupItem]
+    ) -> CodexCollaborationSummary? {
+        struct Builder {
+            let id: String
+            var label: String?
+            var prompt: String?
+            var followUps: [String] = []
+            var result: String?
+            var status: LiveFeedActivityStatus
+            var updatedAt: Date
+        }
+
+        var order: [String] = []
+        var builders: [String: Builder] = [:]
+        var latestEvent: CodexCollaborationLatestEvent?
+        var activityIDs: [String] = []
+
+        for item in items {
+            let activity = item.activity
+            guard !isHiddenHousekeeping(activity) else {
+                continue
+            }
+            let detail = activity.collaboration
+            let agentID = detail?.agentThreadID ?? activity.id
+            if builders[agentID] == nil {
+                order.append(agentID)
+                builders[agentID] = Builder(
+                    id: agentID,
+                    label: detail?.agentLabel,
+                    prompt: nil,
+                    status: resolvedStatus(
+                        detail?.agentStatus,
+                        fallback: activity.status
+                    ),
+                    updatedAt: activity.occurredAt
+                )
+            }
+            guard var builder = builders[agentID] else {
+                continue
+            }
+
+            if let label = nonempty(detail?.agentLabel) {
+                builder.label = label
+            }
+            let action = detail?.action.lowercased() ?? "legacy"
+            if let prompt = nonempty(detail?.prompt) {
+                if action == "follow_up" {
+                    if builder.followUps.last != prompt {
+                        builder.followUps.append(prompt)
+                    }
+                } else if builder.prompt == nil {
+                    builder.prompt = prompt
+                }
+            }
+            if let result = nonempty(detail?.message) {
+                builder.result = result
+            } else if detail == nil {
+                builder.result = nonempty(activity.text)
+            }
+            builder.status = resolvedStatus(
+                detail?.agentStatus,
+                fallback: activity.status
+            )
+            builder.updatedAt = activity.occurredAt
+            builders[agentID] = builder
+            activityIDs.append(activity.id)
+
+            if let preview = nonempty(
+                detail?.message ?? detail?.prompt ?? activity.text
+            ) {
+                latestEvent = CodexCollaborationLatestEvent(
+                    agentID: agentID,
+                    text: preview,
+                    status: builder.status,
+                    occurredAt: activity.occurredAt
+                )
+            }
+        }
+
+        let agents = order.compactMap { id -> CodexCollaborationAgentSummary? in
+            guard let builder = builders[id] else {
+                return nil
+            }
+            return CodexCollaborationAgentSummary(
+                id: builder.id,
+                label: builder.label,
+                prompt: builder.prompt,
+                followUps: builder.followUps,
+                result: builder.result,
+                status: builder.status,
+                updatedAt: builder.updatedAt
+            )
+        }
+        guard !agents.isEmpty else {
+            return nil
+        }
+        return CodexCollaborationSummary(
+            activityIDs: activityIDs,
+            agents: agents,
+            latestEvent: latestEvent
+        )
+    }
+
+    private static func resolvedStatus(
+        _ agentStatus: String?,
+        fallback: LiveFeedActivityStatus
+    ) -> LiveFeedActivityStatus {
+        switch agentStatus?
+            .replacingOccurrences(of: "-", with: "_")
+            .lowercased()
+        {
+        case "pending_init", "running":
+            return .running
+        case "completed", "shutdown":
+            return .completed
+        case "interrupted", "errored", "not_found":
+            return .failed
+        default:
+            return fallback
+        }
+    }
+
+    private static func nonempty(_ value: String?) -> String? {
+        let text = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text?.isEmpty == false ? text : nil
     }
 }
 
@@ -632,10 +858,22 @@ struct CodexTranscriptView: View {
     ) -> some View {
         switch entry {
         case .activityGroup(let group):
-            CodexActivityGroupView(
-                group: group,
-                workspaceDirectory: workspaceDirectory
-            )
+            if
+                group.kind == .collaboration,
+                let summary = CodexCollaborationSummary.make(
+                    from: group.items
+                )
+            {
+                CodexCollaborationGroupView(
+                    summary: summary,
+                    workspaceDirectory: workspaceDirectory
+                )
+            } else {
+                CodexActivityGroupView(
+                    group: group,
+                    workspaceDirectory: workspaceDirectory
+                )
+            }
         case .message(let message):
             CodexMessageView(
                 turnID: turnID,
@@ -702,6 +940,388 @@ func transcriptGroupExpansionState(
     isRunning: Bool
 ) -> Bool {
     isRunning ? current : false
+}
+
+private struct CodexCollaborationGroupView: View {
+    let summary: CodexCollaborationSummary
+    let workspaceDirectory: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+    @State private var expandedResultIDs: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(
+                    reduceMotion ? nil : .easeInOut(duration: 0.18)
+                ) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                header
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                isExpanded ? "협업 검토 접기" : "협업 검토 자세히 보기"
+            )
+
+            progressBar
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(
+                        Array(summary.agents.enumerated()),
+                        id: \.element.id
+                    ) { index, agent in
+                        CodexCollaborationAgentView(
+                            agent: agent,
+                            index: index,
+                            workspaceDirectory: workspaceDirectory,
+                            isResultExpanded: resultBinding(for: agent.id)
+                        )
+
+                        if index < summary.agents.count - 1 {
+                            Divider()
+                                .opacity(0.55)
+                                .padding(.leading, 33)
+                        }
+                    }
+                }
+                .transition(.opacity)
+            } else if let latestEvent = summary.latestEvent {
+                latestPreview(latestEvent)
+                    .transition(.opacity)
+            }
+        }
+        .padding(11)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color.purple.opacity(0.075),
+                    Color.primary.opacity(0.025),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.purple.opacity(0.15), lineWidth: 1)
+        }
+        .onChange(of: summary.isRunning) { _, running in
+            guard !running else {
+                return
+            }
+            withAnimation(
+                reduceMotion ? nil : .easeInOut(duration: 0.16)
+            ) {
+                isExpanded = false
+                expandedResultIDs.removeAll()
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "person.2.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.purple)
+                .frame(width: 28, height: 28)
+                .background(
+                    Color.purple.opacity(0.11),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("협업 검토")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                Text(summary.statusText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 6)
+
+            if summary.isRunning {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(.purple)
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.purple.opacity(0.10))
+                Capsule()
+                    .fill(
+                        summary.failedCount > 0
+                            ? Color.orange.opacity(0.82)
+                            : Color.purple.opacity(0.78)
+                    )
+                    .frame(
+                        width: max(
+                            summary.progress > 0 ? 3 : 0,
+                            geometry.size.width * summary.progress
+                        )
+                    )
+            }
+        }
+        .frame(height: 3)
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.2),
+            value: summary.progress
+        )
+        .accessibilityElement()
+        .accessibilityLabel(summary.statusText)
+    }
+
+    private func latestPreview(
+        _ latestEvent: CodexCollaborationLatestEvent
+    ) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            collaborationStatusIcon(latestEvent.status)
+                .frame(width: 15, height: 15)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(summary.displayLabel(for: latestEvent.agentID))
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+
+                    Text(latestEvent.status == .running ? "최근 요청" : "최근 결과")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(Color.purple)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Color.purple.opacity(0.09),
+                            in: Capsule()
+                        )
+                }
+
+                Text(collaborationPreview(latestEvent.text))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Text(latestEvent.occurredAt.formatted(
+                date: .omitted,
+                time: .standard
+            ))
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 2)
+        .padding(.top, 1)
+    }
+
+    private func resultBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedResultIDs.contains(id) },
+            set: { expanded in
+                if expanded {
+                    expandedResultIDs.insert(id)
+                } else {
+                    expandedResultIDs.remove(id)
+                }
+            }
+        )
+    }
+}
+
+private struct CodexCollaborationAgentView: View {
+    let agent: CodexCollaborationAgentSummary
+    let index: Int
+    let workspaceDirectory: String
+    @Binding var isResultExpanded: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Text("\(index + 1)")
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.purple)
+                .frame(width: 24, height: 24)
+                .background(
+                    Color.purple.opacity(0.10),
+                    in: Circle()
+                )
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Text(agent.label ?? "검토자 \(index + 1)")
+                        .font(.system(size: 11.5, weight: .bold))
+
+                    CollaborationStatusBadge(status: agent.status)
+
+                    Spacer(minLength: 4)
+
+                    Text(agent.updatedAt.formatted(
+                        date: .omitted,
+                        time: .standard
+                    ))
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+
+                if let prompt = agent.prompt {
+                    collaborationTextSection(
+                        title: "요청",
+                        text: prompt,
+                        lineLimit: 5
+                    )
+                }
+
+                if let followUp = agent.followUps.last {
+                    collaborationTextSection(
+                        title: agent.followUps.count > 1
+                            ? "추가 요청 \(agent.followUps.count)건"
+                            : "추가 요청",
+                        text: followUp,
+                        lineLimit: 4
+                    )
+                }
+
+                if let result = agent.result {
+                    DisclosureGroup(isExpanded: $isResultExpanded) {
+                        if isResultExpanded {
+                            ConversationMarkdownView(
+                                source: result,
+                                fontSize: 11.5,
+                                fileBaseDirectory: workspaceDirectory
+                            )
+                            .textSelection(.enabled)
+                            .padding(.top, 7)
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(
+                                isResultExpanded
+                                    ? "검토 결과 접기"
+                                    : "검토 결과 자세히"
+                            )
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(Color.purple)
+
+                            if !isResultExpanded {
+                                Text(collaborationPreview(result))
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(4)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .tint(.purple)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 9)
+    }
+
+    private func collaborationTextSection(
+        title: String,
+        text: String,
+        lineLimit: Int
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(lineLimit)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct CollaborationStatusBadge: View {
+    let status: LiveFeedActivityStatus
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 8.5, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(color.opacity(0.10), in: Capsule())
+    }
+
+    private var label: String {
+        switch status {
+        case .running:
+            "검토 중"
+        case .completed:
+            "완료"
+        case .failed:
+            "오류"
+        }
+    }
+
+    private var color: Color {
+        collaborationStatusColor(status)
+    }
+}
+
+@ViewBuilder
+private func collaborationStatusIcon(
+    _ status: LiveFeedActivityStatus
+) -> some View {
+    if status == .running {
+        ProgressView()
+            .controlSize(.mini)
+            .tint(.purple)
+    } else {
+        Image(
+            systemName: status == .failed
+                ? "exclamationmark.circle.fill"
+                : "checkmark.circle.fill"
+        )
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(collaborationStatusColor(status))
+    }
+}
+
+private func collaborationStatusColor(
+    _ status: LiveFeedActivityStatus
+) -> Color {
+    switch status {
+    case .running:
+        .purple
+    case .completed:
+        .green
+    case .failed:
+        .red
+    }
+}
+
+private func collaborationPreview(_ text: String) -> String {
+    text
+        .split(whereSeparator: \.isWhitespace)
+        .joined(separator: " ")
 }
 
 private struct CodexActivityGroupView: View {
@@ -888,6 +1508,8 @@ private struct CodexActivityGroupView: View {
             OfficeLocalization.string("도구 사용")
         case .changes:
             OfficeLocalization.string("파일 변경")
+        case .collaboration:
+            OfficeLocalization.string("협업 검토")
         case .other:
             OfficeLocalization.string("기타 작업")
         }
@@ -903,6 +1525,8 @@ private struct CodexActivityGroupView: View {
             "도구 사용"
         case .changes:
             "파일 변경"
+        case .collaboration:
+            "협업"
         case .other:
             "작업"
         }
@@ -918,6 +1542,8 @@ private struct CodexActivityGroupView: View {
             "wrench.and.screwdriver"
         case .changes:
             "doc.badge.gearshape"
+        case .collaboration:
+            "person.2.fill"
         case .other:
             "ellipsis.circle"
         }
@@ -933,6 +1559,8 @@ private struct CodexActivityGroupView: View {
             .orange
         case .changes:
             .green
+        case .collaboration:
+            .purple
         case .other:
             .secondary
         }

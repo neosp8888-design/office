@@ -520,6 +520,97 @@ test("같은 이벤트 ID의 시작과 완료는 한 활동 행을 갱신한다"
   );
 });
 
+test("협업 활동은 검토자 정보와 결과를 JSON으로 저장한다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = {
+    turnID: "turn-1",
+    character: { id: "boss" },
+    sequence: 0,
+    lastActivity: null,
+    activityRecords: new Map(),
+  };
+
+  await runtime.addActivity(state, {
+    kind: "collaboration",
+    text: "접힘 정책을 검토해 주세요.",
+    eventKey: "collaboration:spawn-1:reviewer-1",
+    status: "running",
+    collaboration: {
+      action: "spawn",
+      agentThreadId: "reviewer-1",
+      prompt: "접힘 정책을 검토해 주세요.",
+      agentStatus: "running",
+    },
+  });
+  await runtime.addActivity(state, {
+    kind: "collaboration",
+    text: "회귀 위험이 없습니다.",
+    eventKey: "collaboration:spawn-1:reviewer-1",
+    status: "completed",
+    collaboration: {
+      action: "result",
+      agentThreadId: "reviewer-1",
+      message: "회귀 위험이 없습니다.",
+      agentStatus: "completed",
+    },
+  });
+
+  const activityQueries = queries.filter(({ text }) =>
+    /turn_activities/.test(text)
+  );
+  assert.equal(activityQueries.length, 2);
+  assert.match(activityQueries[0].text, /collaboration/);
+  assert.equal(activityQueries[0].values[2], "collaboration");
+  assert.deepEqual(activityQueries[0].values[6], {
+    action: "spawn",
+    agentThreadId: "reviewer-1",
+    prompt: "접힘 정책을 검토해 주세요.",
+    agentStatus: "running",
+  });
+  assert.match(activityQueries[1].text, /collaboration = \$6/);
+  assert.deepEqual(activityQueries[1].values[5], {
+    action: "result",
+    agentThreadId: "reviewer-1",
+    message: "회귀 위험이 없습니다.",
+    agentStatus: "completed",
+  });
+});
+
+test("협업 활동 스키마와 실시간 API가 구조화 내용을 함께 제공한다", () => {
+  const migrationSource = readFileSync(
+    new URL(
+      "../../database/migrations/020_collaboration_activities.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const serverSource = readFileSync(
+    new URL("../src/server.mjs", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(migrationSource, /'collaboration'/);
+  assert.match(
+    migrationSource,
+    /ADD COLUMN IF NOT EXISTS collaboration jsonb/,
+  );
+  assert.match(
+    serverSource,
+    /'collaboration', activity\.collaboration/,
+  );
+});
+
 test("같은 활동 상태가 반복되면 저장과 방송을 반복하지 않는다", async () => {
   const queries = [];
   const broadcasts = [];

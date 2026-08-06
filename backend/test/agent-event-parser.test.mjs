@@ -218,6 +218,129 @@ test("Codex 파일 변경은 변경 종류와 경로를 표시한다", () => {
   assert.equal(event.activity.status, "completed");
 });
 
+test("Codex 협업 요청은 검토자별 구조화 활동으로 변환한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "spawn-1",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        sender_thread_id: "root-thread",
+        receiver_thread_ids: ["reviewer-1"],
+        prompt: "스크롤 정책을 독립적으로 검토해 주세요.",
+        agents_states: {
+          "reviewer-1": { status: "running", message: null },
+        },
+        status: "completed",
+      },
+    }),
+    "codex",
+  );
+
+  assert.deepEqual(event.activities, [{
+    kind: "collaboration",
+    text: "스크롤 정책을 독립적으로 검토해 주세요.",
+    eventKey: "collaboration:spawn-1:reviewer-1",
+    status: "running",
+    preserveText: false,
+    messageScoped: false,
+    collaboration: {
+      action: "spawn",
+      agentThreadId: "reviewer-1",
+      agentLabel: null,
+      prompt: "스크롤 정책을 독립적으로 검토해 주세요.",
+      agentStatus: "running",
+    },
+  }]);
+});
+
+test("Codex 협업 대기는 완료된 검토 결과만 공개한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "wait-1",
+        type: "collab_tool_call",
+        tool: "wait",
+        receiver_thread_ids: ["reviewer-1", "reviewer-2"],
+        agents_states: {
+          "reviewer-1": {
+            status: "completed",
+            message: "스크롤 위치 보존에 회귀 위험이 있습니다.",
+          },
+          "reviewer-2": { status: "running", message: null },
+        },
+        status: "completed",
+      },
+    }),
+    "codex",
+  );
+
+  assert.equal(event.activities.length, 1);
+  assert.equal(event.activities[0].status, "completed");
+  assert.equal(
+    event.activities[0].collaboration.agentThreadId,
+    "reviewer-1",
+  );
+  assert.equal(
+    event.activities[0].collaboration.message,
+    "스크롤 위치 보존에 회귀 위험이 있습니다.",
+  );
+});
+
+test("Codex 협업 추가 지시는 해당 검토자의 후속 요청으로 보존한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "input-1",
+        type: "collab_tool_call",
+        tool: "send_input",
+        receiver_thread_ids: ["reviewer-1"],
+        prompt: "CPU 측정값도 함께 확인해 주세요.",
+        status: "completed",
+      },
+    }),
+    "codex",
+  );
+
+  assert.equal(event.activities[0].status, "running");
+  assert.deepEqual(event.activities[0].collaboration, {
+    action: "follow_up",
+    agentThreadId: "reviewer-1",
+    agentLabel: null,
+    prompt: "CPU 측정값도 함께 확인해 주세요.",
+    agentStatus: "running",
+  });
+});
+
+test("Codex 협업의 대기 시작과 종료 정리는 화면 활동으로 만들지 않는다", () => {
+  for (const object of [
+    {
+      type: "item.started",
+      item: {
+        id: "wait-1",
+        type: "collab_tool_call",
+        tool: "wait",
+        status: "in_progress",
+      },
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: "close-1",
+        type: "collab_tool_call",
+        tool: "close_agent",
+        receiver_thread_ids: ["reviewer-1"],
+        status: "completed",
+      },
+    },
+  ]) {
+    assert.equal(parseAgentEvent(JSON.stringify(object), "codex"), null);
+  }
+});
+
 test("긴 절대 변경 경로는 업무 폴더 상대경로로 보존한다", () => {
   const workdir = [
     "/Users/example/.officestra/worktrees/03ffd78858a8",

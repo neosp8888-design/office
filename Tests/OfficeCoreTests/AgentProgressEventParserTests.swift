@@ -88,6 +88,39 @@ final class AgentProgressEventParserTests: XCTestCase {
         )
     }
 
+    func testCodexCollaborationShowsRequestAndResultButNotWaiting() {
+        let request = #"""
+        {"type":"item.completed","item":{"type":"collab_tool_call","tool":"spawn_agent","prompt":"스크롤 정책을 검토해 주세요.","receiver_thread_ids":["reviewer-1"],"status":"completed"}}
+        """#
+        let result = #"""
+        {"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"reviewer-1":{"status":"completed","message":"회귀 위험이 없습니다."}},"status":"completed"}}
+        """#
+        let waiting = #"""
+        {"type":"item.started","item":{"type":"collab_tool_call","tool":"wait","status":"in_progress"}}
+        """#
+
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: request,
+                backend: .codex
+            ),
+            "협업 요청 · 스크롤 정책을 검토해 주세요."
+        )
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: result,
+                backend: .codex
+            ),
+            "협업 결과 · 회귀 위험이 없습니다."
+        )
+        XCTAssertNil(
+            AgentProgressEventParser.message(
+                fromJSONLine: waiting,
+                backend: .codex
+            )
+        )
+    }
+
     func testClaudePublicTextTakesPriorityOverThinking() {
         let line = #"""
         {"type":"assistant","message":{"content":[{"type":"thinking","thinking":"internal"},{"type":"text","text":"현재 파일 구조를 확인했습니다."}]}}

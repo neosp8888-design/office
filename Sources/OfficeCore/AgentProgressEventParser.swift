@@ -75,7 +75,7 @@ public enum AgentProgressEventParser {
         case "mcp_tool_call":
             return mcpMessage(item, eventType: eventType)
         case "collab_tool_call":
-            return eventType == "item.started"
+            return eventType == "item.completed"
                 ? collabMessage(item)
                 : nil
         case "web_search":
@@ -231,18 +231,58 @@ public enum AgentProgressEventParser {
 
     private static func collabMessage(
         _ item: [String: Any]
-    ) -> String {
+    ) -> String? {
         let tool = cleanText(
             item["tool"] ?? item["name"] ?? item["action"]
-        ) ?? "협업"
-        let target = cleanText(
-            item["receiver_agent_nickname"]
-                ?? item["receiver_agent"]
-                ?? item["agent_name"]
-                ?? item["agent"]
-        )
-        return target.map { "협업 · \(tool) → \($0)" }
-            ?? "협업 · \(tool)"
+        )?.replacingOccurrences(of: "-", with: "_").lowercased()
+            ?? "collaboration"
+        if ["close_agent", "closeagent"].contains(tool) {
+            return nil
+        }
+        if ["spawn_agent", "spawnagent"].contains(tool) {
+            let prompt = cleanText(
+                item["prompt"] ?? item["message"] ?? item["input"]
+            )
+            return prompt.map {
+                "협업 요청 · \(shortened($0, limit: 220))"
+            } ?? "협업 검토 시작"
+        }
+        if ["send_input", "sendinput"].contains(tool) {
+            let prompt = cleanText(
+                item["prompt"] ?? item["message"] ?? item["input"]
+            )
+            return prompt.map {
+                "협업 추가 요청 · \(shortened($0, limit: 220))"
+            } ?? "협업 추가 요청"
+        }
+        if tool == "wait" {
+            let states = item["agents_states"] as? [String: Any]
+                ?? item["agent_states"] as? [String: Any]
+                ?? item["agentsStates"] as? [String: Any]
+                ?? [:]
+            var hasTerminalAgent = false
+            for value in states.values {
+                guard let state = value as? [String: Any] else {
+                    continue
+                }
+                if let message = cleanText(
+                    state["message"] ?? state["result"] ?? state["output"]
+                ) {
+                    return "협업 결과 · \(shortened(message, limit: 260))"
+                }
+                let status = cleanText(state["status"])?.lowercased()
+                if let status,
+                    [
+                        "completed", "shutdown", "interrupted",
+                        "errored", "not_found",
+                    ].contains(status)
+                {
+                    hasTerminalAgent = true
+                }
+            }
+            return hasTerminalAgent ? "협업 검토 완료" : nil
+        }
+        return "협업 · \(tool)"
     }
 
     private static func webSearchMessage(

@@ -967,6 +967,7 @@ async function queryTurnFeed({
                 'kind', activity.kind,
                 'text', activity.text,
                 'status', activity.status,
+                'collaboration', activity.collaboration,
                 'occurredAt', activity.occurred_at
               )
               ORDER BY activity.seq

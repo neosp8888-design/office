@@ -261,6 +261,163 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.showsWaiting)
     }
 
+    func testCodexTranscriptSeparatesCollaborationAroundPublicMessages() throws {
+        let activities = try [
+            makeActivity(
+                id: "collab-spawn",
+                kind: "collaboration",
+                text: "스크롤 정책을 검토해 주세요.",
+                status: "running",
+                collaboration: [
+                    "action": "spawn",
+                    "agentThreadId": "reviewer-1",
+                    "prompt": "스크롤 정책을 검토해 주세요.",
+                    "agentStatus": "running",
+                ]
+            ),
+            makeActivity(
+                id: "legacy-wait",
+                kind: "tool",
+                text: "협업 · wait",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "message-1",
+                kind: "message",
+                text: "첫 검토를 요청했습니다.",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "collab-result",
+                kind: "collaboration",
+                text: "회귀 위험이 없습니다.",
+                status: "completed",
+                collaboration: [
+                    "action": "result",
+                    "agentThreadId": "reviewer-1",
+                    "message": "회귀 위험이 없습니다.",
+                    "agentStatus": "completed",
+                ]
+            ),
+        ]
+
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "첫 검토를 요청했습니다.\n\n완료했습니다.",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        XCTAssertEqual(presentation.entries.count, 4)
+        guard
+            case .activityGroup(let firstGroup) = presentation.entries[0],
+            case .message = presentation.entries[1],
+            case .activityGroup(let secondGroup) = presentation.entries[2],
+            case .message = presentation.entries[3]
+        else {
+            return XCTFail("대화 전후 협업 그룹의 순서가 다릅니다.")
+        }
+        XCTAssertEqual(firstGroup.kind, .collaboration)
+        XCTAssertEqual(firstGroup.items.map(\.id), ["collab-spawn"])
+        XCTAssertEqual(secondGroup.kind, .collaboration)
+        XCTAssertEqual(secondGroup.items.map(\.id), ["collab-result"])
+    }
+
+    func testCollaborationSummaryCombinesRequestsAndLatestResultsByReviewer()
+        throws
+    {
+        let activities = try [
+            makeActivity(
+                id: "spawn-1",
+                kind: "collaboration",
+                text: "UI 구조를 검토해 주세요.",
+                status: "running",
+                collaboration: [
+                    "action": "spawn",
+                    "agentThreadId": "reviewer-1",
+                    "prompt": "UI 구조를 검토해 주세요.",
+                    "agentStatus": "running",
+                ]
+            ),
+            makeActivity(
+                id: "spawn-2",
+                kind: "collaboration",
+                text: "CPU 부하를 검토해 주세요.",
+                status: "running",
+                collaboration: [
+                    "action": "spawn",
+                    "agentThreadId": "reviewer-2",
+                    "prompt": "CPU 부하를 검토해 주세요.",
+                    "agentStatus": "running",
+                ]
+            ),
+            makeActivity(
+                id: "result-1",
+                kind: "collaboration",
+                text: "접힘 UI가 적절합니다.",
+                status: "completed",
+                collaboration: [
+                    "action": "result",
+                    "agentThreadId": "reviewer-1",
+                    "message": "접힘 UI가 적절합니다.",
+                    "agentStatus": "completed",
+                ]
+            ),
+            makeActivity(
+                id: "follow-up-2",
+                kind: "collaboration",
+                text: "Markdown 비용도 확인해 주세요.",
+                status: "running",
+                collaboration: [
+                    "action": "follow_up",
+                    "agentThreadId": "reviewer-2",
+                    "prompt": "Markdown 비용도 확인해 주세요.",
+                    "agentStatus": "running",
+                ]
+            ),
+            makeActivity(
+                id: "result-2",
+                kind: "collaboration",
+                text: "렌더링 회귀가 발견됐습니다.",
+                status: "failed",
+                collaboration: [
+                    "action": "result",
+                    "agentThreadId": "reviewer-2",
+                    "message": "렌더링 회귀가 발견됐습니다.",
+                    "agentStatus": "errored",
+                ]
+            ),
+        ]
+        let group = CodexActivityGroup(
+            kind: .collaboration,
+            items: activities.map(CodexActivityGroupItem.activity)
+        )
+        let summary = try XCTUnwrap(
+            CodexCollaborationSummary.make(from: group.items)
+        )
+
+        XCTAssertEqual(summary.agents.count, 2)
+        XCTAssertEqual(summary.completedCount, 1)
+        XCTAssertEqual(summary.failedCount, 1)
+        XCTAssertEqual(summary.runningCount, 0)
+        XCTAssertEqual(summary.statusText, "2명 · 1명 완료 · 1명 오류")
+        XCTAssertEqual(summary.agents[0].prompt, "UI 구조를 검토해 주세요.")
+        XCTAssertEqual(summary.agents[0].result, "접힘 UI가 적절합니다.")
+        XCTAssertEqual(
+            summary.agents[1].followUps,
+            ["Markdown 비용도 확인해 주세요."]
+        )
+        XCTAssertEqual(
+            summary.latestEvent?.text,
+            "렌더링 회귀가 발견됐습니다."
+        )
+        XCTAssertEqual(
+            summary.displayLabel(for: "reviewer-2"),
+            "검토자 2"
+        )
+    }
+
     func testCodexTranscriptPreservesRepeatedMessageAfterPrefixRemoval() throws {
         let activity = try makeActivity(
             id: "message-1",
@@ -892,15 +1049,20 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         id: String,
         kind: String,
         text: String,
-        status: String
+        status: String,
+        collaboration: [String: Any]? = nil
     ) throws -> LiveFeedActivity {
-        let data = try JSONSerialization.data(withJSONObject: [
+        var object: [String: Any] = [
             "id": id,
             "kind": kind,
             "text": text,
             "status": status,
             "occurredAt": 1_000,
-        ])
+        ]
+        if let collaboration {
+            object["collaboration"] = collaboration
+        }
+        let data = try JSONSerialization.data(withJSONObject: object)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         return try decoder.decode(LiveFeedActivity.self, from: data)

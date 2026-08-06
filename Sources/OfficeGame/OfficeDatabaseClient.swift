@@ -603,6 +603,7 @@ struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
     let kind: String
     let text: String
     let status: LiveFeedActivityStatus
+    let collaboration: LiveFeedCollaboration?
     let occurredAt: Date
 
     private enum CodingKeys: String, CodingKey {
@@ -610,6 +611,7 @@ struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
         case kind
         case text
         case status
+        case collaboration
         case occurredAt
     }
 
@@ -622,7 +624,57 @@ struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
             LiveFeedActivityStatus.self,
             forKey: .status
         ) ?? .completed
+        collaboration = try container.decodeIfPresent(
+            LiveFeedCollaboration.self,
+            forKey: .collaboration
+        )
         occurredAt = try container.decode(Date.self, forKey: .occurredAt)
+    }
+}
+
+struct LiveFeedCollaboration: Decodable, Equatable, Sendable {
+    let action: String
+    let agentThreadID: String?
+    let agentLabel: String?
+    let prompt: String?
+    let message: String?
+    let agentStatus: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case action
+        case agentThreadID = "agentThreadId"
+        case agentLabel
+        case prompt
+        case message
+        case agentStatus
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        action = try container.decodeIfPresent(
+            String.self,
+            forKey: .action
+        ) ?? "other"
+        agentThreadID = try container.decodeIfPresent(
+            String.self,
+            forKey: .agentThreadID
+        )
+        agentLabel = try container.decodeIfPresent(
+            String.self,
+            forKey: .agentLabel
+        )
+        prompt = try container.decodeIfPresent(
+            String.self,
+            forKey: .prompt
+        )
+        message = try container.decodeIfPresent(
+            String.self,
+            forKey: .message
+        )
+        agentStatus = try container.decodeIfPresent(
+            String.self,
+            forKey: .agentStatus
+        )
     }
 }
 

@@ -1655,15 +1655,23 @@ export class AgentRuntime {
       ? existing.text
       : activity.text;
     const status = activity.status ?? "completed";
+    const collaboration = activity.collaboration ?? null;
+    const collaborationKey = JSON.stringify(collaboration);
     if (
       existing &&
       existing.kind === activity.kind &&
       existing.text === text &&
-      existing.status === status
+      existing.status === status &&
+      JSON.stringify(existing.collaboration ?? null) === collaborationKey
     ) {
       return;
     }
-    const duplicateKey = `${activity.kind}\n${text}\n${status}`;
+    const duplicateKey = [
+      activity.kind,
+      text,
+      status,
+      collaborationKey,
+    ].join("\n");
     if (!eventKey && state.lastActivity === duplicateKey) {
       return;
     }
@@ -1676,7 +1684,8 @@ export class AgentRuntime {
           SET
             kind = $3,
             text = $4,
-            status = $5
+            status = $5,
+            collaboration = $6
           WHERE turn_id = $1
             AND seq = $2
         `,
@@ -1686,6 +1695,7 @@ export class AgentRuntime {
           activity.kind,
           text,
           status,
+          collaboration,
         ],
       );
       state.activityRecords.set(eventKey, {
@@ -1693,6 +1703,7 @@ export class AgentRuntime {
         kind: activity.kind,
         text,
         status,
+        collaboration,
       });
       await this.touchTurn(state.turnID);
       this.broadcast({
@@ -1712,9 +1723,10 @@ export class AgentRuntime {
           kind,
           text,
           event_key,
-          status
+          status,
+          collaboration
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (turn_id, seq) DO NOTHING
       `,
       [
@@ -1724,6 +1736,7 @@ export class AgentRuntime {
         text,
         eventKey,
         status,
+        collaboration,
       ],
     );
     if (eventKey) {
@@ -1732,6 +1745,7 @@ export class AgentRuntime {
         kind: activity.kind,
         text,
         status,
+        collaboration,
       });
     }
     await this.touchTurn(state.turnID);
