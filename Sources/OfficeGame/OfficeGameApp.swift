@@ -202,6 +202,12 @@ private struct OfficeGameView: View {
         )
         .preferredColorScheme(theme.isNight ? .dark : .light)
         .frame(minWidth: 1_180, minHeight: 760)
+        .environment(\.presentCharacterProfile) { characterID in
+            guard let character = OfficeCharacter(rawValue: characterID) else {
+                return
+            }
+            profileCharacter = character
+        }
         .sheet(item: $historyTarget) { target in
             switch target {
             case .character(let character):
