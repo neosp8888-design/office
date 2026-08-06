@@ -104,7 +104,6 @@ enum OfficePanelControlLayout {
 private struct OfficeGameView: View {
     @ObservedObject var director: AgentDirector
     @StateObject private var backendController = OfficeBackendController()
-    @State private var command = ""
     @State private var attachments: [URL] = []
     @State private var showsCharacterSettings = false
     @State private var profileCharacter: OfficeCharacter?
@@ -796,87 +795,13 @@ private struct OfficeGameView: View {
                 }
             }
 
-            HStack(spacing: 9) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(DashboardPalette.accent)
-
-                CommandComposerView(
-                    text: $command,
-                    placeholder: commandPlaceholder,
-                    isEnabled:
-                        director.isReadyForSubmissions
-                            && !director.isUpdatingConfiguration,
-                    onSubmit: submitCommand
-                )
-                .frame(height: 40)
-
-                Button {
-                    chooseAttachments()
-                } label: {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 32, height: 32)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("파일 첨부")
-                .help("파일 첨부 · 한 번에 최대 20개")
-                .disabled(attachmentSelectionIsDisabled)
-                .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
-
-                if director.isSelectedCharacterRunning {
-                    Button(action: director.cancelSelectedJob) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(
-                                Color.red.opacity(0.88),
-                                in: RoundedRectangle(
-                                    cornerRadius: 11,
-                                    style: .continuous
-                                )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("대화 중단")
-                    .help("현재 직원의 업무 중단")
-                    .disabled(director.isCancellingSelectedCharacter)
-                    .opacity(
-                        director.isCancellingSelectedCharacter ? 0.42 : 1
-                    )
-                } else {
-                    Button(action: submitCommand) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(
-                                DashboardPalette.accent,
-                                in: RoundedRectangle(
-                                    cornerRadius: 11,
-                                    style: .continuous
-                                )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("보내기")
-                    .disabled(commandIsDisabled)
-                    .opacity(commandIsDisabled ? 0.42 : 1)
-                }
-            }
-            .padding(.leading, 13)
-            .padding(.trailing, 7)
-            .padding(.vertical, 6)
-            .background(
-                Color.primary.opacity(0.045),
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            CommandEntryRow(
+                director: director,
+                placeholder: commandPlaceholder,
+                attachmentCount: attachments.count,
+                onChooseAttachments: chooseAttachments,
+                onSubmit: submitCommand
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.primary.opacity(0.07))
-            }
         }
         .padding(14)
     }
@@ -1079,27 +1004,6 @@ private struct OfficeGameView: View {
         return OfficeLocalization.string("캐릭터를 선택하세요")
     }
 
-    private var commandIsDisabled: Bool {
-        !director.isReadyForSubmissions
-            || director.isUpdatingConfiguration
-            || director.selectedCharacter == nil
-            || director.isSelectedCharacterRunning
-            || (
-                command.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty
-                    && attachments.isEmpty
-            )
-    }
-
-    private var attachmentSelectionIsDisabled: Bool {
-        !director.isReadyForSubmissions
-            || director.isUpdatingConfiguration
-            || director.selectedCharacter == nil
-            || director.isSelectedCharacterRunning
-            || attachments.count >= 20
-    }
-
     private var characterSettingsButton: some View {
         Button {
             showsCharacterSettings.toggle()
@@ -1145,27 +1049,23 @@ private struct OfficeGameView: View {
         .help("캐릭터 이름 설정")
     }
 
-    private func submitCommand() {
-        let enteredPrompt = command.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
+    private func submitCommand(_ prompt: String) -> Bool {
         guard
-            !commandIsDisabled,
-            director.selectedCharacter != nil
+            director.isReadyForSubmissions,
+            !director.isUpdatingConfiguration,
+            director.selectedCharacter != nil,
+            !director.isSelectedCharacterRunning
         else {
-            return
+            return false
         }
 
-        let prompt = enteredPrompt.isEmpty
-            ? "첨부 파일을 확인해줘."
-            : enteredPrompt
         let attachmentPaths = attachments.map(\.path)
-        command = ""
         attachments = []
         director.submit(
             prompt,
             attachmentPaths: attachmentPaths
         )
+        return true
     }
 
     private func chooseAttachments() {

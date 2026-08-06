@@ -1,0 +1,196 @@
+// 이 파일은 명령 입력 초안의 전송 가능 여부와 초기화 규칙을 검증한다.
+
+import AppKit
+import SwiftUI
+import XCTest
+@testable import OfficeGame
+
+@MainActor
+final class CommandEntryDraftTests: XCTestCase {
+    func testAvailabilityAllowsReadyIdleSelectedCharacter() {
+        let availability = CommandEntryAvailability(
+            isReady: true,
+            isUpdatingConfiguration: false,
+            hasSelectedCharacter: true,
+            isSelectedCharacterRunning: false
+        )
+
+        XCTAssertTrue(availability.canSubmit)
+        XCTAssertTrue(availability.canChooseAttachments(currentCount: 19))
+        XCTAssertFalse(availability.canChooseAttachments(currentCount: 20))
+    }
+
+    func testAvailabilityRejectsEveryBlockedState() {
+        let blockedStates = [
+            CommandEntryAvailability(
+                isReady: false,
+                isUpdatingConfiguration: false,
+                hasSelectedCharacter: true,
+                isSelectedCharacterRunning: false
+            ),
+            CommandEntryAvailability(
+                isReady: true,
+                isUpdatingConfiguration: true,
+                hasSelectedCharacter: true,
+                isSelectedCharacterRunning: false
+            ),
+            CommandEntryAvailability(
+                isReady: true,
+                isUpdatingConfiguration: false,
+                hasSelectedCharacter: false,
+                isSelectedCharacterRunning: false
+            ),
+            CommandEntryAvailability(
+                isReady: true,
+                isUpdatingConfiguration: false,
+                hasSelectedCharacter: true,
+                isSelectedCharacterRunning: true
+            ),
+        ]
+
+        for availability in blockedStates {
+            XCTAssertFalse(availability.canSubmit)
+            XCTAssertFalse(
+                availability.canChooseAttachments(currentCount: 0)
+            )
+        }
+    }
+
+    func testEmptyDraftWithoutAttachmentsCannotSubmit() {
+        let draft = CommandEntryDraft(text: "  \n ")
+
+        XCTAssertNil(
+            draft.submissionPrompt(
+                hasAttachments: false,
+                isSubmissionAllowed: true
+            )
+        )
+    }
+
+    func testAttachmentOnlyDraftUsesDefaultPrompt() {
+        let draft = CommandEntryDraft(text: " \n ")
+
+        XCTAssertEqual(
+            draft.submissionPrompt(
+                hasAttachments: true,
+                isSubmissionAllowed: true
+            ),
+            "첨부 파일을 확인해줘."
+        )
+    }
+
+    func testDraftTrimsPromptBeforeSubmission() {
+        let draft = CommandEntryDraft(text: "  업무를 확인해줘. \n")
+
+        XCTAssertEqual(
+            draft.submissionPrompt(
+                hasAttachments: false,
+                isSubmissionAllowed: true
+            ),
+            "업무를 확인해줘."
+        )
+    }
+
+    func testUnavailableDraftDoesNotSubmit() {
+        let draft = CommandEntryDraft(text: "업무")
+
+        XCTAssertNil(
+            draft.submissionPrompt(
+                hasAttachments: true,
+                isSubmissionAllowed: false
+            )
+        )
+    }
+
+    func testDraftClearsOnlyAfterAcceptedSubmission() {
+        var draft = CommandEntryDraft(text: "업무")
+
+        draft.clearAfterSubmission(accepted: false)
+        XCTAssertEqual(draft.text, "업무")
+
+        draft.clearAfterSubmission(accepted: true)
+        XCTAssertEqual(draft.text, "")
+    }
+
+    func testTypingWithinNonemptyDraftDoesNotRequestRedraw() {
+        let (coordinator, textBox) = makeCoordinator(initialText: "업")
+        let textView = TrackingTextView()
+        textView.string = "업무"
+        textView.resetDisplayRequestCount()
+
+        coordinator.textDidChange(
+            Notification(
+                name: NSText.didChangeNotification,
+                object: textView
+            )
+        )
+
+        XCTAssertEqual(textBox.value, "업무")
+        XCTAssertEqual(textView.displayRequestCount, 0)
+    }
+
+    func testPlaceholderVisibilityChangesRequestRedraw() {
+        for (oldValue, newValue) in [("", "업무"), ("업무", "")] {
+            let (coordinator, textBox) = makeCoordinator(
+                initialText: oldValue
+            )
+            let textView = TrackingTextView()
+            textView.string = newValue
+            textView.resetDisplayRequestCount()
+
+            coordinator.textDidChange(
+                Notification(
+                    name: NSText.didChangeNotification,
+                    object: textView
+                )
+            )
+
+            XCTAssertEqual(textBox.value, newValue)
+            XCTAssertEqual(textView.displayRequestCount, 1)
+        }
+    }
+
+    private func makeCoordinator(
+        initialText: String
+    ) -> (CommandComposerView.Coordinator, TextBox) {
+        let textBox = TextBox(value: initialText)
+        let composer = CommandComposerView(
+            text: Binding(
+                get: { textBox.value },
+                set: { textBox.value = $0 }
+            ),
+            placeholder: "업무를 입력하세요",
+            isEnabled: true,
+            onSubmit: {}
+        )
+        return (composer.makeCoordinator(), textBox)
+    }
+}
+
+private final class TextBox {
+    var value: String
+
+    init(value: String) {
+        self.value = value
+    }
+}
+
+private final class TrackingTextView: NSTextView {
+    private(set) var displayRequestCount = 0
+
+    override var needsDisplay: Bool {
+        get {
+            super.needsDisplay
+        }
+        set {
+            if newValue {
+                displayRequestCount += 1
+            }
+            super.needsDisplay = newValue
+        }
+    }
+
+    func resetDisplayRequestCount() {
+        displayRequestCount = 0
+    }
+}
