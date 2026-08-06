@@ -233,8 +233,8 @@ public enum PixelOfficeAsset {
             ]
         case .leftWoman:
             filenames = [
-                "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent",
                 "profile-left-woman-loop",
+                "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent",
             ]
         case .rightWoman:
             filenames = [
