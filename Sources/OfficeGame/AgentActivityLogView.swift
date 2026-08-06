@@ -630,6 +630,7 @@ struct CodexTranscriptView: View {
         case .message(let message):
             CodexMessageView(
                 turnID: turnID,
+                workspaceDirectory: workspaceDirectory,
                 message: message,
                 isConclusion: isConclusion,
                 needsInput: isConclusion && needsInput,
@@ -931,6 +932,7 @@ private struct CodexActivityGroupView: View {
 
 private struct CodexMessageView: View {
     let turnID: String
+    let workspaceDirectory: String
     let message: CodexTranscriptMessage
     let isConclusion: Bool
     let needsInput: Bool
@@ -962,6 +964,7 @@ private struct CodexMessageView: View {
                 WaterfallResponseRevealView(
                     source: message.text,
                     fontSize: 14,
+                    fileBaseDirectory: workspaceDirectory,
                     onFinished: onResponsePresented
                 )
             } else if animatesResponse {
@@ -998,7 +1001,8 @@ private struct CodexMessageView: View {
     private var renderedMessage: some View {
         ConversationMarkdownView(
             source: message.text,
-            fontSize: 14
+            fontSize: 14,
+            fileBaseDirectory: workspaceDirectory
         )
         .textSelection(.enabled)
     }
