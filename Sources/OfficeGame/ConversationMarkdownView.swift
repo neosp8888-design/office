@@ -205,6 +205,8 @@ private struct LocalMarkdownImageProvider: ImageProvider {
 private struct LocalMarkdownFileVideo: View {
     let url: URL
     @State private var isPlaying = false
+    @State private var aspectRatio =
+        ConversationMarkdownVideoLayout.fallbackAspectRatio
 
     var body: some View {
         ZStack {
@@ -212,8 +214,8 @@ private struct LocalMarkdownFileVideo: View {
                 url: url,
                 isPlaying: isPlaying
             )
-            .frame(width: 320, height: 240)
-            .background(Color.black.opacity(0.86))
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity)
             .clipShape(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
@@ -235,9 +237,47 @@ private struct LocalMarkdownFileVideo: View {
                 .stroke(Color.primary.opacity(0.10))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: url) {
+            await loadAspectRatio()
+        }
         .onDisappear {
             isPlaying = false
         }
+    }
+
+    @MainActor
+    private func loadAspectRatio() async {
+        let asset = AVURLAsset(url: url)
+        guard
+            let tracks = try? await asset.loadTracks(withMediaType: .video),
+            let track = tracks.first,
+            let naturalSize = try? await track.load(.naturalSize),
+            let preferredTransform = try? await track.load(.preferredTransform)
+        else {
+            return
+        }
+
+        aspectRatio = ConversationMarkdownVideoLayout.aspectRatio(
+            naturalSize: naturalSize,
+            preferredTransform: preferredTransform
+        )
+    }
+}
+
+enum ConversationMarkdownVideoLayout {
+    static let fallbackAspectRatio: CGFloat = 9 / 16
+
+    static func aspectRatio(
+        naturalSize: CGSize,
+        preferredTransform: CGAffineTransform
+    ) -> CGFloat {
+        let displayedSize = naturalSize.applying(preferredTransform)
+        let width = abs(displayedSize.width)
+        let height = abs(displayedSize.height)
+        guard width > 0, height > 0 else {
+            return fallbackAspectRatio
+        }
+        return width / height
     }
 }
 
