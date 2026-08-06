@@ -95,29 +95,66 @@ final class PixelOfficeAssetTests: XCTestCase {
     }
 
     func testWomenHaveSilentFullBodyProfileVideos() async throws {
-        let expectedFilenames: [OfficeCharacter: String] = [
-            .boss: "profile-boss-loop.mp4",
-            .leftWoman: "profile-left-woman-loop.mp4",
-            .rightWoman: "profile-right-woman-loop.mp4",
+        let expectedFilenames: [OfficeCharacter: [String]] = [
+            .boss: [
+                "profile-boss-loop.mp4",
+                "profile-boss-freyja-v16-palmier-klingv3-mid40s-natural-loop-v3-silent.mp4",
+            ],
+            .leftWoman: [
+                "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent.mp4",
+                "profile-left-woman-loop.mp4",
+            ],
+            .rightWoman: [
+                "profile-right-woman-loop.mp4",
+                "kodaeri-fantasy-palmier-loop-10s.mp4",
+            ],
         ]
 
-        for (character, expectedFilename) in expectedFilenames {
-            let videoURL = try XCTUnwrap(
-                PixelOfficeAsset.fullBodyProfileVideoURL(for: character)
+        for (character, filenames) in expectedFilenames {
+            let videoURLs = PixelOfficeAsset.fullBodyProfileVideoURLs(
+                for: character
             )
-            let asset = AVURLAsset(url: videoURL)
-            let videoTracks = try await asset.loadTracks(withMediaType: .video)
-            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            XCTAssertEqual(
+                videoURLs.map(\.lastPathComponent),
+                filenames
+            )
+            XCTAssertEqual(
+                PixelOfficeAsset.fullBodyProfileVideoURL(for: character),
+                videoURLs.first
+            )
 
-            XCTAssertEqual(videoURL.pathExtension, "mp4")
-            XCTAssertEqual(videoURL.lastPathComponent, expectedFilename)
-            XCTAssertFalse(videoTracks.isEmpty)
-            XCTAssertTrue(audioTracks.isEmpty)
+            for videoURL in videoURLs {
+                let asset = AVURLAsset(url: videoURL)
+                let videoTracks = try await asset.loadTracks(withMediaType: .video)
+                let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+
+                XCTAssertEqual(videoURL.pathExtension, "mp4")
+                XCTAssertFalse(videoTracks.isEmpty)
+                XCTAssertTrue(audioTracks.isEmpty)
+            }
         }
 
         for character in OfficeCharacter.allCases where expectedFilenames[character] == nil {
             XCTAssertNil(PixelOfficeAsset.fullBodyProfileVideoURL(for: character))
+            XCTAssertTrue(
+                PixelOfficeAsset.fullBodyProfileVideoURLs(for: character).isEmpty
+            )
         }
+    }
+
+    func testStarfallProfileVideoUsesCommonPortraitCanvas() async throws {
+        let videoURL = try XCTUnwrap(
+            PixelOfficeAsset.fullBodyProfileVideoURLs(for: .leftWoman).first
+        )
+        let asset = AVURLAsset(url: videoURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let videoTrack = try XCTUnwrap(
+            videoTracks.first
+        )
+        let size = try await videoTrack.load(.naturalSize)
+
+        XCTAssertEqual(size.width, 720)
+        XCTAssertEqual(size.height, 1_280)
     }
 
     func testAllThemesUseTheRetinaV4Canvas() throws {

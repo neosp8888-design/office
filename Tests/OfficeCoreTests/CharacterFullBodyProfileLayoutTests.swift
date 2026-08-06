@@ -27,4 +27,42 @@ final class CharacterFullBodyProfileLayoutTests: XCTestCase {
             accuracy: 0.000_1
         )
     }
+
+    func testProfileSelectionWrapsInBothDirections() {
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.previousIndex(from: 0, count: 3),
+            2
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.nextIndex(from: 2, count: 3),
+            0
+        )
+    }
+
+    func testProfileSelectionRespondsOnlyToHorizontalDragThreshold() {
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.index(
+                afterHorizontalDrag: -36,
+                from: 0,
+                count: 3
+            ),
+            1
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.index(
+                afterHorizontalDrag: 36,
+                from: 0,
+                count: 3
+            ),
+            2
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.index(
+                afterHorizontalDrag: 35,
+                from: 0,
+                count: 3
+            ),
+            0
+        )
+    }
 }

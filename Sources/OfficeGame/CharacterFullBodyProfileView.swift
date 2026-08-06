@@ -22,18 +22,58 @@ enum CharacterFullBodyProfileLayout {
     }
 }
 
+enum CharacterFullBodyProfileSelection {
+    static let dragThreshold: CGFloat = 36
+
+    static func previousIndex(from index: Int, count: Int) -> Int {
+        guard count > 1 else {
+            return 0
+        }
+        return (index - 1 + count) % count
+    }
+
+    static func nextIndex(from index: Int, count: Int) -> Int {
+        guard count > 1 else {
+            return 0
+        }
+        return (index + 1) % count
+    }
+
+    static func index(
+        afterHorizontalDrag translation: CGFloat,
+        from index: Int,
+        count: Int
+    ) -> Int {
+        if translation <= -dragThreshold {
+            return nextIndex(from: index, count: count)
+        }
+        if translation >= dragThreshold {
+            return previousIndex(from: index, count: count)
+        }
+        return index
+    }
+}
+
 struct CharacterFullBodyProfileView: View {
     let character: CharacterConfiguration
     let name: String
 
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedVideoIndex = 0
 
     private var image: NSImage? {
         CharacterFullBodyProfileImageCache.image(for: character.id)
     }
 
-    private var videoURL: URL? {
-        PixelOfficeAsset.fullBodyProfileVideoURL(for: character.id)
+    private var videoURLs: [URL] {
+        PixelOfficeAsset.fullBodyProfileVideoURLs(for: character.id)
+    }
+
+    private var selectedVideoURL: URL? {
+        guard !videoURLs.isEmpty else {
+            return nil
+        }
+        return videoURLs[selectedVideoIndex % videoURLs.count]
     }
 
     var body: some View {
@@ -50,12 +90,32 @@ struct CharacterFullBodyProfileView: View {
                 .keyboardShortcut(.cancelAction)
             }
 
-            if let videoURL {
-                CharacterFullBodyProfileVideo(url: videoURL)
-                    .frame(
-                        width: CharacterFullBodyProfileLayout.imageWidth,
-                        height: CharacterFullBodyProfileLayout.imageHeight
-                    )
+            if let selectedVideoURL {
+                ZStack {
+                    CharacterFullBodyProfileVideo(url: selectedVideoURL)
+                        .id(selectedVideoURL)
+
+                    if videoURLs.count > 1 {
+                        profileNavigationControls
+                    }
+                }
+                .frame(
+                    width: CharacterFullBodyProfileLayout.imageWidth,
+                    height: CharacterFullBodyProfileLayout.imageHeight
+                )
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 12)
+                        .onEnded { value in
+                            selectVideo(
+                                CharacterFullBodyProfileSelection.index(
+                                    afterHorizontalDrag: value.translation.width,
+                                    from: selectedVideoIndex,
+                                    count: videoURLs.count
+                                )
+                            )
+                        }
+                )
             } else if let image {
                 Image(nsImage: image)
                     .resizable()
@@ -69,6 +129,62 @@ struct CharacterFullBodyProfileView: View {
         }
         .padding(CharacterFullBodyProfileLayout.horizontalPadding)
         .frame(width: CharacterFullBodyProfileLayout.sheetWidth)
+    }
+
+    private var profileNavigationControls: some View {
+        HStack {
+            profileNavigationButton(
+                systemName: "chevron.left",
+                accessibilityLabel: "이전 프로필"
+            ) {
+                selectVideo(
+                    CharacterFullBodyProfileSelection.previousIndex(
+                        from: selectedVideoIndex,
+                        count: videoURLs.count
+                    )
+                )
+            }
+
+            Spacer()
+
+            profileNavigationButton(
+                systemName: "chevron.right",
+                accessibilityLabel: "다음 프로필"
+            ) {
+                selectVideo(
+                    CharacterFullBodyProfileSelection.nextIndex(
+                        from: selectedVideoIndex,
+                        count: videoURLs.count
+                    )
+                )
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
+    private func profileNavigationButton(
+        systemName: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(.black.opacity(0.58), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func selectVideo(_ index: Int) {
+        guard index != selectedVideoIndex else {
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            selectedVideoIndex = index
+        }
     }
 }
 

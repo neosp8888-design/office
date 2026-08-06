@@ -218,23 +218,40 @@ public enum PixelOfficeAsset {
     public static func fullBodyProfileVideoURL(
         for character: OfficeCharacter
     ) -> URL? {
-        let filename: String
+        fullBodyProfileVideoURLs(for: character).first
+    }
+
+    public static func fullBodyProfileVideoURLs(
+        for character: OfficeCharacter
+    ) -> [URL] {
+        let filenames: [String]
         switch character {
         case .boss:
-            filename = "profile-boss-loop"
+            filenames = [
+                "profile-boss-loop",
+                "profile-boss-freyja-v16-palmier-klingv3-mid40s-natural-loop-v3-silent",
+            ]
         case .leftWoman:
-            filename = "profile-left-woman-loop"
+            filenames = [
+                "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent",
+                "profile-left-woman-loop",
+            ]
         case .rightWoman:
-            filename = "profile-right-woman-loop"
+            filenames = [
+                "profile-right-woman-loop",
+                "kodaeri-fantasy-palmier-loop-10s",
+            ]
         case .leftMan, .rightMan:
-            return nil
+            return []
         }
 
-        return OfficeCoreResourceBundle.bundle.url(
-            forResource: filename,
-            withExtension: "mp4",
-            subdirectory: "profiles"
-        )
+        return filenames.compactMap { filename in
+            OfficeCoreResourceBundle.bundle.url(
+                forResource: filename,
+                withExtension: "mp4",
+                subdirectory: "profiles"
+            )
+        }
     }
 
     public static func image(
