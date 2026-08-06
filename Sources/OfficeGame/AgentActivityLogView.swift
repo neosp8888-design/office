@@ -535,13 +535,22 @@ struct CodexTranscriptView: View {
     private static let compactEntryLimit = 18
 
     var body: some View {
-        let presentation = CodexTranscriptPresentation.make(
+        let presentation = TranscriptPresentationCache.shared.presentation(
+            provider: .codex,
             turnID: turnID,
             activities: activities,
             response: response,
             responseUpdatedAt: responseUpdatedAt,
             isRunning: isRunning
-        )
+        ) {
+            CodexTranscriptPresentation.make(
+                turnID: turnID,
+                activities: activities,
+                response: response,
+                responseUpdatedAt: responseUpdatedAt,
+                isRunning: isRunning
+            )
+        }
         let hiddenCount = max(
             0,
             presentation.entries.count - Self.compactEntryLimit

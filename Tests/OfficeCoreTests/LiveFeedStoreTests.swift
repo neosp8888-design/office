@@ -156,6 +156,54 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertTrue(state.isFollowingLatest)
     }
 
+    func testInitialScrollStopsAfterTwoStablePasses() {
+        var policy = LiveWorkspaceFeedScrollPolicy()
+
+        XCTAssertFalse(
+            policy.shouldStop(
+                distanceFromBottom: 12,
+                tolerance: 20
+            )
+        )
+        XCTAssertTrue(
+            policy.shouldStop(
+                distanceFromBottom: 8,
+                tolerance: 20
+            )
+        )
+    }
+
+    func testInitialScrollResetsStabilityAndCapsRetries() {
+        var policy = LiveWorkspaceFeedScrollPolicy()
+
+        XCTAssertFalse(
+            policy.shouldStop(
+                distanceFromBottom: 10,
+                tolerance: 20
+            )
+        )
+        XCTAssertFalse(
+            policy.shouldStop(
+                distanceFromBottom: 80,
+                tolerance: 20
+            )
+        )
+        XCTAssertFalse(
+            policy.shouldStop(
+                distanceFromBottom: 15,
+                tolerance: 20
+            )
+        )
+        XCTAssertEqual(
+            LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts,
+            4
+        )
+        XCTAssertEqual(
+            LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts,
+            3
+        )
+    }
+
     func testExecutionModeTitleTreatsHistoricalValuesAsStandard() {
         XCTAssertEqual(agentExecutionModeTitle(true), "Fast")
         XCTAssertEqual(agentExecutionModeTitle(false), "Standard")
