@@ -7,6 +7,11 @@ enum OfficeLocalization {
         "업무 지시를 정확히 이해하고 실행 계획과 결과를 간결하게 보고한다."
     private static let englishDefaultIdentityPrompt =
         "Understand work instructions precisely and report the execution plan and results concisely."
+    private static let translationsByLanguage = Dictionary(
+        uniqueKeysWithValues: ["ko", "en"].map { language in
+            (language, loadTranslations(for: language))
+        }
+    )
 
     static var usesKorean: Bool {
         languageIdentifier(for: preferredLanguages) == "ko"
@@ -23,22 +28,15 @@ enum OfficeLocalization {
     }
 
     static func string(_ key: String) -> String {
-        let localization = languageIdentifier(for: preferredLanguages)
+        string(key, languages: preferredLanguages)
+    }
 
-        guard
-            let path = OfficeGameResourceBundle.bundle.path(
-                forResource: "Localizable",
-                ofType: "strings",
-                inDirectory: nil,
-                forLocalization: localization
-            ),
-            let translations = NSDictionary(contentsOfFile: path)
-                as? [String: String]
-        else {
-            return key
-        }
-
-        return translations[key] ?? key
+    static func string(
+        _ key: String,
+        languages: [String]
+    ) -> String {
+        let localization = languageIdentifier(for: languages)
+        return translationsByLanguage[localization]?[key] ?? key
     }
 
     static func format(_ key: String, _ arguments: CVarArg...) -> String {
@@ -64,5 +62,23 @@ enum OfficeLocalization {
     private static var preferredLanguages: [String] {
         UserDefaults.standard.stringArray(forKey: "AppleLanguages")
             ?? Locale.preferredLanguages
+    }
+
+    private static func loadTranslations(
+        for localization: String
+    ) -> [String: String] {
+        guard
+            let path = OfficeGameResourceBundle.bundle.path(
+                forResource: "Localizable",
+                ofType: "strings",
+                inDirectory: nil,
+                forLocalization: localization
+            ),
+            let translations = NSDictionary(contentsOfFile: path)
+                as? [String: String]
+        else {
+            return [:]
+        }
+        return translations
     }
 }
