@@ -8,7 +8,7 @@ final class ConversationMarkdownVideoLayoutTests: XCTestCase {
     func testInlinePlayerUsesBoundedWidth() {
         XCTAssertEqual(
             ConversationMarkdownVideoLayout.maximumWidth,
-            420
+            294
         )
     }
 
