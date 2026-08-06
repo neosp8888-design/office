@@ -5,6 +5,8 @@ import { isAbsolute, relative } from "node:path";
 import { normalizeResponseSources } from "./work-record-provenance.mjs";
 
 const MAX_REASONING_LENGTH = 6_000;
+const MAX_COLLABORATION_PROMPT_LENGTH = 4_000;
+const MAX_COLLABORATION_RESULT_LENGTH = 12_000;
 const RESPONSE_SOURCES_MARKER = "[OFFICE_SOURCES]";
 
 export function parseAgentEvent(line, backend, workdir = null) {
@@ -183,16 +185,10 @@ function parseCodexEvent(object, workdir) {
         ),
       };
     case "collab_tool_call":
-      return {
-        activity: activity(
-          "tool",
-          collabActivityText(item),
-          {
-            eventKey,
-            status: codexActivityStatus(item, type),
-          },
-        ),
-      };
+      {
+        const activities = collabActivities(item, type, eventKey);
+        return activities.length > 0 ? { activities } : null;
+      }
     case "web_search":
       return {
         activity: activity(
@@ -368,7 +364,7 @@ function parseClaudeEvent(object, workdir) {
 }
 
 function activity(kind, text, options = {}) {
-  return {
+  const value = {
     kind,
     text,
     eventKey: options.eventKey ?? null,
@@ -376,6 +372,10 @@ function activity(kind, text, options = {}) {
     preserveText: options.preserveText === true,
     messageScoped: options.messageScoped === true,
   };
+  if (options.collaboration) {
+    value.collaboration = options.collaboration;
+  }
+  return value;
 }
 
 function normalizedUsage(value, backend, options = {}) {
@@ -555,17 +555,256 @@ function mcpActivityText(item) {
   return target;
 }
 
-function collabActivityText(item) {
-  const tool = cleanText(item.tool ?? item.name ?? item.action) ?? "협업";
-  const target = cleanText(
-    item.receiver_agent_nickname ??
-      item.receiver_agent ??
-      item.agent_name ??
-      item.agent,
+function collabActivities(item, eventType, eventKey) {
+  if (eventType !== "item.completed") {
+    return [];
+  }
+
+  const tool = normalizedCollabTool(item.tool ?? item.name ?? item.action);
+  if (tool === "close_agent") {
+    return [];
+  }
+
+  const callStatus = codexActivityStatus(item, eventType);
+  const prompt = limitedCollabText(
+    item.prompt ?? item.message ?? item.input,
+    MAX_COLLABORATION_PROMPT_LENGTH,
   );
-  return target
-    ? `협업 · ${tool} → ${target}`
-    : `협업 · ${tool}`;
+  const agentStates = collabAgentStates(item);
+  const threadIDs = collabThreadIDs(item, agentStates);
+  const agentLabel = threadIDs.length === 1
+    ? cleanText(
+      item.receiver_agent_nickname ??
+        item.receiver_agent ??
+        item.agent_name ??
+        item.agent,
+    )
+    : null;
+
+  if (tool === "wait") {
+    return threadIDs.flatMap((threadID) => {
+      const state = agentStates[threadID] ?? {};
+      const agentStatus = normalizedCollabAgentStatus(state.status);
+      const message = limitedCollabText(
+        state.message ?? state.result ?? state.output,
+        MAX_COLLABORATION_RESULT_LENGTH,
+      );
+      if (!message && ["pending_init", "running"].includes(agentStatus)) {
+        return [];
+      }
+      const status = collabAgentActivityStatus(
+        agentStatus,
+        callStatus,
+        "result",
+      );
+      return [activity(
+        "collaboration",
+        message
+          ? collaborationSummaryText(message)
+          : collaborationStatusText(status),
+        {
+          eventKey: collaborationEventKey(eventKey, threadID),
+          status,
+          collaboration: {
+            action: "result",
+            agentThreadId: threadID,
+            agentLabel,
+            message,
+            agentStatus,
+          },
+        },
+      )];
+    });
+  }
+
+  if (tool === "spawn_agent") {
+    if (threadIDs.length === 0) {
+      if (callStatus !== "failed") {
+        return [];
+      }
+      return [activity(
+        "collaboration",
+        "협업 검토를 시작하지 못했습니다.",
+        {
+          eventKey,
+          status: "failed",
+          collaboration: {
+            action: "spawn",
+            agentLabel,
+            prompt,
+            agentStatus: "errored",
+          },
+        },
+      )];
+    }
+    return threadIDs.map((threadID) => {
+      const state = agentStates[threadID] ?? {};
+      const agentStatus = normalizedCollabAgentStatus(state.status) ??
+        (callStatus === "failed" ? "errored" : "running");
+      const status = collabAgentActivityStatus(
+        agentStatus,
+        callStatus,
+        "spawn",
+      );
+      return activity(
+        "collaboration",
+        prompt
+          ? collaborationSummaryText(prompt)
+          : collaborationStatusText(status),
+        {
+          eventKey: collaborationEventKey(eventKey, threadID),
+          status,
+          collaboration: {
+            action: "spawn",
+            agentThreadId: threadID,
+            agentLabel,
+            prompt,
+            agentStatus,
+          },
+        },
+      );
+    });
+  }
+
+  if (tool === "send_input") {
+    if (threadIDs.length === 0) {
+      return [];
+    }
+    return threadIDs.map((threadID) => {
+      const state = agentStates[threadID] ?? {};
+      const agentStatus = normalizedCollabAgentStatus(state.status) ??
+        (callStatus === "failed" ? "errored" : "running");
+      const status = collabAgentActivityStatus(
+        agentStatus,
+        callStatus,
+        "follow_up",
+      );
+      return activity(
+        "collaboration",
+        prompt
+          ? collaborationSummaryText(prompt)
+          : collaborationStatusText(status),
+        {
+          eventKey: collaborationEventKey(eventKey, threadID),
+          status,
+          collaboration: {
+            action: "follow_up",
+            agentThreadId: threadID,
+            agentLabel,
+            prompt,
+            agentStatus,
+          },
+        },
+      );
+    });
+  }
+
+  if (threadIDs.length === 0) {
+    return [];
+  }
+  return threadIDs.map((threadID) => activity(
+    "collaboration",
+    prompt ? collaborationSummaryText(prompt) : "협업 작업",
+    {
+      eventKey: collaborationEventKey(eventKey, threadID),
+      status: callStatus,
+      collaboration: {
+        action: "other",
+        agentThreadId: threadID,
+        agentLabel,
+        prompt,
+      },
+    },
+  ));
+}
+
+function normalizedCollabTool(value) {
+  const tool = cleanText(value)?.replaceAll("-", "_").toLowerCase();
+  switch (tool) {
+    case "spawnagent":
+      return "spawn_agent";
+    case "sendinput":
+      return "send_input";
+    case "closeagent":
+      return "close_agent";
+    default:
+      return tool ?? "collaboration";
+  }
+}
+
+function collabAgentStates(item) {
+  const value = item.agents_states ?? item.agent_states ?? item.agentsStates;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
+}
+
+function collabThreadIDs(item, states) {
+  const values = [
+    ...(Array.isArray(item.receiver_thread_ids)
+      ? item.receiver_thread_ids
+      : []),
+    ...(Array.isArray(item.receiverThreadIds)
+      ? item.receiverThreadIds
+      : []),
+    cleanText(item.receiver_thread_id ?? item.receiverThreadId),
+    ...Object.keys(states),
+  ];
+  return [...new Set(values.map(cleanText).filter(Boolean))];
+}
+
+function normalizedCollabAgentStatus(value) {
+  const status = cleanText(value)?.replaceAll("-", "_").toLowerCase();
+  return status || null;
+}
+
+function collabAgentActivityStatus(agentStatus, callStatus, action) {
+  if (callStatus === "failed") {
+    return "failed";
+  }
+  if (["interrupted", "errored", "not_found"].includes(agentStatus)) {
+    return "failed";
+  }
+  if (["completed", "shutdown"].includes(agentStatus)) {
+    return "completed";
+  }
+  if (["pending_init", "running"].includes(agentStatus)) {
+    return "running";
+  }
+  return action === "spawn" || action === "follow_up"
+    ? "running"
+    : callStatus;
+}
+
+function collaborationEventKey(eventKey, threadID) {
+  return ["collaboration", eventKey, threadID]
+    .filter(Boolean)
+    .join(":");
+}
+
+function collaborationSummaryText(value) {
+  return safePublicText(value, 320);
+}
+
+function collaborationStatusText(status) {
+  switch (status) {
+    case "running":
+      return "협업 검토 중";
+    case "failed":
+      return "협업 검토에 실패했습니다.";
+    default:
+      return "협업 검토를 마쳤습니다.";
+  }
+}
+
+function limitedCollabText(value, limit) {
+  const text = cleanText(value)?.replaceAll("\r\n", "\n");
+  if (!text) {
+    return null;
+  }
+  return text.length <= limit
+    ? text
+    : `${text.slice(0, limit - 1)}…`;
 }
 
 function webSearchActivityText(item) {
