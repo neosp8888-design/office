@@ -86,7 +86,11 @@ final class CharacterFullBodyProfileLayoutTests: XCTestCase {
     func testCloseButtonUsesCompactAnimatedMetrics() {
         XCTAssertEqual(
             CharacterFullBodyProfileCloseButtonMetrics.diameter,
-            30
+            18
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfileCloseButtonMetrics.iconSize,
+            8
         )
         XCTAssertEqual(
             CharacterFullBodyProfileCloseButtonMetrics.hoverRotation,

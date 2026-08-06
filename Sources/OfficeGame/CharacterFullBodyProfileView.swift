@@ -23,7 +23,8 @@ enum CharacterFullBodyProfileLayout {
 }
 
 enum CharacterFullBodyProfileCloseButtonMetrics {
-    static let diameter: CGFloat = 30
+    static let diameter: CGFloat = 18
+    static let iconSize: CGFloat = 8
     static let hoverRotation = 90.0
     static let hoverScale = 1.08
     static let pressedScale = 0.88
@@ -316,7 +317,13 @@ private struct AnimatedProfileCloseButton: View {
                     .rotationEffect(.degrees(isHovered ? 180 : 0))
 
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(
+                        .system(
+                            size: CharacterFullBodyProfileCloseButtonMetrics
+                                .iconSize,
+                            weight: .bold
+                        )
+                    )
                     .foregroundStyle(.white)
                     .rotationEffect(
                         .degrees(
