@@ -22,6 +22,13 @@ enum CharacterFullBodyProfileLayout {
     }
 }
 
+enum CharacterFullBodyProfileCloseButtonMetrics {
+    static let diameter: CGFloat = 30
+    static let hoverRotation = 90.0
+    static let hoverScale = 1.08
+    static let pressedScale = 0.88
+}
+
 enum CharacterFullBodyProfileSelection {
     static let dragThreshold: CGFloat = 36
     static let loopsBeforeAutomaticAdvance = 2
@@ -105,7 +112,7 @@ struct CharacterFullBodyProfileView: View {
 
                 Spacer()
 
-                Button("닫기") {
+                AnimatedProfileCloseButton {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -229,6 +236,93 @@ struct CharacterFullBodyProfileView: View {
             return
         }
         outgoingVideoURL = nil
+    }
+}
+
+private struct AnimatedProfileCloseButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(isHovered ? 0.72 : 0.46),
+                                Color.indigo.opacity(isHovered ? 0.72 : 0.28),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            colors: [
+                                .cyan.opacity(0.9),
+                                .purple.opacity(0.9),
+                                .cyan.opacity(0.9),
+                            ],
+                            center: .center
+                        ),
+                        lineWidth: isHovered ? 1.8 : 0.8
+                    )
+                    .rotationEffect(.degrees(isHovered ? 180 : 0))
+
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .rotationEffect(
+                        .degrees(
+                            isHovered
+                                ? CharacterFullBodyProfileCloseButtonMetrics.hoverRotation
+                                : 0
+                        )
+                    )
+            }
+            .frame(
+                width: CharacterFullBodyProfileCloseButtonMetrics.diameter,
+                height: CharacterFullBodyProfileCloseButtonMetrics.diameter
+            )
+            .scaleEffect(
+                isHovered
+                    ? CharacterFullBodyProfileCloseButtonMetrics.hoverScale
+                    : 1
+            )
+            .shadow(
+                color: .cyan.opacity(isHovered ? 0.42 : 0.12),
+                radius: isHovered ? 8 : 3
+            )
+            .contentShape(Circle())
+        }
+        .buttonStyle(AnimatedProfileCloseButtonPressStyle())
+        .onHover { isHovered = $0 }
+        .animation(
+            .spring(response: 0.38, dampingFraction: 0.72),
+            value: isHovered
+        )
+        .accessibilityLabel("닫기")
+        .help("닫기")
+    }
+}
+
+private struct AnimatedProfileCloseButtonPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(
+                configuration.isPressed
+                    ? CharacterFullBodyProfileCloseButtonMetrics.pressedScale
+                    : 1
+            )
+            .brightness(configuration.isPressed ? 0.12 : 0)
+            .animation(
+                .spring(response: 0.22, dampingFraction: 0.58),
+                value: configuration.isPressed
+            )
     }
 }
 
