@@ -562,12 +562,6 @@ private struct ClaudeToolRunView: View, Equatable {
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
 
-            if run.isRunning {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(ClaudePalette.color(for: run.kind))
-            }
-
             Spacer(minLength: 6)
 
             Text(OfficeLocalization.format("%d개", run.steps.count))
