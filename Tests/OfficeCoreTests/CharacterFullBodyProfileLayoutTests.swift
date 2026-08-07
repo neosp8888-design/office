@@ -4,10 +4,13 @@ import XCTest
 @testable import OfficeGame
 
 final class CharacterFullBodyProfileLayoutTests: XCTestCase {
-    func testImageUsesHalfOfProfileContentWidth() {
+    func testImageWidthIsEightyPercentLargerThanBefore() {
         XCTAssertEqual(
             CharacterFullBodyProfileLayout.imageWidth,
-            CharacterFullBodyProfileLayout.referenceContentWidth * 0.5
+            CharacterFullBodyProfileLayout.referenceContentWidth
+                * CharacterFullBodyProfileLayout.previousImageWidthRatio
+                * 1.8,
+            accuracy: 0.000_1
         )
     }
 
