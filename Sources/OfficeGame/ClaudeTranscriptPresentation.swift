@@ -130,9 +130,36 @@ struct ClaudePlanStep: Equatable, Identifiable {
     }
 }
 
+/// 도구 그룹 한 칸의 갈래다. 편집과 계획은 별도 항목이라 여기에 오지 않는다.
+enum ClaudeToolGroupKind: String, Equatable, Hashable {
+    case shell
+    case read
+    case search
+    case web
+    case delegate
+    case other
+
+    init(family: ClaudeToolFamily) {
+        switch family {
+        case .shell:
+            self = .shell
+        case .read:
+            self = .read
+        case .search:
+            self = .search
+        case .web:
+            self = .web
+        case .delegate:
+            self = .delegate
+        case .edit, .plan, .other:
+            self = .other
+        }
+    }
+}
+
 /// 타임라인에 놓이는 한 덩어리다.
 enum ClaudeTranscriptEntry: Identifiable, Equatable {
-    case thought(ClaudeThought)
+    case thoughts(ClaudeThoughtRun)
     case tools(ClaudeToolRun)
     case edits(ClaudeEditRun)
     case plan(ClaudePlanBoard)
@@ -141,8 +168,8 @@ enum ClaudeTranscriptEntry: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .thought(let thought):
-            thought.id
+        case .thoughts(let run):
+            run.id
         case .tools(let run):
             run.id
         case .edits(let run):
@@ -171,6 +198,36 @@ struct ClaudeThought: Identifiable, Equatable {
     }
 }
 
+/// 한 대화 구간의 추론을 한 칸으로 묶는다. 최신 추론만 원문 그대로 펼쳐 둔다.
+struct ClaudeThoughtRun: Identifiable, Equatable {
+    let thoughts: [ClaudeThought]
+
+    var id: String { "thoughts:\(thoughts.first?.activityID ?? "empty")" }
+
+    var isRunning: Bool {
+        thoughts.contains { $0.isRunning }
+    }
+
+    var latestThought: ClaudeThought? {
+        thoughts.last
+    }
+
+    func visibleHistoryThoughts(
+        showsAll: Bool,
+        limit: Int
+    ) -> [ClaudeThought] {
+        let history = thoughts.dropLast()
+        guard !showsAll, history.count > limit else {
+            return Array(history)
+        }
+        return Array(history.suffix(limit))
+    }
+
+    func hiddenHistoryThoughtCount(limit: Int) -> Int {
+        max(0, thoughts.count - 1 - limit)
+    }
+}
+
 struct ClaudeToolStep: Identifiable, Equatable {
     let activityID: String
     let call: ClaudeToolCall
@@ -181,9 +238,12 @@ struct ClaudeToolStep: Identifiable, Equatable {
 }
 
 struct ClaudeToolRun: Identifiable, Equatable {
+    let kind: ClaudeToolGroupKind
     let steps: [ClaudeToolStep]
 
-    var id: String { "tools:\(steps.first?.activityID ?? "empty")" }
+    var id: String {
+        "tools:\(kind.rawValue):\(steps.first?.activityID ?? "empty")"
+    }
 
     var isRunning: Bool {
         steps.contains { $0.status == .running }
@@ -209,15 +269,23 @@ struct ClaudeToolRun: Identifiable, Equatable {
             + (remainder > 0 ? " 외 \(remainder)종" : "")
     }
 
-    func visibleSteps(showsAll: Bool, limit: Int) -> [ClaudeToolStep] {
-        guard !showsAll, steps.count > limit else {
-            return steps
-        }
-        return Array(steps.suffix(limit))
+    var latestStep: ClaudeToolStep? {
+        steps.last
     }
 
-    func hiddenStepCount(limit: Int) -> Int {
-        max(0, steps.count - limit)
+    func visibleHistorySteps(
+        showsAll: Bool,
+        limit: Int
+    ) -> [ClaudeToolStep] {
+        let history = steps.dropLast()
+        guard !showsAll, history.count > limit else {
+            return Array(history)
+        }
+        return Array(history.suffix(limit))
+    }
+
+    func hiddenHistoryStepCount(limit: Int) -> Int {
+        max(0, steps.count - 1 - limit)
     }
 }
 
@@ -302,6 +370,13 @@ struct ClaudeTranscriptPresentation: Equatable {
     /// 글자 단위로 계속 늘어나는 마지막 응답 메시지다.
     let streamingMessageID: String?
 
+    /// 버퍼에 모으는 동안 갈래별 자리를 가리키는 값이다.
+    private enum GroupSlot: Hashable {
+        case thoughts
+        case tools(ClaudeToolGroupKind)
+        case edits
+    }
+
     var latestMessage: ClaudeTranscriptMessage? {
         for entry in entries.reversed() {
             if case .message(let message) = entry {
@@ -319,46 +394,63 @@ struct ClaudeTranscriptPresentation: Equatable {
         isRunning: Bool
     ) -> ClaudeTranscriptPresentation {
         var entries: [ClaudeTranscriptEntry] = []
-        var toolBuffer: [ClaudeToolStep] = []
+        var slotOrder: [GroupSlot] = []
+        var thoughtBuffer: [ClaudeThought] = []
+        var toolBuffers: [ClaudeToolGroupKind: [ClaudeToolStep]] = [:]
         var editBuffer: [ClaudeToolStep] = []
 
-        func flushTools() {
-            guard !toolBuffer.isEmpty else {
+        // 같은 갈래는 한 칸에 모으되 처음 등장한 순서를 유지한다.
+        func reserve(_ slot: GroupSlot) {
+            guard !slotOrder.contains(slot) else {
                 return
             }
-            entries.append(.tools(ClaudeToolRun(steps: toolBuffer)))
-            toolBuffer.removeAll(keepingCapacity: true)
+            slotOrder.append(slot)
         }
 
-        func flushEdits() {
-            guard !editBuffer.isEmpty else {
-                return
+        func flushGroups() {
+            for slot in slotOrder {
+                switch slot {
+                case .thoughts:
+                    guard !thoughtBuffer.isEmpty else {
+                        continue
+                    }
+                    entries.append(
+                        .thoughts(ClaudeThoughtRun(thoughts: thoughtBuffer))
+                    )
+                case .tools(let kind):
+                    guard let steps = toolBuffers[kind], !steps.isEmpty else {
+                        continue
+                    }
+                    entries.append(
+                        .tools(ClaudeToolRun(kind: kind, steps: steps))
+                    )
+                case .edits:
+                    guard !editBuffer.isEmpty else {
+                        continue
+                    }
+                    entries.append(.edits(ClaudeEditRun(steps: editBuffer)))
+                }
             }
-            entries.append(.edits(ClaudeEditRun(steps: editBuffer)))
+            slotOrder.removeAll(keepingCapacity: true)
+            thoughtBuffer.removeAll(keepingCapacity: true)
+            toolBuffers.removeAll(keepingCapacity: true)
             editBuffer.removeAll(keepingCapacity: true)
-        }
-
-        func flushOperations() {
-            flushTools()
-            flushEdits()
         }
 
         for activity in activities {
             switch activity.kind {
             case "thinking":
-                flushOperations()
-                entries.append(
-                    .thought(
-                        ClaudeThought(
-                            activityID: activity.id,
-                            text: activity.text,
-                            occurredAt: activity.occurredAt,
-                            isRunning: activity.status == .running
-                        )
+                reserve(.thoughts)
+                thoughtBuffer.append(
+                    ClaudeThought(
+                        activityID: activity.id,
+                        text: activity.text,
+                        occurredAt: activity.occurredAt,
+                        isRunning: activity.status == .running
                     )
                 )
             case "message":
-                flushOperations()
+                flushGroups()
                 entries.append(
                     .message(
                         ClaudeTranscriptMessage(
@@ -378,7 +470,7 @@ struct ClaudeTranscriptPresentation: Equatable {
                 )
                 switch call.family {
                 case .plan:
-                    flushOperations()
+                    flushGroups()
                     // 계획은 갱신되는 하나의 보드이므로 최신 위치에만 남긴다.
                     entries.removeAll { entry in
                         if case .plan = entry {
@@ -396,15 +488,16 @@ struct ClaudeTranscriptPresentation: Equatable {
                         )
                     )
                 case .edit:
-                    flushTools()
+                    reserve(.edits)
                     editBuffer.append(step)
                 default:
-                    flushEdits()
-                    toolBuffer.append(step)
+                    let kind = ClaudeToolGroupKind(family: call.family)
+                    reserve(.tools(kind))
+                    toolBuffers[kind, default: []].append(step)
                 }
             }
         }
-        flushOperations()
+        flushGroups()
 
         let promotedMessages = activities
             .filter { $0.kind == "message" }

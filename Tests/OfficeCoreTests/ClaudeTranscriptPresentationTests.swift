@@ -123,21 +123,123 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
 
         XCTAssertEqual(presentation.entries.count, 4)
         guard
-            case .thought(let thought) = presentation.entries[0],
+            case .thoughts(let thoughts) = presentation.entries[0],
             case .tools(let reads) = presentation.entries[1],
-            case .edits(let edits) = presentation.entries[2],
-            case .tools(let tests) = presentation.entries[3]
+            case .tools(let commands) = presentation.entries[2],
+            case .edits(let edits) = presentation.entries[3]
         else {
             return XCTFail("Claude 타임라인 순서가 다릅니다.")
         }
-        XCTAssertEqual(thought.text, "먼저 구조를 확인한다.")
-        XCTAssertEqual(reads.steps.map(\.activityID), ["tool-1", "tool-2"])
-        XCTAssertEqual(reads.title, "Read · Bash")
+        XCTAssertEqual(
+            thoughts.latestThought?.text,
+            "먼저 구조를 확인한다."
+        )
+        XCTAssertEqual(reads.kind, .read)
+        XCTAssertEqual(reads.steps.map(\.activityID), ["tool-1"])
+        XCTAssertEqual(reads.title, "Read")
+        XCTAssertEqual(commands.kind, .shell)
+        XCTAssertEqual(
+            commands.steps.map(\.activityID),
+            ["tool-2", "tool-5"]
+        )
+        XCTAssertEqual(commands.title, "Bash 2")
+        XCTAssertTrue(commands.isRunning)
         XCTAssertEqual(edits.steps.map(\.activityID), ["tool-3", "tool-4"])
         XCTAssertEqual(edits.fileCount, 2)
         XCTAssertEqual(edits.title, "파일 2개를 편집했습니다")
-        XCTAssertTrue(tests.isRunning)
         XCTAssertFalse(presentation.showsWaiting)
+    }
+
+    func testToolGroupsSplitByKindAndResetAfterMessage() throws {
+        let activities = try [
+            makeActivity(
+                id: "tool-1",
+                kind: "tool",
+                text: "도구 · Grep · struct Claude",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-2",
+                kind: "tool",
+                text: "도구 · WebFetch · https://example.com",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-3",
+                kind: "tool",
+                text: "도구 · Task · 하위 검토 위임",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "message-1",
+                kind: "message",
+                text: "1차 정리를 마쳤습니다.",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-4",
+                kind: "tool",
+                text: "도구 · Grep · func make",
+                status: "completed"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        XCTAssertEqual(
+            presentation.entries.map(\.id),
+            [
+                "tools:search:tool-1",
+                "tools:web:tool-2",
+                "tools:delegate:tool-3",
+                "activity:message-1",
+                "tools:search:tool-4",
+            ]
+        )
+    }
+
+    func testConsecutiveThoughtsCollapseIntoOneRun() throws {
+        let activities = try (0..<3).map { index in
+            try makeActivity(
+                id: "think-\(index)",
+                kind: "thinking",
+                text: "\(index)번째 추론",
+                status: "completed"
+            )
+        }
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        XCTAssertEqual(presentation.entries.count, 1)
+        guard case .thoughts(let run) = presentation.entries[0] else {
+            return XCTFail("추론 그룹이 없습니다.")
+        }
+        XCTAssertEqual(run.thoughts.count, 3)
+        XCTAssertEqual(run.latestThought?.text, "2번째 추론")
+        XCTAssertEqual(
+            run.visibleHistoryThoughts(showsAll: false, limit: 20)
+                .map(\.text),
+            ["0번째 추론", "1번째 추론"]
+        )
+        XCTAssertEqual(run.hiddenHistoryThoughtCount(limit: 1), 1)
+        XCTAssertEqual(
+            run.visibleHistoryThoughts(showsAll: false, limit: 1)
+                .map(\.text),
+            ["1번째 추론"]
+        )
+        XCTAssertFalse(run.isRunning)
     }
 
     func testRepeatedToolsAreCountedInGroupTitle() throws {
@@ -160,10 +262,16 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
             isRunning: false
         )
 
-        guard case .tools(let run) = presentation.entries.first else {
+        guard
+            case .tools(let reads) = presentation.entries.first,
+            case .tools(let searches) = presentation.entries.last
+        else {
             return XCTFail("도구 그룹이 없습니다.")
         }
-        XCTAssertEqual(run.title, "Read 3 · Grep")
+        XCTAssertEqual(reads.kind, .read)
+        XCTAssertEqual(reads.title, "Read 3")
+        XCTAssertEqual(searches.kind, .search)
+        XCTAssertEqual(searches.title, "Grep")
     }
 
     func testPlanBoardKeepsOnlyTheLatestChecklist() throws {
@@ -362,10 +470,14 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
             isRunning: true
         )
 
-        guard case .thought(let thought) = presentation.entries.first else {
+        guard
+            case .thoughts(let run) = presentation.entries.first,
+            let thought = run.latestThought
+        else {
             return XCTFail("사고 항목이 없습니다.")
         }
         XCTAssertTrue(thought.isPlaceholder)
+        XCTAssertTrue(run.isRunning)
         XCTAssertFalse(presentation.showsWaiting)
     }
 

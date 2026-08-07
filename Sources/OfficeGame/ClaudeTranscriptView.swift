@@ -48,6 +48,71 @@ enum ClaudePalette {
             "wrench.and.screwdriver"
         }
     }
+
+    static func color(for kind: ClaudeToolGroupKind) -> Color {
+        color(for: family(of: kind))
+    }
+
+    static func icon(for kind: ClaudeToolGroupKind) -> String {
+        icon(for: family(of: kind))
+    }
+
+    private static func family(
+        of kind: ClaudeToolGroupKind
+    ) -> ClaudeToolFamily {
+        switch kind {
+        case .shell:
+            .shell
+        case .read:
+            .read
+        case .search:
+            .search
+        case .web:
+            .web
+        case .delegate:
+            .delegate
+        case .other:
+            .other
+        }
+    }
+}
+
+extension ClaudeToolGroupKind {
+    /// 그룹 카드 제목이다.
+    var title: String {
+        switch self {
+        case .shell:
+            OfficeLocalization.string("명령 실행")
+        case .read:
+            OfficeLocalization.string("파일 읽기")
+        case .search:
+            OfficeLocalization.string("검색")
+        case .web:
+            OfficeLocalization.string("웹 조회")
+        case .delegate:
+            OfficeLocalization.string("서브에이전트")
+        case .other:
+            OfficeLocalization.string("도구 사용")
+        }
+    }
+
+    /// `이전 OO 3개 보기`에 들어가는 낱말이다.
+    var historyNoun: String {
+        switch self {
+        case .shell:
+            "명령"
+        case .read:
+            "읽기"
+        case .search:
+            "검색"
+        case .web:
+            "조회"
+        case .delegate:
+            "위임"
+        case .other:
+            "도구 사용"
+        }
+    }
 }
 
 struct ClaudeTranscriptView: View {
@@ -155,8 +220,9 @@ struct ClaudeTranscriptView: View {
         isStreaming: Bool
     ) -> some View {
         switch entry {
-        case .thought(let thought):
-            ClaudeThoughtView(thought: thought)
+        case .thoughts(let run):
+            ClaudeThoughtRunView(run: run)
+                .equatable()
         case .tools(let run):
             ClaudeToolRunView(run: run)
                 .equatable()
@@ -304,15 +370,97 @@ private struct ClaudeWaitingView: View {
     }
 }
 
-/// Claude가 주는 사고 원문은 잘라내지 않고 그대로 보여준다.
-private struct ClaudeThoughtView: View {
-    let thought: ClaudeThought
+/// 추론은 Claude Code의 강점이라 최신 원문은 접지 않고 이전 기록만 접는다.
+private struct ClaudeThoughtRunView: View, Equatable {
+    let run: ClaudeThoughtRun
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+    @State private var showsAllHistory = false
+
+    private static let compactHistoryLimit = 20
+
+    static func == (
+        lhs: ClaudeThoughtRunView,
+        rhs: ClaudeThoughtRunView
+    ) -> Bool {
+        lhs.run == rhs.run
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            if thought.isRunning {
+        let historyCount = max(0, run.thoughts.count - 1)
+        let hiddenCount = run.hiddenHistoryThoughtCount(
+            limit: Self.compactHistoryLimit
+        )
+
+        VStack(alignment: .leading, spacing: 8) {
+            groupHeader
+
+            if let latestThought = run.latestThought {
+                thoughtRow(latestThought, isLatest: true)
+            }
+
+            if historyCount > 0 {
+                DisclosureGroup(isExpanded: $isExpanded) {
+                    if isExpanded {
+                        LazyVStack(alignment: .leading, spacing: 5) {
+                            if hiddenCount > 0, !showsAllHistory {
+                                Button {
+                                    showsAllHistory = true
+                                } label: {
+                                    Label(
+                                        "더 이전 추론 \(hiddenCount)개 보기",
+                                        systemImage: "clock.arrow.circlepath"
+                                    )
+                                    .font(
+                                        .system(size: 9.5, weight: .semibold)
+                                    )
+                                    .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.vertical, 5)
+                            }
+
+                            ForEach(visibleHistory) { thought in
+                                thoughtRow(thought, isLatest: false)
+                            }
+                        }
+                        .padding(.top, 5)
+                    }
+                } label: {
+                    Text(
+                        isExpanded
+                            ? "이전 추론 숨기기"
+                            : "이전 추론 \(historyCount)개 보기"
+                    )
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .tint(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            ClaudePalette.accent.opacity(0.05),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(ClaudePalette.accent.opacity(0.14))
+        }
+        .onChange(of: run.isRunning) { _, running in
+            isExpanded = transcriptGroupExpansionState(
+                current: isExpanded,
+                isRunning: running
+            )
+        }
+    }
+
+    private var groupHeader: some View {
+        HStack(spacing: 8) {
+            if run.isRunning {
                 CoreAnimationDotsView(
                     dotSize: 3,
                     spacing: 2,
@@ -325,45 +473,66 @@ private struct ClaudeThoughtView: View {
                     ),
                     isAnimated: !reduceMotion
                 )
-                .frame(width: 16, height: 14)
-                .padding(.top, 3)
+                .frame(width: 18, height: 14)
                 .accessibilityHidden(true)
             } else {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(ClaudePalette.accent.opacity(0.65))
-                    .frame(width: 16, height: 16)
-                    .padding(.top, 1)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(displayText)
-                    .font(.system(size: 12.5, weight: .regular))
-                    .italic()
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text(thought.occurredAt.formatted(
-                    date: .omitted,
-                    time: .standard
-                ))
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
             }
+
+            Text("추론")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 6)
+
+            Text(OfficeLocalization.format("%d개", run.thoughts.count))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
         }
-        .padding(.leading, 9)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(ClaudePalette.accent.opacity(0.22))
-                .frame(width: 2)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("사고, \(displayText)")
     }
 
-    private var displayText: String {
+    private func thoughtRow(
+        _ thought: ClaudeThought,
+        isLatest: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(ClaudePalette.accent.opacity(0.65))
+                .frame(width: 15, height: 15)
+
+            Text(displayText(thought))
+                .font(.system(size: 12.5, weight: .regular))
+                .italic()
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(isLatest ? nil : 4)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(thought.occurredAt.formatted(
+                date: .omitted,
+                time: .standard
+            ))
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, isLatest ? 4 : 3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("추론, \(displayText(thought))")
+    }
+
+    private var visibleHistory: [ClaudeThought] {
+        run.visibleHistoryThoughts(
+            showsAll: showsAllHistory,
+            limit: Self.compactHistoryLimit
+        )
+    }
+
+    private func displayText(_ thought: ClaudeThought) -> String {
         thought.isPlaceholder ? "생각을 정리하는 중" : thought.text
     }
 }
@@ -385,60 +554,60 @@ private struct ClaudeToolRunView: View, Equatable {
     }
 
     var body: some View {
-        let hiddenCount = run.hiddenStepCount(limit: Self.compactStepLimit)
-        DisclosureGroup(isExpanded: $isExpanded) {
-            if isExpanded {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if hiddenCount > 0, !showsAllSteps {
-                        Button {
-                            showsAllSteps = true
-                        } label: {
-                            Label(
-                                "이전 호출 \(hiddenCount)개 보기",
-                                systemImage: "clock.arrow.circlepath"
-                            )
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
+        let historyCount = max(0, run.steps.count - 1)
+        let hiddenCount = run.hiddenHistoryStepCount(
+            limit: Self.compactStepLimit
+        )
+
+        VStack(alignment: .leading, spacing: 8) {
+            groupHeader
+
+            if let latestStep = run.latestStep {
+                stepRow(latestStep)
+            }
+
+            if historyCount > 0 {
+                DisclosureGroup(isExpanded: $isExpanded) {
+                    if isExpanded {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            if hiddenCount > 0, !showsAllSteps {
+                                Button {
+                                    showsAllSteps = true
+                                } label: {
+                                    Label(
+                                        "더 이전 호출 \(hiddenCount)개 보기",
+                                        systemImage: "clock.arrow.circlepath"
+                                    )
+                                    .font(
+                                        .system(size: 9.5, weight: .semibold)
+                                    )
+                                    .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.vertical, 6)
+                            }
+
+                            ForEach(visibleHistory) { step in
+                                stepRow(step)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .padding(.vertical, 6)
+                        .padding(.top, 5)
                     }
-
-                    ForEach(visibleSteps) { step in
-                        stepRow(step)
-                    }
+                } label: {
+                    Text(
+                        isExpanded
+                            ? "이전 \(run.kind.historyNoun) 숨기기"
+                            : "이전 \(run.kind.historyNoun) \(historyCount)개 보기"
+                    )
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                 }
-                .padding(.top, 7)
+                .tint(.secondary)
             }
-        } label: {
-            HStack(spacing: 8) {
-                ClaudeToolBadge(
-                    call: run.steps.last?.call ?? run.steps.first!.call,
-                    isCompact: true
-                )
-
-                Text(run.title)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if run.isRunning {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(ClaudePalette.accent)
-                }
-
-                Spacer(minLength: 6)
-
-                Text("\(run.steps.count)회")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
         }
-        .tint(.secondary)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
         .background(
             Color.primary.opacity(0.035),
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -452,6 +621,41 @@ private struct ClaudeToolRunView: View, Equatable {
                 current: isExpanded,
                 isRunning: running
             )
+        }
+    }
+
+    private var groupHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: ClaudePalette.icon(for: run.kind))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(
+                    run.isRunning
+                        ? ClaudePalette.color(for: run.kind)
+                        : .secondary
+                )
+                .frame(width: 18)
+
+            Text(run.kind.title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            // 어떤 도구를 실제로 썼는지는 Claude 기록의 핵심이라 함께 남긴다.
+            Text(run.title)
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+
+            if run.isRunning {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(ClaudePalette.color(for: run.kind))
+            }
+
+            Spacer(minLength: 6)
+
+            Text(OfficeLocalization.format("%d개", run.steps.count))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -500,8 +704,8 @@ private struct ClaudeToolRunView: View, Equatable {
         )
     }
 
-    private var visibleSteps: [ClaudeToolStep] {
-        run.visibleSteps(
+    private var visibleHistory: [ClaudeToolStep] {
+        run.visibleHistorySteps(
             showsAll: showsAllSteps,
             limit: Self.compactStepLimit
         )
