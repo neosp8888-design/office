@@ -8,7 +8,9 @@ import SwiftUI
 enum CharacterFullBodyProfileLayout {
     static let referenceContentWidth: CGFloat = 386
     static let horizontalPadding: CGFloat = 16
-    static let imageWidthRatio: CGFloat = 0.5
+    static let previousImageWidthRatio: CGFloat = 0.5
+    static let imageWidthScale: CGFloat = 1.8
+    static let imageWidthRatio = previousImageWidthRatio * imageWidthScale
     static let imageAspectRatio: CGFloat = 0.5
 
     static let imageWidth = referenceContentWidth * imageWidthRatio
