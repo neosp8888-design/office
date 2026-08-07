@@ -442,7 +442,9 @@ private struct UsageBoardContent: View {
             name: "Claude",
             icon: "sparkles",
             fiveHour: snapshot.claudeFiveHour,
+            fiveHourResetAt: snapshot.claudeFiveHourResetAt,
             weekly: snapshot.claudeWeekly,
+            weeklyResetAt: snapshot.claudeWeeklyResetAt,
             plan: snapshot.claudePlan,
             activity: snapshot.claudeActivity,
             tint: Color(
@@ -455,7 +457,9 @@ private struct UsageBoardContent: View {
             name: "Codex",
             icon: "terminal.fill",
             fiveHour: snapshot.codexFiveHour,
+            fiveHourResetAt: snapshot.codexFiveHourResetAt,
             weekly: snapshot.codexWeekly,
+            weeklyResetAt: snapshot.codexWeeklyResetAt,
             plan: snapshot.codexPlan,
             activity: snapshot.codexActivity,
             tint: DashboardPalette.accent
@@ -490,7 +494,9 @@ private struct UsageProviderColumn: View {
     let name: String
     let icon: String
     let fiveHour: Int?
+    let fiveHourResetAt: Date?
     let weekly: Int?
+    let weeklyResetAt: Date?
     let plan: String?
     let activity: AIUsageActivitySnapshot?
     let tint: Color
@@ -501,7 +507,9 @@ private struct UsageProviderColumn: View {
                 name: name,
                 icon: icon,
                 fiveHour: fiveHour,
+                fiveHourResetAt: fiveHourResetAt,
                 weekly: weekly,
+                weeklyResetAt: weeklyResetAt,
                 plan: plan,
                 tint: tint
             )
@@ -518,7 +526,9 @@ private struct UsageProviderCard: View {
     let name: String
     let icon: String
     let fiveHour: Int?
+    let fiveHourResetAt: Date?
     let weekly: Int?
+    let weeklyResetAt: Date?
     let plan: String?
     let tint: Color
 
@@ -545,8 +555,18 @@ private struct UsageProviderCard: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
             }
-            UsageMeter(label: "5시간", value: fiveHour, tint: tint)
-            UsageMeter(label: "7일", value: weekly, tint: tint)
+            UsageMeter(
+                label: "5시간",
+                value: fiveHour,
+                resetAt: fiveHourResetAt,
+                tint: tint
+            )
+            UsageMeter(
+                label: "7일",
+                value: weekly,
+                resetAt: weeklyResetAt,
+                tint: tint
+            )
         }
         .padding(13)
         .background(
@@ -675,32 +695,44 @@ private struct UsageMetricCell: View {
 private struct UsageMeter: View {
     let label: String
     let value: Int?
+    let resetAt: Date?
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 9) {
-            Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 32, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 9) {
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, alignment: .leading)
 
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.primary.opacity(0.075))
-                    Capsule()
-                        .fill(tint)
-                        .frame(
-                            width: geometry.size.width
-                                * CGFloat(value ?? 0) / 100
-                        )
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.primary.opacity(0.075))
+                        Capsule()
+                            .fill(tint)
+                            .frame(
+                                width: geometry.size.width
+                                    * CGFloat(value ?? 0) / 100
+                            )
+                    }
                 }
-            }
-            .frame(height: 6)
+                .frame(height: 6)
 
-            Text(value.map { "\($0)%" } ?? "–")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .frame(width: 34, alignment: .trailing)
+                Text(value.map { "\($0)%" } ?? "–")
+                    .font(
+                        .system(size: 10, weight: .bold, design: .rounded)
+                    )
+                    .frame(width: 34, alignment: .trailing)
+            }
+
+            if let reset = usageResetTimeText(resetAt) {
+                Label("초기화 \(reset)", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
     }
 }

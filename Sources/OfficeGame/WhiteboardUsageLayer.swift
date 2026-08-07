@@ -51,10 +51,30 @@ struct WhiteboardUsageLayer: View {
         }
 
         return [
-            "Codex 5시간 \(percentText(snapshot.codexFiveHour))",
-            "Codex 주간 \(percentText(snapshot.codexWeekly))",
-            "Claude 5시간 \(percentText(snapshot.claudeFiveHour))",
-            "Claude 주간 \(percentText(snapshot.claudeWeekly))",
+            accessibilityLimitText(
+                provider: "Codex",
+                window: "5시간",
+                remaining: snapshot.codexFiveHour,
+                resetAt: snapshot.codexFiveHourResetAt
+            ),
+            accessibilityLimitText(
+                provider: "Codex",
+                window: "주간",
+                remaining: snapshot.codexWeekly,
+                resetAt: snapshot.codexWeeklyResetAt
+            ),
+            accessibilityLimitText(
+                provider: "Claude",
+                window: "5시간",
+                remaining: snapshot.claudeFiveHour,
+                resetAt: snapshot.claudeFiveHourResetAt
+            ),
+            accessibilityLimitText(
+                provider: "Claude",
+                window: "주간",
+                remaining: snapshot.claudeWeekly,
+                resetAt: snapshot.claudeWeeklyResetAt
+            ),
         ]
         .joined(separator: ", ")
     }
@@ -107,9 +127,10 @@ struct WhiteboardUsageLayer: View {
             drawUsageGroup(
                 provider: "CODEX",
                 fiveHour: snapshot.codexFiveHour,
+                fiveHourResetAt: snapshot.codexFiveHourResetAt,
                 weekly: snapshot.codexWeekly,
-                providerY: 2,
-                usageY: 19,
+                weeklyResetAt: snapshot.codexWeeklyResetAt,
+                providerY: 0,
                 context: &context,
                 ink: ink,
                 mutedInk: mutedInk
@@ -117,9 +138,10 @@ struct WhiteboardUsageLayer: View {
             drawUsageGroup(
                 provider: "CLAUDE",
                 fiveHour: snapshot.claudeFiveHour,
+                fiveHourResetAt: snapshot.claudeFiveHourResetAt,
                 weekly: snapshot.claudeWeekly,
-                providerY: 41,
-                usageY: 58,
+                weeklyResetAt: snapshot.claudeWeeklyResetAt,
+                providerY: 40,
                 context: &context,
                 ink: ink,
                 mutedInk: mutedInk
@@ -159,9 +181,10 @@ struct WhiteboardUsageLayer: View {
     private func drawUsageGroup(
         provider: String,
         fiveHour: Int?,
+        fiveHourResetAt: Date?,
         weekly: Int?,
+        weeklyResetAt: Date?,
         providerY: CGFloat,
-        usageY: CGFloat,
         context: inout GraphicsContext,
         ink: Color,
         mutedInk: Color
@@ -170,16 +193,31 @@ struct WhiteboardUsageLayer: View {
             provider,
             in: &context,
             at: CGPoint(x: 0, y: providerY),
-            size: 12.5,
+            size: 11,
             weight: .bold,
             color: ink
         )
         drawText(
-            "5H \(compactPercentText(fiveHour))"
-                + "  ·  7D \(compactPercentText(weekly))",
+            compactLimitText(
+                label: "5H",
+                remaining: fiveHour,
+                resetAt: fiveHourResetAt
+            ),
             in: &context,
-            at: CGPoint(x: 0, y: usageY),
-            size: 11.5,
+            at: CGPoint(x: 0, y: providerY + 14),
+            size: 9,
+            weight: .semibold,
+            color: mutedInk
+        )
+        drawText(
+            compactLimitText(
+                label: "7D",
+                remaining: weekly,
+                resetAt: weeklyResetAt
+            ),
+            in: &context,
+            at: CGPoint(x: 0, y: providerY + 26),
+            size: 9,
             weight: .semibold,
             color: mutedInk
         )
@@ -234,13 +272,80 @@ struct WhiteboardUsageLayer: View {
     private func percentText(_ value: Int?) -> String {
         value.map { "\($0)퍼센트" } ?? "정보 없음"
     }
+
+    private func compactLimitText(
+        label: String,
+        remaining: Int?,
+        resetAt: Date?
+    ) -> String {
+        let limit = "\(label) \(compactPercentText(remaining))"
+        guard let reset = usageResetTimeText(resetAt) else {
+            return limit
+        }
+        return "\(limit) · \(reset)"
+    }
+
+    private func accessibilityLimitText(
+        provider: String,
+        window: String,
+        remaining: Int?,
+        resetAt: Date?
+    ) -> String {
+        let limit = "\(provider) \(window) \(percentText(remaining))"
+        guard let reset = usageResetTimeText(resetAt) else {
+            return limit
+        }
+        return "\(limit), 초기화 \(reset)"
+    }
+}
+
+func usageResetTimeText(
+    _ resetAt: Date?,
+    relativeTo now: Date = Date(),
+    calendar sourceCalendar: Calendar = .autoupdatingCurrent
+) -> String? {
+    guard let resetAt else {
+        return nil
+    }
+
+    let calendar = sourceCalendar
+    let time = calendar.dateComponents([.hour, .minute], from: resetAt)
+    guard let hour = time.hour, let minute = time.minute else {
+        return nil
+    }
+    let clock = String(format: "%02d:%02d", hour, minute)
+
+    if calendar.isDate(resetAt, inSameDayAs: now) {
+        return "오늘 \(clock)"
+    }
+    let tomorrow = calendar.date(
+        byAdding: .day,
+        value: 1,
+        to: calendar.startOfDay(for: now)
+    )
+    if
+        let tomorrow,
+        calendar.isDate(resetAt, inSameDayAs: tomorrow)
+    {
+        return "내일 \(clock)"
+    }
+
+    let date = calendar.dateComponents([.month, .day], from: resetAt)
+    guard let month = date.month, let day = date.day else {
+        return clock
+    }
+    return "\(month)/\(day) \(clock)"
 }
 
 struct AIUsageSnapshot: Equatable, Sendable {
     let codexFiveHour: Int?
+    let codexFiveHourResetAt: Date?
     let codexWeekly: Int?
+    let codexWeeklyResetAt: Date?
     let claudeFiveHour: Int?
+    let claudeFiveHourResetAt: Date?
     let claudeWeekly: Int?
+    let claudeWeeklyResetAt: Date?
     let codexPlan: String?
     let claudePlan: String?
     let codexActivity: AIUsageActivitySnapshot?
@@ -336,9 +441,15 @@ enum CodexBarUsageReader {
 
         return AIUsageSnapshot(
             codexFiveHour: codexUsage?.remaining(windowMinutes: 300),
+            codexFiveHourResetAt: codexUsage?.resetAt(windowMinutes: 300),
             codexWeekly: codexUsage?.remaining(windowMinutes: 10_080),
+            codexWeeklyResetAt: codexUsage?.resetAt(windowMinutes: 10_080),
             claudeFiveHour: claudeUsage?.remaining(windowMinutes: 300),
+            claudeFiveHourResetAt: claudeUsage?.resetAt(windowMinutes: 300),
             claudeWeekly: claudeUsage?.remaining(windowMinutes: 10_080),
+            claudeWeeklyResetAt: claudeUsage?.resetAt(
+                windowMinutes: 10_080
+            ),
             codexPlan: codex?.plan,
             claudePlan: claude?.plan,
             codexActivity: costProviders?
@@ -552,9 +663,7 @@ private struct UsagePayload: Decodable {
     let identity: UsageIdentityPayload?
 
     func remaining(windowMinutes: Int) -> Int? {
-        let window = [primary, secondary, tertiary]
-            .compactMap { $0 }
-            .first { $0.windowMinutes == windowMinutes }
+        let window = window(minutes: windowMinutes)
         guard let usedPercent = window?.usedPercent else {
             return nil
         }
@@ -562,15 +671,48 @@ private struct UsagePayload: Decodable {
             min(100, max(0, 100 - usedPercent)).rounded()
         )
     }
+
+    func resetAt(windowMinutes: Int) -> Date? {
+        window(minutes: windowMinutes)?.resetsAt
+    }
+
+    private func window(minutes: Int) -> UsageWindow? {
+        [primary, secondary, tertiary]
+            .compactMap { $0 }
+            .first { $0.windowMinutes == minutes }
+    }
 }
 
 private struct UsageIdentityPayload: Decodable {
     let loginMethod: String?
 }
 
-private struct UsageWindow: Decodable {
+struct UsageWindow: Decodable {
     let usedPercent: Double
     let windowMinutes: Int
+    let resetsAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case usedPercent
+        case windowMinutes
+        case resetsAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        usedPercent = try container.decode(Double.self, forKey: .usedPercent)
+        windowMinutes = try container.decode(Int.self, forKey: .windowMinutes)
+        if
+            let value = try container.decodeIfPresent(
+                String.self,
+                forKey: .resetsAt
+            )
+        {
+            resetsAt = ISO8601DateFormatter().date(from: value)
+        } else {
+            resetsAt = nil
+        }
+    }
 }
 
 private struct CostProviderPayload: Decodable {
