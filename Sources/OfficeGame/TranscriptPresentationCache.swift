@@ -58,11 +58,6 @@ final class TranscriptPresentationCache {
             isRunning: isRunning
         )
 
-        guard !isRunning else {
-            storage.removeObject(forKey: key)
-            return make()
-        }
-
         if
             let entry = storage.object(forKey: key),
             entry.revision == revision,

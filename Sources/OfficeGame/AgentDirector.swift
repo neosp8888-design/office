@@ -10,9 +10,77 @@ struct PendingAgentQuestion: Identifiable, Equatable {
     let text: String
 }
 
+@MainActor
+final class CharacterSelectionStore: ObservableObject {
+    @Published private(set) var selectedCharacterID: OfficeCharacter?
+
+    init(selectedCharacterID: OfficeCharacter? = .boss) {
+        self.selectedCharacterID = selectedCharacterID
+    }
+
+    func select(_ characterID: OfficeCharacter?) {
+        guard selectedCharacterID != characterID else {
+            return
+        }
+        selectedCharacterID = characterID
+    }
+}
+
 enum WorkspaceReviewDecision {
     case approve(reviewTree: String)
     case reject
+}
+
+@MainActor
+final class CharacterLiveFeedStore: ObservableObject {
+    @Published private(set) var turns: [LiveFeedTurn]
+    @Published private(set) var isLoadingInitialFeed: Bool
+
+    private var latestTurns: [LiveFeedTurn]
+    private var latestIsLoadingInitialFeed: Bool
+    private var isPresented = false
+
+    init(
+        turns: [LiveFeedTurn] = [],
+        isLoadingInitialFeed: Bool = true
+    ) {
+        self.turns = turns
+        self.isLoadingInitialFeed = isLoadingInitialFeed
+        latestTurns = turns
+        latestIsLoadingInitialFeed = isLoadingInitialFeed
+    }
+
+    func stage(
+        turns: [LiveFeedTurn],
+        isLoadingInitialFeed: Bool
+    ) {
+        latestTurns = turns
+        latestIsLoadingInitialFeed = isLoadingInitialFeed
+        guard isPresented else {
+            return
+        }
+        publishLatestIfNeeded()
+    }
+
+    func setPresented(_ isPresented: Bool) {
+        guard self.isPresented != isPresented else {
+            return
+        }
+        self.isPresented = isPresented
+        guard isPresented else {
+            return
+        }
+        publishLatestIfNeeded()
+    }
+
+    private func publishLatestIfNeeded() {
+        if turns != latestTurns {
+            turns = latestTurns
+        }
+        if isLoadingInitialFeed != latestIsLoadingInitialFeed {
+            isLoadingInitialFeed = latestIsLoadingInitialFeed
+        }
+    }
 }
 
 private struct RealtimeFeedEvent: Decodable {
@@ -27,6 +95,8 @@ final class LiveFeedStore: ObservableObject {
     @Published private var responseAnimationTurnIDs: Set<String> = []
     private(set) var persistedTurns: [LiveFeedTurn] = []
     private var optimisticTurns: [String: LiveFeedTurn] = [:]
+    private var turnsByCharacterID: [String: [LiveFeedTurn]] = [:]
+    private var characterStores: [String: CharacterLiveFeedStore] = [:]
 
     static func snapshotTurns(
         from sortedTurns: [LiveFeedTurn],
@@ -97,6 +167,31 @@ final class LiveFeedStore: ObservableObject {
         Set(optimisticTurns.values.map(\.characterId))
     }
 
+    func turns(for characterID: String) -> [LiveFeedTurn] {
+        turnsByCharacterID[characterID] ?? []
+    }
+
+    func characterStore(
+        for characterID: String
+    ) -> CharacterLiveFeedStore {
+        if let store = characterStores[characterID] {
+            return store
+        }
+        let store = CharacterLiveFeedStore(
+            turns: turnsByCharacterID[characterID] ?? [],
+            isLoadingInitialFeed: isLoadingInitialFeed
+        )
+        characterStores[characterID] = store
+        return store
+    }
+
+    func setCharacterFeedPresented(
+        _ isPresented: Bool,
+        for characterID: String
+    ) {
+        characterStore(for: characterID).setPresented(isPresented)
+    }
+
     private func hasMatchingPersistedTurn(
         for optimisticTurn: LiveFeedTurn,
         in turns: [LiveFeedTurn]
@@ -127,6 +222,17 @@ final class LiveFeedStore: ObservableObject {
         guard turns != mergedTurns else {
             return
         }
+        let updatedTurnsByCharacterID = Dictionary(
+            grouping: mergedTurns,
+            by: \.characterId
+        )
+        turnsByCharacterID = updatedTurnsByCharacterID
+        for (characterID, store) in characterStores {
+            store.stage(
+                turns: updatedTurnsByCharacterID[characterID] ?? [],
+                isLoadingInitialFeed: isLoadingInitialFeed
+            )
+        }
         turns = mergedTurns
     }
 
@@ -135,6 +241,12 @@ final class LiveFeedStore: ObservableObject {
             return
         }
         isLoadingInitialFeed = false
+        for (characterID, store) in characterStores {
+            store.stage(
+                turns: turnsByCharacterID[characterID] ?? [],
+                isLoadingInitialFeed: false
+            )
+        }
     }
 
     func beginResponseAnimation(for turnID: String) {
@@ -234,7 +346,6 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var autoApproveAndMerge = true
     @Published private(set) var turnPersistenceErrors:
         [OfficeCharacter: String] = [:]
-    @Published var selectedCharacterID: OfficeCharacter? = .boss
     @Published private(set) var settingsStatus: String?
     @Published private(set) var latestSubmittedCommandID: UUID?
     @Published private(set) var latestSubmittedTurnID: String?
@@ -247,6 +358,16 @@ final class AgentDirector: ObservableObject {
     let liveFeedStore = LiveFeedStore()
     let archiveFeedStore = ArchiveFeedStore()
     let speechBubbleStore = SpeechBubbleStore()
+    let characterSelectionStore = CharacterSelectionStore()
+
+    var selectedCharacterID: OfficeCharacter? {
+        get {
+            characterSelectionStore.selectedCharacterID
+        }
+        set {
+            characterSelectionStore.select(newValue)
+        }
+    }
 
     var workspaceDirectory: String {
         configuration.workdir
@@ -536,7 +657,9 @@ final class AgentDirector: ObservableObject {
         guard latestCharacter != selectedCharacterID else {
             return
         }
-        unreviewedCompletedCharacters.remove(latestCharacter)
+        if unreviewedCompletedCharacters.contains(latestCharacter) {
+            unreviewedCompletedCharacters.remove(latestCharacter)
+        }
         selectedCharacterID = latestCharacter
     }
 
@@ -589,20 +712,28 @@ final class AgentDirector: ObservableObject {
 
     func select(_ character: CharacterConfiguration) {
         hasUserChosenCharacter = true
+        var remainingCompletedCharacters =
+            unreviewedCompletedCharacters
         if let selectedCharacterID {
-            unreviewedCompletedCharacters.remove(selectedCharacterID)
+            remainingCompletedCharacters.remove(selectedCharacterID)
         }
-        unreviewedCompletedCharacters.remove(character.id)
+        remainingCompletedCharacters.remove(character.id)
+        if remainingCompletedCharacters != unreviewedCompletedCharacters {
+            unreviewedCompletedCharacters = remainingCompletedCharacters
+        }
         selectedCharacterID = character.id
-        clearTransientBubbles()
-        if
-            pendingQuestions[character.id] == nil,
-            !runningCharacters.contains(character.id),
-            failedCharacters[character.id] == nil,
+        let shouldShowReadyBubble =
+            pendingQuestions[character.id] == nil
+            && !runningCharacters.contains(character.id)
+            && failedCharacters[character.id] == nil
+            &&
             offDutyCharacters[character.id] == nil
-        {
-            showBubble("🫡 콜! 준비 완료", for: character.id)
-        }
+        refreshBubblesAfterSelection(
+            character.id,
+            readyMessage: shouldShowReadyBubble
+                ? "🫡 콜! 준비 완료"
+                : nil
+        )
     }
 
     func submit(
@@ -1031,19 +1162,36 @@ final class AgentDirector: ObservableObject {
         }
     }
 
-    private func clearTransientBubbles() {
+    private func refreshBubblesAfterSelection(
+        _ character: OfficeCharacter,
+        readyMessage: String?
+    ) {
         for task in bubbleDismissTasks.values {
             task.cancel()
         }
         bubbleDismissTasks = [:]
-        speechBubbleStore.replace(
-            with: bubbles.filter {
-                pendingQuestions[$0.key] != nil
-                    || runningCharacters.contains($0.key)
-                    || !isWarningAcknowledged(for: $0.key)
-                        && warningMessage(for: $0.key) != nil
+        var updatedBubbles = bubbles.filter {
+            pendingQuestions[$0.key] != nil
+                || runningCharacters.contains($0.key)
+                || !isWarningAcknowledged(for: $0.key)
+                    && warningMessage(for: $0.key) != nil
+        }
+        if let readyMessage {
+            updatedBubbles[character] = readyMessage
+        }
+        speechBubbleStore.replace(with: updatedBubbles)
+
+        guard readyMessage != nil else {
+            return
+        }
+        bubbleDismissTasks[character] = Task { [weak self] in
+            try? await Task.sleep(for: Self.bubbleLifetime)
+            guard !Task.isCancelled else {
+                return
             }
-        )
+            self?.speechBubbleStore.remove(for: character)
+            self?.bubbleDismissTasks[character] = nil
+        }
     }
 
     private func startIdleChatter() {

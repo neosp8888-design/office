@@ -1,10 +1,22 @@
-// 이 파일은 대화 안 동영상이 원본 화면 비율로 표시되는지 검증한다.
+// 이 파일은 대화 동영상의 메타데이터 캐시와 원본 비율 표시를 검증한다.
 
 import CoreGraphics
+import Foundation
 import XCTest
 @testable import OfficeGame
 
+@MainActor
 final class ConversationMarkdownVideoLayoutTests: XCTestCase {
+    func testVideoAspectRatioCacheReusesLoadedMetadata() {
+        let cache = ConversationMarkdownVideoAspectRatioCache()
+        let url = URL(fileURLWithPath: "/tmp/sample.mp4")
+
+        XCTAssertNil(cache.aspectRatio(for: url))
+        cache.store(16 / 9, for: url)
+
+        XCTAssertEqual(cache.aspectRatio(for: url), 16 / 9)
+    }
+
     func testInlinePlayerUsesBoundedWidth() {
         XCTAssertEqual(
             ConversationMarkdownVideoLayout.maximumWidth,

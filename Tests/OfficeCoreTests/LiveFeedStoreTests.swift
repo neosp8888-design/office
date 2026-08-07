@@ -1,11 +1,153 @@
 // 이 파일은 서버 응답 전 임시 업무 카드의 유지와 실제 턴 치환을 검증한다.
 
+import Combine
 import OfficeCore
 import XCTest
 @testable import OfficeGame
 
 @MainActor
 final class LiveFeedStoreTests: XCTestCase {
+    func testCharacterSelectionPublishesOnlyWhenValueChanges() {
+        let store = CharacterSelectionStore()
+        var publicationCount = 0
+        let cancellable = store.objectWillChange.sink {
+            publicationCount += 1
+        }
+
+        store.select(.boss)
+        store.select(.leftMan)
+        store.select(.leftMan)
+
+        XCTAssertEqual(store.selectedCharacterID, .leftMan)
+        XCTAssertEqual(publicationCount, 1)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testCharacterTurnIndexTracksMergedAndReconciledTurns() {
+        let store = LiveFeedStore()
+        let submittedAt = Date(timeIntervalSinceReferenceDate: 900)
+        let bossTurn = makeTurn(
+            id: "boss-turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "총괄",
+            startedAt: submittedAt
+        )
+        let optimistic = makeTurn(
+            id: "local-turn",
+            characterID: OfficeCharacter.rightWoman.rawValue,
+            prompt: "수정",
+            startedAt: submittedAt.addingTimeInterval(1)
+        )
+
+        store.replace(with: [bossTurn])
+        store.insertOptimisticTurn(optimistic)
+
+        XCTAssertEqual(
+            store.turns(for: OfficeCharacter.boss.rawValue).map(\.id),
+            ["boss-turn"]
+        )
+        XCTAssertEqual(
+            store.turns(for: OfficeCharacter.rightWoman.rawValue).map(\.id),
+            ["local-turn"]
+        )
+
+        store.reconcileOptimisticTurn(
+            id: "local-turn",
+            with: "server-turn"
+        )
+
+        XCTAssertEqual(
+            store.turns(for: OfficeCharacter.rightWoman.rawValue).map(\.id),
+            ["server-turn"]
+        )
+    }
+
+    func testHiddenCharacterFeedStagesUpdatesUntilPresented() {
+        let store = LiveFeedStore()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 950)
+        let initialTurn = makeTurn(
+            id: "boss-turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "초기 업무",
+            startedAt: startedAt
+        )
+        store.replace(with: [initialTurn])
+
+        let characterStore = store.characterStore(
+            for: OfficeCharacter.boss.rawValue
+        )
+        var publicationCount = 0
+        let cancellable = characterStore.objectWillChange.sink {
+            publicationCount += 1
+        }
+        let updatedTurn = makeTurn(
+            id: "boss-turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "초기 업무",
+            response: "진행 중",
+            startedAt: startedAt,
+            updatedAt: startedAt.addingTimeInterval(1)
+        )
+
+        store.replace(with: [updatedTurn])
+
+        XCTAssertEqual(characterStore.turns, [initialTurn])
+        XCTAssertEqual(publicationCount, 0)
+
+        store.setCharacterFeedPresented(
+            true,
+            for: OfficeCharacter.boss.rawValue
+        )
+
+        XCTAssertEqual(characterStore.turns, [updatedTurn])
+        XCTAssertEqual(publicationCount, 1)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testPresentedCharacterFeedIgnoresUnrelatedUpdates() {
+        let store = LiveFeedStore()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 975)
+        let bossTurn = makeTurn(
+            id: "boss-turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "총괄",
+            startedAt: startedAt
+        )
+        let coworkerTurn = makeTurn(
+            id: "coworker-turn",
+            characterID: OfficeCharacter.rightWoman.rawValue,
+            prompt: "보조",
+            startedAt: startedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [coworkerTurn, bossTurn])
+
+        let characterStore = store.characterStore(
+            for: OfficeCharacter.boss.rawValue
+        )
+        store.setCharacterFeedPresented(
+            true,
+            for: OfficeCharacter.boss.rawValue
+        )
+        var publicationCount = 0
+        let cancellable = characterStore.objectWillChange.sink {
+            publicationCount += 1
+        }
+        let updatedCoworkerTurn = makeTurn(
+            id: "coworker-turn",
+            characterID: OfficeCharacter.rightWoman.rawValue,
+            prompt: "보조",
+            response: "진행 중",
+            startedAt: startedAt.addingTimeInterval(1),
+            updatedAt: startedAt.addingTimeInterval(2)
+        )
+
+        store.replace(with: [updatedCoworkerTurn, bossTurn])
+
+        XCTAssertEqual(characterStore.turns, [bossTurn])
+        XCTAssertEqual(publicationCount, 0)
+        withExtendedLifetime(cancellable) {}
+    }
+
     func testOptimisticTurnSurvivesUnrelatedFeedAndReconcilesByID() {
         let store = LiveFeedStore()
         let submittedAt = Date(timeIntervalSinceReferenceDate: 1_000)

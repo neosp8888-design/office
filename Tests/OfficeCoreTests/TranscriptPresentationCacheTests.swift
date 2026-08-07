@@ -106,7 +106,7 @@ final class TranscriptPresentationCacheTests: XCTestCase {
         XCTAssertEqual(buildCount, 4)
     }
 
-    func testRunningRevisionBypassesAndEvictsFinishedEntry() {
+    func testUnchangedRunningRevisionIsReusedAndTransitionsRebuild() {
         let cache = TranscriptPresentationCache()
         var buildCount = 0
 
@@ -122,7 +122,7 @@ final class TranscriptPresentationCacheTests: XCTestCase {
             ) as Int
         }
 
-        XCTAssertEqual(buildCount, 4)
+        XCTAssertEqual(buildCount, 3)
     }
 
     func testProvidersDoNotShareTurnEntry() {

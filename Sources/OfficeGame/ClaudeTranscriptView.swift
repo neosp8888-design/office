@@ -137,9 +137,14 @@ struct ClaudeTranscriptView: View {
             value: presentation.showsWaiting
         )
         .task(id: response) {
-            if !response.isEmpty {
-                onResponsePresented()
+            guard
+                animatesResponse,
+                !isRunning,
+                !response.isEmpty
+            else {
+                return
             }
+            onResponsePresented()
         }
     }
 
