@@ -54,6 +54,7 @@ function makeCodexActivityState() {
     sequence: 0,
     lastActivity: null,
     activityRecords: new Map(),
+    activityWritePromise: null,
     hasSeenInitialCodexReasoning: false,
     pendingInitialCodexReasoning: null,
     pendingAgentMessage: null,
@@ -520,6 +521,57 @@ test("같은 이벤트 ID의 시작과 완료는 한 활동 행을 갱신한다"
   );
 });
 
+test("동시에 도착한 활동은 서로 다른 순번과 이벤트 행을 유지한다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        if (/INSERT INTO turn_activities/.test(text)) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+
+  await Promise.all([
+    runtime.addActivity(state, {
+      kind: "tool",
+      text: "첫 활동",
+      eventKey: "activity-a",
+      status: "running",
+    }),
+    runtime.addActivity(state, {
+      kind: "tool",
+      text: "둘째 활동",
+      eventKey: "activity-b",
+      status: "running",
+    }),
+  ]);
+  await runtime.addActivity(state, {
+    kind: "tool",
+    text: "첫 활동 완료",
+    eventKey: "activity-a",
+    status: "completed",
+  });
+
+  assert.equal(state.activityRecords.get("activity-a").sequence, 1);
+  assert.equal(state.activityRecords.get("activity-b").sequence, 2);
+  const inserts = queries.filter(({ text }) =>
+    /INSERT INTO turn_activities/.test(text)
+  );
+  assert.deepEqual(inserts.map(({ values }) => values[1]), [1, 2]);
+  const update = queries.find(({ text }) =>
+    /UPDATE turn_activities/.test(text) && /kind = \$3/.test(text)
+  );
+  assert.equal(update.values[1], 1);
+});
+
 test("협업 활동은 검토자 정보와 결과를 JSON으로 저장한다", async () => {
   const queries = [];
   const runtime = new AgentRuntime({
@@ -585,6 +637,49 @@ test("협업 활동은 검토자 정보와 결과를 JSON으로 저장한다", a
     message: "회귀 위험이 없습니다.",
     agentStatus: "completed",
   });
+});
+
+test("부모 턴 종료는 남은 협업 카드의 구조화 상태도 함께 종료한다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+  state.activityRecords.set("collaboration:agent-1", {
+    sequence: 1,
+    kind: "collaboration",
+    text: "검토 중",
+    status: "running",
+    collaboration: {
+      action: "spawn",
+      agentThreadId: "agent-1",
+      agentStatus: "running",
+    },
+  });
+
+  await runtime.finalizeRunningActivities(state, "completed");
+
+  const query = queries.find(({ text }) =>
+    /UPDATE turn_activities/.test(text) && /jsonb_set/.test(text)
+  );
+  assert.deepEqual(query.values, ["turn-1", "completed", "completed"]);
+  assert.equal(
+    state.activityRecords.get("collaboration:agent-1").status,
+    "completed",
+  );
+  assert.equal(
+    state.activityRecords.get("collaboration:agent-1")
+      .collaboration.agentStatus,
+    "completed",
+  );
 });
 
 test("협업 활동 스키마와 실시간 API가 구조화 내용을 함께 제공한다", () => {
@@ -1069,6 +1164,293 @@ test("Codex 파일 변경 통계는 현재 턴 rollout의 실제 patch diff로 �
     ].join("\n"),
   );
   assert.equal(state.activityRecords.get("files-1").status, "completed");
+});
+
+test("Codex rollout 협업 활동은 부분 행을 보존하고 같은 DB 행을 완료한다", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "office-collab-rollout-test-"));
+  const rolloutPath = join(workdir, "rollout.jsonl");
+  writeFileSync(rolloutPath, "");
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir,
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+  state.workdir = workdir;
+  state.rolloutReader = {
+    path: rolloutPath,
+    offset: 0,
+    remainder: "",
+    pending: [],
+  };
+  state.rolloutPollPromise = null;
+
+  const spawnCall = JSON.stringify({
+    type: "response_item",
+    payload: {
+      type: "function_call",
+      name: "spawn_agent",
+      namespace: "collaboration",
+      call_id: "call-runtime-spawn",
+      arguments: JSON.stringify({
+        task_name: "runtime_review",
+        message: "gAAAAABencrypted",
+      }),
+    },
+  });
+  const started = JSON.stringify({
+    type: "event_msg",
+    payload: {
+      type: "sub_agent_activity",
+      event_id: "call-runtime-spawn",
+      agent_thread_id: "thread-runtime-review",
+      agent_path: "/root/runtime_review",
+      kind: "started",
+    },
+  });
+  const finalAnswer = JSON.stringify({
+    type: "response_item",
+    payload: {
+      type: "agent_message",
+      author: "/root/runtime_review",
+      recipient: "/root",
+      content: [{
+        type: "input_text",
+        text: [
+          "Message Type: FINAL_ANSWER",
+          "Task name: /root",
+          "Sender: /root/runtime_review",
+          "Payload:",
+          "런타임 연결 검토 완료",
+        ].join("\n"),
+      }],
+    },
+  });
+
+  appendFileSync(
+    rolloutPath,
+    `${spawnCall}\n${started.slice(0, Math.floor(started.length / 2))}`,
+  );
+  await runtime.consumeCodexRolloutActivities(state);
+  assert.equal(state.activityRecords.size, 0);
+
+  appendFileSync(
+    rolloutPath,
+    `${started.slice(Math.floor(started.length / 2))}\n`,
+  );
+  await runtime.consumeCodexRolloutActivities(state);
+
+  let inserts = queries.filter(({ text }) =>
+    /INSERT INTO turn_activities/.test(text)
+  );
+  let updates = queries.filter(({ text }) =>
+    /UPDATE turn_activities/.test(text)
+  );
+  assert.equal(inserts.length, 1);
+  assert.equal(updates.length, 0);
+  assert.equal(
+    state.activityRecords.get(
+      "collaboration:rollout:thread-runtime-review",
+    ).status,
+    "running",
+  );
+
+  appendFileSync(rolloutPath, `${finalAnswer}\n`);
+  await runtime.consumeCodexRolloutActivities(state);
+
+  inserts = queries.filter(({ text }) =>
+    /INSERT INTO turn_activities/.test(text)
+  );
+  updates = queries.filter(({ text }) =>
+    /UPDATE turn_activities/.test(text)
+  );
+  assert.equal(inserts.length, 1);
+  assert.equal(updates.length, 1);
+  assert.equal(state.activityRecords.size, 1);
+  assert.deepEqual(
+    state.activityRecords.get(
+      "collaboration:rollout:thread-runtime-review",
+    ),
+    {
+      sequence: 1,
+      kind: "collaboration",
+      text: "런타임 연결 검토 완료",
+      status: "completed",
+      collaboration: {
+        action: "result",
+        agentThreadId: "thread-runtime-review",
+        agentLabel: "runtime review",
+        prompt: "runtime review",
+        message: "런타임 연결 검토 완료",
+        agentStatus: "completed",
+      },
+    },
+  );
+  assert.doesNotMatch(JSON.stringify(queries), /gAAAAABencrypted/);
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("Codex rollout 협업 저장이 일시 실패하면 다음 poll에서 재시도한다", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "office-collab-retry-test-"));
+  const rolloutPath = join(workdir, "rollout.jsonl");
+  const records = [
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "collaboration",
+        call_id: "call-retry-spawn",
+        arguments: JSON.stringify({ task_name: "retry_review" }),
+      },
+    },
+    {
+      type: "event_msg",
+      payload: {
+        type: "sub_agent_activity",
+        event_id: "call-retry-spawn",
+        agent_thread_id: "thread-retry-review",
+        agent_path: "/root/retry_review",
+        kind: "started",
+      },
+    },
+  ];
+  writeFileSync(
+    rolloutPath,
+    `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+  );
+  let shouldFail = true;
+  let insertAttempts = 0;
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text) => {
+        if (/INSERT INTO turn_activities/.test(text)) {
+          insertAttempts += 1;
+          if (shouldFail) {
+            shouldFail = false;
+            throw new Error("temporary database error");
+          }
+        }
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir,
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+  state.workdir = workdir;
+  state.rolloutReader = {
+    path: rolloutPath,
+    offset: 0,
+    remainder: "",
+    pending: [],
+  };
+  state.rolloutPollPromise = null;
+
+  try {
+    await assert.rejects(
+      runtime.consumeCodexRolloutActivities(state),
+      /temporary database error/,
+    );
+    assert.equal(state.rolloutReader.collaborationPending.length, 1);
+
+    await runtime.consumeCodexRolloutActivities(state);
+    assert.equal(insertAttempts, 2);
+    assert.equal(state.rolloutReader.collaborationPending.length, 0);
+    assert.equal(
+      state.activityRecords.get(
+        "collaboration:rollout:thread-retry-review",
+      ).status,
+      "running",
+    );
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("새 Codex 세션의 rollout 파일이 늦게 생겨도 다음 poll에서 재부착한다", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "office-collab-attach-test-"));
+  const rolloutPath = join(workdir, "rollout.jsonl");
+  writeFileSync(
+    rolloutPath,
+    [
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "spawn_agent",
+          namespace: "collaboration",
+          call_id: "call-late-spawn",
+          arguments: JSON.stringify({ task_name: "late_review" }),
+        },
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "sub_agent_activity",
+          event_id: "call-late-spawn",
+          agent_thread_id: "thread-late-review",
+          agent_path: "/root/late_review",
+          kind: "started",
+        },
+      }),
+      "",
+    ].join("\n"),
+  );
+  const readerStartModes = [];
+  let factoryCalls = 0;
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => ({ rowCount: 1 }),
+    },
+    withTransaction: async () => {},
+    workdir,
+    broadcast: () => {},
+    rolloutReaderFactory: (_sessionID, startAtEnd) => {
+      factoryCalls += 1;
+      readerStartModes.push(startAtEnd);
+      if (factoryCalls === 1) {
+        return null;
+      }
+      return {
+        path: rolloutPath,
+        offset: startAtEnd ? readFileSync(rolloutPath).length : 0,
+        remainder: "",
+        pending: [],
+      };
+    },
+  });
+  const state = makeCodexActivityState();
+  state.workdir = workdir;
+  state.rolloutReader = null;
+  state.rolloutPollPromise = null;
+  state.resumedCodexSession = false;
+
+  try {
+    await runtime.consumeCodexRolloutActivities(state);
+    assert.equal(state.activityRecords.size, 0);
+    await runtime.consumeCodexRolloutActivities(state);
+
+    assert.equal(factoryCalls, 2);
+    assert.deepEqual(readerStartModes, [false, false]);
+    assert.equal(
+      state.activityRecords.get(
+        "collaboration:rollout:thread-late-review",
+      ).status,
+      "running",
+    );
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("업무 프롬프트에 보관된 첨부 경로를 기록한다", () => {
@@ -1901,9 +2283,9 @@ test("중단 중 늦게 저장된 keyless 활동도 출력 종료 뒤 닫는다"
 
   assert.equal(settled, true);
   const closingUpdate = queries.findLast(({ text }) =>
-    /UPDATE turn_activities\s+SET status = \$2/.test(text)
+    /UPDATE turn_activities/.test(text) && /status = \$2/.test(text)
   );
-  assert.deepEqual(closingUpdate.values, ["turn-1", "failed"]);
+  assert.deepEqual(closingUpdate.values, ["turn-1", "failed", "errored"]);
 });
 
 test("실행 중인 업무가 없으면 중단 요청을 거절한다", async () => {

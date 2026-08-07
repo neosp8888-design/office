@@ -36,6 +36,9 @@ import {
   parseAgentEvent,
 } from "./agent-event-parser.mjs";
 import {
+  CodexRolloutCollaborationTracker,
+} from "./codex-rollout-collaboration.mjs";
+import {
   appendLocalImagePreviews,
   listGeneratedImages,
 } from "./local-artifacts.mjs";
@@ -85,6 +88,7 @@ const MAX_TURN_SNAPSHOT_BYTES = 24 * 1024 * 1024;
 const ROLLOUT_TAIL_CHUNK_BYTES = 64 * 1024;
 const MAX_WORKSPACE_DIFF_BYTES = 512 * 1024;
 const MAX_AUTO_WORKSPACE_RETRIES = 3;
+const CODEX_ROLLOUT_MONITOR_INTERVAL_MS = 400;
 const rolloutPathCache = new Map();
 
 const BLOCKED_WORKSPACE_STATUSES = new Set([
@@ -104,6 +108,7 @@ export class AgentRuntime {
     repositoryRoot = workdir,
     broadcast,
     workspaceManager = null,
+    rolloutReaderFactory = createRolloutReader,
   }) {
     this.pool = pool;
     this.withTransaction = withTransaction;
@@ -111,6 +116,7 @@ export class AgentRuntime {
     this.repositoryRoot = repositoryRoot;
     this.broadcast = broadcast;
     this.workspaceManager = workspaceManager;
+    this.rolloutReaderFactory = rolloutReaderFactory;
     this.running = new Map();
     this.automaticApprovalCharacters = new Set();
   }
@@ -138,10 +144,25 @@ export class AgentRuntime {
           SELECT id, 'interrupted' AS status FROM interrupted_turns
         ), closed_activities AS (
           UPDATE turn_activities AS activity
-          SET status = CASE
-            WHEN turn.status = 'completed' THEN 'completed'
-            ELSE 'failed'
-          END
+          SET
+            status = CASE
+              WHEN turn.status = 'completed' THEN 'completed'
+              ELSE 'failed'
+            END,
+            collaboration = CASE
+              WHEN activity.kind = 'collaboration'
+                AND jsonb_typeof(activity.collaboration) = 'object'
+              THEN jsonb_set(
+                activity.collaboration,
+                '{agentStatus}',
+                to_jsonb((CASE
+                  WHEN turn.status = 'completed' THEN 'completed'
+                  ELSE 'errored'
+                END)::text),
+                true
+              )
+              ELSE activity.collaboration
+            END
           FROM terminal_turns AS turn
           WHERE activity.turn_id = turn.id
             AND activity.status = 'running'
@@ -565,11 +586,14 @@ export class AgentRuntime {
       sequence: 0,
       lastActivity: null,
       activityRecords: new Map(),
+      activityWritePromise: null,
       fileChangeSnapshots: new Map(),
-      rolloutReader: createRolloutReader(
+      rolloutReader: this.rolloutReaderFactory(
         prepared.externalSessionID,
         true,
       ),
+      rolloutMonitorTimer: null,
+      rolloutPollPromise: null,
       hasSeenInitialCodexReasoning: false,
       pendingInitialCodexReasoning: null,
       pendingAgentMessage: null,
@@ -1246,11 +1270,17 @@ export class AgentRuntime {
       detached: process.platform !== "win32",
     });
     state.process = child;
+    this.startCodexRolloutMonitor(state);
 
     const outputTask = this.consumeOutput(state, child.stdout);
     const errorTask = collectStream(child.stderr);
-    const [exitCode] = await once(child, "close");
-    await outputTask;
+    let exitCode;
+    try {
+      [exitCode] = await once(child, "close");
+      await outputTask;
+    } finally {
+      await this.stopCodexRolloutMonitor(state);
+    }
     const stderr = (await errorTask).trim();
 
     if (await this.settleCancelledOutput(state)) {
@@ -1273,6 +1303,95 @@ export class AgentRuntime {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
     await this.complete(state, decoded);
+  }
+
+  startCodexRolloutMonitor(state) {
+    if (
+      state.character.backend !== "codex" ||
+      state.rolloutMonitorTimer
+    ) {
+      return;
+    }
+    state.rolloutMonitorTimer = setInterval(() => {
+      void this.consumeCodexRolloutActivities(state).catch((error) => {
+        console.warn(
+          "Codex 협업 기록을 읽지 못했습니다.",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    }, CODEX_ROLLOUT_MONITOR_INTERVAL_MS);
+    state.rolloutMonitorTimer.unref?.();
+  }
+
+  async stopCodexRolloutMonitor(state) {
+    if (state.rolloutMonitorTimer) {
+      clearInterval(state.rolloutMonitorTimer);
+      state.rolloutMonitorTimer = null;
+    }
+    if (state.rolloutPollPromise) {
+      try {
+        await state.rolloutPollPromise;
+      } catch {
+        // 마지막 직접 읽기에서 한 번 더 복구를 시도한다.
+      }
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.consumeCodexRolloutActivities(state);
+        break;
+      } catch (error) {
+        if (attempt === 1) {
+          console.warn(
+            "Codex 협업 기록의 마지막 갱신을 읽지 못했습니다.",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+    }
+  }
+
+  async consumeCodexRolloutActivities(state) {
+    if (state.character.backend !== "codex") {
+      return;
+    }
+    if (!state.rolloutReader && state.externalSessionID) {
+      state.rolloutReader = this.rolloutReaderFactory(
+        state.externalSessionID,
+        state.resumedCodexSession === true,
+      );
+    }
+    if (!state.rolloutReader) {
+      return;
+    }
+    if (state.rolloutPollPromise) {
+      return state.rolloutPollPromise;
+    }
+    const poll = (async () => {
+      const reader = state.rolloutReader;
+      const activities = rolloutCollaborationActivities(
+        reader,
+        state.workdir,
+      );
+      if (activities.length === 0) {
+        return;
+      }
+      await this.promotePendingAgentMessage(state);
+      for (const activity of activities) {
+        await this.addParsedActivity(state, activity);
+        acknowledgeRolloutCollaborationActivity(
+          reader,
+          activity,
+        );
+      }
+    })();
+    state.rolloutPollPromise = poll;
+    try {
+      await poll;
+    } finally {
+      if (state.rolloutPollPromise === poll) {
+        state.rolloutPollPromise = null;
+      }
+    }
   }
 
   async consumeOutput(state, stream) {
@@ -1639,7 +1758,7 @@ export class AgentRuntime {
       );
     });
     state.externalSessionID = externalSessionID;
-    state.rolloutReader = createRolloutReader(
+    state.rolloutReader = this.rolloutReaderFactory(
       externalSessionID,
       !isNewSession,
     );
@@ -1647,6 +1766,21 @@ export class AgentRuntime {
   }
 
   async addActivity(state, activity) {
+    const previous = state.activityWritePromise ?? Promise.resolve();
+    const write = previous
+      .catch(() => {})
+      .then(() => this.persistActivity(state, activity));
+    state.activityWritePromise = write;
+    try {
+      await write;
+    } finally {
+      if (state.activityWritePromise === write) {
+        state.activityWritePromise = null;
+      }
+    }
+  }
+
+  async persistActivity(state, activity) {
     const eventKey = activity.eventKey ?? null;
     const existing = eventKey
       ? state.activityRecords.get(eventKey)
@@ -1714,7 +1848,7 @@ export class AgentRuntime {
       return;
     }
 
-    state.sequence += 1;
+    const sequence = state.sequence + 1;
     await this.pool.query(
       `
         INSERT INTO turn_activities (
@@ -1731,7 +1865,7 @@ export class AgentRuntime {
       `,
       [
         state.turnID,
-        state.sequence,
+        sequence,
         activity.kind,
         text,
         eventKey,
@@ -1739,9 +1873,10 @@ export class AgentRuntime {
         collaboration,
       ],
     );
+    state.sequence = sequence;
     if (eventKey) {
       state.activityRecords.set(eventKey, {
-        sequence: state.sequence,
+        sequence,
         kind: activity.kind,
         text,
         status,
@@ -1799,19 +1934,55 @@ export class AgentRuntime {
   }
 
   async finalizeRunningActivities(state, status) {
+    if (state.activityWritePromise) {
+      try {
+        await state.activityWritePromise;
+      } catch {
+        // 실패한 개별 저장은 호출자가 처리하고, 이미 저장된 실행 중 행은
+        // 아래 일괄 전환으로 끝 상태를 맞춘다.
+      }
+    }
+    const collaborationAgentStatus = status === "completed"
+      ? "completed"
+      : "errored";
     await this.pool.query(
       `
         UPDATE turn_activities
-        SET status = $2
+        SET
+          status = $2,
+          collaboration = CASE
+            WHEN kind = 'collaboration'
+              AND jsonb_typeof(collaboration) = 'object'
+            THEN jsonb_set(
+              collaboration,
+              '{agentStatus}',
+              to_jsonb($3::text),
+              true
+            )
+            ELSE collaboration
+          END
         WHERE turn_id = $1
           AND status = 'running'
       `,
-      [state.turnID, status],
+      [state.turnID, status, collaborationAgentStatus],
     );
     if (state.activityRecords instanceof Map) {
       for (const [eventKey, activity] of state.activityRecords) {
         if (activity.status === "running") {
-          state.activityRecords.set(eventKey, { ...activity, status });
+          const collaboration =
+            activity.kind === "collaboration" &&
+              activity.collaboration &&
+              typeof activity.collaboration === "object"
+              ? {
+                ...activity.collaboration,
+                agentStatus: collaborationAgentStatus,
+              }
+              : activity.collaboration;
+          state.activityRecords.set(eventKey, {
+            ...activity,
+            status,
+            collaboration,
+          });
         }
       }
     }
@@ -3708,6 +3879,8 @@ function createRolloutReader(sessionID, startAtEnd) {
     offset: startAtEnd ? statSync(path).size : 0,
     remainder: "",
     pending: [],
+    collaborationPending: [],
+    collaborationTracker: new CodexRolloutCollaborationTracker(),
   };
 }
 
@@ -3907,7 +4080,7 @@ function nonnegativeTokenCount(value) {
 }
 
 function rolloutFileChangeStatistics(reader, workdir, changes) {
-  if (!reader || !readRolloutPatchEvents(reader, workdir)) {
+  if (!reader || !readRolloutEvents(reader, workdir)) {
     return null;
   }
   const expectedPaths = normalizedChangePaths(workdir, changes);
@@ -3921,7 +4094,26 @@ function rolloutFileChangeStatistics(reader, workdir, changes) {
   return event.statistics;
 }
 
-function readRolloutPatchEvents(reader, workdir) {
+function rolloutCollaborationActivities(reader, workdir) {
+  if (!reader || !readRolloutEvents(reader, workdir)) {
+    return [];
+  }
+  reader.collaborationPending ??= [];
+  return [...reader.collaborationPending];
+}
+
+function acknowledgeRolloutCollaborationActivity(reader, activity) {
+  const pending = reader?.collaborationPending;
+  if (!Array.isArray(pending)) {
+    return;
+  }
+  const index = pending.indexOf(activity);
+  if (index >= 0) {
+    pending.splice(index, 1);
+  }
+}
+
+function readRolloutEvents(reader, workdir) {
   let size;
   try {
     size = statSync(reader.path).size;
@@ -3932,6 +4124,8 @@ function readRolloutPatchEvents(reader, workdir) {
     reader.offset = 0;
     reader.remainder = "";
     reader.pending = [];
+    reader.collaborationPending = [];
+    reader.collaborationTracker = new CodexRolloutCollaborationTracker();
   }
   if (size === reader.offset) {
     return true;
@@ -3971,6 +4165,9 @@ function readRolloutPatchEvents(reader, workdir) {
     reader.remainder + buffer.subarray(0, bytesRead).toString("utf8")
   ).split("\n");
   reader.remainder = lines.pop() ?? "";
+  reader.collaborationPending ??= [];
+  reader.collaborationTracker ??=
+    new CodexRolloutCollaborationTracker();
   for (const line of lines) {
     let record;
     try {
@@ -3979,6 +4176,9 @@ function readRolloutPatchEvents(reader, workdir) {
       continue;
     }
     const payload = record?.payload;
+    reader.collaborationPending.push(
+      ...reader.collaborationTracker.consume(record),
+    );
     if (
       payload?.type !== "patch_apply_end" ||
       payload.status !== "completed" ||

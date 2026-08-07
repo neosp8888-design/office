@@ -418,6 +418,40 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
     }
 
+    func testCollaborationSummaryReadsPromptAndResultFromOneUpdatedRow()
+        throws
+    {
+        let activity = try makeActivity(
+            id: "collaboration-1",
+            kind: "collaboration",
+            text: "현재 이벤트 형식 검토 완료",
+            status: "completed",
+            collaboration: [
+                "action": "result",
+                "agentThreadId": "reviewer-1",
+                "agentLabel": "event schema review",
+                "prompt": "event schema review",
+                "message": "현재 이벤트 형식 검토 완료",
+                "agentStatus": "completed",
+            ]
+        )
+        let summary = try XCTUnwrap(
+            CodexCollaborationSummary.make(
+                from: [CodexActivityGroupItem.activity(activity)]
+            )
+        )
+
+        XCTAssertEqual(summary.agents.count, 1)
+        XCTAssertEqual(summary.completedCount, 1)
+        XCTAssertEqual(summary.runningCount, 0)
+        XCTAssertEqual(summary.agents[0].label, "event schema review")
+        XCTAssertEqual(summary.agents[0].prompt, "event schema review")
+        XCTAssertEqual(
+            summary.agents[0].result,
+            "현재 이벤트 형식 검토 완료"
+        )
+    }
+
     func testCodexTranscriptPreservesRepeatedMessageAfterPrefixRemoval() throws {
         let activity = try makeActivity(
             id: "message-1",
