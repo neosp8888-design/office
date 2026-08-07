@@ -233,6 +233,93 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
         XCTAssertEqual(last.text, "이어서 작성 중")
     }
 
+    func testEarlierMessagesAreGroupedWhileLatestStaysVisible() throws {
+        let activities = try [
+            makeActivity(
+                id: "message-1",
+                kind: "message",
+                text: "첫 번째 진행 보고",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-1",
+                kind: "tool",
+                text: "도구 · Bash · swift test",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "message-2",
+                kind: "message",
+                text: "두 번째 진행 보고",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-2",
+                kind: "tool",
+                text: "도구 · Read · Package.swift",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "message-3",
+                kind: "message",
+                text: "최종 보고",
+                status: "completed"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "첫 번째 진행 보고\n\n두 번째 진행 보고\n\n최종 보고",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        XCTAssertEqual(presentation.entries.count, 4)
+        guard
+            case .messageHistory(let history) = presentation.entries[0],
+            case .tools = presentation.entries[1],
+            case .tools = presentation.entries[2],
+            case .message(let latest) = presentation.entries[3]
+        else {
+            return XCTFail("이전 대화가 한 묶음으로 정리되지 않았습니다.")
+        }
+        XCTAssertEqual(
+            history.messages.map(\.text),
+            ["첫 번째 진행 보고", "두 번째 진행 보고"]
+        )
+        XCTAssertEqual(latest.text, "최종 보고")
+        XCTAssertEqual(presentation.latestMessage, latest)
+    }
+
+    func testStreamingResponseKeepsPromotedMessageInHistory() throws {
+        let activity = try makeActivity(
+            id: "message-1",
+            kind: "message",
+            text: "완료 전 보고",
+            status: "completed"
+        )
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [activity],
+            response: "완료 전 보고\n\n작성 중인 최신 응답",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+
+        XCTAssertEqual(presentation.entries.count, 2)
+        guard
+            case .messageHistory(let history) = presentation.entries[0],
+            case .message(let latest) = presentation.entries[1]
+        else {
+            return XCTFail("진행 메시지와 최신 응답이 분리되지 않았습니다.")
+        }
+        XCTAssertEqual(history.messages.map(\.text), ["완료 전 보고"])
+        XCTAssertEqual(latest.text, "작성 중인 최신 응답")
+        XCTAssertEqual(presentation.streamingMessageID, latest.id)
+    }
+
     func testCompletedResponseIsNotStreaming() throws {
         let presentation = ClaudeTranscriptPresentation.make(
             turnID: "turn-1",

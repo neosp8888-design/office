@@ -93,15 +93,9 @@ struct ClaudeTranscriptView: View {
         let visibleEntries = showsAllEntries
             ? presentation.entries
             : Array(presentation.entries.suffix(Self.compactEntryLimit))
-        let conclusionMessageID: String? = {
-            guard
-                isCompleted,
-                case .message(let message) = presentation.entries.last
-            else {
-                return nil
-            }
-            return message.id
-        }()
+        let conclusionMessageID = isCompleted
+            ? presentation.latestMessage?.id
+            : nil
 
         VStack(alignment: .leading, spacing: 13) {
             if hiddenCount > 0, !showsAllEntries {
@@ -168,6 +162,12 @@ struct ClaudeTranscriptView: View {
             )
         case .plan(let board):
             ClaudePlanBoardView(board: board)
+        case .messageHistory(let history):
+            ClaudeMessageHistoryView(
+                turnID: turnID,
+                workspaceDirectory: workspaceDirectory,
+                history: history
+            )
         case .message(let message):
             ClaudeMessageView(
                 turnID: turnID,
@@ -182,6 +182,83 @@ struct ClaudeTranscriptView: View {
                 onFinishedTyping: onResponsePresented
             )
         }
+    }
+}
+
+/// 앞선 공개 대화는 기본으로 접고 요청 시에만 원문을 만든다.
+private struct ClaudeMessageHistoryView: View {
+    let turnID: String
+    let workspaceDirectory: String
+    let history: ClaudeMessageHistory
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(history.messages) { message in
+                        ClaudeMessageView(
+                            turnID: turnID,
+                            workspaceDirectory: workspaceDirectory,
+                            message: message,
+                            isConclusion: false,
+                            needsInput: false,
+                            isStreaming: false,
+                            animates: false,
+                            responseFeedback: nil,
+                            updateResponseFeedback: { _ in },
+                            onFinishedTyping: {}
+                        )
+
+                        if message.id != history.messages.last?.id {
+                            Divider()
+                                .opacity(0.45)
+                        }
+                    }
+                }
+                .padding(.top, 8)
+                .transition(.opacity)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(ClaudePalette.accent)
+
+                Text("이전 대화")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 6)
+
+                Text("\(history.messages.count)개")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .tint(.secondary)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .background(
+            ClaudePalette.accent.opacity(0.045),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(ClaudePalette.accent.opacity(0.10))
+        }
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.16),
+            value: isExpanded
+        )
+        .accessibilityLabel(
+            isExpanded
+                ? "이전 대화 \(history.messages.count)개 접기"
+                : "이전 대화 \(history.messages.count)개 보기"
+        )
     }
 }
 
