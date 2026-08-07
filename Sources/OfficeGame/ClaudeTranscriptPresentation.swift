@@ -163,7 +163,6 @@ enum ClaudeTranscriptEntry: Identifiable, Equatable {
     case tools(ClaudeToolRun)
     case edits(ClaudeEditRun)
     case plan(ClaudePlanBoard)
-    case messageHistory(ClaudeMessageHistory)
     case message(ClaudeTranscriptMessage)
 
     var id: String {
@@ -176,8 +175,6 @@ enum ClaudeTranscriptEntry: Identifiable, Equatable {
             run.id
         case .plan(let board):
             board.id
-        case .messageHistory(let history):
-            history.id
         case .message(let message):
             message.id
         }
@@ -352,15 +349,6 @@ struct ClaudeTranscriptMessage: Identifiable, Equatable {
     let id: String
     let text: String
     let occurredAt: Date
-}
-
-/// 현재 또는 최종 대화보다 앞선 공개 대화를 한 카드로 접는다.
-struct ClaudeMessageHistory: Identifiable, Equatable {
-    let messages: [ClaudeTranscriptMessage]
-
-    var id: String {
-        "message-history:\(messages.first?.id ?? "empty")"
-    }
 }
 
 /// Claude 턴 하나를 발생 순서대로 재구성한 결과다.
@@ -541,8 +529,6 @@ struct ClaudeTranscriptPresentation: Equatable {
             streamingMessageID = isRunning ? id : nil
         }
 
-        entries = groupingEarlierMessages(in: entries)
-
         return ClaudeTranscriptPresentation(
             entries: entries,
             showsWaiting: isRunning
@@ -550,49 +536,5 @@ struct ClaudeTranscriptPresentation: Equatable {
                 && !activities.contains { $0.status == .running },
             streamingMessageID: streamingMessageID
         )
-    }
-
-    private static func groupingEarlierMessages(
-        in entries: [ClaudeTranscriptEntry]
-    ) -> [ClaudeTranscriptEntry] {
-        let messageIndices = entries.indices.filter { index in
-            if case .message = entries[index] {
-                return true
-            }
-            return false
-        }
-        guard messageIndices.count > 1 else {
-            return entries
-        }
-
-        let earlierIndices = Array(messageIndices.dropLast())
-        let earlierMessages = earlierIndices.compactMap { index in
-            if case .message(let message) = entries[index] {
-                return message
-            }
-            return nil
-        }
-        guard let insertionIndex = earlierIndices.first else {
-            return entries
-        }
-
-        let earlierIndexSet = Set(earlierIndices)
-        var groupedEntries: [ClaudeTranscriptEntry] = []
-        groupedEntries.reserveCapacity(entries.count - earlierIndices.count + 1)
-
-        for index in entries.indices {
-            if index == insertionIndex {
-                groupedEntries.append(
-                    .messageHistory(
-                        ClaudeMessageHistory(messages: earlierMessages)
-                    )
-                )
-            }
-            if earlierIndexSet.contains(index) {
-                continue
-            }
-            groupedEntries.append(entries[index])
-        }
-        return groupedEntries
     }
 }
