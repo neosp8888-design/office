@@ -125,6 +125,7 @@ struct ClaudeTranscriptView: View {
     let isCompleted: Bool
     let needsInput: Bool
     let animatesResponse: Bool
+    let animatesInitialResponse: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
@@ -161,6 +162,12 @@ struct ClaudeTranscriptView: View {
         let conclusionMessageID = isCompleted
             ? presentation.latestMessage?.id
             : nil
+        let responseCompletionRevision =
+            ClaudeResponseCompletionRevision(
+                response: response,
+                isRunning: isRunning,
+                animatesResponse: animatesResponse
+            )
 
         VStack(alignment: .leading, spacing: 13) {
             if hiddenCount > 0, !showsAllEntries {
@@ -201,15 +208,19 @@ struct ClaudeTranscriptView: View {
             reduceMotion ? nil : .easeOut(duration: 0.18),
             value: presentation.showsWaiting
         )
-        .task(id: response) {
+        .task(id: responseCompletionRevision) {
             guard
                 animatesResponse,
-                !isRunning,
-                !response.isEmpty
+                !isRunning
             else {
                 return
             }
             onResponsePresented()
+        }
+        .onDisappear {
+            if animatesResponse, !isRunning {
+                onResponsePresented()
+            }
         }
     }
 
@@ -242,12 +253,19 @@ struct ClaudeTranscriptView: View {
                 needsInput: isConclusion && needsInput,
                 isStreaming: isStreaming,
                 animates: animatesResponse,
+                animatesInitialSource: animatesInitialResponse,
                 responseFeedback: responseFeedback,
                 updateResponseFeedback: updateResponseFeedback,
                 onFinishedTyping: onResponsePresented
             )
         }
     }
+}
+
+struct ClaudeResponseCompletionRevision: Hashable {
+    let response: String
+    let isRunning: Bool
+    let animatesResponse: Bool
 }
 
 private struct ClaudeWaitingView: View {
@@ -887,6 +905,7 @@ private struct ClaudeMessageView: View {
     let needsInput: Bool
     let isStreaming: Bool
     let animates: Bool
+    let animatesInitialSource: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onFinishedTyping: () -> Void
@@ -914,6 +933,7 @@ private struct ClaudeMessageView: View {
                     source: message.text,
                     fileBaseDirectory: workspaceDirectory,
                     animates: animates,
+                    animatesInitialSource: animatesInitialSource,
                     isStreaming: true,
                     onFinishedTyping: onFinishedTyping
                 )

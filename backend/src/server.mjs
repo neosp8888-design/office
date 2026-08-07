@@ -48,6 +48,7 @@ import { startSlackBridge } from "./slack-bridge.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const automaticWorkspaceApprovalRetryIntervalMs = 10_000;
+const liveFeedMinimumTurnsPerCharacter = 10;
 const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
@@ -873,7 +874,7 @@ async function queryTurnFeed({
   const result = await pool.query(
     `
       WITH matching_turn_ids AS (
-        SELECT t.id, t.started_at
+        SELECT t.id, t.started_at, session.character_id
         FROM turns AS t
         JOIN cli_sessions AS session
           ON session.id = t.cli_session_id
@@ -900,15 +901,31 @@ async function queryTurnFeed({
               )
             ) ILIKE '%' || $3 || '%'
           )
+      ), ranked_character_turn_ids AS (
+        SELECT
+          matching.id,
+          row_number() OVER (
+            PARTITION BY matching.character_id
+            ORDER BY matching.started_at DESC, matching.id DESC
+          ) AS character_rank
+        FROM matching_turn_ids AS matching
       ), selected_turn_ids AS (
         SELECT recent.id
         FROM (
           SELECT id
           FROM matching_turn_ids
-          ORDER BY started_at DESC
+          ORDER BY started_at DESC, id DESC
           LIMIT $2
           OFFSET $4
         ) AS recent
+        UNION
+        SELECT ranked.id
+        FROM ranked_character_turn_ids AS ranked
+        WHERE $1::uuid IS NULL
+          AND $5::boolean
+          AND $3::text IS NULL
+          AND $4::integer = 0
+          AND ranked.character_rank <= $6::integer
         UNION
         SELECT task_workspace.review_turn_id
         FROM task_workspaces AS task_workspace
@@ -1037,9 +1054,16 @@ async function queryTurnFeed({
           )
         LIMIT 1
       ) AS workspace ON true
-      ORDER BY t.started_at DESC
+      ORDER BY t.started_at DESC, t.id DESC
     `,
-    [turnID, limit, query, offset, includesWorkspaceReviews],
+    [
+      turnID,
+      limit,
+      query,
+      offset,
+      includesWorkspaceReviews,
+      liveFeedMinimumTurnsPerCharacter,
+    ],
   );
   return result.rows.map((turn) =>
     withSessionContext(withArtifactPreviews(turn)),

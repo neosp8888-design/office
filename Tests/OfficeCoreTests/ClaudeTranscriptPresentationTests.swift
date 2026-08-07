@@ -5,6 +5,21 @@ import XCTest
 @testable import OfficeGame
 
 final class ClaudeTranscriptPresentationTests: XCTestCase {
+    func testResponseCompletionRevisionChangesWhenRunningCompletes() {
+        let running = ClaudeResponseCompletionRevision(
+            response: "같은 응답",
+            isRunning: true,
+            animatesResponse: true
+        )
+        let completed = ClaudeResponseCompletionRevision(
+            response: "같은 응답",
+            isRunning: false,
+            animatesResponse: true
+        )
+
+        XCTAssertNotEqual(running, completed)
+    }
+
     func testToolCallSplitsNameAndDetail() throws {
         let call = ClaudeToolCall.parse(
             try makeActivity(

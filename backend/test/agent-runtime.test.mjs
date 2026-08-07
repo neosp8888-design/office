@@ -5068,6 +5068,63 @@ test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토
   }
 });
 
+test("실시간 피드는 직원별 최신 대화를 최근 제한 밖에서도 보존한다", () => {
+  const serverSource = readFileSync(
+    new URL("../src/server.mjs", import.meta.url),
+    "utf8",
+  );
+  const queryStart = serverSource.indexOf("async function queryTurnFeed");
+  const queryEnd = serverSource.indexOf(
+    "async function workspaceReview",
+    queryStart,
+  );
+  assert.ok(queryStart >= 0 && queryEnd > queryStart);
+  const querySource = serverSource.slice(queryStart, queryEnd);
+
+  assert.match(
+    serverSource,
+    /const liveFeedMinimumTurnsPerCharacter = 10;/,
+  );
+  assert.match(
+    querySource,
+    /row_number\(\) OVER \([\s\S]*PARTITION BY matching\.character_id/,
+  );
+  assert.match(
+    querySource,
+    /UNION[\s\S]*SELECT ranked\.id[\s\S]*ranked\.character_rank <= \$6::integer/,
+  );
+  assert.match(
+    querySource,
+    /\$5::boolean[\s\S]*\$3::text IS NULL[\s\S]*\$4::integer = 0/,
+  );
+  assert.match(
+    querySource,
+    /includesWorkspaceReviews,[\s\S]*liveFeedMinimumTurnsPerCharacter/,
+  );
+  assert.match(
+    querySource,
+    /ORDER BY started_at DESC, id DESC[\s\S]*ORDER BY t\.started_at DESC, t\.id DESC/,
+  );
+
+  const liveStart = serverSource.indexOf("async function queryLiveFeed");
+  const archiveStart = serverSource.indexOf(
+    "async function queryArchiveFeed",
+    liveStart,
+  );
+  const contextStart = serverSource.indexOf(
+    "function withSessionContext",
+    archiveStart,
+  );
+  assert.match(
+    serverSource.slice(liveStart, archiveStart),
+    /includesWorkspaceReviews: true/,
+  );
+  assert.match(
+    serverSource.slice(archiveStart, contextStart),
+    /includesWorkspaceReviews: false/,
+  );
+});
+
 test("대화 보관함은 전체 검색을 12건 페이지로 요청한다", () => {
   const serverSource = readFileSync(
     new URL("../src/server.mjs", import.meta.url),

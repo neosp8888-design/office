@@ -35,6 +35,7 @@ enum WorkspaceReviewDecision {
 final class CharacterLiveFeedStore: ObservableObject {
     @Published private(set) var turns: [LiveFeedTurn]
     @Published private(set) var isLoadingInitialFeed: Bool
+    @Published private(set) var presentationRevision = 0
 
     private var latestTurns: [LiveFeedTurn]
     private var latestIsLoadingInitialFeed: Bool
@@ -73,6 +74,13 @@ final class CharacterLiveFeedStore: ObservableObject {
         publishLatestIfNeeded()
     }
 
+    func refreshPresentation() {
+        guard isPresented else {
+            return
+        }
+        presentationRevision &+= 1
+    }
+
     private func publishLatestIfNeeded() {
         if turns != latestTurns {
             turns = latestTurns
@@ -90,22 +98,45 @@ private struct RealtimeFeedEvent: Decodable {
 
 @MainActor
 final class LiveFeedStore: ObservableObject {
+    private struct ResponseAnimationState {
+        let characterID: String
+        let animatesInitialSource: Bool
+    }
+
     @Published private(set) var turns: [LiveFeedTurn] = []
     @Published private(set) var isLoadingInitialFeed = true
-    @Published private var responseAnimationTurnIDs: Set<String> = []
     private(set) var persistedTurns: [LiveFeedTurn] = []
     private var optimisticTurns: [String: LiveFeedTurn] = [:]
     private var turnsByCharacterID: [String: [LiveFeedTurn]] = [:]
     private var characterStores: [String: CharacterLiveFeedStore] = [:]
+    private var responseAnimations: [String: ResponseAnimationState] = [:]
+    private(set) var selectedCharacterFeedID: String?
+
+    static let minimumTurnsPerCharacter = 10
 
     static func snapshotTurns(
         from sortedTurns: [LiveFeedTurn],
         recentLimit: Int
     ) -> [LiveFeedTurn] {
-        Array(sortedTurns.prefix(recentLimit))
-            + sortedTurns.dropFirst(recentLimit).filter {
-                $0.workspace?.status.blocksNewTasks == true
+        let recentTurns = Array(sortedTurns.prefix(recentLimit))
+        var selectedTurnIDs = Set(recentTurns.map(\.id))
+        var selectedCounts = Dictionary(
+            grouping: recentTurns,
+            by: \.characterId
+        ).mapValues(\.count)
+
+        for turn in sortedTurns.dropFirst(recentLimit) {
+            let selectedCount = selectedCounts[turn.characterId, default: 0]
+            if selectedCount < minimumTurnsPerCharacter {
+                selectedTurnIDs.insert(turn.id)
+                selectedCounts[turn.characterId] = selectedCount + 1
             }
+            if turn.workspace?.status.blocksNewTasks == true {
+                selectedTurnIDs.insert(turn.id)
+            }
+        }
+
+        return sortedTurns.filter { selectedTurnIDs.contains($0.id) }
     }
 
     func replace(with turns: [LiveFeedTurn]) {
@@ -185,11 +216,30 @@ final class LiveFeedStore: ObservableObject {
         return store
     }
 
-    func setCharacterFeedPresented(
-        _ isPresented: Bool,
-        for characterID: String
+    func selectCharacterFeed(_ characterID: String?) {
+        guard selectedCharacterFeedID != characterID else {
+            return
+        }
+        if let selectedCharacterFeedID {
+            discardTerminalResponseAnimations(
+                forCharacterID: selectedCharacterFeedID
+            )
+            characterStore(for: selectedCharacterFeedID)
+                .setPresented(false)
+        }
+        selectedCharacterFeedID = characterID
+        if let characterID {
+            characterStore(for: characterID).setPresented(true)
+        }
+    }
+
+    func refreshSelectedCharacterFeedAfterMount(
+        _ characterID: String
     ) {
-        characterStore(for: characterID).setPresented(isPresented)
+        guard selectedCharacterFeedID == characterID else {
+            return
+        }
+        characterStores[characterID]?.refreshPresentation()
     }
 
     private func hasMatchingPersistedTurn(
@@ -219,6 +269,8 @@ final class LiveFeedStore: ObservableObject {
             }
             return $0.startedAt > $1.startedAt
         }
+        pruneResponseAnimations(for: mergedTurns)
+        suppressHiddenInitialResponseAnimations(in: mergedTurns)
         guard turns != mergedTurns else {
             return
         }
@@ -249,22 +301,154 @@ final class LiveFeedStore: ObservableObject {
         }
     }
 
-    func beginResponseAnimation(for turnID: String) {
-        guard !responseAnimationTurnIDs.contains(turnID) else {
+    func restoreResponseAnimations(for turns: [LiveFeedTurn]) {
+        for turn in turns where turn.status.isRunning {
+            guard responseAnimations[turn.id] == nil else {
+                continue
+            }
+            responseAnimations[turn.id] = ResponseAnimationState(
+                characterID: turn.characterId,
+                animatesInitialSource: restoredTurnAnimatesInitialSource(turn)
+            )
+        }
+    }
+
+    private func restoredTurnAnimatesInitialSource(
+        _ turn: LiveFeedTurn
+    ) -> Bool {
+        guard (turn.backend ?? turn.characterBackend) == .claude else {
+            return turn.response.isEmpty
+        }
+        return ClaudeTranscriptPresentation.make(
+            turnID: turn.id,
+            activities: turn.activities,
+            response: turn.response,
+            responseUpdatedAt: turn.updatedAt,
+            isRunning: true
+        ).streamingMessageID == nil
+    }
+
+    func beginResponseAnimation(
+        for turnID: String,
+        characterID: String? = nil,
+        notifiesCharacterStore: Bool = true
+    ) {
+        guard responseAnimations[turnID] == nil else {
             return
         }
-        responseAnimationTurnIDs.insert(turnID)
+        guard
+            let resolvedCharacterID = characterID
+                ?? turn(withID: turnID)?.characterId
+        else {
+            return
+        }
+        responseAnimations[turnID] = ResponseAnimationState(
+            characterID: resolvedCharacterID,
+            animatesInitialSource: true
+        )
+        if notifiesCharacterStore {
+            characterStores[resolvedCharacterID]?
+                .refreshPresentation()
+        }
     }
 
     func shouldAnimateResponse(for turn: LiveFeedTurn) -> Bool {
-        turn.status.isRunning || responseAnimationTurnIDs.contains(turn.id)
+        responseAnimations[turn.id] != nil
+    }
+
+    func shouldAnimateInitialResponse(for turn: LiveFeedTurn) -> Bool {
+        responseAnimations[turn.id]?.animatesInitialSource == true
     }
 
     func finishResponseAnimation(for turnID: String) {
-        guard responseAnimationTurnIDs.contains(turnID) else {
+        guard let animation = responseAnimations[turnID] else {
             return
         }
-        responseAnimationTurnIDs.remove(turnID)
+        let turn = turn(withID: turnID)
+        guard turn?.status.isRunning != true else {
+            return
+        }
+        responseAnimations[turnID] = nil
+        characterStores[animation.characterID]?
+            .refreshPresentation()
+    }
+
+    private func turn(withID turnID: String) -> LiveFeedTurn? {
+        optimisticTurns[turnID]
+            ?? persistedTurns.first(where: { $0.id == turnID })
+    }
+
+    private func discardTerminalResponseAnimations(
+        forCharacterID characterID: String
+    ) {
+        let turnIDs = responseAnimations.compactMap { element -> String? in
+            let (turnID, animation) = element
+            guard
+                animation.characterID == characterID,
+                turn(withID: turnID)?.status.isRunning != true
+            else {
+                return nil
+            }
+            return turnID
+        }
+        for turnID in turnIDs {
+            responseAnimations[turnID] = nil
+        }
+    }
+
+    private func pruneResponseAnimations(for turns: [LiveFeedTurn]) {
+        let turnsByID = Dictionary(
+            uniqueKeysWithValues: turns.map { ($0.id, $0) }
+        )
+        let turnIDs = responseAnimations.compactMap { element -> String? in
+            let (turnID, animation) = element
+            guard let turn = turnsByID[turnID] else {
+                return turnID
+            }
+            guard !turn.status.isRunning else {
+                return nil
+            }
+            if turn.status != .completed
+                || turn.response.isEmpty
+                || animation.characterID != selectedCharacterFeedID
+            {
+                return turnID
+            }
+            return nil
+        }
+        for turnID in turnIDs {
+            responseAnimations[turnID] = nil
+        }
+    }
+
+    private func suppressHiddenInitialResponseAnimations(
+        in turns: [LiveFeedTurn]
+    ) {
+        let turnsByID = Dictionary(
+            uniqueKeysWithValues: turns.map { ($0.id, $0) }
+        )
+        let turnIDs = responseAnimations.compactMap { element -> String? in
+            let (turnID, animation) = element
+            guard
+                animation.animatesInitialSource,
+                animation.characterID != selectedCharacterFeedID,
+                let turn = turnsByID[turnID],
+                turn.status.isRunning,
+                !restoredTurnAnimatesInitialSource(turn)
+            else {
+                return nil
+            }
+            return turnID
+        }
+        for turnID in turnIDs {
+            guard let animation = responseAnimations[turnID] else {
+                continue
+            }
+            responseAnimations[turnID] = ResponseAnimationState(
+                characterID: animation.characterID,
+                animatesInitialSource: false
+            )
+        }
     }
 }
 
@@ -365,6 +549,11 @@ final class AgentDirector: ObservableObject {
             characterSelectionStore.selectedCharacterID
         }
         set {
+            guard characterSelectionStore.selectedCharacterID != newValue
+            else {
+                return
+            }
+            liveFeedStore.selectCharacterFeed(newValue?.rawValue)
             characterSelectionStore.select(newValue)
         }
     }
@@ -574,6 +763,9 @@ final class AgentDirector: ObservableObject {
         )
         database = OfficeDatabaseClient(
             baseURL: configuration.databaseBaseURL
+        )
+        liveFeedStore.selectCharacterFeed(
+            characterSelectionStore.selectedCharacterID?.rawValue
         )
 
         Task {
@@ -822,12 +1014,16 @@ final class AgentDirector: ObservableObject {
                     attachmentPaths: attachmentPaths
                 )
                 conversationIDs[character.id] = started.conversationId
+                liveFeedStore.beginResponseAnimation(
+                    for: started.turnId,
+                    characterID: character.id.rawValue,
+                    notifiesCharacterStore: false
+                )
                 liveFeedStore.reconcileOptimisticTurn(
                     id: optimisticTurnID,
                     with: started.turnId
                 )
                 latestSubmittedTurnID = started.turnId
-                liveFeedStore.beginResponseAnimation(for: started.turnId)
                 scheduleRealtimeFeedRefresh(turnID: started.turnId)
                 latestStartedCommandID = commandID
             } catch {
@@ -1594,6 +1790,19 @@ final class AgentDirector: ObservableObject {
 
         let previousStatuses = observedTurnStatuses
         let previousRunningCharacters = runningCharacters
+        if !hasLoadedLiveFeedSnapshot {
+            liveFeedStore.restoreResponseAnimations(for: turns)
+        } else if announcingTransitions {
+            for turn in turns where
+                turn.status.isRunning && previousStatuses[turn.id] == nil
+            {
+                liveFeedStore.beginResponseAnimation(
+                    for: turn.id,
+                    characterID: turn.characterId,
+                    notifiesCharacterStore: false
+                )
+            }
+        }
         liveFeedStore.replace(with: turns)
         archiveFeedStore.replaceIfNeeded(with: turns)
         selectLatestConversationCharacterIfNeeded(turns)
