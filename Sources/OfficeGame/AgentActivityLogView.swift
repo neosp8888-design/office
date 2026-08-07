@@ -749,6 +749,7 @@ struct CodexTranscriptView: View {
     let isCompleted: Bool
     let needsInput: Bool
     let animatesResponse: Bool
+    let animatesInitialResponse: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
@@ -886,6 +887,7 @@ struct CodexTranscriptView: View {
                 needsInput: isConclusion && needsInput,
                 animatesResponse:
                     animatesResponse && isConclusion,
+                animatesInitialResponse: animatesInitialResponse,
                 responseFeedback: responseFeedback,
                 updateResponseFeedback: updateResponseFeedback,
                 onResponsePresented: {
@@ -1594,6 +1596,7 @@ private struct CodexMessageView: View {
     let isConclusion: Bool
     let needsInput: Bool
     let animatesResponse: Bool
+    let animatesInitialResponse: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
@@ -1622,6 +1625,7 @@ private struct CodexMessageView: View {
                     source: message.text,
                     fontSize: 14,
                     fileBaseDirectory: workspaceDirectory,
+                    animatesInitialSource: animatesInitialResponse,
                     onFinished: onResponsePresented
                 )
             } else if animatesResponse {

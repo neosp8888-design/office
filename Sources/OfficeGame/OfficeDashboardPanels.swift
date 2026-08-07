@@ -834,16 +834,34 @@ private struct LiveWorkspaceFeedMetadata: Equatable {
 @MainActor
 final class LiveWorkspaceFeedPresentationStore: ObservableObject {
     @Published private(set) var isPresented: Bool
+    private var desiredIsPresented: Bool
+    private var publicationTask: Task<Void, Never>?
 
     init(isPresented: Bool) {
         self.isPresented = isPresented
+        desiredIsPresented = isPresented
     }
 
     func setPresented(_ isPresented: Bool) {
-        guard self.isPresented != isPresented else {
+        guard desiredIsPresented != isPresented else {
             return
         }
-        self.isPresented = isPresented
+        desiredIsPresented = isPresented
+        publicationTask?.cancel()
+        publicationTask = Task { [weak self] in
+            await Task.yield()
+            guard
+                let self,
+                !Task.isCancelled,
+                self.desiredIsPresented == isPresented
+            else {
+                return
+            }
+            if self.isPresented != isPresented {
+                self.isPresented = isPresented
+            }
+            self.publicationTask = nil
+        }
     }
 }
 
@@ -918,6 +936,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private weak var director: AgentDirector?
     private var entries: [OfficeCharacter: Entry] = [:]
     private var selectedCharacterID: OfficeCharacter?
+    private var postMountRefreshTask: Task<Void, Never>?
+    private var selectionGeneration = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -946,7 +966,13 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         }
 
         let previousCharacterID = self.selectedCharacterID
+        let didChangeSelection = previousCharacterID != selectedCharacterID
         self.selectedCharacterID = selectedCharacterID
+        if didChangeSelection {
+            postMountRefreshTask?.cancel()
+            postMountRefreshTask = nil
+            selectionGeneration &+= 1
+        }
 
         if
             let previousCharacterID,
@@ -955,10 +981,6 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         {
             previousEntry.presentationStore.setPresented(false)
             previousEntry.hostingView.isHidden = true
-            director.liveFeedStore.setCharacterFeedPresented(
-                false,
-                for: previousCharacterID.rawValue
-            )
         }
 
         guard let selectedCharacterID else {
@@ -977,21 +999,21 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         )
         selectedEntry.presentationStore.setPresented(true)
         selectedEntry.hostingView.isHidden = false
-        director.liveFeedStore.setCharacterFeedPresented(
-            true,
-            for: selectedCharacterID.rawValue
-        )
+        if didChangeSelection {
+            schedulePostMountRefresh(
+                director: director,
+                characterID: selectedCharacterID,
+                generation: selectionGeneration
+            )
+        }
     }
 
     func tearDown() {
-        if let director {
-            for (characterID, entry) in entries {
-                entry.presentationStore.setPresented(false)
-                director.liveFeedStore.setCharacterFeedPresented(
-                    false,
-                    for: characterID.rawValue
-                )
-            }
+        postMountRefreshTask?.cancel()
+        postMountRefreshTask = nil
+        selectionGeneration &+= 1
+        for entry in entries.values {
+            entry.presentationStore.setPresented(false)
         }
         for entry in entries.values {
             entry.hostingView.removeFromSuperview()
@@ -1017,10 +1039,38 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         )
         entry.hostingView.frame = bounds
         entry.hostingView.autoresizingMask = [.width, .height]
-        entry.hostingView.isHidden = true
+        // 선택된 피드는 숨긴 상태로 최초 mount하지 않는다. NSHostingView를
+        // 같은 update cycle에서 hide→show 하면 콘텐츠가 다음 publication까지
+        // 비어 있는 AppKit/SwiftUI 수명주기 경쟁이 생길 수 있다.
+        entry.hostingView.isHidden = false
         addSubview(entry.hostingView)
         entries[characterID] = entry
         return entry
+    }
+
+    private func schedulePostMountRefresh(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        generation: Int
+    ) {
+        postMountRefreshTask = Task { [weak self, weak director] in
+            // updateNSView가 반환되어 선택된 NSHostingView가 실제로 표시된
+            // 다음 MainActor 차례에 한 번만 발행한다.
+            await Task.yield()
+            guard
+                let self,
+                let director,
+                !Task.isCancelled,
+                self.selectionGeneration == generation,
+                self.selectedCharacterID == characterID
+            else {
+                return
+            }
+            director.liveFeedStore.refreshSelectedCharacterFeedAfterMount(
+                characterID.rawValue
+            )
+            self.postMountRefreshTask = nil
+        }
     }
 }
 
@@ -1219,6 +1269,11 @@ struct LiveWorkspaceFeed: View, Equatable {
                                         shouldAnimateResponse:
                                             liveFeedStore
                                             .shouldAnimateResponse(for: turn),
+                                        shouldAnimateInitialResponse:
+                                            liveFeedStore
+                                            .shouldAnimateInitialResponse(
+                                                for: turn
+                                            ),
                                         fetchWorkspaceReview:
                                             fetchWorkspaceReview,
                                         resolveWorkspaceReview:
@@ -1890,6 +1945,7 @@ private struct EquatableLiveTurnCard: View, Equatable {
     let turn: LiveFeedTurn
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
+    let shouldAnimateInitialResponse: Bool
     let fetchWorkspaceReview: WorkspaceReviewFetcher
     let resolveWorkspaceReview: WorkspaceReviewResolver
     let updateResponseFeedback:
@@ -1903,6 +1959,8 @@ private struct EquatableLiveTurnCard: View, Equatable {
         lhs.turn == rhs.turn
             && lhs.workspaceDirectory == rhs.workspaceDirectory
             && lhs.shouldAnimateResponse == rhs.shouldAnimateResponse
+            && lhs.shouldAnimateInitialResponse
+                == rhs.shouldAnimateInitialResponse
     }
 
     var body: some View {
@@ -1910,6 +1968,8 @@ private struct EquatableLiveTurnCard: View, Equatable {
             turn: turn,
             workspaceDirectory: workspaceDirectory,
             shouldAnimateResponse: shouldAnimateResponse,
+            shouldAnimateInitialResponse:
+                shouldAnimateInitialResponse,
             fetchWorkspaceReview: fetchWorkspaceReview,
             resolveWorkspaceReview: resolveWorkspaceReview,
             updateResponseFeedback: updateResponseFeedback,
@@ -1956,6 +2016,7 @@ private struct LiveTurnCard: View {
     let turn: LiveFeedTurn
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
+    let shouldAnimateInitialResponse: Bool
     let fetchWorkspaceReview: WorkspaceReviewFetcher
     let resolveWorkspaceReview: WorkspaceReviewResolver
     let updateResponseFeedback:
@@ -2110,6 +2171,7 @@ private struct LiveTurnCard: View {
             isCompleted: turn.status == .completed,
             needsInput: turn.needsInput,
             animatesResponse: shouldAnimateResponse,
+            animatesInitialResponse: shouldAnimateInitialResponse,
             responseFeedback: turn.feedback,
             updateResponseFeedback: { feedback in
                 await updateResponseFeedback(turn.id, feedback)
@@ -2129,6 +2191,7 @@ private struct LiveTurnCard: View {
             isCompleted: turn.status == .completed,
             needsInput: turn.needsInput,
             animatesResponse: shouldAnimateResponse,
+            animatesInitialResponse: shouldAnimateInitialResponse,
             responseFeedback: turn.feedback,
             updateResponseFeedback: { feedback in
                 await updateResponseFeedback(turn.id, feedback)
@@ -2381,6 +2444,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
     let source: String
     let fileBaseDirectory: String?
     let animates: Bool
+    let animatesInitialSource: Bool
     let isStreaming: Bool
     let onFinishedTyping: () -> Void
 
@@ -2393,6 +2457,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
             && lhs.source == rhs.source
             && lhs.fileBaseDirectory == rhs.fileBaseDirectory
             && lhs.animates == rhs.animates
+            && lhs.animatesInitialSource == rhs.animatesInitialSource
             && lhs.isStreaming == rhs.isStreaming
     }
 
@@ -2403,6 +2468,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
             source: source,
             fileBaseDirectory: fileBaseDirectory,
             animates: animates,
+            animatesInitialSource: animatesInitialSource,
             isStreaming: isStreaming,
             onFinishedTyping: onFinishedTyping
         )
@@ -2428,6 +2494,7 @@ struct LiveTypingResponseView: View {
         source: String,
         fileBaseDirectory: String? = nil,
         animates: Bool,
+        animatesInitialSource: Bool = true,
         isStreaming: Bool,
         onFinishedTyping: @escaping () -> Void
     ) {
@@ -2438,8 +2505,9 @@ struct LiveTypingResponseView: View {
         self.animates = animates
         self.isStreaming = isStreaming
         self.onFinishedTyping = onFinishedTyping
-        animatesInitialSource =
+        self.animatesInitialSource =
             animates
+                && animatesInitialSource
                 && LiveTypingAppearanceCache.shared
                     .shouldAnimateInitialSource(for: turnID)
     }
@@ -2460,6 +2528,7 @@ struct LiveTypingResponseView: View {
                         source: source,
                         fontSize: Self.responseFontSize,
                         fileBaseDirectory: fileBaseDirectory,
+                        animatesInitialSource: animatesInitialSource,
                         onFinished: onFinishedTyping
                     )
                 }
@@ -2538,6 +2607,7 @@ struct WaterfallResponseRevealView: View {
     let source: String
     let fontSize: CGFloat
     let fileBaseDirectory: String?
+    let animatesInitialSource: Bool
     let onFinished: () -> Void
 
     @State private var segments: [WaterfallResponseSegment]
@@ -2548,17 +2618,21 @@ struct WaterfallResponseRevealView: View {
         source: String,
         fontSize: CGFloat,
         fileBaseDirectory: String? = nil,
+        animatesInitialSource: Bool = true,
         onFinished: @escaping () -> Void
     ) {
         self.source = source
         self.fontSize = fontSize
         self.fileBaseDirectory = fileBaseDirectory
+        self.animatesInitialSource = animatesInitialSource
         self.onFinished = onFinished
 
         let initialSegment = WaterfallResponseSegment(source: source)
         _segments = State(initialValue: [initialSegment])
         _cumulativeSource = State(initialValue: source)
-        _revealingSegmentID = State(initialValue: initialSegment.id)
+        _revealingSegmentID = State(
+            initialValue: animatesInitialSource ? initialSegment.id : nil
+        )
     }
 
     var body: some View {
@@ -2585,6 +2659,11 @@ struct WaterfallResponseRevealView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            if !animatesInitialSource, revealingSegmentID == nil {
+                onFinished()
+            }
+        }
         .onChange(of: source) { _, updatedSource in
             appendNewSource(updatedSource)
         }

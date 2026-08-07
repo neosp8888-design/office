@@ -94,10 +94,7 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(characterStore.turns, [initialTurn])
         XCTAssertEqual(publicationCount, 0)
 
-        store.setCharacterFeedPresented(
-            true,
-            for: OfficeCharacter.boss.rawValue
-        )
+        store.selectCharacterFeed(OfficeCharacter.boss.rawValue)
 
         XCTAssertEqual(characterStore.turns, [updatedTurn])
         XCTAssertEqual(publicationCount, 1)
@@ -124,10 +121,7 @@ final class LiveFeedStoreTests: XCTestCase {
         let characterStore = store.characterStore(
             for: OfficeCharacter.boss.rawValue
         )
-        store.setCharacterFeedPresented(
-            true,
-            for: OfficeCharacter.boss.rawValue
-        )
+        store.selectCharacterFeed(OfficeCharacter.boss.rawValue)
         var publicationCount = 0
         let cancellable = characterStore.objectWillChange.sink {
             publicationCount += 1
@@ -145,6 +139,576 @@ final class LiveFeedStoreTests: XCTestCase {
 
         XCTAssertEqual(characterStore.turns, [bossTurn])
         XCTAssertEqual(publicationCount, 0)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testSelectedCharacterFeedPublishesSnapshotLoadedAfterSelection() {
+        let store = LiveFeedStore()
+        let characterID = OfficeCharacter.leftWoman.rawValue
+        let characterStore = store.characterStore(for: characterID)
+        var publicationCount = 0
+        let cancellable = characterStore.objectWillChange.sink {
+            publicationCount += 1
+        }
+
+        store.selectCharacterFeed(characterID)
+        store.replace(with: [
+            makeTurn(
+                id: "left-woman-turn",
+                characterID: characterID,
+                prompt: "초기 스냅샷",
+                startedAt: Date(timeIntervalSinceReferenceDate: 990)
+            ),
+        ])
+        store.finishInitialLoading()
+
+        XCTAssertEqual(characterStore.turns.map(\.id), ["left-woman-turn"])
+        XCTAssertFalse(characterStore.isLoadingInitialFeed)
+        XCTAssertEqual(publicationCount, 2)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testSelectingLoadedCharacterExposesTurnsBeforeSelectionPublishes() {
+        let store = LiveFeedStore()
+        let characterID = OfficeCharacter.leftWoman.rawValue
+        store.replace(with: [
+            makeTurn(
+                id: "existing-turn",
+                characterID: characterID,
+                prompt: "이미 불러온 대화",
+                startedAt: Date(timeIntervalSinceReferenceDate: 995)
+            ),
+        ])
+        store.finishInitialLoading()
+
+        store.selectCharacterFeed(characterID)
+        let characterStore = store.characterStore(for: characterID)
+
+        XCTAssertEqual(characterStore.turns.map(\.id), ["existing-turn"])
+        XCTAssertFalse(characterStore.isLoadingInitialFeed)
+        XCTAssertEqual(store.selectedCharacterFeedID, characterID)
+    }
+
+    func testRapidCharacterSelectionPublishesOnlyLatestFeedUpdates() {
+        let store = LiveFeedStore()
+        let bossID = OfficeCharacter.boss.rawValue
+        let leftWomanID = OfficeCharacter.leftWoman.rawValue
+        let rightManID = OfficeCharacter.rightMan.rawValue
+        let bossStore = store.characterStore(for: bossID)
+        let leftWomanStore = store.characterStore(for: leftWomanID)
+        let rightManStore = store.characterStore(for: rightManID)
+
+        store.selectCharacterFeed(bossID)
+        store.selectCharacterFeed(leftWomanID)
+        store.selectCharacterFeed(rightManID)
+        store.replace(with: [
+            makeTurn(
+                id: "boss-turn",
+                characterID: bossID,
+                prompt: "총괄",
+                startedAt: Date(timeIntervalSinceReferenceDate: 997)
+            ),
+            makeTurn(
+                id: "left-woman-turn",
+                characterID: leftWomanID,
+                prompt: "분석",
+                startedAt: Date(timeIntervalSinceReferenceDate: 998)
+            ),
+            makeTurn(
+                id: "right-man-turn",
+                characterID: rightManID,
+                prompt: "검증",
+                startedAt: Date(timeIntervalSinceReferenceDate: 999)
+            ),
+        ])
+
+        XCTAssertTrue(bossStore.turns.isEmpty)
+        XCTAssertTrue(leftWomanStore.turns.isEmpty)
+        XCTAssertEqual(rightManStore.turns.map(\.id), ["right-man-turn"])
+        XCTAssertEqual(store.selectedCharacterFeedID, rightManID)
+    }
+
+    func testRestoredRunningTurnShowsExistingTextImmediatelyButKeepsEffects() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "restored-running-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "재시작 전 업무",
+            response: "이미 작성된 응답",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_001)
+        )
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: running))
+        XCTAssertFalse(store.shouldAnimateInitialResponse(for: running))
+
+        let updatedRunning = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "이미 작성된 응답 + 새 문장",
+            status: .running,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [updatedRunning])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: updatedRunning))
+        XCTAssertFalse(
+            store.shouldAnimateInitialResponse(for: updatedRunning)
+        )
+    }
+
+    func testStartedResponseAnimationSurvivesStreamingUntilTerminal() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "new-running-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "새 업무",
+            response: "작성 중",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002)
+        )
+        store.selectCharacterFeed(running.characterId)
+        store.replace(with: [running])
+        store.beginResponseAnimation(for: running.id)
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: running))
+        XCTAssertTrue(store.shouldAnimateInitialResponse(for: running))
+        store.finishResponseAnimation(for: running.id)
+        XCTAssertTrue(store.shouldAnimateResponse(for: running))
+
+        let completed = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "최종 응답",
+            status: .completed,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [completed])
+        store.finishResponseAnimation(for: completed.id)
+
+        XCTAssertFalse(store.shouldAnimateResponse(for: completed))
+    }
+
+    func testRestoredEmptyRunningTurnAnimatesFirstArrivingResponse() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "restored-empty-running-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "응답 대기 중",
+            response: "",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002.5)
+        )
+
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: running))
+        XCTAssertTrue(store.shouldAnimateInitialResponse(for: running))
+    }
+
+    func testRestoredClaudeTurnAnimatesFirstResponseAfterPromotedMessage()
+        throws
+    {
+        let store = LiveFeedStore()
+        let promotedMessage = try makeActivity(
+            id: "promoted-message",
+            kind: "message",
+            text: "완료 전 보고",
+            status: "completed"
+        )
+        let running = makeTurn(
+            id: "restored-promoted-claude-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "계속 진행",
+            response: "완료 전 보고",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002.75),
+            backend: .claude,
+            activities: [promotedMessage]
+        )
+
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: running))
+        XCTAssertTrue(store.shouldAnimateInitialResponse(for: running))
+    }
+
+    func testRestoredClaudeTurnShowsExistingStreamingRemainderImmediately()
+        throws
+    {
+        let store = LiveFeedStore()
+        let promotedMessage = try makeActivity(
+            id: "promoted-message-with-remainder",
+            kind: "message",
+            text: "완료 전 보고",
+            status: "completed"
+        )
+        let running = makeTurn(
+            id: "restored-streaming-claude-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "계속 진행",
+            response: "완료 전 보고\n\n이미 작성 중",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002.875),
+            backend: .claude,
+            activities: [promotedMessage]
+        )
+
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: running))
+        XCTAssertFalse(store.shouldAnimateInitialResponse(for: running))
+    }
+
+    func testHiddenRestoredClaudeTurnDoesNotReplayAccumulatedResponse()
+        throws
+    {
+        let store = LiveFeedStore()
+        let promotedMessage = try makeActivity(
+            id: "hidden-promoted-message",
+            kind: "message",
+            text: "완료 전 보고",
+            status: "completed"
+        )
+        let running = makeTurn(
+            id: "hidden-restored-claude-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "계속 진행",
+            response: "완료 전 보고",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002.9),
+            backend: .claude,
+            activities: [promotedMessage]
+        )
+        store.selectCharacterFeed(OfficeCharacter.boss.rawValue)
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+        XCTAssertTrue(store.shouldAnimateInitialResponse(for: running))
+
+        let updatedRunning = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "완료 전 보고\n\n숨은 동안 쌓인 응답",
+            status: .running,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1),
+            backend: .claude,
+            activities: [promotedMessage]
+        )
+        store.replace(with: [updatedRunning])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: updatedRunning))
+        XCTAssertFalse(
+            store.shouldAnimateInitialResponse(for: updatedRunning)
+        )
+    }
+
+    func testSelectedRestoredClaudeTurnAnimatesFirstArrivingResponse()
+        throws
+    {
+        let store = LiveFeedStore()
+        let promotedMessage = try makeActivity(
+            id: "selected-promoted-message",
+            kind: "message",
+            text: "완료 전 보고",
+            status: "completed"
+        )
+        let running = makeTurn(
+            id: "selected-restored-claude-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "계속 진행",
+            response: "완료 전 보고",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002.95),
+            backend: .claude,
+            activities: [promotedMessage]
+        )
+        store.selectCharacterFeed(running.characterId)
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        let updatedRunning = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "완료 전 보고\n\n지금 도착한 응답",
+            status: .running,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1),
+            backend: .claude,
+            activities: [promotedMessage]
+        )
+        store.replace(with: [updatedRunning])
+
+        XCTAssertTrue(store.shouldAnimateInitialResponse(for: updatedRunning))
+    }
+
+    func testHiddenRestoredCodexTurnDoesNotReplayAccumulatedResponse() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "hidden-restored-codex-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "계속 진행",
+            response: "",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_002.975)
+        )
+        store.selectCharacterFeed(OfficeCharacter.boss.rawValue)
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        let updatedRunning = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "숨은 동안 쌓인 Codex 응답",
+            status: .running,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [updatedRunning])
+
+        XCTAssertTrue(store.shouldAnimateResponse(for: updatedRunning))
+        XCTAssertFalse(
+            store.shouldAnimateInitialResponse(for: updatedRunning)
+        )
+    }
+
+    func testHiddenTerminalAndRemovedTurnsDiscardResponseAnimations() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "hidden-running-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "숨은 업무",
+            response: "작성 중",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_003)
+        )
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        let completed = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "완료",
+            status: .completed,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [completed])
+
+        XCTAssertFalse(store.shouldAnimateResponse(for: completed))
+
+        let removed = makeTurn(
+            id: "removed-running-turn",
+            characterID: OfficeCharacter.rightMan.rawValue,
+            prompt: "삭제될 업무",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_004)
+        )
+        store.restoreResponseAnimations(for: [removed])
+        store.replace(with: [removed])
+        store.replace(with: [])
+
+        XCTAssertFalse(store.shouldAnimateResponse(for: removed))
+    }
+
+    func testEmptyTerminalResponseDiscardsAnimationWhileSelected() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "empty-terminal-turn",
+            characterID: OfficeCharacter.leftWoman.rawValue,
+            prompt: "실패할 업무",
+            response: "작성 중",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_005)
+        )
+        store.selectCharacterFeed(running.characterId)
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        let failed = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "",
+            status: .failed,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [failed])
+
+        XCTAssertFalse(store.shouldAnimateResponse(for: failed))
+    }
+
+    func testNoncompletedTerminalResponseDiscardsAnimationWhileSelected() {
+        let store = LiveFeedStore()
+        let running = makeTurn(
+            id: "interrupted-response-turn",
+            characterID: OfficeCharacter.rightMan.rawValue,
+            prompt: "중단될 업무",
+            response: "부분 응답",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_005.5)
+        )
+        store.selectCharacterFeed(running.characterId)
+        store.restoreResponseAnimations(for: [running])
+        store.replace(with: [running])
+
+        let interrupted = makeTurn(
+            id: running.id,
+            characterID: running.characterId,
+            prompt: running.prompt,
+            response: "부분 응답",
+            status: .interrupted,
+            startedAt: running.startedAt,
+            updatedAt: running.updatedAt.addingTimeInterval(1)
+        )
+        store.replace(with: [interrupted])
+
+        XCTAssertFalse(store.shouldAnimateResponse(for: interrupted))
+    }
+
+    func testSelectingLoadedFeedPublishesMountRefresh() {
+        let store = LiveFeedStore()
+        let characterID = OfficeCharacter.leftWoman.rawValue
+        store.replace(with: [
+            makeTurn(
+                id: "loaded-mount-turn",
+                characterID: characterID,
+                prompt: "재시작 뒤 대화",
+                startedAt: Date(timeIntervalSinceReferenceDate: 1_006)
+            ),
+        ])
+        store.finishInitialLoading()
+        let characterStore = store.characterStore(for: characterID)
+        var publicationCount = 0
+        let cancellable = characterStore.objectWillChange.sink {
+            publicationCount += 1
+        }
+
+        store.selectCharacterFeed(characterID)
+
+        XCTAssertEqual(characterStore.presentationRevision, 0)
+        XCTAssertEqual(publicationCount, 0)
+
+        store.refreshSelectedCharacterFeedAfterMount(characterID)
+
+        XCTAssertEqual(characterStore.presentationRevision, 1)
+        XCTAssertEqual(publicationCount, 1)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testResponseAnimationStatePublishesOnlyToPresentedCharacter() {
+        let store = LiveFeedStore()
+        let characterID = OfficeCharacter.leftWoman.rawValue
+        let running = makeTurn(
+            id: "animation-publication-turn",
+            characterID: characterID,
+            prompt: "애니메이션",
+            status: .running,
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_007)
+        )
+        store.replace(with: [running])
+        store.finishInitialLoading()
+        let characterStore = store.characterStore(for: characterID)
+        store.selectCharacterFeed(characterID)
+        let initialRevision = characterStore.presentationRevision
+
+        store.beginResponseAnimation(for: running.id)
+
+        XCTAssertEqual(
+            characterStore.presentationRevision,
+            initialRevision + 1
+        )
+    }
+
+    func testStalePostMountRefreshCannotPublishAfterRapidSelection() {
+        let store = LiveFeedStore()
+        let firstID = OfficeCharacter.leftWoman.rawValue
+        let latestID = OfficeCharacter.rightMan.rawValue
+        store.replace(with: [
+            makeTurn(
+                id: "first-mounted-turn",
+                characterID: firstID,
+                prompt: "첫 직원",
+                startedAt: Date(timeIntervalSinceReferenceDate: 1_008)
+            ),
+            makeTurn(
+                id: "latest-mounted-turn",
+                characterID: latestID,
+                prompt: "마지막 직원",
+                startedAt: Date(timeIntervalSinceReferenceDate: 1_009)
+            ),
+        ])
+        store.finishInitialLoading()
+        let firstStore = store.characterStore(for: firstID)
+        let latestStore = store.characterStore(for: latestID)
+
+        store.selectCharacterFeed(firstID)
+        store.selectCharacterFeed(latestID)
+        store.refreshSelectedCharacterFeedAfterMount(firstID)
+        store.refreshSelectedCharacterFeedAfterMount(latestID)
+
+        XCTAssertEqual(firstStore.presentationRevision, 0)
+        XCTAssertEqual(latestStore.presentationRevision, 1)
+        XCTAssertEqual(store.selectedCharacterFeedID, latestID)
+    }
+
+    func testPresentationStoreDefersPublicationBeyondViewUpdate() async {
+        let store = LiveWorkspaceFeedPresentationStore(isPresented: false)
+        var publicationCount = 0
+        let publication = expectation(
+            description: "다음 MainActor 차례에서 표시 상태 발행"
+        )
+        let cancellable = store.objectWillChange.sink {
+            publicationCount += 1
+            publication.fulfill()
+        }
+
+        store.setPresented(true)
+
+        XCTAssertFalse(store.isPresented)
+        XCTAssertEqual(publicationCount, 0)
+
+        await fulfillment(of: [publication], timeout: 1)
+
+        XCTAssertTrue(store.isPresented)
+        XCTAssertEqual(publicationCount, 1)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testPresentationStoreCoalescesRapidVisibilityChanges() async {
+        let store = LiveWorkspaceFeedPresentationStore(isPresented: false)
+        var publicationCount = 0
+        let publication = expectation(
+            description: "마지막 표시 상태만 한 번 발행"
+        )
+        publication.assertForOverFulfill = true
+        let cancellable = store.objectWillChange.sink {
+            publicationCount += 1
+            publication.fulfill()
+        }
+
+        store.setPresented(true)
+        store.setPresented(false)
+        store.setPresented(true)
+
+        await fulfillment(of: [publication], timeout: 1)
+
+        XCTAssertTrue(store.isPresented)
+        XCTAssertEqual(publicationCount, 1)
         withExtendedLifetime(cancellable) {}
     }
 
@@ -559,7 +1123,7 @@ final class LiveFeedStoreTests: XCTestCase {
         turns.append(
             makeTurn(
                 id: "old-closed-review",
-                characterID: OfficeCharacter.leftWoman.rawValue,
+                characterID: OfficeCharacter.rightMan.rawValue,
                 prompt: "종료된 검토",
                 startedAt: baseDate.addingTimeInterval(-120),
                 workspace: makeWorkspace(status: .closed)
@@ -583,6 +1147,40 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.count, 121)
         XCTAssertFalse(snapshot.contains { $0.id == "old-closed-review" })
         XCTAssertEqual(snapshot.last?.id, "old-blocking-review")
+    }
+
+    func testSnapshotKeepsMinimumTurnsForEachCharacter() {
+        let baseDate = Date(timeIntervalSinceReferenceDate: 11_000)
+        var turns = (0 ..< 120).map { index in
+            makeTurn(
+                id: "busy-\(index)",
+                characterID: OfficeCharacter.rightMan.rawValue,
+                prompt: "최근 업무",
+                startedAt: baseDate.addingTimeInterval(-Double(index))
+            )
+        }
+        turns.append(contentsOf: (0 ..< 12).map { index in
+            makeTurn(
+                id: "quiet-\(index)",
+                characterID: OfficeCharacter.leftWoman.rawValue,
+                prompt: "오래된 업무",
+                startedAt:
+                    baseDate.addingTimeInterval(-Double(120 + index))
+            )
+        })
+
+        let snapshot = LiveFeedStore.snapshotTurns(
+            from: turns,
+            recentLimit: 120
+        )
+
+        XCTAssertEqual(snapshot.count, 130)
+        XCTAssertEqual(
+            snapshot.filter {
+                $0.characterId == OfficeCharacter.leftWoman.rawValue
+            }.map(\.id),
+            (0 ..< 10).map { "quiet-\($0)" }
+        )
     }
 
     func testWorkspaceFileBaseFollowsReviewLifecycle() {
@@ -708,19 +1306,22 @@ final class LiveFeedStoreTests: XCTestCase {
         characterID: String,
         prompt: String,
         response: String = "",
+        status: LiveTurnStatus = .running,
         startedAt: Date,
         updatedAt: Date? = nil,
         sources: [LiveFeedSource]? = nil,
         responseSourceWarning: String? = nil,
-        workspace: TurnWorkspaceReview? = nil
+        workspace: TurnWorkspaceReview? = nil,
+        backend: AgentBackend = .codex,
+        activities: [LiveFeedActivity] = []
     ) -> LiveFeedTurn {
         LiveFeedTurn(
             id: id,
             characterId: characterID,
             characterName: characterID,
-            characterBackend: .codex,
-            backend: .codex,
-            model: "gpt-5.6-sol",
+            characterBackend: backend,
+            backend: backend,
+            model: backend == .claude ? "claude-sonnet-5" : "gpt-5.6-sol",
             effort: "high",
             fastMode: true,
             externalSessionId: nil,
@@ -728,7 +1329,7 @@ final class LiveFeedStoreTests: XCTestCase {
             prompt: prompt,
             response: response,
             feedback: nil,
-            status: .running,
+            status: status,
             needsInput: false,
             errorMessage: nil,
             responseSourceWarning: responseSourceWarning,
@@ -737,10 +1338,28 @@ final class LiveFeedStoreTests: XCTestCase {
             updatedAt: updatedAt ?? startedAt,
             estimatedCostUsd: nil,
             sessionContext: nil,
-            activities: [],
+            activities: activities,
             sources: sources,
             workspace: workspace
         )
+    }
+
+    private func makeActivity(
+        id: String,
+        kind: String,
+        text: String,
+        status: String
+    ) throws -> LiveFeedActivity {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": id,
+            "kind": kind,
+            "text": text,
+            "status": status,
+            "occurredAt": 1_000,
+        ])
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode(LiveFeedActivity.self, from: data)
     }
 
     private func makeWorkspace(
