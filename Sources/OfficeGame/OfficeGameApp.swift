@@ -104,7 +104,6 @@ enum OfficePanelControlLayout {
 private struct OfficeGameView: View {
     @ObservedObject var director: AgentDirector
     @StateObject private var backendController = OfficeBackendController()
-    @State private var attachments: [URL] = []
     @State private var showsCharacterSettings = false
     @State private var profileCharacter: OfficeCharacter?
     @State private var historyTarget: ConversationHistoryTarget?
@@ -114,7 +113,6 @@ private struct OfficeGameView: View {
     @State private var artStyleRevealProgress: CGFloat = 1
     @State private var splitDragStartLeftWidth: CGFloat?
     @State private var splitDragStartTopHeight: CGFloat?
-    @Namespace private var characterSelectionAnimation
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
     @AppStorage("officeArtStyle") private var selectedArtStyleRawValue =
@@ -402,76 +400,23 @@ private struct OfficeGameView: View {
 
     private var liveWorkspacePanel: some View {
         VStack(spacing: 0) {
-            liveWorkspaceHeader
+            LiveWorkspaceHeader(director: director)
 
             Divider()
                 .opacity(0.55)
 
-            LiveWorkspaceFeed(director: director)
-                .equatable()
+            CachedLiveWorkspaceFeeds(director: director)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
                 .opacity(0.55)
 
-            commandBar
-        }
-        .officePanelStyle()
-    }
-
-    private var liveWorkspaceHeader: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(DashboardPalette.accent)
-                .frame(width: 36, height: 36)
-                .background(
-                    DashboardPalette.accent.opacity(0.10),
-                    in: RoundedRectangle(
-                        cornerRadius: 11,
-                        style: .continuous
-                    )
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("실시간 대화")
-                    .font(.system(size: 17, weight: .bold))
-                Text(
-                    String(
-                        format: OfficeLocalization.string("%@의 대화와 진행 기록"),
-                        director.selectedName
-                            ?? OfficeLocalization.string("백부장")
-                    )
-                )
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(
-                        director.isRealtimeConnected
-                            ? Color.green
-                            : Color.orange
-                    )
-                    .frame(width: 7, height: 7)
-                Text(
-                    director.isRealtimeConnected
-                        ? "LIVE"
-                        : "연결 중"
-                )
-            }
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(.secondary)
-            .help(
-                director.realtimeConnectionError
-                    ?? "백엔드 WebSocket 실시간 연결"
+            LiveWorkspaceCommandBar(
+                director: director,
+                onShowProfile: { profileCharacter = $0 }
             )
         }
-        .padding(.horizontal, 17)
-        .padding(.vertical, 13)
+        .officePanelStyle()
     }
 
     private var theme: OfficeTheme {
@@ -725,11 +670,122 @@ private struct OfficeGameView: View {
         }
     }
 
+}
+
+private struct LiveWorkspaceHeader: View {
+    @ObservedObject private var director: AgentDirector
+    @ObservedObject private var characterSelectionStore:
+        CharacterSelectionStore
+
+    init(director: AgentDirector) {
+        self.director = director
+        _characterSelectionStore = ObservedObject(
+            wrappedValue: director.characterSelectionStore
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DashboardPalette.accent)
+                .frame(width: 36, height: 36)
+                .background(
+                    DashboardPalette.accent.opacity(0.10),
+                    in: RoundedRectangle(
+                        cornerRadius: 11,
+                        style: .continuous
+                    )
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("실시간 대화")
+                    .font(.system(size: 17, weight: .bold))
+                Text(
+                    String(
+                        format: OfficeLocalization.string(
+                            "%@의 대화와 진행 기록"
+                        ),
+                        selectedName
+                    )
+                )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(
+                        director.isRealtimeConnected
+                            ? Color.green
+                            : Color.orange
+                    )
+                    .frame(width: 7, height: 7)
+                Text(director.isRealtimeConnected ? "LIVE" : "연결 중")
+            }
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .help(
+                director.realtimeConnectionError
+                    ?? "백엔드 WebSocket 실시간 연결"
+            )
+        }
+        .padding(.horizontal, 17)
+        .padding(.vertical, 13)
+    }
+
+    private var selectedName: String {
+        guard
+            let characterID = characterSelectionStore.selectedCharacterID
+        else {
+            return OfficeLocalization.string("백부장")
+        }
+        return director.displayName(for: characterID)
+    }
+}
+
+private struct LiveWorkspaceCommandBar: View {
+    @ObservedObject private var director: AgentDirector
+    @ObservedObject private var characterSelectionStore:
+        CharacterSelectionStore
+    @State private var attachments: [URL] = []
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let onShowProfile: (OfficeCharacter) -> Void
+
+    init(
+        director: AgentDirector,
+        onShowProfile: @escaping (OfficeCharacter) -> Void
+    ) {
+        self.director = director
+        self.onShowProfile = onShowProfile
+        _characterSelectionStore = ObservedObject(
+            wrappedValue: director.characterSelectionStore
+        )
+    }
+
+    var body: some View {
+        commandBar
+    }
+
+    private var selectedCharacterID: OfficeCharacter? {
+        characterSelectionStore.selectedCharacterID
+    }
+
+    private var selectedCharacter: CharacterConfiguration? {
+        guard let selectedCharacterID else {
+            return nil
+        }
+        return director.characters.first { $0.id == selectedCharacterID }
+    }
+
     private var commandBar: some View {
         VStack(alignment: .leading, spacing: 9) {
             characterSelector
 
-            if let character = director.selectedCharacter {
+            if let character = selectedCharacter {
                 HStack {
                     AgentQuickSettingsView(
                         director: director,
@@ -741,7 +797,7 @@ private struct OfficeGameView: View {
                             for: character.id
                         ) != nil {
                         Button {
-                            profileCharacter = character.id
+                            onShowProfile(character.id)
                         } label: {
                             Label(
                                 "프로필",
@@ -807,10 +863,24 @@ private struct OfficeGameView: View {
     }
 
     private var characterSelector: some View {
-        HStack(spacing: 3) {
-            ForEach(director.characters) { character in
+        ZStack {
+            CoreAnimationSelectionHighlight(
+                selectedIndex: director.characters.firstIndex {
+                    $0.id == selectedCharacterID
+                },
+                itemCount: director.characters.count,
+                spacing: 3,
+                reduceMotion: reduceMotion
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+
+            HStack(spacing: 3) {
+                ForEach(director.characters) { character in
                 let isSelected =
-                    director.selectedCharacterID == character.id
+                    selectedCharacterID == character.id
                 let isRunning =
                     director.runningCharacters.contains(character.id)
                 let name = director.displayName(for: character.id)
@@ -875,46 +945,17 @@ private struct OfficeGameView: View {
                             style: .continuous
                         )
                     )
-                    .background {
-                        if isSelected {
-                            RoundedRectangle(
-                                cornerRadius: 10,
-                                style: .continuous
-                            )
-                            .fill(
-                                Color(nsColor: .controlBackgroundColor)
-                                    .opacity(0.94)
-                            )
-                            .overlay {
-                                RoundedRectangle(
-                                    cornerRadius: 10,
-                                    style: .continuous
-                                )
-                                .stroke(
-                                    DashboardPalette.accent.opacity(0.18)
-                                )
-                            }
-                            .matchedGeometryEffect(
-                                id: "selectedCharacter",
-                                in: characterSelectionAnimation
-                            )
-                            .shadow(
-                                color: .black.opacity(0.10),
-                                radius: 6,
-                                y: 2
-                            )
-                        }
                     }
+                    .buttonStyle(.plain)
+                    .help("\(name) 선택")
+                    .accessibilityLabel("\(name) 선택")
+                    .accessibilityValue(
+                        isSelected ? "선택됨" : "선택되지 않음"
+                    )
+                    .accessibilityIdentifier(
+                        "commandCharacter-\(character.id.rawValue)"
+                    )
                 }
-                .buttonStyle(.plain)
-                .help("\(name) 선택")
-                .accessibilityLabel("\(name) 선택")
-                .accessibilityValue(
-                    isSelected ? "선택됨" : "선택되지 않음"
-                )
-                .accessibilityIdentifier(
-                    "commandCharacter-\(character.id.rawValue)"
-                )
             }
         }
         .padding(4)
@@ -938,12 +979,6 @@ private struct OfficeGameView: View {
                     .stroke(Color.primary.opacity(0.055))
                 }
         }
-        .animation(
-            reduceMotion
-                ? nil
-                : .spring(response: 0.28, dampingFraction: 0.84),
-            value: director.selectedCharacterID
-        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("직원 선택")
     }
@@ -959,7 +994,7 @@ private struct OfficeGameView: View {
             return OfficeLocalization.string("저장된 세션을 복구하는 중입니다")
         }
         if
-            let selectedCharacterID = director.selectedCharacterID,
+            let selectedCharacterID,
             let persistenceError =
                 director.turnPersistenceErrors[selectedCharacterID]
         {
@@ -968,9 +1003,9 @@ private struct OfficeGameView: View {
                 persistenceError
             )
         }
-        if let selectedName = director.selectedName {
+        if let selectedCharacterID {
+            let selectedName = director.displayName(for: selectedCharacterID)
             if
-                let selectedCharacterID = director.selectedCharacterID,
                 director.pendingQuestion(for: selectedCharacterID) != nil
             {
                 return OfficeLocalization.format(
@@ -979,7 +1014,6 @@ private struct OfficeGameView: View {
                 )
             }
             if
-                let selectedCharacterID = director.selectedCharacterID,
                 director.offDutyReason(for: selectedCharacterID) != nil
             {
                 return OfficeLocalization.format(
@@ -988,7 +1022,6 @@ private struct OfficeGameView: View {
                 )
             }
             if
-                let selectedCharacterID = director.selectedCharacterID,
                 director.failureMessage(for: selectedCharacterID) != nil
             {
                 return OfficeLocalization.format(
@@ -1004,6 +1037,9 @@ private struct OfficeGameView: View {
         return OfficeLocalization.string("캐릭터를 선택하세요")
     }
 
+}
+
+private extension OfficeGameView {
     private var characterSettingsButton: some View {
         Button {
             showsCharacterSettings.toggle()
@@ -1049,12 +1085,15 @@ private struct OfficeGameView: View {
         .help("캐릭터 이름 설정")
     }
 
+}
+
+private extension LiveWorkspaceCommandBar {
     private func submitCommand(_ prompt: String) -> Bool {
         guard
             director.isReadyForSubmissions,
             !director.isUpdatingConfiguration,
-            director.selectedCharacter != nil,
-            !director.isSelectedCharacterRunning
+            let selectedCharacterID,
+            !director.runningCharacters.contains(selectedCharacterID)
         else {
             return false
         }

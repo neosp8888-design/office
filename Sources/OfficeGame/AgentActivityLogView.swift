@@ -830,6 +830,7 @@ struct CodexTranscriptView: View {
         )
         .onChange(of: isRunning) { _, running in
             if
+                animatesResponse,
                 !running,
                 presentedResponseRevision == latestMessageRevision
             {
@@ -838,6 +839,7 @@ struct CodexTranscriptView: View {
         }
         .onChange(of: presentedResponseRevision) { _, revision in
             if
+                animatesResponse,
                 !isRunning,
                 revision == latestMessageRevision
             {
@@ -845,7 +847,7 @@ struct CodexTranscriptView: View {
             }
         }
         .onDisappear {
-            if !isRunning {
+            if animatesResponse, !isRunning {
                 onResponsePresented()
             }
         }

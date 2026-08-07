@@ -2,9 +2,23 @@
 
 import AppKit
 import AVFoundation
+import Combine
 import MarkdownUI
 import OfficeCore
 import SwiftUI
+
+private struct LiveWorkspaceFeedPresentationStoreKey: EnvironmentKey {
+    static let defaultValue: LiveWorkspaceFeedPresentationStore? = nil
+}
+
+extension EnvironmentValues {
+    var liveWorkspaceFeedPresentationStore:
+        LiveWorkspaceFeedPresentationStore?
+    {
+        get { self[LiveWorkspaceFeedPresentationStoreKey.self] }
+        set { self[LiveWorkspaceFeedPresentationStoreKey.self] = newValue }
+    }
+}
 
 struct ConversationMarkdownView: View {
     let source: String
@@ -204,6 +218,8 @@ private struct LocalMarkdownImageProvider: ImageProvider {
 
 private struct LocalMarkdownFileVideo: View {
     let url: URL
+    @Environment(\.liveWorkspaceFeedPresentationStore)
+    private var feedPresentationStore
     @State private var isPlaying = false
     @State private var aspectRatio =
         ConversationMarkdownVideoLayout.fallbackAspectRatio
@@ -243,10 +259,30 @@ private struct LocalMarkdownFileVideo: View {
         .onDisappear {
             isPlaying = false
         }
+        .onReceive(feedPresentationPublisher) { isPresented in
+            if !isPresented {
+                isPlaying = false
+            }
+        }
+    }
+
+    private var feedPresentationPublisher: AnyPublisher<Bool, Never> {
+        if let feedPresentationStore {
+            return feedPresentationStore.$isPresented.eraseToAnyPublisher()
+        }
+        return Just(true).eraseToAnyPublisher()
     }
 
     @MainActor
     private func loadAspectRatio() async {
+        if
+            let cached = ConversationMarkdownVideoAspectRatioCache.shared
+                .aspectRatio(for: url)
+        {
+            aspectRatio = cached
+            return
+        }
+
         let asset = AVURLAsset(url: url)
         guard
             let tracks = try? await asset.loadTracks(withMediaType: .video),
@@ -257,10 +293,37 @@ private struct LocalMarkdownFileVideo: View {
             return
         }
 
-        aspectRatio = ConversationMarkdownVideoLayout.aspectRatio(
+        let loadedAspectRatio = ConversationMarkdownVideoLayout.aspectRatio(
             naturalSize: naturalSize,
             preferredTransform: preferredTransform
         )
+        ConversationMarkdownVideoAspectRatioCache.shared.store(
+            loadedAspectRatio,
+            for: url
+        )
+        aspectRatio = loadedAspectRatio
+    }
+}
+
+@MainActor
+final class ConversationMarkdownVideoAspectRatioCache {
+    static let shared = ConversationMarkdownVideoAspectRatioCache()
+
+    private let storage = NSCache<NSURL, NSNumber>()
+
+    init(countLimit: Int = 32) {
+        storage.countLimit = countLimit
+    }
+
+    func aspectRatio(for url: URL) -> CGFloat? {
+        guard let value = storage.object(forKey: url as NSURL) else {
+            return nil
+        }
+        return CGFloat(truncating: value)
+    }
+
+    func store(_ aspectRatio: CGFloat, for url: URL) {
+        storage.setObject(NSNumber(value: aspectRatio), forKey: url as NSURL)
     }
 }
 

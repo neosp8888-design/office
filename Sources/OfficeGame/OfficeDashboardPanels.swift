@@ -744,10 +744,260 @@ struct LiveWorkspaceFeedScrollPolicy: Equatable {
     }
 }
 
+struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
+    @ObservedObject private var characterSelectionStore:
+        CharacterSelectionStore
+    private let director: AgentDirector
+
+    @MainActor
+    init(director: AgentDirector) {
+        self.director = director
+        _characterSelectionStore = ObservedObject(
+            wrappedValue: director.characterSelectionStore
+        )
+    }
+
+    func makeNSView(context: Context) -> CachedLiveWorkspaceFeedsNSView {
+        let view = CachedLiveWorkspaceFeedsNSView()
+        view.configure(
+            director: director,
+            selectedCharacterID:
+                characterSelectionStore.selectedCharacterID
+        )
+        return view
+    }
+
+    func updateNSView(
+        _ nsView: CachedLiveWorkspaceFeedsNSView,
+        context: Context
+    ) {
+        nsView.configure(
+            director: director,
+            selectedCharacterID:
+                characterSelectionStore.selectedCharacterID
+        )
+    }
+
+    static func dismantleNSView(
+        _ nsView: CachedLiveWorkspaceFeedsNSView,
+        coordinator: ()
+    ) {
+        nsView.tearDown()
+    }
+}
+
+private struct LiveWorkspaceFeedMetadata: Equatable {
+    let latestTerminalTurnID: String?
+    let latestSubmittedTurnID: String?
+    let latestStartedCommandID: UUID?
+
+    @MainActor
+    init(director: AgentDirector) {
+        latestTerminalTurnID = director.latestTerminalTurnID
+        latestSubmittedTurnID = director.latestSubmittedTurnID
+        latestStartedCommandID = director.latestStartedCommandID
+    }
+}
+
+@MainActor
+final class LiveWorkspaceFeedPresentationStore: ObservableObject {
+    @Published private(set) var isPresented: Bool
+
+    init(isPresented: Bool) {
+        self.isPresented = isPresented
+    }
+
+    func setPresented(_ isPresented: Bool) {
+        guard self.isPresented != isPresented else {
+            return
+        }
+        self.isPresented = isPresented
+    }
+}
+
+private struct HostedLiveWorkspaceFeed: View {
+    let director: AgentDirector
+    let characterID: OfficeCharacter
+    let metadata: LiveWorkspaceFeedMetadata
+    let presentationStore: LiveWorkspaceFeedPresentationStore
+
+    var body: some View {
+        LiveWorkspaceFeed(
+            director: director,
+            characterID: characterID,
+            presentationStore: presentationStore,
+            metadata: metadata
+        )
+        .equatable()
+        .environment(
+            \.liveWorkspaceFeedPresentationStore,
+            presentationStore
+        )
+        .environment(\.locale, OfficeLocalization.locale)
+    }
+}
+
+@MainActor
+final class CachedLiveWorkspaceFeedsNSView: NSView {
+    @MainActor
+    private final class Entry {
+        let characterID: OfficeCharacter
+        let presentationStore: LiveWorkspaceFeedPresentationStore
+        let hostingView: NSHostingView<HostedLiveWorkspaceFeed>
+        var metadata: LiveWorkspaceFeedMetadata
+
+        init(
+            director: AgentDirector,
+            characterID: OfficeCharacter,
+            metadata: LiveWorkspaceFeedMetadata
+        ) {
+            self.characterID = characterID
+            self.metadata = metadata
+            presentationStore = LiveWorkspaceFeedPresentationStore(
+                isPresented: false
+            )
+            hostingView = NSHostingView(
+                rootView: HostedLiveWorkspaceFeed(
+                    director: director,
+                    characterID: characterID,
+                    metadata: metadata,
+                    presentationStore: presentationStore
+                )
+            )
+        }
+
+        func refreshRootIfNeeded(
+            director: AgentDirector,
+            metadata: LiveWorkspaceFeedMetadata
+        ) {
+            guard self.metadata != metadata else {
+                return
+            }
+            self.metadata = metadata
+            hostingView.rootView = HostedLiveWorkspaceFeed(
+                director: director,
+                characterID: characterID,
+                metadata: metadata,
+                presentationStore: presentationStore
+            )
+        }
+    }
+
+    private weak var director: AgentDirector?
+    private var entries: [OfficeCharacter: Entry] = [:]
+    private var selectedCharacterID: OfficeCharacter?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        for entry in entries.values where entry.hostingView.frame != bounds {
+            entry.hostingView.frame = bounds
+        }
+    }
+
+    func configure(
+        director: AgentDirector,
+        selectedCharacterID: OfficeCharacter?
+    ) {
+        if self.director !== director {
+            tearDown()
+            self.director = director
+        }
+
+        let previousCharacterID = self.selectedCharacterID
+        self.selectedCharacterID = selectedCharacterID
+
+        if
+            let previousCharacterID,
+            previousCharacterID != selectedCharacterID,
+            let previousEntry = entries[previousCharacterID]
+        {
+            previousEntry.presentationStore.setPresented(false)
+            previousEntry.hostingView.isHidden = true
+            director.liveFeedStore.setCharacterFeedPresented(
+                false,
+                for: previousCharacterID.rawValue
+            )
+        }
+
+        guard let selectedCharacterID else {
+            return
+        }
+
+        let metadata = LiveWorkspaceFeedMetadata(director: director)
+        let selectedEntry = entry(
+            director: director,
+            characterID: selectedCharacterID,
+            metadata: metadata
+        )
+        selectedEntry.refreshRootIfNeeded(
+            director: director,
+            metadata: metadata
+        )
+        selectedEntry.presentationStore.setPresented(true)
+        selectedEntry.hostingView.isHidden = false
+        director.liveFeedStore.setCharacterFeedPresented(
+            true,
+            for: selectedCharacterID.rawValue
+        )
+    }
+
+    func tearDown() {
+        if let director {
+            for (characterID, entry) in entries {
+                entry.presentationStore.setPresented(false)
+                director.liveFeedStore.setCharacterFeedPresented(
+                    false,
+                    for: characterID.rawValue
+                )
+            }
+        }
+        for entry in entries.values {
+            entry.hostingView.removeFromSuperview()
+        }
+        entries.removeAll()
+        selectedCharacterID = nil
+        director = nil
+    }
+
+    private func entry(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        metadata: LiveWorkspaceFeedMetadata
+    ) -> Entry {
+        if let entry = entries[characterID] {
+            return entry
+        }
+
+        let entry = Entry(
+            director: director,
+            characterID: characterID,
+            metadata: metadata
+        )
+        entry.hostingView.frame = bounds
+        entry.hostingView.autoresizingMask = [.width, .height]
+        entry.hostingView.isHidden = true
+        addSubview(entry.hostingView)
+        entries[characterID] = entry
+        return entry
+    }
+}
+
 struct LiveWorkspaceFeed: View, Equatable {
-    @ObservedObject private var liveFeedStore: LiveFeedStore
+    @ObservedObject private var characterFeedStore: CharacterLiveFeedStore
+    private let liveFeedStore: LiveFeedStore
+    private let characterID: OfficeCharacter
+    private let presentationStore: LiveWorkspaceFeedPresentationStore
     private let workspaceDirectory: String
-    private let selectedCharacterID: OfficeCharacter?
     private let latestTerminalTurnID: String?
     private let latestSubmittedTurnID: String?
     private let latestStartedCommandID: UUID?
@@ -761,7 +1011,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var visibleTurnLimit = Self.pageSize
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
-    @State private var usesSinglePassInitialScroll = false
 
     private static let bottomTolerance = CGFloat(20)
     private static let topLoadThreshold = CGFloat(120)
@@ -769,15 +1018,25 @@ struct LiveWorkspaceFeed: View, Equatable {
     private static let pageSize = 10
     private static let maximumVisibleTurnCount = 30
 
-    init(director: AgentDirector) {
-        _liveFeedStore = ObservedObject(
-            wrappedValue: director.liveFeedStore
+    fileprivate init(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        presentationStore: LiveWorkspaceFeedPresentationStore,
+        metadata: LiveWorkspaceFeedMetadata
+    ) {
+        let liveFeedStore = director.liveFeedStore
+        _characterFeedStore = ObservedObject(
+            wrappedValue: liveFeedStore.characterStore(
+                for: characterID.rawValue
+            )
         )
+        self.liveFeedStore = liveFeedStore
+        self.characterID = characterID
+        self.presentationStore = presentationStore
         workspaceDirectory = director.workspaceDirectory
-        selectedCharacterID = director.selectedCharacterID
-        latestTerminalTurnID = director.latestTerminalTurnID
-        latestSubmittedTurnID = director.latestSubmittedTurnID
-        latestStartedCommandID = director.latestStartedCommandID
+        latestTerminalTurnID = metadata.latestTerminalTurnID
+        latestSubmittedTurnID = metadata.latestSubmittedTurnID
+        latestStartedCommandID = metadata.latestStartedCommandID
         fetchWorkspaceReview = { turnID in
             try await director.fetchWorkspaceReview(turnID: turnID)
         }
@@ -800,20 +1059,17 @@ struct LiveWorkspaceFeed: View, Equatable {
         rhs: LiveWorkspaceFeed
     ) -> Bool {
         lhs.liveFeedStore === rhs.liveFeedStore
+            && lhs.characterFeedStore === rhs.characterFeedStore
+            && lhs.characterID == rhs.characterID
+            && lhs.presentationStore === rhs.presentationStore
             && lhs.workspaceDirectory == rhs.workspaceDirectory
-            && lhs.selectedCharacterID == rhs.selectedCharacterID
             && lhs.latestTerminalTurnID == rhs.latestTerminalTurnID
             && lhs.latestSubmittedTurnID == rhs.latestSubmittedTurnID
             && lhs.latestStartedCommandID == rhs.latestStartedCommandID
     }
 
     private var selectedTurns: [LiveFeedTurn] {
-        guard let selectedCharacterID else {
-            return []
-        }
-        return liveFeedStore.turns.filter {
-            $0.characterId == selectedCharacterID.rawValue
-        }
+        characterFeedStore.turns
     }
 
     private var displayTurns: [LiveFeedTurn] {
@@ -865,7 +1121,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         ScrollViewReader { proxy in
             Group {
                 if displayTurns.isEmpty {
-                    if liveFeedStore.isLoadingInitialFeed {
+                    if characterFeedStore.isLoadingInitialFeed {
                         VStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
@@ -919,7 +1175,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                             )
                             .frame(height: 1)
 
-                            VStack(spacing: 14) {
+                            LazyVStack(spacing: 14) {
                                 if hiddenTurnCount > 0 {
                                     archivedTurnsNotice
                                 }
@@ -961,7 +1217,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                         performInitialScrollIfNeeded(proxy: proxy)
                     }
                     .onChange(
-                        of: liveFeedStore.isLoadingInitialFeed
+                        of: characterFeedStore.isLoadingInitialFeed
                     ) { _, isLoading in
                         guard !isLoading else {
                             return
@@ -1065,18 +1321,14 @@ struct LiveWorkspaceFeed: View, Equatable {
                         )
                     }
                     .onDisappear {
-                        scrollMetrics.followScrollTask?.cancel()
-                        scrollMetrics.followScrollTask = nil
-                        scrollMetrics.initialScrollTask?.cancel()
-                        scrollMetrics.initialScrollTask = nil
-                        scrollMetrics.submittedScrollTask?.cancel()
-                        scrollMetrics.submittedScrollTask = nil
+                        cancelScheduledScrolls()
                     }
                 }
             }
-            .onChange(of: selectedCharacterID) {
-                _, _ in
-                resetForSelectedCharacter(proxy: proxy)
+            .onReceive(presentationStore.$isPresented) { isPresented in
+                if !isPresented {
+                    cancelScheduledScrolls()
+                }
             }
         }
     }
@@ -1125,7 +1377,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     ) {
         guard
             !didPerformInitialScroll,
-            !liveFeedStore.isLoadingInitialFeed,
+            !characterFeedStore.isLoadingInitialFeed,
             !displayTurns.isEmpty,
             scrollMetrics.initialScrollTask == nil,
             scrollMetrics.viewportHeight > 0,
@@ -1136,31 +1388,6 @@ struct LiveWorkspaceFeed: View, Equatable {
 
         markAtBottom()
         scrollMetrics.initialScrollTask = Task { @MainActor in
-            if usesSinglePassInitialScroll {
-                await Task.yield()
-                try? await Task.sleep(for: .milliseconds(16))
-                guard !Task.isCancelled else {
-                    return
-                }
-                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-                try? await Task.sleep(for: .milliseconds(40))
-                guard !Task.isCancelled else {
-                    return
-                }
-                if distanceFromBottom > Self.bottomTolerance {
-                    proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-                    await Task.yield()
-                    guard !Task.isCancelled else {
-                        return
-                    }
-                }
-                markAtBottom()
-                didPerformInitialScroll = true
-                usesSinglePassInitialScroll = false
-                scrollMetrics.initialScrollTask = nil
-                return
-            }
-
             var policy = LiveWorkspaceFeedScrollPolicy()
             for _ in 0..<LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts {
                 guard !Task.isCancelled else {
@@ -1206,23 +1433,13 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
     }
 
-    private func resetForSelectedCharacter(
-        proxy: ScrollViewProxy
-    ) {
-        visibleTurnLimit = Self.pageSize
-        isLoadingOlderTurns = false
-        didPerformInitialScroll = false
-        usesSinglePassInitialScroll = true
+    private func cancelScheduledScrolls() {
         scrollMetrics.followScrollTask?.cancel()
         scrollMetrics.followScrollTask = nil
         scrollMetrics.initialScrollTask?.cancel()
         scrollMetrics.initialScrollTask = nil
         scrollMetrics.submittedScrollTask?.cancel()
         scrollMetrics.submittedScrollTask = nil
-        markAtBottom()
-        DispatchQueue.main.async {
-            performInitialScrollIfNeeded(proxy: proxy)
-        }
     }
 
     private func revealSubmittedTurn(

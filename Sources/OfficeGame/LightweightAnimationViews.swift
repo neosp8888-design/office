@@ -87,6 +87,204 @@ struct CoreAnimationWaterfallMaskView: NSViewRepresentable {
     }
 }
 
+struct CoreAnimationSelectionHighlight: NSViewRepresentable {
+    let selectedIndex: Int?
+    let itemCount: Int
+    let spacing: CGFloat
+    let reduceMotion: Bool
+
+    func makeNSView(context: Context) -> CoreAnimationSelectionHighlightNSView {
+        let view = CoreAnimationSelectionHighlightNSView()
+        view.configure(
+            selectedIndex: selectedIndex,
+            itemCount: itemCount,
+            spacing: spacing,
+            animated: false
+        )
+        return view
+    }
+
+    func updateNSView(
+        _ nsView: CoreAnimationSelectionHighlightNSView,
+        context: Context
+    ) {
+        nsView.configure(
+            selectedIndex: selectedIndex,
+            itemCount: itemCount,
+            spacing: spacing,
+            animated: !reduceMotion
+        )
+    }
+}
+
+enum CharacterSelectionHighlightGeometry {
+    static func frame(
+        in bounds: CGRect,
+        selectedIndex: Int?,
+        itemCount: Int,
+        spacing: CGFloat
+    ) -> CGRect? {
+        guard
+            let selectedIndex,
+            itemCount > 0,
+            selectedIndex >= 0,
+            selectedIndex < itemCount,
+            bounds.width > 0,
+            bounds.height > 0
+        else {
+            return nil
+        }
+
+        let totalSpacing = spacing * CGFloat(itemCount - 1)
+        let itemWidth = max(0, bounds.width - totalSpacing)
+            / CGFloat(itemCount)
+        return CGRect(
+            x: CGFloat(selectedIndex) * (itemWidth + spacing),
+            y: 0,
+            width: itemWidth,
+            height: bounds.height
+        )
+    }
+}
+
+final class CoreAnimationSelectionHighlightNSView: NSView {
+    private let highlightLayer = CALayer()
+    private var selectedIndex: Int?
+    private var itemCount = 0
+    private var spacing = CGFloat.zero
+    private var hasPositionedHighlight = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        configureHighlightLayer()
+        layer?.addSublayer(highlightLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        updateHighlightGeometry(
+            animated: false,
+            preserveCurrentAnimation: true
+        )
+    }
+
+    func configure(
+        selectedIndex: Int?,
+        itemCount: Int,
+        spacing: CGFloat,
+        animated: Bool
+    ) {
+        let selectionChanged = self.selectedIndex != selectedIndex
+        let geometryChanged = self.itemCount != itemCount
+            || self.spacing != spacing
+        self.selectedIndex = selectedIndex
+        self.itemCount = itemCount
+        self.spacing = spacing
+
+        if selectionChanged || geometryChanged {
+            updateHighlightGeometry(
+                animated: animated && selectionChanged,
+                preserveCurrentAnimation: false
+            )
+        }
+    }
+
+    private func configureHighlightLayer() {
+        highlightLayer.backgroundColor = NSColor.controlBackgroundColor
+            .withAlphaComponent(0.94)
+            .cgColor
+        highlightLayer.borderColor = NSColor(
+            calibratedRed: 0.13,
+            green: 0.55,
+            blue: 0.52,
+            alpha: 0.18
+        ).cgColor
+        highlightLayer.borderWidth = 1
+        highlightLayer.cornerRadius = 10
+        highlightLayer.cornerCurve = .continuous
+        highlightLayer.shadowColor = NSColor.black.cgColor
+        highlightLayer.shadowOpacity = 0.10
+        highlightLayer.shadowRadius = 6
+        highlightLayer.shadowOffset = CGSize(width: 0, height: -2)
+    }
+
+    private func updateHighlightGeometry(
+        animated: Bool,
+        preserveCurrentAnimation: Bool
+    ) {
+        guard
+            let targetFrame = CharacterSelectionHighlightGeometry.frame(
+                in: bounds,
+                selectedIndex: selectedIndex,
+                itemCount: itemCount,
+                spacing: spacing
+            )
+        else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            highlightLayer.isHidden = true
+            CATransaction.commit()
+            hasPositionedHighlight = false
+            return
+        }
+
+        let previousPositionX = highlightLayer.presentation()?.position.x
+            ?? highlightLayer.position.x
+        let targetPosition = CGPoint(
+            x: targetFrame.midX,
+            y: targetFrame.midY
+        )
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        highlightLayer.isHidden = false
+        highlightLayer.bounds = CGRect(
+            origin: .zero,
+            size: targetFrame.size
+        )
+        highlightLayer.position = targetPosition
+        highlightLayer.shadowPath = CGPath(
+            roundedRect: CGRect(origin: .zero, size: targetFrame.size),
+            cornerWidth: 10,
+            cornerHeight: 10,
+            transform: nil
+        )
+        CATransaction.commit()
+
+        guard
+            animated,
+            hasPositionedHighlight,
+            abs(previousPositionX - targetPosition.x) > 0.5
+        else {
+            if !preserveCurrentAnimation {
+                highlightLayer.removeAnimation(
+                    forKey: "officestra.selection"
+                )
+            }
+            hasPositionedHighlight = true
+            return
+        }
+
+        let spring = CASpringAnimation(keyPath: "position.x")
+        spring.fromValue = previousPositionX
+        spring.toValue = targetPosition.x
+        spring.mass = 1
+        spring.stiffness = 500
+        spring.damping = 38
+        spring.initialVelocity = 0
+        spring.duration = spring.settlingDuration
+        highlightLayer.add(spring, forKey: "officestra.selection")
+        hasPositionedHighlight = true
+    }
+}
+
 final class CoreAnimationDotsNSView: NSView {
     private let dotLayers = (0..<3).map { _ in CAShapeLayer() }
     private var dotSize = CGFloat(4)
