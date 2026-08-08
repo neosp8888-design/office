@@ -189,9 +189,18 @@ struct ClaudeThought: Identifiable, Equatable {
 
     var id: String { "thought:\(activityID)" }
 
-    /// 스트림 시작만 있고 원문이 아직 없는 상태다.
-    var isPlaceholder: Bool {
-        isRunning && text == "추론 중"
+    /// 스트림 시작만 알리는 자리표시자다. 원문이 끝내 오지 않는 경우도 있다.
+    static let placeholderText = "추론 중"
+
+    /// 보여줄 원문이 없으면 카드로 만들지 않는다.
+    static func hasContent(_ activity: LiveFeedActivity) -> Bool {
+        guard activity.kind == "thinking" else {
+            return false
+        }
+        let text = activity.text.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return !text.isEmpty && text != placeholderText
     }
 }
 
@@ -428,6 +437,10 @@ struct ClaudeTranscriptPresentation: Equatable {
         for activity in activities {
             switch activity.kind {
             case "thinking":
+                // 원문 없는 자리표시자는 아래쪽 `생각 중` 표시가 대신한다.
+                guard ClaudeThought.hasContent(activity) else {
+                    continue
+                }
                 reserve(.thoughts)
                 thoughtBuffer.append(
                     ClaudeThought(
@@ -531,9 +544,17 @@ struct ClaudeTranscriptPresentation: Equatable {
 
         return ClaudeTranscriptPresentation(
             entries: entries,
+            // 자리표시자 추론만 돌고 있으면 화면에 남는 카드가 없으므로
+            // 아래쪽 `생각 중`으로 진행 중임을 알린다.
             showsWaiting: isRunning
                 && streamingMessageID == nil
-                && !activities.contains { $0.status == .running },
+                && !activities.contains { activity in
+                    activity.status == .running
+                        && !(
+                            activity.kind == "thinking"
+                                && !ClaudeThought.hasContent(activity)
+                        )
+                },
             streamingMessageID: streamingMessageID
         )
     }

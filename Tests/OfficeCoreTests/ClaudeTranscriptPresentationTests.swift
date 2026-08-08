@@ -468,7 +468,7 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.showsWaiting)
     }
 
-    func testRunningThinkingPlaceholderIsMarked() throws {
+    func testContentlessThinkingBecomesWaitingInsteadOfCard() throws {
         let activity = try makeActivity(
             id: "think-1",
             kind: "thinking",
@@ -484,14 +484,69 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
             isRunning: true
         )
 
-        guard
-            case .thoughts(let run) = presentation.entries.first,
-            let thought = run.latestThought
-        else {
-            return XCTFail("사고 항목이 없습니다.")
+        XCTAssertTrue(presentation.entries.isEmpty)
+        XCTAssertTrue(presentation.showsWaiting)
+    }
+
+    /// 원문이 끝내 오지 않은 자리표시자가 카드로 굳어 `추론 · 1개`가
+    /// 여러 번 겹쳐 보이던 문제를 고정한다.
+    func testStrayThinkingPlaceholdersDoNotStackAsCards() throws {
+        let activities = try [
+            makeActivity(
+                id: "think-1",
+                kind: "thinking",
+                text: "추론 중",
+                status: "running"
+            ),
+            makeActivity(
+                id: "message-1",
+                kind: "message",
+                text: "확인해 보겠습니다.",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "think-2",
+                kind: "thinking",
+                text: "추론 중",
+                status: "running"
+            ),
+            makeActivity(
+                id: "think-3",
+                kind: "thinking",
+                text: "두 구현의 차이를 먼저 본다.",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-1",
+                kind: "tool",
+                text: "도구 · Bash · git log",
+                status: "running"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+
+        XCTAssertEqual(
+            presentation.entries.map(\.id),
+            [
+                "activity:message-1",
+                "thoughts:think-3",
+                "tools:shell:tool-1",
+            ]
+        )
+        guard case .thoughts(let run) = presentation.entries[1] else {
+            return XCTFail("추론 카드가 없습니다.")
         }
-        XCTAssertTrue(thought.isPlaceholder)
-        XCTAssertTrue(run.isRunning)
+        XCTAssertEqual(run.thoughts.count, 1)
+        XCTAssertEqual(run.latestThought?.text, "두 구현의 차이를 먼저 본다.")
+        XCTAssertFalse(run.isRunning)
+        // 실제로 도는 도구가 있으므로 아래쪽 `생각 중`은 뜨지 않는다.
         XCTAssertFalse(presentation.showsWaiting)
     }
 
