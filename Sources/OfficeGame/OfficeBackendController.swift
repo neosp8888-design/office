@@ -28,12 +28,32 @@ struct OfficeBackendLaunchConfiguration: Equatable {
     static let jobLabel = "com.neo.office-backend-4317"
 
     let workdir: URL
+    let backendDirectoryURL: URL
     let healthURL: URL
     let runtimeConfigurationURL: URL
     let userID: uid_t
 
     var jobTarget: String {
         "gui/\(userID)/\(Self.jobLabel)"
+    }
+}
+
+enum OfficeBackendRuntimeLocation {
+    static func resolve(
+        resourceURL: URL,
+        workdir: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let bundledBackend = resourceURL
+            .appending(path: "OFFICESTRARuntime")
+            .appending(path: "backend")
+        let bundledServer = bundledBackend
+            .appending(path: "src")
+            .appending(path: "server.mjs")
+        if fileManager.fileExists(atPath: bundledServer.path) {
+            return bundledBackend
+        }
+        return workdir.appending(path: "backend")
     }
 }
 
@@ -68,7 +88,7 @@ enum OfficeBackendLaunchCommands {
         let command = """
         export OFFICE_WORKDIR=\(shellQuoted(configuration.workdir.path)); \
         export CHARACTER_CONFIG_PATH=\(shellQuoted(configuration.runtimeConfigurationURL.path)); \
-        cd \(shellQuoted(configuration.workdir.appending(path: "backend").path)); \
+        cd \(shellQuoted(configuration.backendDirectoryURL.path)); \
         exec \(shellQuoted(nodeExecutableURL.path)) src/server.mjs
         """
         return OfficeBackendLaunchCommand(
@@ -111,8 +131,13 @@ final class OfficeBackendController: ObservableObject {
             status = .stopped
             return
         }
+        let workdirURL = URL(fileURLWithPath: workdir)
         configuration = OfficeBackendLaunchConfiguration(
-            workdir: URL(fileURLWithPath: workdir),
+            workdir: workdirURL,
+            backendDirectoryURL: OfficeBackendRuntimeLocation.resolve(
+                resourceURL: resourceURL,
+                workdir: workdirURL
+            ),
             healthURL: healthURL,
             runtimeConfigurationURL: resourceURL
                 .appending(path: "OfficeLLM_OfficeCore.bundle")
