@@ -752,9 +752,19 @@ final class AgentDirector: ObservableObject {
             : englishIdleChatterMessages
     }
 
-    init(startBackgroundTasks: Bool = true) {
+    init(
+        startBackgroundTasks: Bool = true,
+        workspaceDirectory: String? = nil
+    ) {
         do {
-            configuration = try CharacterConfigurationAsset.load()
+            let loadedConfiguration = try CharacterConfigurationAsset.load()
+            if let workspaceDirectory {
+                configuration = loadedConfiguration.using(
+                    workdir: workspaceDirectory
+                )
+            } else {
+                configuration = loadedConfiguration
+            }
         } catch {
             fatalError(error.localizedDescription)
         }

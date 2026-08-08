@@ -297,6 +297,15 @@ public struct OfficeAgentConfiguration: Codable, Sendable {
     public let databaseBaseURL: URL
     public let archiveCabinetHitbox: CharacterHitbox
     public let characters: [CharacterConfiguration]
+
+    public func using(workdir: String) -> OfficeAgentConfiguration {
+        OfficeAgentConfiguration(
+            workdir: workdir,
+            databaseBaseURL: databaseBaseURL,
+            archiveCabinetHitbox: archiveCabinetHitbox,
+            characters: characters
+        )
+    }
 }
 
 public enum CharacterConfigurationAsset {

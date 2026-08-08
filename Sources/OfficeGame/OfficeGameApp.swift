@@ -6,15 +6,37 @@ import SwiftUI
 
 @main
 struct OfficeGameApp: App {
-    @StateObject private var director = AgentDirector()
+    @StateObject private var launchCoordinator = OfficeLaunchCoordinator()
 
     var body: some Scene {
         WindowGroup("OFFICESTRA") {
-            OfficeGameView(director: director)
+            OfficeLaunchRootView(coordinator: launchCoordinator)
                 .environment(\.locale, OfficeLocalization.locale)
         }
         .defaultSize(width: 1_440, height: 900)
         .windowResizability(.contentMinSize)
+    }
+}
+
+private struct OfficeLaunchRootView: View {
+    @ObservedObject var coordinator: OfficeLaunchCoordinator
+
+    var body: some View {
+        switch coordinator.state {
+        case .needsWorkspace:
+            OfficeWorkspaceSetupView(
+                validationError: coordinator.validationError,
+                chooseWorkspace: coordinator.chooseWorkspace
+            )
+        case .ready:
+            if let director = coordinator.director {
+                OfficeGameView(director: director)
+            } else {
+                ProgressView()
+            }
+        case .failed(let message):
+            OfficeLaunchFailureView(message: message)
+        }
     }
 }
 
