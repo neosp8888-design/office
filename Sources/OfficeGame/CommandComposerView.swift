@@ -82,20 +82,6 @@ struct CommandEntryRow: View {
         let canSubmit = submissionPrompt != nil
 
         HStack(spacing: 9) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(DashboardPalette.accent)
-
-            CommandComposerView(
-                text: $draft.text,
-                placeholder: placeholder,
-                isEnabled:
-                    director.isReadyForSubmissions
-                        && !director.isUpdatingConfiguration,
-                onSubmit: submitDraft
-            )
-            .frame(height: 40)
-
             Button(action: onChooseAttachments) {
                 Image(systemName: "paperclip")
                     .font(.system(size: 15, weight: .semibold))
@@ -107,6 +93,16 @@ struct CommandEntryRow: View {
             .help("파일 첨부 · 한 번에 최대 20개")
             .disabled(attachmentSelectionIsDisabled)
             .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
+
+            CommandComposerView(
+                text: $draft.text,
+                placeholder: placeholder,
+                isEnabled:
+                    director.isReadyForSubmissions
+                        && !director.isUpdatingConfiguration,
+                onSubmit: submitDraft
+            )
+            .frame(height: 40)
 
             if director.isSelectedCharacterRunning {
                 Button(action: director.cancelSelectedJob) {
@@ -149,7 +145,8 @@ struct CommandEntryRow: View {
                 .opacity(canSubmit ? 1 : 0.42)
             }
         }
-        .padding(.leading, 13)
+        // 양끝이 같은 32pt 버튼이라 좌우 여백을 맞춘다.
+        .padding(.leading, 7)
         .padding(.trailing, 7)
         .padding(.vertical, 6)
         .background(
