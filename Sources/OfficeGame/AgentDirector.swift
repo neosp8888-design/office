@@ -510,6 +510,9 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var names: [OfficeCharacter: String]
     @Published private(set) var pendingQuestions:
         [OfficeCharacter: String] = [:]
+    /// 대화 안에서 답변받을 턴을 가리킨다. 답변이 끝나면 비운다.
+    @Published private(set) var pendingQuestionTurnIDs:
+        [OfficeCharacter: String] = [:]
     @Published private(set) var questionSubmissionErrors:
         [OfficeCharacter: String] = [:]
     @Published private(set) var latestQuestion: PendingAgentQuestion?
@@ -885,6 +888,12 @@ final class AgentDirector: ObservableObject {
         questionSubmissionErrors[character]
     }
 
+    func pendingQuestionTurnID(
+        for character: OfficeCharacter
+    ) -> String? {
+        pendingQuestionTurnIDs[character]
+    }
+
     func failureMessage(for character: OfficeCharacter) -> String? {
         failedCharacters[character]
     }
@@ -951,11 +960,14 @@ final class AgentDirector: ObservableObject {
         }
 
         let questionBeingAnswered = pendingQuestions[character.id]
+        let questionTurnIDBeingAnswered =
+            pendingQuestionTurnIDs[character.id]
         let conversationID = conversationIDs[character.id] ?? UUID()
         conversationIDs[character.id] = conversationID
         hasUserChosenCharacter = true
         selectedCharacterID = character.id
         pendingQuestions[character.id] = nil
+        pendingQuestionTurnIDs[character.id] = nil
         questionSubmissionErrors[character.id] = nil
         turnPersistenceErrors[character.id] = nil
         unreviewedCompletedCharacters.remove(character.id)
@@ -1032,6 +1044,7 @@ final class AgentDirector: ObservableObject {
                 let message = error.localizedDescription
                 if AgentUsageLimitClassifier.isLimitReached(message) {
                     pendingQuestions[character.id] = nil
+                    pendingQuestionTurnIDs[character.id] = nil
                     questionSubmissionErrors[character.id] = nil
                     failedCharacters[character.id] = nil
                     offDutyCharacters[character.id] = message
@@ -1045,6 +1058,8 @@ final class AgentDirector: ObservableObject {
                     )
                 } else if let questionBeingAnswered {
                     pendingQuestions[character.id] = questionBeingAnswered
+                    pendingQuestionTurnIDs[character.id] =
+                        questionTurnIDBeingAnswered
                     questionSubmissionErrors[character.id] =
                         message
                     latestQuestion = PendingAgentQuestion(
@@ -1871,11 +1886,13 @@ final class AgentDirector: ObservableObject {
                         autoDismiss: false
                     )
                 }
+                pendingQuestionTurnIDs[character] = turn.id
             } else if
                 !turn.status.isRunning,
                 pendingQuestions[character] != nil
             {
                 pendingQuestions[character] = nil
+                pendingQuestionTurnIDs[character] = nil
             }
 
             if
@@ -1945,10 +1962,12 @@ final class AgentDirector: ObservableObject {
                         autoDismiss: false
                     )
                 }
+                pendingQuestionTurnIDs[character] = turn.id
             } else {
                 if pendingQuestions[character] != nil {
                     pendingQuestions[character] = nil
                 }
+                pendingQuestionTurnIDs[character] = nil
                 showBubble(turn.response, for: character)
             }
         case .failed, .interrupted:
@@ -2046,6 +2065,7 @@ final class AgentDirector: ObservableObject {
         conversationIDs[character] = nil
         sessionIDs[character] = nil
         pendingQuestions[character] = nil
+        pendingQuestionTurnIDs[character] = nil
         questionSubmissionErrors[character] = nil
         acknowledgedWarningMessages[character] = nil
         failedCharacters[character] = nil

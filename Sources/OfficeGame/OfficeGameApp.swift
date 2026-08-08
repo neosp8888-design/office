@@ -240,28 +240,17 @@ private struct OfficeGameView: View {
         .onAppear {
             director.selectDefaultCharacterIfNeeded()
         }
-        .onChange(of: director.latestQuestion) { _, question in
-            guard let question else {
-                if
-                    let detail = bubbleDetail,
-                    detail.isQuestion,
-                    director.pendingQuestion(for: detail.character) == nil
-                {
-                    bubbleDetail = nil
-                }
+        // 확인 질문은 대화 카드 안에서 답변하므로 창을 새로 띄우지 않는다.
+        // 말풍선으로 직접 연 질문 창만 답변이 끝나면 닫는다.
+        .onChange(of: director.latestQuestion) { _, _ in
+            guard
+                let detail = bubbleDetail,
+                detail.isQuestion,
+                director.pendingQuestion(for: detail.character) == nil
+            else {
                 return
             }
-            guard bubbleDetail == nil, historyTarget == nil else {
-                return
-            }
-            bubbleDetail = BubbleDetail(
-                character: question.character,
-                name: director.displayName(for: question.character),
-                message: question.text,
-                isQuestion: true,
-                isFailure: false,
-                isOffDuty: false
-            )
+            bubbleDetail = nil
         }
     }
 
