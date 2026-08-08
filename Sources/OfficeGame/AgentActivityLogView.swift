@@ -1424,12 +1424,6 @@ private struct CodexActivityGroupView: View, Equatable {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            if group.isRunning {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(groupColor)
-            }
-
             Spacer(minLength: 6)
 
             Text(OfficeLocalization.format("%d개", group.items.count))
