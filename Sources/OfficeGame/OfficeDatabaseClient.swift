@@ -103,6 +103,104 @@ struct OfficeDatabaseClient: Sendable {
         try validate(response)
     }
 
+    func updateSettings(
+        _ updates: [CharacterSettingsBulkUpdate]
+    ) async throws -> CharacterSettingsBulkResult {
+        guard let request = try bulkSettingsRequest(updates) else {
+            return CharacterSettingsBulkResult(
+                ok: true,
+                characters: [],
+                warnings: []
+            )
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        let result = try JSONDecoder().decode(
+            CharacterSettingsBulkResult.self,
+            from: data
+        )
+        guard result.ok else {
+            throw OfficeDatabaseError.requestFailed
+        }
+        return result
+    }
+
+    func bulkSettingsRequest(
+        _ updates: [CharacterSettingsBulkUpdate]
+    ) throws -> URLRequest? {
+        guard !updates.isEmpty else {
+            return nil
+        }
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "characters")
+            .appending(path: "settings")
+            .appending(path: "bulk")
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            CharacterSettingsBulkRequest(updates: updates)
+        )
+        return request
+    }
+
+    func synchronizeRuntimeCLIPaths(
+        _ executablePaths: [AgentBackend: String]
+    ) async throws -> RuntimeCLIPathsResult {
+        guard let request = try runtimeCLIPathsRequest(executablePaths) else {
+            return RuntimeCLIPathsResult(
+                ok: true,
+                updatedCharacterIds: []
+            )
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        let result = try JSONDecoder().decode(
+            RuntimeCLIPathsResult.self,
+            from: data
+        )
+        guard result.ok else {
+            throw OfficeDatabaseError.requestFailed
+        }
+        return result
+    }
+
+    func runtimeCLIPathsRequest(
+        _ executablePaths: [AgentBackend: String]
+    ) throws -> URLRequest? {
+        let executables = Dictionary(
+            uniqueKeysWithValues: executablePaths.compactMap { backend, path in
+                let normalized = path.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                return normalized.isEmpty
+                    ? nil
+                    : (backend.rawValue, normalized)
+            }
+        )
+        guard !executables.isEmpty else {
+            return nil
+        }
+        let url = baseURL
+            .appending(path: "api")
+            .appending(path: "runtime")
+            .appending(path: "cli-paths")
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            RuntimeCLIPathsRequest(executables: executables)
+        )
+        return request
+    }
+
     func updateIdentityPrompt(
         _ identityPrompt: String,
         for character: OfficeCharacter
@@ -509,6 +607,33 @@ struct StoredActiveSession: Decodable, Sendable {
     let characterId: String
     let externalSessionId: String?
     let conversationId: UUID
+}
+
+struct CharacterSettingsBulkUpdate: Encodable, Equatable, Sendable {
+    let characterId: String
+    let backend: AgentBackend
+    let model: String?
+    let effort: String
+    let fastMode: Bool
+    let permission: String
+
+    init(
+        character: OfficeCharacter,
+        settings: CharacterAgentSettings
+    ) {
+        characterId = character.rawValue
+        backend = settings.backend
+        model = settings.model
+        effort = settings.effort
+        fastMode = settings.fastMode
+        permission = settings.permission.cliValue(for: settings.backend)
+    }
+}
+
+struct CharacterSettingsBulkResult: Decodable, Sendable {
+    let ok: Bool
+    let characters: [StoredCharacterProfile]
+    let warnings: [String]
 }
 
 struct CharacterHistory: Decodable, Sendable {
@@ -1050,6 +1175,19 @@ private struct AgentSettingsRequest: Encodable {
     let effort: String
     let fastMode: Bool
     let permission: String
+}
+
+private struct CharacterSettingsBulkRequest: Encodable {
+    let updates: [CharacterSettingsBulkUpdate]
+}
+
+private struct RuntimeCLIPathsRequest: Encodable {
+    let executables: [String: String]
+}
+
+struct RuntimeCLIPathsResult: Decodable, Equatable, Sendable {
+    let ok: Bool
+    let updatedCharacterIds: [String]
 }
 
 private struct IdentityPromptRequest: Encodable {

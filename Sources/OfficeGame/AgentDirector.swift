@@ -754,14 +754,24 @@ final class AgentDirector: ObservableObject {
 
     init(
         startBackgroundTasks: Bool = true,
-        workspaceDirectory: String? = nil
+        workspaceDirectory: String? = nil,
+        availableBackends: Set<AgentBackend>? = nil,
+        executablePaths: [AgentBackend: String] = [:]
     ) {
         do {
             let loadedConfiguration = try CharacterConfigurationAsset.load()
             if let workspaceDirectory {
-                configuration = loadedConfiguration.using(
-                    workdir: workspaceDirectory
-                )
+                if let availableBackends {
+                    configuration = loadedConfiguration.preparingForRuntime(
+                        workdir: workspaceDirectory,
+                        availableBackends: availableBackends,
+                        executablePaths: executablePaths
+                    )
+                } else {
+                    configuration = loadedConfiguration.using(
+                        workdir: workspaceDirectory
+                    )
+                }
             } else {
                 configuration = loadedConfiguration
             }

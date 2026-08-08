@@ -3,7 +3,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
+  accessSync,
   closeSync,
+  constants,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -97,6 +99,7 @@ const BLOCKED_WORKSPACE_STATUSES = new Set([
   "conflict",
 ]);
 export class AgentBusyError extends Error {}
+export class AgentDrainingError extends Error {}
 export class AgentJobNotFoundError extends Error {}
 export class CharacterNotFoundError extends Error {}
 
@@ -119,6 +122,50 @@ export class AgentRuntime {
     this.rolloutReaderFactory = rolloutReaderFactory;
     this.running = new Map();
     this.automaticApprovalCharacters = new Set();
+    this.preparingJobs = new Set();
+    this.postProcessingJobs = new Set();
+    this.draining = false;
+  }
+
+  get acceptingJobs() {
+    return !this.draining;
+  }
+
+  activeWorkCount() {
+    return this.preparingJobs.size +
+      this.running.size +
+      this.automaticApprovalCharacters.size +
+      this.postProcessingJobs.size;
+  }
+
+  maintenanceStatus() {
+    const activeTurnCount = this.activeWorkCount();
+    return {
+      acceptingJobs: this.acceptingJobs,
+      draining: this.draining,
+      activeTurnCount,
+      idle: activeTurnCount === 0,
+    };
+  }
+
+  beginDrain() {
+    this.draining = true;
+    return this.maintenanceStatus();
+  }
+
+  cancelDrain() {
+    this.draining = false;
+    return this.maintenanceStatus();
+  }
+
+  async withPostProcessing(label, operation) {
+    const token = Symbol(label);
+    this.postProcessingJobs.add(token);
+    try {
+      return await operation();
+    } finally {
+      this.postProcessingJobs.delete(token);
+    }
   }
 
   async recoverInterruptedJobs() {
@@ -402,6 +449,23 @@ export class AgentRuntime {
     characterID = null,
     excludeWorkspaceID = null,
   } = {}) {
+    if (this.draining) {
+      return 0;
+    }
+    return await this.withPostProcessing(
+      "resume-pending-automatic-workspace-approvals",
+      async () =>
+        await this.resumePendingAutomaticWorkspaceApprovalsAccepted({
+          characterID,
+          excludeWorkspaceID,
+        }),
+    );
+  }
+
+  async resumePendingAutomaticWorkspaceApprovalsAccepted({
+    characterID = null,
+    excludeWorkspaceID = null,
+  } = {}) {
     if (!(await this.automaticWorkspaceApprovalEnabled())) {
       return 0;
     }
@@ -455,29 +519,53 @@ export class AgentRuntime {
   }
 
   async wakePeerWaitingAutomaticApprovals({ resume = true } = {}) {
-    const waiting = await this.pool.query(
-      `
-        UPDATE task_workspaces
-        SET
-          auto_waiting_for_peer = false,
-          error_message = NULL,
-          updated_at = now()
-        WHERE auto_waiting_for_peer = true
-          AND auto_repair_paused = false
-          AND status IN ('awaiting_approval', 'conflict')
-        RETURNING id
-      `,
+    return await this.withPostProcessing(
+      "wake-peer-waiting-automatic-approvals",
+      async () => {
+        const waiting = await this.pool.query(
+          `
+            UPDATE task_workspaces
+            SET
+              auto_waiting_for_peer = false,
+              error_message = NULL,
+              updated_at = now()
+            WHERE auto_waiting_for_peer = true
+              AND auto_repair_paused = false
+              AND status IN ('awaiting_approval', 'conflict')
+            RETURNING id
+          `,
+        );
+        if (waiting.rowCount === 0) {
+          return 0;
+        }
+        if (resume) {
+          await this.resumePendingAutomaticWorkspaceApprovals();
+        }
+        return waiting.rowCount;
+      },
     );
-    if (waiting.rowCount === 0) {
-      return 0;
-    }
-    if (resume) {
-      await this.resumePendingAutomaticWorkspaceApprovals();
-    }
-    return waiting.rowCount;
   }
 
-  async start({
+  async start(options) {
+    const automaticRepair = options?.automaticRepair ?? null;
+    if (!automaticRepair && this.draining) {
+      throw new AgentDrainingError(
+        "백엔드가 안전한 전환을 준비 중이라 새 업무를 받지 않습니다.",
+      );
+    }
+
+    const preparation = Symbol(
+      `prepare-agent-job:${String(options?.characterID ?? "unknown")}`,
+    );
+    this.preparingJobs.add(preparation);
+    try {
+      return await this.startAccepted(options);
+    } finally {
+      this.preparingJobs.delete(preparation);
+    }
+  }
+
+  async startAccepted({
     characterID,
     prompt,
     conversationID,
@@ -1087,6 +1175,8 @@ export class AgentRuntime {
             session.id,
             session.external_id AS "externalSessionID",
             session.conversation_id AS "conversationID",
+            conversation.workdir AS "conversationWorkdir",
+            session_scope.repository_root AS "sessionRepositoryRoot",
             workspace.id AS "workspaceID",
             workspace.status AS "workspaceStatus",
             workspace.repository_root AS "workspaceRepositoryRoot",
@@ -1114,6 +1204,16 @@ export class AgentRuntime {
           FROM active_cli_sessions AS active
           JOIN cli_sessions AS session
             ON session.id = active.cli_session_id
+          JOIN conversations AS conversation
+            ON conversation.id = session.conversation_id
+          LEFT JOIN LATERAL (
+            SELECT candidate.repository_root
+            FROM task_workspaces AS candidate
+            WHERE candidate.cli_session_id = session.id
+              AND candidate.repository_root IS NOT NULL
+            ORDER BY candidate.updated_at DESC, candidate.id DESC
+            LIMIT 1
+          ) AS session_scope ON true
           LEFT JOIN LATERAL (
             SELECT candidate.*
             FROM task_workspaces AS candidate
@@ -1146,7 +1246,13 @@ export class AgentRuntime {
       let externalSessionID;
       let effectiveConversationID;
       let workspace = null;
-      const active = activeResult.rows[0] ?? null;
+      const activeCandidate = activeResult.rows[0] ?? null;
+      const active = activeSessionMatchesRuntime(activeCandidate, {
+        workdir: this.workdir,
+        repositoryRoot: this.repositoryRoot,
+      })
+        ? activeCandidate
+        : null;
       const reusedSession = Boolean(active);
       if (active) {
         sessionID = active.id;
@@ -2261,6 +2367,51 @@ export class AgentRuntime {
         status: state.workspace.status,
       });
     }
+    if (workspaceReview?.hasChanges) {
+      const characterID = state.character.id;
+      this.automaticApprovalCharacters.add(characterID);
+      try {
+        if (this.running.get(characterID) === state) {
+          this.running.delete(characterID);
+        }
+        this.broadcast({
+          type: "feed.changed",
+          turnId: state.turnID,
+          characterId: characterID,
+        });
+        await this.handleAutomaticWorkspaceApproval(
+          state,
+          workspaceReview,
+          { reservationHeld: true },
+        );
+      } finally {
+        this.automaticApprovalCharacters.delete(characterID);
+      }
+      await this.resumePendingAutomaticWorkspaceApprovals({
+        characterID,
+        excludeWorkspaceID: state.workspace?.id ?? null,
+      });
+      return;
+    }
+
+    if (workspaceReview) {
+      await this.withPostProcessing(
+        `complete-workspace:${state.turnID}`,
+        async () => {
+          if (this.running.get(state.character.id) === state) {
+            this.running.delete(state.character.id);
+          }
+          this.broadcast({
+            type: "feed.changed",
+            turnId: state.turnID,
+            characterId: state.character.id,
+          });
+          await this.wakePeerWaitingAutomaticApprovals();
+        },
+      );
+      return;
+    }
+
     if (this.running.get(state.character.id) === state) {
       this.running.delete(state.character.id);
     }
@@ -2269,18 +2420,6 @@ export class AgentRuntime {
       turnId: state.turnID,
       characterId: state.character.id,
     });
-    if (workspaceReview?.hasChanges) {
-      await this.handleAutomaticWorkspaceApproval(
-        state,
-        workspaceReview,
-      );
-      await this.resumePendingAutomaticWorkspaceApprovals({
-        characterID: state.character.id,
-        excludeWorkspaceID: state.workspace?.id ?? null,
-      });
-    } else if (workspaceReview) {
-      await this.wakePeerWaitingAutomaticApprovals();
-    }
   }
 
   async automaticWorkspaceApprovalEnabled() {
@@ -2294,9 +2433,15 @@ export class AgentRuntime {
     return result.rows?.[0]?.enabled ?? true;
   }
 
-  async handleAutomaticWorkspaceApproval(state, workspaceReview) {
+  async handleAutomaticWorkspaceApproval(
+    state,
+    workspaceReview,
+    { reservationHeld = false } = {},
+  ) {
     const characterID = state.character.id;
-    this.automaticApprovalCharacters.add(characterID);
+    if (!reservationHeld) {
+      this.automaticApprovalCharacters.add(characterID);
+    }
     try {
       let enabled = false;
       try {
@@ -2382,7 +2527,9 @@ export class AgentRuntime {
         }
       }
     } finally {
-      this.automaticApprovalCharacters.delete(characterID);
+      if (!reservationHeld) {
+        this.automaticApprovalCharacters.delete(characterID);
+      }
     }
   }
 
@@ -2834,14 +2981,14 @@ export class AgentRuntime {
     };
   }
 
-  async prepareWorkspaceForSessionEnd(characterID) {
+  async inspectWorkspaceForSessionEnd(characterID, client = this.pool) {
     if (this.running.has(characterID)) {
       throw new AgentBusyError(
         "이 직원의 실행 중인 업무가 끝난 뒤 CLI를 변경하세요.",
       );
     }
 
-    const busy = await this.pool.query(
+    const busy = await client.query(
       `
         SELECT turn.id
         FROM turns AS turn
@@ -2859,7 +3006,7 @@ export class AgentRuntime {
       );
     }
 
-    const candidate = await this.pool.query(
+    const candidate = await client.query(
       `
         SELECT
           workspace.*,
@@ -2896,27 +3043,12 @@ export class AgentRuntime {
     );
 
     if (candidate.rowCount === 0) {
-      const ended = await this.withTransaction(async (client) => {
-        const active = await client.query(
-          `
-            DELETE FROM active_cli_sessions
-            WHERE character_id = $1
-            RETURNING cli_session_id
-          `,
-          [characterID],
-        );
-        await client.query(
-          `
-            UPDATE cli_sessions
-            SET ended_at = COALESCE(ended_at, now())
-            WHERE character_id = $1
-              AND ended_at IS NULL
-          `,
-          [characterID],
-        );
-        return active.rowCount > 0;
-      });
-      return { ended };
+      return {
+        characterID,
+        workspace: null,
+        reviewTurnID: null,
+        review: null,
+      };
     }
 
     const workspace = workspaceFromRow(candidate.rows[0]);
@@ -2938,6 +3070,124 @@ export class AgentRuntime {
     }
 
     const review = await this.workspaceManager.prepareReview(workspace);
+    return {
+      characterID,
+      workspace,
+      reviewTurnID,
+      review,
+    };
+  }
+
+  async applyWorkspaceSessionEndPlan(client, plan) {
+    if (plan.review?.hasChanges) {
+      throw new AgentBusyError(
+        "CLI를 변경하기 전에 현재 작업 공간의 변경사항을 승인하거나 거절하세요.",
+      );
+    }
+    if (!plan.workspace) {
+      const active = await client.query(
+        `
+          DELETE FROM active_cli_sessions
+          WHERE character_id = $1
+          RETURNING cli_session_id
+        `,
+        [plan.characterID],
+      );
+      await client.query(
+        `
+          UPDATE cli_sessions
+          SET ended_at = COALESCE(ended_at, now())
+          WHERE character_id = $1
+            AND ended_at IS NULL
+        `,
+        [plan.characterID],
+      );
+      return { ended: active.rowCount > 0 };
+    }
+
+    const updated = await client.query(
+      `
+        UPDATE task_workspaces
+        SET
+          status = 'closed',
+          review_tree = NULL,
+          changed_files = '[]'::jsonb,
+          error_message = NULL,
+          updated_at = now()
+        WHERE id = $1
+          AND status = 'active'
+        RETURNING id
+      `,
+      [plan.workspace.id],
+    );
+    if (updated.rowCount === 0) {
+      throw new AgentBusyError(
+        "작업 공간 상태가 바뀌었습니다. 다시 확인하세요.",
+      );
+    }
+    await client.query(
+      `
+        DELETE FROM active_cli_sessions
+        WHERE cli_session_id = $1
+      `,
+      [plan.workspace.cliSessionID],
+    );
+    await client.query(
+      `
+        UPDATE cli_sessions
+        SET ended_at = COALESCE(ended_at, now())
+        WHERE id = $1
+      `,
+      [plan.workspace.cliSessionID],
+    );
+    return { ended: true };
+  }
+
+  async finalizeWorkspaceSessionEndPlan(plan) {
+    if (!plan.workspace) {
+      return null;
+    }
+    const warnings = [];
+    try {
+      await this.workspaceManager.cleanup(plan.workspace);
+    } catch (error) {
+      warnings.push(
+        `빈 작업 공간 정리에 실패했습니다. ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    const transitionWarning = await this.transitionWorkRecordReviewBestEffort({
+      turnID: plan.reviewTurnID,
+      status: "not_required",
+      reviewTree: plan.review.reviewTree,
+      headCommit: plan.review.headCommit,
+      changedFiles: [],
+      actorType: "system",
+    });
+    if (transitionWarning) {
+      warnings.push(transitionWarning);
+    }
+    this.broadcast({
+      type: "workspace.changed",
+      turnId: plan.reviewTurnID,
+      characterId: plan.characterID,
+      status: "closed",
+    });
+    return warnings.length > 0
+      ? `${plan.characterID}: ${warnings.join(" ")}`
+      : null;
+  }
+
+  async prepareWorkspaceForSessionEnd(characterID) {
+    const plan = await this.inspectWorkspaceForSessionEnd(characterID);
+    const { workspace, reviewTurnID, review } = plan;
+    if (!workspace) {
+      return await this.withTransaction(async (client) =>
+        await this.applyWorkspaceSessionEndPlan(client, plan)
+      );
+    }
+
     if (review.hasChanges) {
       const updated = await this.pool.query(
         `
@@ -2993,44 +3243,9 @@ export class AgentRuntime {
     }
 
     await this.workspaceManager.cleanup(workspace);
-    const closed = await this.withTransaction(async (client) => {
-      const updated = await client.query(
-        `
-          UPDATE task_workspaces
-          SET
-            status = 'closed',
-            review_tree = NULL,
-            changed_files = '[]'::jsonb,
-            error_message = NULL,
-            updated_at = now()
-          WHERE id = $1
-            AND status = 'active'
-          RETURNING id
-        `,
-        [workspace.id],
-      );
-      if (updated.rowCount === 0) {
-        throw new AgentBusyError(
-          "작업 공간 상태가 바뀌었습니다. 다시 확인하세요.",
-        );
-      }
-      await client.query(
-        `
-          DELETE FROM active_cli_sessions
-          WHERE cli_session_id = $1
-        `,
-        [workspace.cliSessionID],
-      );
-      await client.query(
-        `
-          UPDATE cli_sessions
-          SET ended_at = COALESCE(ended_at, now())
-          WHERE id = $1
-        `,
-        [workspace.cliSessionID],
-      );
-      return true;
-    });
+    const closed = await this.withTransaction(async (client) =>
+      await this.applyWorkspaceSessionEndPlan(client, plan)
+    );
     await this.transitionWorkRecordReviewBestEffort({
       turnID: reviewTurnID,
       status: "not_required",
@@ -3045,7 +3260,7 @@ export class AgentRuntime {
       characterId: characterID,
       status: "closed",
     });
-    return { ended: closed };
+    return closed;
   }
 
   async fetchWorkspaceReview(turnID) {
@@ -3143,6 +3358,27 @@ export class AgentRuntime {
   }
 
   async approveWorkspace(
+    turnID,
+    expectedReviewTree,
+    { actorType = "user" } = {},
+  ) {
+    if (actorType !== "system" && this.draining) {
+      throw new AgentDrainingError(
+        "백엔드가 안전한 전환을 준비 중이라 새 승인을 받지 않습니다.",
+      );
+    }
+    return await this.withPostProcessing(
+      `approve-workspace:${turnID}`,
+      async () =>
+        await this.approveWorkspaceAccepted(
+          turnID,
+          expectedReviewTree,
+          { actorType },
+        ),
+    );
+  }
+
+  async approveWorkspaceAccepted(
     turnID,
     expectedReviewTree,
     { actorType = "user" } = {},
@@ -3399,6 +3635,18 @@ export class AgentRuntime {
   }
 
   async rejectWorkspace(turnID) {
+    if (this.draining) {
+      throw new AgentDrainingError(
+        "백엔드가 안전한 전환을 준비 중이라 새 거절을 받지 않습니다.",
+      );
+    }
+    return await this.withPostProcessing(
+      `reject-workspace:${turnID}`,
+      async () => await this.rejectWorkspaceAccepted(turnID),
+    );
+  }
+
+  async rejectWorkspaceAccepted(turnID) {
     const rejected = await this.withTransaction(async (client) => {
       const record = await this.workspaceReviewRecord(
         client,
@@ -3610,6 +3858,41 @@ function workspaceFromActiveRow(row) {
     mergedAt: row.workspaceMergedAt,
     rejectedAt: row.workspaceRejectedAt,
   });
+}
+
+function activeSessionMatchesRuntime(row, { workdir, repositoryRoot }) {
+  if (!row) {
+    return false;
+  }
+  const currentWorkdir = canonicalRuntimePath(workdir);
+  const currentRepositoryRoot = canonicalRuntimePath(repositoryRoot);
+  const sessionRepositoryRoot = canonicalRuntimePath(
+    row.sessionRepositoryRoot ?? row.workspaceRepositoryRoot,
+  );
+  if (sessionRepositoryRoot) {
+    return sessionRepositoryRoot === currentRepositoryRoot;
+  }
+  const conversationWorkdir = canonicalRuntimePath(row.conversationWorkdir);
+  return Boolean(
+    conversationWorkdir &&
+      (
+        conversationWorkdir === currentWorkdir ||
+        conversationWorkdir === currentRepositoryRoot
+      ),
+  );
+}
+
+function canonicalRuntimePath(value) {
+  const candidate = String(value ?? "").trim();
+  if (!candidate) {
+    return null;
+  }
+  const absolute = resolve(candidate);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return absolute;
+  }
 }
 
 function workspaceReviewPayload(workspace, diff) {
@@ -4385,11 +4668,30 @@ export function executionEnvironment(
   return environment;
 }
 
-function locateExecutable(character) {
+export function configuredExecutableForCharacter(character) {
   const configured = character.config?.executablePath;
-  if (configured && existsSync(configured)) {
-    return configured;
+  if (!configured || !existsSync(configured)) {
+    return null;
   }
+  const configuredName = basename(configured).toLowerCase();
+  const expectedName = String(character.backend ?? "").toLowerCase();
+  if (configuredName !== expectedName) {
+    return null;
+  }
+  try {
+    if (!statSync(configured).isFile()) {
+      return null;
+    }
+    accessSync(configured, constants.X_OK);
+    return configured;
+  } catch {
+    return null;
+  }
+}
+
+function locateExecutable(character) {
+  const configured = configuredExecutableForCharacter(character);
+  if (configured) return configured;
 
   const home = homedir();
   const candidates = [

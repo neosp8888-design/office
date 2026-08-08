@@ -22,6 +22,38 @@ enum OfficeCoreResourceBundle {
             )
         }
 
-        return Bundle.module
+        let bundleName = "OfficeLLM_OfficeCore.bundle"
+        let executableDirectory = URL(
+            fileURLWithPath: CommandLine.arguments[0]
+        )
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+        let argumentDirectories = CommandLine.arguments
+            .filter { $0.hasPrefix("/") }
+            .map {
+                URL(fileURLWithPath: $0)
+                    .standardizedFileURL
+                    .resolvingSymlinksInPath()
+                    .deletingLastPathComponent()
+            }
+        let candidates = [
+            Bundle.main.bundleURL.deletingLastPathComponent(),
+            executableDirectory,
+            executableDirectory.deletingLastPathComponent(),
+        ] + argumentDirectories + Bundle.allBundles.map {
+            $0.bundleURL.deletingLastPathComponent()
+        }
+        for directory in candidates {
+            if let bundle = Bundle(
+                url: directory.appendingPathComponent(
+                    bundleName,
+                    isDirectory: true
+                )
+            ) {
+                return bundle
+            }
+        }
+        fatalError("SwiftPM OfficeCore 리소스 번들이 없습니다.")
     }()
 }

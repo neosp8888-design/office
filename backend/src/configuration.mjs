@@ -1,7 +1,8 @@
 // 이 파일은 캐릭터 JSON 설정을 읽어 PostgreSQL 기본 데이터와 동기화한다.
 
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const backendDirectory = resolve(
@@ -41,8 +42,42 @@ export function characterSettingsRequireNewSession(previous, next) {
   return previous.backend !== next.backend;
 }
 
+export async function characterConfigurationForSync(
+  character,
+  executableAccess = access,
+) {
+  const executablePath = String(character.executablePath ?? "").trim();
+  const expectedExecutable = character.backend === "codex"
+    ? "codex"
+    : character.backend === "claude"
+      ? "claude"
+      : null;
+  if (
+    !executablePath ||
+    !expectedExecutable ||
+    basename(executablePath) !== expectedExecutable
+  ) {
+    const { executablePath: _ignored, ...withoutExecutable } = character;
+    return withoutExecutable;
+  }
+
+  try {
+    await executableAccess(executablePath, constants.X_OK);
+    return {
+      ...character,
+      executablePath,
+    };
+  } catch {
+    const { executablePath: _ignored, ...withoutExecutable } = character;
+    return withoutExecutable;
+  }
+}
+
 export async function syncCharacters(client, configuration) {
   for (const character of configuration.characters) {
+    const synchronizedConfiguration = await characterConfigurationForSync(
+      character,
+    );
     await client.query(
       `
         INSERT INTO characters (
@@ -61,6 +96,17 @@ export async function syncCharacters(client, configuration) {
         ON CONFLICT (id) DO UPDATE
         SET
           seat = EXCLUDED.seat,
+          config = CASE
+            WHEN characters.backend = EXCLUDED.backend
+              AND EXCLUDED.config ? 'executablePath'
+              THEN jsonb_set(
+                COALESCE(characters.config, '{}'::jsonb),
+                '{executablePath}',
+                EXCLUDED.config -> 'executablePath',
+                true
+              )
+            ELSE characters.config
+          END,
           updated_at = now()
       `,
       [
@@ -73,7 +119,7 @@ export async function syncCharacters(client, configuration) {
         character.effort,
         character.fastMode ?? true,
         character.permission,
-        JSON.stringify(character),
+        JSON.stringify(synchronizedConfiguration),
       ],
     );
   }

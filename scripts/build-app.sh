@@ -6,6 +6,8 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/OFFICESTRA.app"
+NODE_ENTITLEMENTS="$PROJECT_DIR/scripts/node-runtime.entitlements"
+BACKEND_RELEASE_ID_TOOL="$PROJECT_DIR/scripts/backend-release-id.py"
 
 cd "$PROJECT_DIR"
 # 병합으로 제거된 프레임워크 참조가 증분 산출물에 남지 않도록 배포 빌드를 깨끗하게 시작한다.
@@ -31,6 +33,16 @@ for required_path in \
     fi
 done
 
+if [[ ! -f "$NODE_ENTITLEMENTS" ]]; then
+    print -u2 "Node 런타임 entitlements 파일이 없습니다. $NODE_ENTITLEMENTS"
+    exit 1
+fi
+/usr/bin/plutil -lint "$NODE_ENTITLEMENTS" >/dev/null
+if [[ ! -f "$BACKEND_RELEASE_ID_TOOL" ]]; then
+    print -u2 "백엔드 릴리스 식별자 도구가 없습니다. $BACKEND_RELEASE_ID_TOOL"
+    exit 1
+fi
+
 mkdir -p "$DIST_DIR"
 STAGING_ROOT="$(mktemp -d "$DIST_DIR/.officestra-build.XXXXXX")"
 STAGED_APP="$STAGING_ROOT/OFFICESTRA.app"
@@ -39,6 +51,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 RUNTIME_DIR="$RESOURCES_DIR/OFFICESTRARuntime"
 BACKEND_RUNTIME_DIR="$RUNTIME_DIR/backend"
+NODE_RUNTIME_DIR="$RUNTIME_DIR/node"
 
 cleanup() {
     if [[ -d "$STAGING_ROOT" ]]; then
@@ -74,9 +87,14 @@ cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
     "$GAME_RESOURCE_BUNDLE/" \
     "$RESOURCES_DIR/OfficeLLM_OfficeGame.bundle/"
 
-# 백엔드 코드와 production 의존성을 앱에 포함해 사용자 프로젝트와
-# OFFICESTRA 설치 소스의 경로를 서로 독립시킨다.
-mkdir -p "$BACKEND_RUNTIME_DIR/src" "$RUNTIME_DIR/database/migrations"
+# 백엔드 코드, Node 런타임, Compose 설정과 production 의존성을 앱에
+# 포함해 사용자 프로젝트와 OFFICESTRA 설치 소스의 경로를 분리한다.
+mkdir -p \
+    "$BACKEND_RUNTIME_DIR/src" \
+    "$RUNTIME_DIR/database/migrations" \
+    "$RUNTIME_DIR/infra" \
+    "$NODE_RUNTIME_DIR/bin" \
+    "$RUNTIME_DIR/licenses"
 /usr/bin/rsync \
     -a \
     --delete \
@@ -90,6 +108,48 @@ cp "$PROJECT_DIR/backend/package-lock.json" \
     --delete \
     "$PROJECT_DIR/database/migrations/" \
     "$RUNTIME_DIR/database/migrations/"
+cp "$PROJECT_DIR/infra/compose.yaml" "$RUNTIME_DIR/infra/compose.yaml"
+
+NODE_EXECUTABLE="${OFFICESTRA_NODE_EXECUTABLE:-$(command -v node || true)}"
+if [[ ! -x "$NODE_EXECUTABLE" ]]; then
+    print -u2 "배포 앱에 포함할 Node 실행 파일을 찾을 수 없습니다."
+    exit 1
+fi
+NODE_EXECUTABLE="$(realpath "$NODE_EXECUTABLE")"
+NODE_VERSION="$($NODE_EXECUTABLE -p 'process.versions.node')"
+NODE_MAJOR="${NODE_VERSION%%.*}"
+if (( NODE_MAJOR < 20 )); then
+    print -u2 "OFFICESTRA 백엔드는 Node 20 이상이 필요합니다. 현재: $NODE_VERSION"
+    exit 1
+fi
+NODE_PREFIX="$(cd "$(dirname "$NODE_EXECUTABLE")/.." && pwd)"
+if [[ ! -f "$NODE_PREFIX/LICENSE" ]]; then
+    print -u2 "Node 라이선스 파일을 찾을 수 없습니다. $NODE_PREFIX/LICENSE"
+    exit 1
+fi
+cp "$NODE_EXECUTABLE" "$NODE_RUNTIME_DIR/bin/node"
+/usr/bin/shasum -a 256 "$NODE_RUNTIME_DIR/bin/node" \
+    | /usr/bin/awk '{print $1}' \
+    > "$NODE_RUNTIME_DIR/SHA256"
+/usr/bin/printf '%s\n' "$NODE_VERSION" > "$NODE_RUNTIME_DIR/VERSION"
+cp "$NODE_ENTITLEMENTS" "$NODE_RUNTIME_DIR/ENTITLEMENTS.plist"
+cp "$NODE_PREFIX/LICENSE" "$RUNTIME_DIR/licenses/Node-LICENSE"
+cp "$PROJECT_DIR/LICENSE" "$RUNTIME_DIR/licenses/OFFICESTRA-LICENSE"
+
+canonical_architectures() {
+    /usr/bin/lipo -archs "$1" \
+        | /usr/bin/tr ' ' '\n' \
+        | /usr/bin/sort \
+        | /usr/bin/paste -sd ' ' -
+}
+
+APP_ARCHITECTURES="$(canonical_architectures "$MACOS_DIR/OfficeLLM")"
+NODE_ARCHITECTURES="$(canonical_architectures "$NODE_RUNTIME_DIR/bin/node")"
+if [[ -z "$APP_ARCHITECTURES" || "$APP_ARCHITECTURES" != "$NODE_ARCHITECTURES" ]]; then
+    print -u2 "앱과 번들 Node 아키텍처가 일치하지 않습니다. app=$APP_ARCHITECTURES node=$NODE_ARCHITECTURES"
+    exit 1
+fi
+
 npm \
     --prefix "$BACKEND_RUNTIME_DIR" \
     ci \
@@ -97,13 +157,24 @@ npm \
     --ignore-scripts \
     --no-audit \
     --no-fund
+"$NODE_EXECUTABLE" \
+    "$PROJECT_DIR/scripts/generate-third-party-notices.mjs" \
+    "$BACKEND_RUNTIME_DIR/package-lock.json" \
+    "$RUNTIME_DIR/licenses/THIRD-PARTY-NOTICES.md"
 
 for packaged_runtime_path in \
     "$BACKEND_RUNTIME_DIR/src/server.mjs" \
     "$BACKEND_RUNTIME_DIR/node_modules/pg/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/ws/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/@slack/bolt/package.json" \
-    "$RUNTIME_DIR/database/migrations/001_initial.sql"; do
+    "$RUNTIME_DIR/database/migrations/001_initial.sql" \
+    "$RUNTIME_DIR/infra/compose.yaml" \
+    "$NODE_RUNTIME_DIR/bin/node" \
+    "$NODE_RUNTIME_DIR/SHA256" \
+    "$NODE_RUNTIME_DIR/VERSION" \
+    "$NODE_RUNTIME_DIR/ENTITLEMENTS.plist" \
+    "$RUNTIME_DIR/licenses/Node-LICENSE" \
+    "$RUNTIME_DIR/licenses/THIRD-PARTY-NOTICES.md"; do
     if [[ ! -e "$packaged_runtime_path" ]]; then
         print -u2 "필수 백엔드 런타임이 없습니다. $packaged_runtime_path"
         exit 1
@@ -111,15 +182,7 @@ for packaged_runtime_path in \
 done
 
 RUNTIME_CONFIG="$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/characters.json"
-RUNTIME_WORKDIR="${OFFICESTRA_WORKDIR:-}"
-if [[ -z "$RUNTIME_WORKDIR" ]]; then
-    if GIT_COMMON_DIR="$(git -C "$PROJECT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
-        && [[ "${GIT_COMMON_DIR:t}" == ".git" ]]; then
-        RUNTIME_WORKDIR="${GIT_COMMON_DIR:h}"
-    else
-        RUNTIME_WORKDIR="$PROJECT_DIR"
-    fi
-fi
+RUNTIME_WORKDIR="${OFFICESTRA_WORKDIR:-/Users/your-name/Projects}"
 
 OFFICESTRA_RUNTIME_CONFIG="$RUNTIME_CONFIG" \
 OFFICESTRA_CONFIGURED_WORKDIR="$RUNTIME_WORKDIR" \
@@ -134,18 +197,139 @@ const configuredWorkdir = process.env.OFFICESTRA_CONFIGURED_WORKDIR?.trim();
 configuration.workdir = configuredWorkdir;
 
 if (
-  !nodePath.isAbsolute(configuration.workdir) ||
-  !fs.statSync(configuration.workdir).isDirectory()
+  !nodePath.isAbsolute(configuration.workdir)
 ) {
-  throw new Error(`업무 폴더가 올바른 디렉터리가 아닙니다. ${configuration.workdir}`);
+  throw new Error(`업무 폴더가 절대 경로가 아닙니다. ${configuration.workdir}`);
 }
 
 fs.writeFileSync(configPath, `${JSON.stringify(configuration, null, 2)}\n`);
 NODE
 
 chmod 755 "$MACOS_DIR/OfficeLLM"
-codesign --force --deep --sign - "$STAGED_APP"
+chmod 755 "$NODE_RUNTIME_DIR/bin/node"
+# SwiftPM release 산출물의 DWARF에는 빌드 머신의 절대 소스 경로가 남으므로
+# 배포 번들에 넣기 전에 디버그 심볼을 제거한다.
+/usr/bin/strip -S "$MACOS_DIR/OfficeLLM"
+CODESIGN_IDENTITY="${OFFICESTRA_CODESIGN_IDENTITY:--}"
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+    codesign \
+        --force \
+        --entitlements "$NODE_ENTITLEMENTS" \
+        --options runtime \
+        --sign - \
+        "$NODE_RUNTIME_DIR/bin/node"
+else
+    codesign \
+        --force \
+        --entitlements "$NODE_ENTITLEMENTS" \
+        --options runtime \
+        --timestamp \
+        --sign "$CODESIGN_IDENTITY" \
+        "$NODE_RUNTIME_DIR/bin/node"
+fi
+
+# Developer ID 재서명에서 기존 Node 배포본의 광범위한 entitlement를 무작정
+# 보존하지 않는다. V8 JIT에 필요한 두 권한만 남았는지 서명 결과를 정확히
+# 비교하고, 실제 실행과 동적 코드 생성까지 확인한다.
+SIGNED_NODE_ENTITLEMENTS="$STAGING_ROOT/signed-node.entitlements"
+codesign \
+    -d \
+    --entitlements :- \
+    "$NODE_RUNTIME_DIR/bin/node" \
+    > "$SIGNED_NODE_ENTITLEMENTS" \
+    2>/dev/null
+OFFICESTRA_EXPECTED_NODE_ENTITLEMENTS="$NODE_ENTITLEMENTS" \
+OFFICESTRA_SIGNED_NODE_ENTITLEMENTS="$SIGNED_NODE_ENTITLEMENTS" \
+/usr/bin/python3 <<'PY'
+import os
+import plistlib
+import sys
+
+expected_path = os.environ["OFFICESTRA_EXPECTED_NODE_ENTITLEMENTS"]
+signed_path = os.environ["OFFICESTRA_SIGNED_NODE_ENTITLEMENTS"]
+with open(expected_path, "rb") as handle:
+    expected = plistlib.load(handle)
+with open(signed_path, "rb") as handle:
+    signed = plistlib.load(handle)
+
+if signed != expected:
+    print(
+        "서명된 Node entitlement가 최소 배포 정책과 다릅니다. "
+        f"expected={expected!r} actual={signed!r}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
+
+"$NODE_RUNTIME_DIR/bin/node" --version >/dev/null
+PACKAGED_NODE_VERSION="$($NODE_RUNTIME_DIR/bin/node -p 'process.versions.node')"
+if [[ "$PACKAGED_NODE_VERSION" != "$(<"$NODE_RUNTIME_DIR/VERSION")" ]]; then
+    print -u2 "번들 Node 버전 기록이 실행 파일과 일치하지 않습니다."
+    exit 1
+fi
+NODE_CDHASH="$(
+    codesign -d --verbose=4 "$NODE_RUNTIME_DIR/bin/node" 2>&1 \
+        | /usr/bin/sed -n 's/^CDHash=//p' \
+        | /usr/bin/head -n 1
+)"
+if [[ -z "$NODE_CDHASH" ]]; then
+    print -u2 "번들 Node CDHash를 읽지 못했습니다."
+    exit 1
+fi
+/usr/bin/printf '%s\n' "$NODE_CDHASH" > "$NODE_RUNTIME_DIR/CDHASH"
+"$NODE_RUNTIME_DIR/bin/node" --check "$BACKEND_RUNTIME_DIR/src/server.mjs"
+"$NODE_RUNTIME_DIR/bin/node" -e '
+const increment = new Function("value", "return value + 1");
+let value = 0;
+for (let index = 0; index < 250000; index += 1) {
+  value = increment(value);
+}
+if (value !== 250000) {
+  throw new Error(`Node JIT smoke test failed: ${value}`);
+}
+'
+
+# 서명된 Node를 포함해 최종 번들에서 백엔드가 실제로 읽는 파일만 해시한다.
+# Info.plist 자체는 순환 입력이므로 제외하고 계산한 값을 주입한 뒤 재계산한다.
+BACKEND_RELEASE_ID="$(
+    /usr/bin/python3 "$BACKEND_RELEASE_ID_TOOL" "$STAGED_APP"
+)"
+if [[ -z "$BACKEND_RELEASE_ID" ]]; then
+    print -u2 "백엔드 릴리스 식별자를 만들지 못했습니다."
+    exit 1
+fi
+/usr/libexec/PlistBuddy \
+    -c "Set :OFFICESTRABackendReleaseID $BACKEND_RELEASE_ID" \
+    "$CONTENTS_DIR/Info.plist"
+/usr/bin/python3 \
+    "$BACKEND_RELEASE_ID_TOOL" \
+    --verify \
+    --verify-node-signature \
+    "$STAGED_APP" >/dev/null
+
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+    codesign --force --sign - "$MACOS_DIR/OfficeLLM"
+    codesign --force --sign - "$STAGED_APP"
+else
+    codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --sign "$CODESIGN_IDENTITY" \
+        "$MACOS_DIR/OfficeLLM"
+    codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --sign "$CODESIGN_IDENTITY" \
+        "$STAGED_APP"
+fi
 codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+/usr/bin/python3 \
+    "$BACKEND_RELEASE_ID_TOOL" \
+    --verify \
+    --verify-node-signature \
+    "$STAGED_APP" >/dev/null
 
 if [[ -e "$APP_BUNDLE" ]]; then
     /usr/bin/swift -e '

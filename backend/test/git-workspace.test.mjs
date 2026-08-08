@@ -46,6 +46,86 @@ test("Git 저장소가 아닌 작업 폴더는 기존 실행 경로를 유지한
   }
 });
 
+test("Git 실행 파일이 없는 non-Git 폴더는 공유 폴더로 유지한다", async () => {
+  const root = realpathSync(
+    mkdtempSync(join(tmpdir(), "office-workspace-no-git-command-")),
+  );
+  const emptyPath = join(root, "empty-path");
+  mkdirSync(emptyPath);
+  const originalPath = process.env.PATH;
+  try {
+    process.env.PATH = emptyPath;
+    const manager = new GitWorkspaceManager({ sourceWorkdir: root });
+
+    assert.equal(await canonicalProjectRoot(root), root);
+    assert.equal(await manager.isRepository(), false);
+    assert.equal(
+      await manager.planProvision({
+        workspaceID: "workspace-plan-no-git",
+        characterID: "boss",
+      }),
+      null,
+    );
+    assert.equal(
+      await manager.provision({
+        workspaceID: "workspace-no-git",
+        characterID: "boss",
+      }),
+      null,
+    );
+  } finally {
+    restorePath(originalPath);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Git 실행 파일이 없어도 실제 저장소는 공유 폴더로 오인하지 않는다", async () => {
+  const fixture = createRepository();
+  const emptyPath = join(fixture.root, "empty-path");
+  mkdirSync(emptyPath);
+  const originalPath = process.env.PATH;
+  try {
+    process.env.PATH = emptyPath;
+    const manager = new GitWorkspaceManager({
+      sourceWorkdir: fixture.sourceWorkdir,
+      worktreeRoot: fixture.worktreeRoot,
+    });
+
+    await assert.rejects(
+      manager.isRepository(),
+      isMissingGitCommandError,
+    );
+  } finally {
+    restorePath(originalPath);
+    fixture.remove();
+  }
+});
+
+test("Git 실행 파일이 없어도 손상된 Git 표식은 공유 폴더로 우회하지 않는다", async () => {
+  const root = realpathSync(
+    mkdtempSync(join(tmpdir(), "office-workspace-broken-git-no-command-")),
+  );
+  const emptyPath = join(root, "empty-path");
+  mkdirSync(emptyPath);
+  writeFileSync(
+    join(root, ".git"),
+    "gitdir: /definitely/missing/officestra-git-dir\n",
+  );
+  const originalPath = process.env.PATH;
+  try {
+    process.env.PATH = emptyPath;
+    const manager = new GitWorkspaceManager({ sourceWorkdir: root });
+
+    await assert.rejects(
+      manager.isRepository(),
+      isMissingGitCommandError,
+    );
+  } finally {
+    restorePath(originalPath);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("손상된 Git 표식은 non-Git으로 우회하지 않고 실패한다", async () => {
   const root = mkdtempSync(join(tmpdir(), "office-workspace-broken-git-"));
   try {
@@ -1278,5 +1358,19 @@ function pathExists(path) {
     return true;
   } catch (error) {
     return error.code === "EISDIR";
+  }
+}
+
+function isMissingGitCommandError(error) {
+  return error instanceof GitWorkspaceError &&
+    error.code === "command-failed" &&
+    error.cause?.code === "ENOENT";
+}
+
+function restorePath(originalPath) {
+  if (originalPath === undefined) {
+    delete process.env.PATH;
+  } else {
+    process.env.PATH = originalPath;
   }
 }

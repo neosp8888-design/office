@@ -2,6 +2,7 @@
 
 import Darwin
 import Foundation
+import OfficeCore
 
 enum OfficeBackendStatus: Equatable {
     case running
@@ -31,6 +32,7 @@ struct OfficeBackendLaunchConfiguration: Equatable {
     let backendDirectoryURL: URL
     let healthURL: URL
     let runtimeConfigurationURL: URL
+    let releaseID: String
     let userID: uid_t
 
     var jobTarget: String {
@@ -42,6 +44,7 @@ enum OfficeBackendRuntimeLocation {
     static func resolve(
         resourceURL: URL,
         workdir: URL,
+        developmentRoot: URL? = nil,
         fileManager: FileManager = .default
     ) -> URL {
         let bundledBackend = resourceURL
@@ -52,6 +55,15 @@ enum OfficeBackendRuntimeLocation {
             .appending(path: "server.mjs")
         if fileManager.fileExists(atPath: bundledServer.path) {
             return bundledBackend
+        }
+        if let developmentRoot {
+            let developmentBackend = developmentRoot.appending(path: "backend")
+            let developmentServer = developmentBackend
+                .appending(path: "src")
+                .appending(path: "server.mjs")
+            if fileManager.fileExists(atPath: developmentServer.path) {
+                return developmentBackend
+            }
         }
         return workdir.appending(path: "backend")
     }
@@ -83,14 +95,57 @@ enum OfficeBackendLaunchCommands {
 
     static func start(
         configuration: OfficeBackendLaunchConfiguration,
-        nodeExecutableURL: URL
+        nodeExecutableURL: URL,
+        standardOutputURL: URL? = nil,
+        standardErrorURL: URL? = nil,
+        executableSearchPaths: [String] = []
     ) -> OfficeBackendLaunchCommand {
-        let command = """
-        export OFFICE_WORKDIR=\(shellQuoted(configuration.workdir.path)); \
-        export CHARACTER_CONFIG_PATH=\(shellQuoted(configuration.runtimeConfigurationURL.path)); \
-        cd \(shellQuoted(configuration.backendDirectoryURL.path)); \
-        exec \(shellQuoted(nodeExecutableURL.path)) src/server.mjs
-        """
+        let path = ([nodeExecutableURL.deletingLastPathComponent().path]
+            + executableSearchPaths
+            + [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+            ])
+            .reduce(into: [String]()) { result, element in
+                if !result.contains(element) {
+                    result.append(element)
+                }
+            }
+            .joined(separator: ":")
+        let outputRedirect = standardOutputURL.map {
+            " >> \(shellQuoted($0.path))"
+        } ?? ""
+        let errorRedirect = standardErrorURL.map {
+            " 2>> \(shellQuoted($0.path))"
+        } ?? ""
+        let logDirectories = [standardOutputURL, standardErrorURL]
+            .compactMap { $0?.deletingLastPathComponent().path }
+            .reduce(into: [String]()) { result, element in
+                if !result.contains(element) {
+                    result.append(element)
+                }
+            }
+        let quotedLogDirectories = logDirectories
+            .map(shellQuoted)
+            .joined(separator: " ")
+        let prepareLogs = logDirectories.isEmpty
+            ? ""
+            : "mkdir -p \(quotedLogDirectories); "
+        let command = "umask 077; \(prepareLogs)"
+            + "export PATH=\(shellQuoted(path)); "
+            + "export OFFICE_WORKDIR=\(shellQuoted(configuration.workdir.path)); "
+            + "export OFFICESTRA_RELEASE_ID="
+            + "\(shellQuoted(configuration.releaseID)); "
+            + "export CHARACTER_CONFIG_PATH="
+            + "\(shellQuoted(configuration.runtimeConfigurationURL.path)); "
+            + "cd \(shellQuoted(configuration.backendDirectoryURL.path)); "
+            + "exec \(shellQuoted(nodeExecutableURL.path)) src/server.mjs"
+            + outputRedirect
+            + errorRedirect
         return OfficeBackendLaunchCommand(
             executableURL: URL(fileURLWithPath: "/bin/launchctl"),
             arguments: [
@@ -106,7 +161,7 @@ enum OfficeBackendLaunchCommands {
     }
 
     private static func shellQuoted(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\\\''"))'"
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 
@@ -132,16 +187,23 @@ final class OfficeBackendController: ObservableObject {
             return
         }
         let workdirURL = URL(fileURLWithPath: workdir)
+        let developmentRoot = Bundle.main.bundleURL.pathExtension == "app"
+            ? nil
+            : OfficeDevelopmentRuntimeLocator.locate()
+        let layout = OfficeRuntimeLayout.resolve(
+            resourceURL: resourceURL,
+            developmentRoot: developmentRoot
+        )
         configuration = OfficeBackendLaunchConfiguration(
             workdir: workdirURL,
             backendDirectoryURL: OfficeBackendRuntimeLocation.resolve(
                 resourceURL: resourceURL,
-                workdir: workdirURL
+                workdir: workdirURL,
+                developmentRoot: developmentRoot
             ),
             healthURL: healthURL,
-            runtimeConfigurationURL: resourceURL
-                .appending(path: "OfficeLLM_OfficeCore.bundle")
-                .appending(path: "characters.json"),
+            runtimeConfigurationURL: layout.runtimeConfiguration,
+            releaseID: OfficeAppReleaseIdentity.current(),
             userID: getuid()
         )
         monitorTask = Task { [weak self] in
@@ -205,7 +267,18 @@ final class OfficeBackendController: ObservableObject {
                     try run(
                         OfficeBackendLaunchCommands.start(
                             configuration: configuration,
-                            nodeExecutableURL: nodeExecutableURL()
+                            nodeExecutableURL: nodeExecutableURL(
+                                configuration: configuration
+                            ),
+                            standardOutputURL: logURL(
+                                named: "backend.out.log",
+                                configuration: configuration
+                            ),
+                            standardErrorURL: logURL(
+                                named: "backend.err.log",
+                                configuration: configuration
+                            ),
+                            executableSearchPaths: cliSearchPaths()
                         )
                     )
                 }
@@ -225,8 +298,14 @@ final class OfficeBackendController: ObservableObject {
         }
     }
 
-    private nonisolated static func nodeExecutableURL() throws -> URL {
+    private nonisolated static func nodeExecutableURL(
+        configuration: OfficeBackendLaunchConfiguration
+    ) throws -> URL {
+        let bundledNode = configuration.backendDirectoryURL
+            .deletingLastPathComponent()
+            .appending(path: "node/bin/node")
         let candidates = [
+            bundledNode,
             URL(fileURLWithPath: "/opt/homebrew/bin/node"),
             URL(fileURLWithPath: "/usr/local/bin/node"),
         ]
@@ -236,6 +315,25 @@ final class OfficeBackendController: ObservableObject {
             throw OfficeBackendControlError.nodeExecutableMissing
         }
         return executable
+    }
+
+    private nonisolated static func logURL(
+        named name: String,
+        configuration: OfficeBackendLaunchConfiguration
+    ) -> URL {
+        configuration.runtimeConfigurationURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "logs")
+            .appending(path: name)
+    }
+
+    private nonisolated static func cliSearchPaths() -> [String] {
+        [AgentBackend.codex, .claude].compactMap {
+            OfficeToolLocator.locate($0.rawValue)?
+                .deletingLastPathComponent()
+                .path
+        }
     }
 
     private nonisolated static func run(
