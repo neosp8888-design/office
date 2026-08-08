@@ -774,6 +774,18 @@ private struct LiveWorkspaceCommandBar: View {
         VStack(alignment: .leading, spacing: 9) {
             characterSelector
 
+            if !attachments.isEmpty {
+                attachmentStrip
+            }
+
+            CommandEntryRow(
+                director: director,
+                placeholder: commandPlaceholder,
+                attachmentCount: attachments.count,
+                onChooseAttachments: chooseAttachments,
+                onSubmit: submitCommand
+            )
+
             if let character = selectedCharacter {
                 HStack {
                     AgentQuickSettingsView(
@@ -804,51 +816,42 @@ private struct LiveWorkspaceCommandBar: View {
                 }
             }
 
-            if !attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        ForEach(attachments, id: \.path) { attachment in
-                            HStack(spacing: 5) {
-                                Image(systemName: "doc.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(
-                                        DashboardPalette.accent
-                                    )
-                                Text(attachment.lastPathComponent)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1)
-                                Button {
-                                    removeAttachment(attachment)
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(
-                                    "\(attachment.lastPathComponent) 첨부 제거"
-                                )
-                            }
-                            .padding(.horizontal, 9)
-                            .frame(height: 27)
-                            .background(
-                                Color.primary.opacity(0.055),
-                                in: Capsule()
-                            )
-                        }
-                    }
-                }
-            }
-
-            CommandEntryRow(
-                director: director,
-                placeholder: commandPlaceholder,
-                attachmentCount: attachments.count,
-                onChooseAttachments: chooseAttachments,
-                onSubmit: submitCommand
-            )
         }
         .padding(14)
+    }
+
+    private var attachmentStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(attachments, id: \.path) { attachment in
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(DashboardPalette.accent)
+                        Text(attachment.lastPathComponent)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        Button {
+                            removeAttachment(attachment)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(
+                            "\(attachment.lastPathComponent) 첨부 제거"
+                        )
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 27)
+                    .background(
+                        Color.primary.opacity(0.055),
+                        in: Capsule()
+                    )
+                }
+            }
+        }
     }
 
     private var characterSelector: some View {
