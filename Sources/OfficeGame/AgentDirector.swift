@@ -752,7 +752,7 @@ final class AgentDirector: ObservableObject {
             : englishIdleChatterMessages
     }
 
-    init() {
+    init(startBackgroundTasks: Bool = true) {
         do {
             configuration = try CharacterConfigurationAsset.load()
         } catch {
@@ -771,13 +771,15 @@ final class AgentDirector: ObservableObject {
             characterSelectionStore.selectedCharacterID?.rawValue
         )
 
-        Task {
-            await restorePersistentState()
-            await refreshLiveFeed(announcingTransitions: false)
-            startRealtimeUpdates()
+        if startBackgroundTasks {
+            Task {
+                await restorePersistentState()
+                await refreshLiveFeed(announcingTransitions: false)
+                startRealtimeUpdates()
+            }
+            startIdleChatter()
+            startWorkingBubbleRotation()
         }
-        startIdleChatter()
-        startWorkingBubbleRotation()
     }
 
     var selectedCharacter: CharacterConfiguration? {

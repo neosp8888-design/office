@@ -776,6 +776,33 @@ struct LiveWorkspaceFeedScrollPolicy: Equatable {
     }
 }
 
+struct LiveWorkspaceFeedTopLoadGate: Equatable {
+    private(set) var didLoadDuringCurrentScroll = false
+
+    mutating func userScrollStarted() {
+        didLoadDuringCurrentScroll = false
+    }
+
+    mutating func shouldLoad(
+        distanceFromTop: CGFloat,
+        threshold: CGFloat,
+        isProgrammaticScrollInFlight: Bool
+    ) -> Bool {
+        if distanceFromTop > threshold {
+            didLoadDuringCurrentScroll = false
+            return false
+        }
+        guard
+            !isProgrammaticScrollInFlight,
+            !didLoadDuringCurrentScroll
+        else {
+            return false
+        }
+        didLoadDuringCurrentScroll = true
+        return true
+    }
+}
+
 struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
     @ObservedObject private var characterSelectionStore:
         CharacterSelectionStore
@@ -810,11 +837,44 @@ struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
         )
     }
 
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: CachedLiveWorkspaceFeedsNSView,
+        context: Context
+    ) -> CGSize? {
+        guard
+            let width = resolvedDimension(
+                proposal.width,
+                fallback: nsView.bounds.width
+            ),
+            let height = resolvedDimension(
+                proposal.height,
+                fallback: nsView.bounds.height
+            )
+        else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
+    }
+
     static func dismantleNSView(
         _ nsView: CachedLiveWorkspaceFeedsNSView,
         coordinator: ()
     ) {
         nsView.tearDown()
+    }
+
+    private func resolvedDimension(
+        _ proposed: CGFloat?,
+        fallback: CGFloat
+    ) -> CGFloat? {
+        if let proposed, proposed.isFinite, proposed >= 0 {
+            return proposed
+        }
+        guard fallback.isFinite, fallback > 0 else {
+            return nil
+        }
+        return fallback
     }
 }
 
@@ -883,6 +943,10 @@ final class LiveWorkspaceFeedPresentationStore: ObservableObject {
     @Published private(set) var isPresented: Bool
     private var desiredIsPresented: Bool
     private var publicationTask: Task<Void, Never>?
+
+    var isPresentationRequested: Bool {
+        desiredIsPresented
+    }
 
     init(isPresented: Bool) {
         self.isPresented = isPresented
@@ -995,8 +1059,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     override func layout() {
         super.layout()
-        for entry in entries.values where entry.hostingView.frame != bounds {
-            entry.hostingView.frame = bounds
+        for subview in subviews where subview.frame != bounds {
+            subview.frame = bounds
         }
     }
 
@@ -1024,7 +1088,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             let previousEntry = entries[previousCharacterID]
         {
             previousEntry.presentationStore.setPresented(false)
-            previousEntry.hostingView.isHidden = true
+            previousEntry.hostingView.removeFromSuperview()
         }
 
         guard let selectedCharacterID else {
@@ -1038,6 +1102,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             metadata: metadata
         )
         selectedEntry.updateMetadata(metadata)
+        if selectedEntry.hostingView.superview !== self {
+            selectedEntry.hostingView.removeFromSuperview()
+            selectedEntry.hostingView.frame = bounds
+            addSubview(selectedEntry.hostingView)
+        }
         selectedEntry.presentationStore.setPresented(true)
         selectedEntry.hostingView.isHidden = false
         if didChangeSelection {
@@ -1080,11 +1149,6 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         )
         entry.hostingView.frame = bounds
         entry.hostingView.autoresizingMask = [.width, .height]
-        // 선택된 피드는 숨긴 상태로 최초 mount하지 않는다. NSHostingView를
-        // 같은 update cycle에서 hide→show 하면 콘텐츠가 다음 publication까지
-        // 비어 있는 AppKit/SwiftUI 수명주기 경쟁이 생길 수 있다.
-        entry.hostingView.isHidden = false
-        addSubview(entry.hostingView)
         entries[characterID] = entry
         return entry
     }
@@ -1135,6 +1199,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var visibleTurnLimit = Self.pageSize
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
+    @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
 
     private static let bottomTolerance = CGFloat(20)
     private static let topLoadThreshold = CGFloat(120)
@@ -1278,25 +1343,26 @@ struct LiveWorkspaceFeed: View, Equatable {
                     ScrollView {
                         VStack(spacing: 0) {
                             LiveWorkspaceFeedScrollObserver(
-                                onScroll: { distanceFromTop in
-                                    guard
-                                        distanceFromTop
-                                            <= Self.topLoadThreshold
-                                    else {
-                                        return
-                                    }
-                                    loadMoreTurnsIfNeeded(proxy: proxy)
+                                onMetrics: { metrics in
+                                    handleScrollMetrics(
+                                        metrics,
+                                        proxy: proxy
+                                    )
                                 },
                                 onUserScrollStarted: {
+                                    topLoadGate.userScrollStarted()
+                                    didPerformInitialScroll = true
                                     pauseFollowingLatest()
                                 },
-                                onUserScroll: { distanceFromBottom in
-                                    followState.userDidScroll(
-                                        distanceFromBottom:
-                                            distanceFromBottom,
-                                        tolerance: Self.bottomTolerance
+                                onUserScrollActivity: {
+                                    didPerformInitialScroll = true
+                                    pauseFollowingLatest()
+                                },
+                                onUserScroll: { metrics in
+                                    handleUserScroll(
+                                        metrics,
+                                        proxy: proxy
                                     )
-                                    updateBottomState()
                                 }
                             )
                             .frame(height: 1)
@@ -1344,7 +1410,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                         .padding(.top, 16)
                     }
                     .defaultScrollAnchor(.bottom)
-                    .coordinateSpace(name: LiveWorkspaceFeedScrollSpace.name)
                     .onAppear {
                         performInitialScrollIfNeeded(proxy: proxy)
                     }
@@ -1359,65 +1424,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                     .onChange(of: initialLayoutRevision) { _, _ in
                         if !didPerformInitialScroll {
                             restartInitialScroll(proxy: proxy)
-                        } else if followState.isFollowingLatest {
-                            scheduleScrollToLatest(proxy)
                         }
-                    }
-                    .background {
-                        GeometryReader { geometry in
-                            Color.clear
-                                .onAppear {
-                                    scrollMetrics.viewportHeight =
-                                        geometry.size.height
-                                    if didPerformInitialScroll {
-                                        updateBottomState()
-                                    } else {
-                                        performInitialScrollIfNeeded(
-                                            proxy: proxy
-                                        )
-                                    }
-                                }
-                                .onChange(of: geometry.size) {
-                                    _, size in
-                                    scrollMetrics.viewportHeight = size.height
-                                    if !didPerformInitialScroll {
-                                        performInitialScrollIfNeeded(
-                                            proxy: proxy
-                                        )
-                                    } else if followState.isFollowingLatest {
-                                        scheduleScrollToLatest(proxy)
-                                    }
-                                }
-                        }
-                    }
-                    .onPreferenceChange(
-                        LiveWorkspaceFeedBottomOffsetKey.self
-                    ) { bottomOffset in
-                        scrollMetrics.bottomMarkerOffset = bottomOffset
-                        if didPerformInitialScroll {
-                            updateBottomState()
-                        } else {
-                            performInitialScrollIfNeeded(
-                                proxy: proxy
-                            )
-                        }
-                    }
-                    .onPreferenceChange(
-                        LiveWorkspaceFeedStreamingHeightKey.self
-                    ) { height in
-                        let didGrow =
-                            height
-                                > scrollMetrics.streamingResponseHeight
-                                    + 0.5
-                        scrollMetrics.streamingResponseHeight = height
-                        guard
-                            didGrow,
-                            didPerformInitialScroll,
-                            followState.isFollowingLatest
-                        else {
-                            return
-                        }
-                        scheduleScrollToLatest(proxy)
                     }
                     .onChange(of: latestSubmittedTurnID) {
                         _, turnID in
@@ -1465,14 +1472,80 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
     }
 
+    private func handleScrollMetrics(
+        _ metrics: LiveWorkspaceFeedScrollSnapshot,
+        proxy: ScrollViewProxy
+    ) {
+        guard presentationStore.isPresentationRequested else {
+            return
+        }
+        let contentDidGrow =
+            metrics.contentHeight > scrollMetrics.contentHeight + 0.5
+        let viewportDidChange =
+            abs(metrics.viewportHeight - scrollMetrics.viewportHeight) > 0.5
+        scrollMetrics.hasSnapshot = true
+        scrollMetrics.distanceFromBottom = metrics.distanceFromBottom
+        scrollMetrics.viewportHeight = metrics.viewportHeight
+        scrollMetrics.contentHeight = metrics.contentHeight
+
+        if !didPerformInitialScroll {
+            performInitialScrollIfNeeded(proxy: proxy)
+            return
+        }
+
+        updateBottomState()
+        if
+            followState.isFollowingLatest,
+            contentDidGrow || viewportDidChange
+        {
+            scheduleScrollToLatest(proxy)
+        }
+    }
+
+    private func handleUserScroll(
+        _ metrics: LiveWorkspaceFeedScrollSnapshot,
+        proxy: ScrollViewProxy
+    ) {
+        guard presentationStore.isPresentationRequested else {
+            return
+        }
+        followState.userDidScroll(
+            distanceFromBottom: metrics.distanceFromBottom,
+            tolerance: Self.bottomTolerance
+        )
+        updateBottomState()
+        if topLoadGate.shouldLoad(
+            distanceFromTop: metrics.distanceFromTop,
+            threshold: Self.topLoadThreshold,
+            isProgrammaticScrollInFlight:
+                scrollMetrics.isProgrammaticScrollInFlight
+        ) {
+            loadMoreTurnsIfNeeded(proxy: proxy)
+        }
+    }
+
     private func scrollToLatest(
         _ proxy: ScrollViewProxy,
         animated: Bool = true
     ) {
-        scrollMetrics.followScrollTask?.cancel()
-        scrollMetrics.followScrollTask = nil
+        cancelScheduledScrolls()
+        let generation = beginProgrammaticScroll()
         markAtBottom()
-        DispatchQueue.main.async {
+        scrollMetrics.followScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.followScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
+            await Task.yield()
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
+                return
+            }
             guard animated else {
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
                 return
@@ -1480,27 +1553,43 @@ struct LiveWorkspaceFeed: View, Equatable {
             withAnimation(.easeOut(duration: 0.20)) {
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
             }
+            try? await Task.sleep(for: .milliseconds(220))
         }
     }
 
     private func scheduleScrollToLatest(
         _ proxy: ScrollViewProxy
     ) {
-        guard followState.isFollowingLatest else {
+        guard
+            presentationStore.isPresentationRequested,
+            followState.isFollowingLatest,
+            scrollMetrics.initialScrollTask == nil,
+            scrollMetrics.submittedScrollTask == nil
+        else {
             return
         }
         markAtBottom()
         guard scrollMetrics.followScrollTask == nil else {
             return
         }
+        let generation = beginProgrammaticScroll()
         scrollMetrics.followScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.followScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
             await Task.yield()
             try? await Task.sleep(for: .milliseconds(16))
-            guard !Task.isCancelled else {
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
                 return
             }
             proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-            scrollMetrics.followScrollTask = nil
         }
     }
 
@@ -1512,44 +1601,61 @@ struct LiveWorkspaceFeed: View, Equatable {
             !characterFeedStore.isLoadingInitialFeed,
             !displayTurns.isEmpty,
             scrollMetrics.initialScrollTask == nil,
+            scrollMetrics.submittedScrollTask == nil,
+            scrollMetrics.followScrollTask == nil,
+            scrollMetrics.hasSnapshot,
             scrollMetrics.viewportHeight > 0,
-            scrollMetrics.bottomMarkerOffset > 0
+            scrollMetrics.contentHeight > 0
         else {
             return
         }
 
         markAtBottom()
+        let generation = beginProgrammaticScroll()
         scrollMetrics.initialScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.initialScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
             var policy = LiveWorkspaceFeedScrollPolicy()
             for _ in 0..<LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts {
-                guard !Task.isCancelled else {
+                guard
+                    !Task.isCancelled,
+                    presentationStore.isPresentationRequested,
+                    scrollMetrics.scrollGeneration == generation
+                else {
                     return
                 }
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
                 try? await Task.sleep(for: .milliseconds(90))
-                let distanceFromBottom = max(
-                    0,
-                    scrollMetrics.bottomMarkerOffset
-                        - scrollMetrics.viewportHeight
-                )
                 if policy.shouldStop(
-                    distanceFromBottom: distanceFromBottom,
+                    distanceFromBottom:
+                        scrollMetrics.distanceFromBottom,
                     tolerance: Self.bottomTolerance
                 ) {
                     break
                 }
             }
-            guard !Task.isCancelled else {
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
                 return
             }
             proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
             await Task.yield()
-            guard !Task.isCancelled else {
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
                 return
             }
             markAtBottom()
             didPerformInitialScroll = true
-            scrollMetrics.initialScrollTask = nil
         }
     }
 
@@ -1561,11 +1667,16 @@ struct LiveWorkspaceFeed: View, Equatable {
             return
         }
         DispatchQueue.main.async {
+            guard presentationStore.isPresentationRequested else {
+                return
+            }
             performInitialScrollIfNeeded(proxy: proxy)
         }
     }
 
     private func cancelScheduledScrolls() {
+        scrollMetrics.scrollGeneration &+= 1
+        scrollMetrics.isProgrammaticScrollInFlight = false
         scrollMetrics.followScrollTask?.cancel()
         scrollMetrics.followScrollTask = nil
         scrollMetrics.initialScrollTask?.cancel()
@@ -1574,45 +1685,70 @@ struct LiveWorkspaceFeed: View, Equatable {
         scrollMetrics.submittedScrollTask = nil
     }
 
+    private func beginProgrammaticScroll() -> Int {
+        scrollMetrics.scrollGeneration &+= 1
+        scrollMetrics.isProgrammaticScrollInFlight = true
+        return scrollMetrics.scrollGeneration
+    }
+
+    private func finishProgrammaticScroll(generation: Int) {
+        guard scrollMetrics.scrollGeneration == generation else {
+            return
+        }
+        scrollMetrics.isProgrammaticScrollInFlight = false
+    }
+
     private func revealSubmittedTurn(
         turnID: String,
         proxy: ScrollViewProxy
     ) {
-        scrollMetrics.followScrollTask?.cancel()
-        scrollMetrics.followScrollTask = nil
-        scrollMetrics.submittedScrollTask?.cancel()
+        cancelScheduledScrolls()
         markAtBottom()
+        let generation = beginProgrammaticScroll()
         scrollMetrics.submittedScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.submittedScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
             await Task.yield()
-            guard !Task.isCancelled else {
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
                 return
             }
             proxy.scrollTo(turnID, anchor: .bottom)
 
             var policy = LiveWorkspaceFeedScrollPolicy()
             for _ in 0..<LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts {
-                guard !Task.isCancelled else {
+                guard
+                    !Task.isCancelled,
+                    presentationStore.isPresentationRequested,
+                    scrollMetrics.scrollGeneration == generation
+                else {
                     return
                 }
                 proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
                 try? await Task.sleep(for: .milliseconds(40))
-                let distanceFromBottom = max(
-                    0,
-                    scrollMetrics.bottomMarkerOffset
-                        - scrollMetrics.viewportHeight
-                )
                 if policy.shouldStop(
-                    distanceFromBottom: distanceFromBottom,
+                    distanceFromBottom:
+                        scrollMetrics.distanceFromBottom,
                     tolerance: Self.bottomTolerance
                 ) {
                     break
                 }
             }
-            guard !Task.isCancelled else {
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
                 return
             }
             markAtBottom()
-            scrollMetrics.submittedScrollTask = nil
         }
     }
 
@@ -1640,6 +1776,10 @@ struct LiveWorkspaceFeed: View, Equatable {
         isLoadingOlderTurns = true
         visibleTurnLimit = nextLimit
         DispatchQueue.main.async {
+            guard presentationStore.isPresentationRequested else {
+                isLoadingOlderTurns = false
+                return
+            }
             if let readingAnchorID {
                 proxy.scrollTo(readingAnchorID, anchor: .top)
             }
@@ -1729,11 +1869,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     }
 
     private var distanceFromBottom: CGFloat {
-        max(
-            0,
-            scrollMetrics.bottomMarkerOffset
-                - scrollMetrics.viewportHeight
-        )
+        scrollMetrics.distanceFromBottom
     }
 
     private func markAtBottom() {
@@ -1745,10 +1881,7 @@ struct LiveWorkspaceFeed: View, Equatable {
 
     private func pauseFollowingLatest() {
         followState.userWillScroll()
-        scrollMetrics.followScrollTask?.cancel()
-        scrollMetrics.followScrollTask = nil
-        scrollMetrics.submittedScrollTask?.cancel()
-        scrollMetrics.submittedScrollTask = nil
+        cancelScheduledScrolls()
     }
 }
 
@@ -1772,10 +1905,6 @@ private struct LiveWorkspacePreparingDots: View {
     }
 }
 
-private enum LiveWorkspaceFeedScrollSpace {
-    static let name = "live-workspace-feed"
-}
-
 private struct LiveWorkspaceFeedTurnRevision: Equatable {
     let id: String
     let updatedAt: Date
@@ -1787,9 +1916,12 @@ private struct LiveWorkspaceFeedTurnRevision: Equatable {
 }
 
 private final class LiveWorkspaceFeedScrollMetrics {
-    var bottomMarkerOffset = CGFloat.zero
+    var hasSnapshot = false
+    var distanceFromBottom = CGFloat.zero
     var viewportHeight = CGFloat.zero
-    var streamingResponseHeight = CGFloat.zero
+    var contentHeight = CGFloat.zero
+    var isProgrammaticScrollInFlight = false
+    var scrollGeneration = 0
     var followScrollTask: Task<Void, Never>?
     var initialScrollTask: Task<Void, Never>?
     var submittedScrollTask: Task<Void, Never>?
@@ -1797,34 +1929,57 @@ private final class LiveWorkspaceFeedScrollMetrics {
 
 private struct LiveWorkspaceFeedBottomMarker: View {
     var body: some View {
-        GeometryReader { geometry in
-            Color.clear.preference(
-                key: LiveWorkspaceFeedBottomOffsetKey.self,
-                value: geometry.frame(
-                    in: .named(LiveWorkspaceFeedScrollSpace.name)
-                ).maxY
-            )
-        }
+        Color.clear
     }
 }
 
-private struct LiveWorkspaceFeedBottomOffsetKey: PreferenceKey {
-    static var defaultValue = CGFloat.zero
+struct LiveWorkspaceFeedScrollSnapshot: Equatable {
+    let distanceFromTop: CGFloat
+    let distanceFromBottom: CGFloat
+    let viewportHeight: CGFloat
+    let contentHeight: CGFloat
+}
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+struct LiveWorkspaceFeedScrollGeometry {
+    static func snapshot(
+        documentBounds: CGRect,
+        visibleRect: CGRect,
+        isFlipped: Bool
+    ) -> LiveWorkspaceFeedScrollSnapshot {
+        let viewportHeight = max(0, visibleRect.height)
+        let contentHeight = max(0, documentBounds.height)
+        let scrollableHeight = max(0, contentHeight - viewportHeight)
+        let rawDistanceFromTop =
+            isFlipped
+            ? visibleRect.minY - documentBounds.minY
+            : documentBounds.maxY - visibleRect.maxY
+        let distanceFromTop = min(
+            scrollableHeight,
+            max(0, rawDistanceFromTop)
+        )
+        return LiveWorkspaceFeedScrollSnapshot(
+            distanceFromTop: distanceFromTop,
+            distanceFromBottom: max(
+                0,
+                scrollableHeight - distanceFromTop
+            ),
+            viewportHeight: viewportHeight,
+            contentHeight: contentHeight
+        )
     }
 }
 
 private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
-    let onScroll: (CGFloat) -> Void
+    let onMetrics: (LiveWorkspaceFeedScrollSnapshot) -> Void
     let onUserScrollStarted: () -> Void
-    let onUserScroll: (CGFloat) -> Void
+    let onUserScrollActivity: () -> Void
+    let onUserScroll: (LiveWorkspaceFeedScrollSnapshot) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            onScroll: onScroll,
+            onMetrics: onMetrics,
             onUserScrollStarted: onUserScrollStarted,
+            onUserScrollActivity: onUserScrollActivity,
             onUserScroll: onUserScroll
         )
     }
@@ -1833,16 +1988,25 @@ private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
         let view = AttachmentView()
         view.onHierarchyChange = {
             [weak view, weak coordinator = context.coordinator] in
-            coordinator?.attach(to: view?.enclosingScrollView)
+            coordinator?.attach(
+                to: view?.window == nil
+                    ? nil
+                    : view?.enclosingScrollView
+            )
         }
         return view
     }
 
     func updateNSView(_ nsView: AttachmentView, context: Context) {
-        context.coordinator.onScroll = onScroll
+        context.coordinator.onMetrics = onMetrics
         context.coordinator.onUserScrollStarted = onUserScrollStarted
+        context.coordinator.onUserScrollActivity = onUserScrollActivity
         context.coordinator.onUserScroll = onUserScroll
-        context.coordinator.attach(to: nsView.enclosingScrollView)
+        context.coordinator.attach(
+            to: nsView.window == nil
+                ? nil
+                : nsView.enclosingScrollView
+        )
     }
 
     static func dismantleNSView(
@@ -1854,40 +2018,80 @@ private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var onScroll: (CGFloat) -> Void
+        var onMetrics: (LiveWorkspaceFeedScrollSnapshot) -> Void
         var onUserScrollStarted: () -> Void
-        var onUserScroll: (CGFloat) -> Void
+        var onUserScrollActivity: () -> Void
+        var onUserScroll: (LiveWorkspaceFeedScrollSnapshot) -> Void
         private weak var scrollView: NSScrollView?
+        private weak var documentView: NSView?
         private var boundsObserver: NSObjectProtocol?
+        private var clipFrameObserver: NSObjectProtocol?
+        private var documentFrameObserver: NSObjectProtocol?
+        private var documentBoundsObserver: NSObjectProtocol?
         private var liveScrollStartObserver: NSObjectProtocol?
-        private var liveScrollObserver: NSObjectProtocol?
+        private var liveScrollUpdateObserver: NSObjectProtocol?
+        private var liveScrollEndObserver: NSObjectProtocol?
+        private var isReportScheduled = false
+        private var reportsUserScroll = false
 
         init(
-            onScroll: @escaping (CGFloat) -> Void,
+            onMetrics: @escaping (LiveWorkspaceFeedScrollSnapshot) -> Void,
             onUserScrollStarted: @escaping () -> Void,
-            onUserScroll: @escaping (CGFloat) -> Void
+            onUserScrollActivity: @escaping () -> Void,
+            onUserScroll: @escaping (LiveWorkspaceFeedScrollSnapshot) -> Void
         ) {
-            self.onScroll = onScroll
+            self.onMetrics = onMetrics
             self.onUserScrollStarted = onUserScrollStarted
+            self.onUserScrollActivity = onUserScrollActivity
             self.onUserScroll = onUserScroll
         }
 
         func attach(to scrollView: NSScrollView?) {
-            guard self.scrollView !== scrollView else {
+            let documentView = scrollView?.documentView
+            guard
+                self.scrollView !== scrollView
+                    || self.documentView !== documentView
+            else {
+                scheduleMetricsReport()
                 return
             }
             detach()
-            guard let scrollView else {
+            guard let scrollView, let documentView else {
                 return
             }
             self.scrollView = scrollView
+            self.documentView = documentView
             scrollView.contentView.postsBoundsChangedNotifications = true
+            scrollView.contentView.postsFrameChangedNotifications = true
+            documentView.postsBoundsChangedNotifications = true
+            documentView.postsFrameChangedNotifications = true
             boundsObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView,
                 queue: .main
             ) { [weak self] _ in
-                self?.reportDistanceFromTop()
+                self?.scheduleMetricsReport()
+            }
+            clipFrameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleMetricsReport()
+            }
+            documentFrameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: documentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleMetricsReport()
+            }
+            documentBoundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: documentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleMetricsReport()
             }
             liveScrollStartObserver = NotificationCenter.default.addObserver(
                 forName: NSScrollView.willStartLiveScrollNotification,
@@ -1896,16 +2100,22 @@ private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
             ) { [weak self] _ in
                 self?.onUserScrollStarted()
             }
-            liveScrollObserver = NotificationCenter.default.addObserver(
+            liveScrollUpdateObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.onUserScrollActivity()
+                self?.scheduleMetricsReport(reportsUserScroll: true)
+            }
+            liveScrollEndObserver = NotificationCenter.default.addObserver(
                 forName: NSScrollView.didEndLiveScrollNotification,
                 object: scrollView,
                 queue: .main
             ) { [weak self] _ in
-                self?.reportUserDistanceFromBottom()
+                self?.scheduleMetricsReport(reportsUserScroll: true)
             }
-            DispatchQueue.main.async { [weak self] in
-                self?.reportDistanceFromTop()
-            }
+            scheduleMetricsReport()
         }
 
         func detach() {
@@ -1917,50 +2127,84 @@ private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
                     liveScrollStartObserver
                 )
             }
-            if let liveScrollObserver {
-                NotificationCenter.default.removeObserver(liveScrollObserver)
+            if let liveScrollUpdateObserver {
+                NotificationCenter.default.removeObserver(
+                    liveScrollUpdateObserver
+                )
+            }
+            if let liveScrollEndObserver {
+                NotificationCenter.default.removeObserver(liveScrollEndObserver)
+            }
+            if let clipFrameObserver {
+                NotificationCenter.default.removeObserver(clipFrameObserver)
+            }
+            if let documentFrameObserver {
+                NotificationCenter.default.removeObserver(
+                    documentFrameObserver
+                )
+            }
+            if let documentBoundsObserver {
+                NotificationCenter.default.removeObserver(
+                    documentBoundsObserver
+                )
             }
             boundsObserver = nil
+            clipFrameObserver = nil
+            documentFrameObserver = nil
+            documentBoundsObserver = nil
             liveScrollStartObserver = nil
-            liveScrollObserver = nil
+            liveScrollUpdateObserver = nil
+            liveScrollEndObserver = nil
             scrollView = nil
+            documentView = nil
+            isReportScheduled = false
+            reportsUserScroll = false
         }
 
-        private func reportDistanceFromTop() {
-            guard
-                let scrollView,
-                let documentView = scrollView.documentView
-            else {
+        private func scheduleMetricsReport(
+            reportsUserScroll: Bool = false
+        ) {
+            if reportsUserScroll {
+                self.reportsUserScroll = true
+            }
+            guard !isReportScheduled else {
                 return
             }
-            let scrollableHeight = max(
-                0,
-                documentView.bounds.height
-                    - scrollView.contentView.bounds.height
-            )
-            let scrollFraction = CGFloat(
-                scrollView.verticalScroller?.floatValue ?? 0
-            )
-            onScroll(scrollFraction * scrollableHeight)
+            isReportScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.isReportScheduled = false
+                let reportsUserScroll = self.reportsUserScroll
+                self.reportsUserScroll = false
+                guard let snapshot = self.scrollSnapshot() else {
+                    return
+                }
+                self.onMetrics(snapshot)
+                if reportsUserScroll {
+                    self.onUserScroll(snapshot)
+                }
+            }
         }
 
-        private func reportUserDistanceFromBottom() {
+        private func scrollSnapshot() -> LiveWorkspaceFeedScrollSnapshot? {
             guard
                 let scrollView,
-                let documentView = scrollView.documentView
+                let documentView,
+                documentView === scrollView.documentView
             else {
-                return
+                return nil
             }
-            let scrollableHeight = max(
-                0,
-                documentView.bounds.height
-                    - scrollView.contentView.bounds.height
+            let documentBounds = documentView.bounds
+            let visibleRect = scrollView.documentVisibleRect
+            return LiveWorkspaceFeedScrollGeometry.snapshot(
+                documentBounds: documentBounds,
+                visibleRect: visibleRect,
+                isFlipped: documentView.isFlipped
             )
-            let scrollFraction = CGFloat(
-                scrollView.verticalScroller?.floatValue ?? 0
-            )
-            onUserScroll((1 - scrollFraction) * scrollableHeight)
         }
+
     }
 
     final class AttachmentView: NSView {
@@ -1975,14 +2219,6 @@ private struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
             super.viewDidMoveToWindow()
             onHierarchyChange?()
         }
-    }
-}
-
-private struct LiveWorkspaceFeedStreamingHeightKey: PreferenceKey {
-    static var defaultValue = CGFloat.zero
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value += nextValue()
     }
 }
 
@@ -2648,16 +2884,6 @@ struct LiveTypingResponseView: View {
                     fileBaseDirectory: fileBaseDirectory
                 )
                 .textSelection(.enabled)
-            }
-        }
-        .background {
-            if isStreaming {
-                GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: LiveWorkspaceFeedStreamingHeightKey.self,
-                        value: geometry.size.height
-                    )
-                }
             }
         }
     }
