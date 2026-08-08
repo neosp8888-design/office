@@ -1076,6 +1076,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
 struct LiveWorkspaceFeed: View, Equatable {
     @ObservedObject private var characterFeedStore: CharacterLiveFeedStore
+    private let director: AgentDirector
     private let liveFeedStore: LiveFeedStore
     private let characterID: OfficeCharacter
     private let presentationStore: LiveWorkspaceFeedPresentationStore
@@ -1112,6 +1113,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                 for: characterID.rawValue
             )
         )
+        self.director = director
         self.liveFeedStore = liveFeedStore
         self.characterID = characterID
         self.presentationStore = presentationStore
@@ -1140,7 +1142,8 @@ struct LiveWorkspaceFeed: View, Equatable {
         lhs: LiveWorkspaceFeed,
         rhs: LiveWorkspaceFeed
     ) -> Bool {
-        lhs.liveFeedStore === rhs.liveFeedStore
+        lhs.director === rhs.director
+            && lhs.liveFeedStore === rhs.liveFeedStore
             && lhs.characterFeedStore === rhs.characterFeedStore
             && lhs.characterID == rhs.characterID
             && lhs.presentationStore === rhs.presentationStore
@@ -1264,6 +1267,7 @@ struct LiveWorkspaceFeed: View, Equatable {
 
                                 ForEach(displayTurns) { turn in
                                     EquatableLiveTurnCard(
+                                        director: director,
                                         turn: turn,
                                         workspaceDirectory: workspaceDirectory,
                                         shouldAnimateResponse:
@@ -1942,6 +1946,7 @@ private struct LiveWorkspaceFeedStreamingHeightKey: PreferenceKey {
 }
 
 private struct EquatableLiveTurnCard: View, Equatable {
+    let director: AgentDirector
     let turn: LiveFeedTurn
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
@@ -1956,7 +1961,8 @@ private struct EquatableLiveTurnCard: View, Equatable {
         lhs: EquatableLiveTurnCard,
         rhs: EquatableLiveTurnCard
     ) -> Bool {
-        lhs.turn == rhs.turn
+        lhs.director === rhs.director
+            && lhs.turn == rhs.turn
             && lhs.workspaceDirectory == rhs.workspaceDirectory
             && lhs.shouldAnimateResponse == rhs.shouldAnimateResponse
             && lhs.shouldAnimateInitialResponse
@@ -1965,6 +1971,7 @@ private struct EquatableLiveTurnCard: View, Equatable {
 
     var body: some View {
         LiveTurnCard(
+            director: director,
             turn: turn,
             workspaceDirectory: workspaceDirectory,
             shouldAnimateResponse: shouldAnimateResponse,
@@ -2013,6 +2020,7 @@ struct LiveTurnPromptBlock: View {
 }
 
 private struct LiveTurnCard: View {
+    let director: AgentDirector
     let turn: LiveFeedTurn
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
@@ -2075,6 +2083,22 @@ private struct LiveTurnCard: View {
                         || turn.status == .interrupted
                 {
                     errorBlock(error)
+                }
+
+                // 확인 질문은 팝업 대신 이 카드 안에서 바로 답변한다.
+                if
+                    turn.needsInput,
+                    let character = OfficeCharacter(
+                        rawValue: turn.characterId
+                    )
+                {
+                    InlineQuestionAnswerView(
+                        director: director,
+                        character: character,
+                        turnID: turn.id,
+                        needsInput: turn.needsInput,
+                        question: turn.response
+                    )
                 }
 
                 if turn.status.isRunning || turn.endedAt != nil {
