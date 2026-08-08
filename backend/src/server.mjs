@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import {
   AgentBusyError,
+  AgentDrainingError,
   AgentJobNotFoundError,
   AgentRuntime,
   CharacterNotFoundError,
@@ -29,10 +30,26 @@ import {
 } from "./work-record-provenance.mjs";
 import { pool, withTransaction } from "./db.mjs";
 import {
+  officeBackendHealth,
+  officeBackendMaintenanceStatus,
+} from "./health.mjs";
+import {
   characterSettingsRequireNewSession,
   readCharacterConfiguration,
   syncCharacters,
 } from "./configuration.mjs";
+import {
+  CharacterSettingsDrainConflictError,
+  CharacterSettingsRuntimeUnavailableError,
+  CharacterSettingsTargetsNotFoundError,
+  CharacterSettingsValidationError,
+  updateCharacterSettingsAtomically,
+  withCharacterSessionLocks,
+} from "./character-settings.mjs";
+import {
+  RuntimeCLIPathsValidationError,
+  synchronizeRuntimeCLIPaths,
+} from "./runtime-cli-paths.mjs";
 import { migrate } from "./migrate.mjs";
 import {
   reconcileTerminalWorkRecordReviews,
@@ -90,25 +107,34 @@ function send(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-async function withCharacterSessionLock(characterID, body) {
-  const client = await pool.connect();
-  const key = `officestra:character:${characterID}`;
-  try {
-    await client.query(
-      "SELECT pg_advisory_lock(hashtext($1))",
-      [key],
-    );
-    return await body(client);
-  } finally {
-    try {
-      await client.query(
-        "SELECT pg_advisory_unlock(hashtext($1))",
-        [key],
-      );
-    } finally {
-      client.release();
-    }
+async function backendMaintenance(response, method, request) {
+  if (!runtime) {
+    send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
+    return;
   }
+  if (method === "GET") {
+    send(response, 200, {
+      ok: true,
+      ...officeBackendMaintenanceStatus(runtime),
+    });
+    return;
+  }
+  if (!["POST", "DELETE"].includes(method)) {
+    send(response, 404, { error: "경로를 찾을 수 없습니다." });
+    return;
+  }
+  if (!trustedJSONMutation(request, response)) {
+    return;
+  }
+  await readJSON(request);
+  const status = method === "POST"
+    ? runtime.beginDrain()
+    : runtime.cancelDrain();
+  send(response, 200, { ok: true, ...status });
+}
+
+async function withCharacterSessionLock(characterID, body) {
+  return await withCharacterSessionLocks(pool, [characterID], body);
 }
 
 async function readJSON(request) {
@@ -448,6 +474,12 @@ async function updateCharacterSettings(response, characterID, body) {
               effort = $4,
               fast_mode = $5,
               permission = $6,
+              config = CASE
+                WHEN characters.backend <> $2
+                  THEN COALESCE(characters.config, '{}'::jsonb)
+                    - 'executablePath'
+                ELSE characters.config
+              END,
               updated_at = now()
             WHERE id = $1
             RETURNING
@@ -473,6 +505,53 @@ async function updateCharacterSettings(response, characterID, body) {
     return;
   }
   send(response, 200, character);
+}
+
+async function updateCharacterSettingsBulk(response, body) {
+  try {
+    send(
+      response,
+      200,
+      await updateCharacterSettingsAtomically({ pool, runtime, body }),
+    );
+  } catch (error) {
+    if (error instanceof CharacterSettingsValidationError) {
+      send(response, 400, { error: error.message });
+      return;
+    }
+    if (error instanceof CharacterSettingsTargetsNotFoundError) {
+      send(response, 404, {
+        error: error.message,
+        characterIds: error.characterIDs,
+      });
+      return;
+    }
+    if (error instanceof CharacterSettingsRuntimeUnavailableError) {
+      send(response, 503, { error: error.message });
+      return;
+    }
+    if (error instanceof CharacterSettingsDrainConflictError) {
+      send(response, 409, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function updateRuntimeCLIPaths(response, body) {
+  try {
+    send(
+      response,
+      200,
+      await synchronizeRuntimeCLIPaths({ pool, body }),
+    );
+  } catch (error) {
+    if (error instanceof RuntimeCLIPathsValidationError) {
+      send(response, 400, { error: error.message });
+      return;
+    }
+    throw error;
+  }
 }
 
 async function characterHistory(response, characterID) {
@@ -1281,6 +1360,10 @@ async function startAgentJob(response, body) {
     });
     send(response, 202, job);
   } catch (error) {
+    if (error instanceof AgentDrainingError) {
+      send(response, 503, { error: error.message });
+      return;
+    }
     if (error instanceof CharacterNotFoundError) {
       send(response, 404, { error: error.message });
       return;
@@ -1732,13 +1815,38 @@ const server = createServer(async (request, response) => {
     const workspaceReviewRoute = routeWorkspaceReview(url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      await pool.query("SELECT 1");
-      send(response, 200, { ok: true });
+      try {
+        await pool.query("SELECT 1");
+        send(response, 200, officeBackendHealth({ runtime }));
+      } catch {
+        send(response, 503, officeBackendHealth({
+          runtime,
+          databaseOK: false,
+        }));
+      }
+    } else if (url.pathname === "/api/maintenance/drain") {
+      await backendMaintenance(response, request.method ?? "GET", request);
+    } else if (
+      request.method === "PUT" &&
+      url.pathname === "/api/runtime/cli-paths"
+    ) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await updateRuntimeCLIPaths(response, await readJSON(request));
     } else if (
       request.method === "GET" &&
       url.pathname === "/api/characters"
     ) {
       await listCharacters(response);
+    } else if (
+      request.method === "PUT" &&
+      url.pathname === "/api/characters/settings/bulk"
+    ) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await updateCharacterSettingsBulk(response, await readJSON(request));
     } else if (
       request.method === "GET" &&
       url.pathname === "/api/active-sessions"
@@ -1863,6 +1971,12 @@ const server = createServer(async (request, response) => {
       error instanceof TurnFeedbackValidationError
     ) {
       send(response, 400, { error: error.message });
+      return;
+    }
+    if (
+      error instanceof AgentDrainingError
+    ) {
+      send(response, 503, { error: error.message });
       return;
     }
     if (

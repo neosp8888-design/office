@@ -14,6 +14,7 @@ final class OfficeBackendLaunchCommandsTests: XCTestCase {
         runtimeConfigurationURL: URL(
             fileURLWithPath: "/Applications/OFFICESTRA.app/Contents/Resources/OfficeLLM_OfficeCore.bundle/characters.json"
         ),
+        releaseID: "release-test",
         userID: 501
     )
 
@@ -60,6 +61,9 @@ final class OfficeBackendLaunchCommandsTests: XCTestCase {
             "OFFICE_WORKDIR='/Users/example/project'"
         ) == true)
         XCTAssertTrue(command.arguments.last?.contains(
+            "OFFICESTRA_RELEASE_ID='release-test'"
+        ) == true)
+        XCTAssertTrue(command.arguments.last?.contains(
             "cd '/Applications/OFFICESTRA.app/Contents/Resources/OFFICESTRARuntime/backend'"
         ) == true)
     }
@@ -91,6 +95,33 @@ final class OfficeBackendLaunchCommandsTests: XCTestCase {
                 workdir: workdir
             ),
             bundledBackend
+        )
+    }
+
+    func testSourceBackendIsUsedForSwiftRunWithAnotherWorkspace() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString)
+        let resources = root.appending(path: "build/resources")
+        let sourceRoot = root.appending(path: "OFFICESTRA")
+        let server = sourceRoot.appending(path: "backend/src/server.mjs")
+        let workdir = root.appending(path: "SelectedProject")
+        try FileManager.default.createDirectory(
+            at: server.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: server.path,
+            contents: Data()
+        ))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertEqual(
+            OfficeBackendRuntimeLocation.resolve(
+                resourceURL: resources,
+                workdir: workdir,
+                developmentRoot: sourceRoot
+            ),
+            sourceRoot.appending(path: "backend")
         )
     }
 

@@ -814,11 +814,22 @@ export async function canonicalProjectRoot(sourceWorkdir) {
 }
 
 async function repositoryRootFor(sourceWorkdir) {
-  const repositoryProbe = await gitResult(
-    sourceWorkdir,
-    ["rev-parse", "--show-toplevel"],
-    { allowedExitCodes: [128] },
-  );
+  let repositoryProbe;
+  try {
+    repositoryProbe = await gitResult(
+      sourceWorkdir,
+      ["rev-parse", "--show-toplevel"],
+      { allowedExitCodes: [128] },
+    );
+  } catch (error) {
+    if (
+      isMissingGitExecutable(error) &&
+      !(await hasGitMarker(sourceWorkdir))
+    ) {
+      return null;
+    }
+    throw error;
+  }
   if (repositoryProbe.exitCode === 0) {
     return canonicalDirectory(repositoryProbe.stdout.trim());
   }
@@ -832,6 +843,12 @@ async function repositoryRootFor(sourceWorkdir) {
     "Git 저장소 확인에 실패했습니다.",
     repositoryProbe,
   );
+}
+
+function isMissingGitExecutable(error) {
+  return error instanceof GitWorkspaceError &&
+    error.code === "command-failed" &&
+    error.cause?.code === "ENOENT";
 }
 
 function isExplicitNonRepository(result) {

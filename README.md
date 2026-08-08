@@ -174,34 +174,43 @@ Git 저장소가 아닌 `workdir`는 기존 공유 폴더 방식으로 실행된
 
 ## 설치
 
-OFFICESTRA는 macOS 14 이상에서 동작한다. Codex CLI 또는 Claude Code CLI 중
-하나 이상에 로그인되어 있어야 하며, Swift 5.10 이상, Node.js, npm, Docker
-Desktop이 필요하다. 모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수
-있다.
+OFFICESTRA Community Preview는 macOS 14 이상에서 동작한다. 일반 비-Git
+폴더를 사용하는 사람은 Swift, Xcode, Node.js, npm, Git이나 저장소 clone이
+필요 없다. 앱에 Node와 백엔드가 포함되어 있고, 첫 실행 도우미가 기존 데이터를
+보존하면서 PostgreSQL 준비·마이그레이션·백엔드 연결을 자동 처리한다.
 
-**처음 설치하는 사용자는 최신 버전만 설치하면 끝이다.** 별도의 DB 백업·복원·
-마이그레이션 명령은 필요 없다. 시작 스크립트가 PostgreSQL 준비와 DB 마이그레이션을
-자동으로 처리한다.
+현재 미리보기에서 사용자가 먼저 준비할 것은 두 가지뿐이다.
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치와 최초 실행
+- Codex CLI 또는 Claude Code CLI 중 하나의 설치와 로그인
+
+Git 저장소를 선택해 worktree 격리·검토·병합 기능을 쓰려는 경우에만 Mac에
+`git`이 필요하다. Git이 없는 일반 폴더는 공유 폴더 방식으로 그대로 동작한다.
+
+모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수 있다.
 
 ### 가장 쉬운 방법
 
-이미 Codex나 Claude Code를 쓰고 있다면 그 도구의 새 대화에 아래 요청을 그대로
-붙여 넣는다.
+1. [Releases](https://github.com/neosp8888-design/office/releases)에서 Mac
+   아키텍처에 맞는 `notarized` DMG를 받는다. 파일명에 `adhoc` 또는
+   `unnotarized`가 있으면 개발 검증용이므로 일반 설치본으로 사용하지 않는다.
+2. DMG를 열어 `OFFICESTRA.app`을 `Applications`로 끌어 놓고 실행한다.
+3. 직원들이 작업할 프로젝트 폴더를 선택한다.
+4. 준비 화면에서 Docker·Codex·Claude 상태를 확인한다. 누락된 항목만 준비한 뒤
+   **다시 확인**을 누르면 DB와 백엔드가 자동으로 이어서 시작된다.
+5. 새 설치에서는 Codex 또는 Claude Code 하나만 로그인돼 있어도 다섯 직원이
+   그 CLI로 자동 맞춰지고 바로 첫 업무를 보낼 수 있다. 기존 데이터에 다른 CLI
+   직원 설정이 남아 있으면 대화와 설정을 바꾸지 않고 해당 로그인을 요청한다.
 
-```text
-이 Mac에 OFFICESTRA 최신 버전을 설치하고 실제 실행까지 확인해줘.
-저장소는 https://github.com/neosp8888-design/office.git 이야.
+설치 오류가 나면 준비 화면의 **로그 열기**로 진단 폴더를 열 수 있다. 앱은
+모르는 4317 프로세스를 종료하지 않으며, 다른 프로젝트용 OFFICESTRA 백엔드가
+실행 중이면 경로를 표시하고 중단한다.
 
-필요한 도구만 설치하고 저장소의 최신 버전을 ~/OFFICESTRA에 내려받아. 직원 작업 폴더는
-나에게 물어보고, 정하지 않으면 ~/Projects를 사용해. 선택한 절대 경로를
-characters.json의 workdir에 설정해. AI CLI가 하나뿐이면 다섯 직원의 provider와
-model을 그 CLI에서 사용 가능한 값으로 맞춰. 기존 로그인은 유지하고 Docker,
-백엔드, 앱을 실행한 뒤 /health가 {"ok":true}인지 확인해. 기존 폴더나 Docker
-데이터가 있으면 삭제하지 말고 먼저 나에게 알려줘.
-```
+릴리스 담당자의 Developer ID 서명·Apple 공증·태그 배포 절차는
+[릴리스 가이드](docs/RELEASING.md)에 정리되어 있다.
 
 <details>
-<summary><strong>직접 설치 명령 보기</strong></summary>
+<summary><strong>소스에서 직접 빌드하는 개발자용 명령 보기</strong></summary>
 
 ### 새 Mac에서 직접 설치하기
 
@@ -321,7 +330,7 @@ cd "$HOME/OFFICESTRA"
 처음 실행할 때 PostgreSQL 이미지와 Node 패키지를 받으므로 시간이 걸릴 수 있다.
 시작 스크립트는 PostgreSQL이 실제로 요청을 받을 수 있을 때까지 기다린 뒤 DB
 마이그레이션과 백엔드를 실행한다. 다른 터미널 탭에서 상태를 확인했을 때
-`{"ok":true}`가 나오면 준비된 것이다.
+응답에 `"ok":true`와 `"service":"officestra-backend"`가 나오면 준비된 것이다.
 
 ```sh
 curl -fsS http://127.0.0.1:4317/health
@@ -500,8 +509,8 @@ codesign --verify --deep --strict --verbose=2 dist/OFFICESTRA.app
 open dist/OFFICESTRA.app
 ```
 
-앱 번들은 로컬 실행용 ad-hoc 서명을 사용한다. 번들로 실행할 때도 백엔드는
-별도 프로세스로 실행 중이어야 한다.
+앱 번들은 로컬 실행용 ad-hoc 서명을 사용한다. 번들에는 Node와 백엔드가 포함되며
+첫 실행 도우미가 이를 별도 로컬 프로세스로 자동 시작한다.
 
 ## 프로젝트 구조
 

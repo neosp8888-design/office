@@ -290,6 +290,24 @@ public struct CharacterConfiguration: Codable, Identifiable, Hashable, Sendable 
             bubble: bubble
         )
     }
+
+    public func applying(executablePath: String?) -> CharacterConfiguration {
+        CharacterConfiguration(
+            id: id,
+            name: name,
+            seat: seat,
+            backend: backend,
+            identityPrompt: identityPrompt,
+            model: model,
+            effort: effort,
+            fastMode: fastMode,
+            permission: permission,
+            executablePath: executablePath,
+            hitbox: hitbox,
+            monitorHitbox: monitorHitbox,
+            bubble: bubble
+        )
+    }
 }
 
 public struct OfficeAgentConfiguration: Codable, Sendable {
@@ -304,6 +322,49 @@ public struct OfficeAgentConfiguration: Codable, Sendable {
             databaseBaseURL: databaseBaseURL,
             archiveCabinetHitbox: archiveCabinetHitbox,
             characters: characters
+        )
+    }
+
+    public func preparingForRuntime(
+        workdir: String,
+        availableBackends: Set<AgentBackend>,
+        executablePaths: [AgentBackend: String] = [:]
+    ) -> OfficeAgentConfiguration {
+        let soleBackend = availableBackends.count == 1
+            ? availableBackends.first
+            : nil
+        return OfficeAgentConfiguration(
+            workdir: workdir,
+            databaseBaseURL: databaseBaseURL,
+            archiveCabinetHitbox: archiveCabinetHitbox,
+            characters: characters.map { character in
+                if soleBackend == nil {
+                    return character.applying(
+                        executablePath: executablePaths[character.backend]
+                            ?? character.executablePath
+                    )
+                }
+                let backend = soleBackend ?? character.backend
+                let effort = backend.effortOptions.contains(character.effort)
+                    ? character.effort
+                    : backend.effortOptions[0]
+                let settings = CharacterAgentSettings(
+                    backend: backend,
+                    model: backend.defaultModel,
+                    effort: effort,
+                    fastMode: character.fastMode
+                        && backend.supportsFastMode(
+                            model: backend.defaultModel
+                        ),
+                    permission: character.agentSettings.permission
+                )
+                return character
+                    .applying(settings)
+                    .applying(
+                        executablePath: executablePaths[backend]
+                            ?? character.executablePath
+                    )
+            }
         )
     }
 }

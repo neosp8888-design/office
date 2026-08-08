@@ -46,6 +46,30 @@ final class OfficeLocalizationTests: XCTestCase {
         )
     }
 
+    func testDockerDataChoicesAreLocalizedInEnglish() {
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "현재 OFFICESTRA 데이터 사용",
+                languages: ["en-US"]
+            ),
+            "Use Current OFFICESTRA Data"
+        )
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "기존 OFFICESTRA 데이터 사용",
+                languages: ["en-US"]
+            ),
+            "Use Existing OFFICESTRA Data"
+        )
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "현재 형식과 구형 형식의 OFFICESTRA 데이터가 모두 발견됐습니다. 사용할 데이터를 선택하세요. 어느 쪽도 삭제되지 않습니다.",
+                languages: ["en-US"]
+            ),
+            "Both current-format and legacy-format OFFICESTRA data were found. Choose which data to use. Neither volume will be deleted."
+        )
+    }
+
     func testEnglishDefaultIdentityPromptReturnsToCanonicalKoreanValue() {
         XCTAssertEqual(
             OfficeLocalization.canonicalIdentityPrompt(

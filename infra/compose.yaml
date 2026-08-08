@@ -1,12 +1,12 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
     environment:
       POSTGRES_DB: office
       POSTGRES_USER: office
       POSTGRES_PASSWORD: office-local
     ports:
-      - "127.0.0.1:54329:5432"
+      - "127.0.0.1:${OFFICESTRA_POSTGRES_PORT:-54329}:5432"
     volumes:
       - office-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -17,3 +17,5 @@ services:
 
 volumes:
   office-postgres-data:
+    labels:
+      com.neo.officestra.data: "true"

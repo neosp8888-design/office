@@ -148,35 +148,48 @@ Non-Git workdirs continue to use the existing shared-folder behavior. A Git work
 
 ## Installation
 
-OFFICESTRA requires macOS 14 or later, Swift 5.10 or later, Node.js with npm,
-Docker Desktop, and at least one authenticated Codex CLI or Claude Code CLI.
-Available models depend on the installed CLI version and account entitlements.
+OFFICESTRA Community Preview requires macOS 14 or later. People using an
+ordinary non-Git folder do not need Swift, Xcode, Node.js, npm, Git, or a source
+checkout. Node and the backend are bundled with the app. The first-run assistant
+preserves existing data while it prepares PostgreSQL, applies migrations, and
+connects the backend.
 
-**For a new installation, install the latest version and you are done.** You do
-not need to run database backup, restore, or migration commands. The startup
-script waits for PostgreSQL and applies the migrations automatically.
+The current preview has only two prerequisites:
+
+- Install and open [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- Install and sign in to either Codex CLI or Claude Code CLI
+
+Git is required only when the selected folder is a Git repository and you want
+worktree isolation, review, and merge. An ordinary folder still works in shared
+folder mode when Git is not installed.
+
+Available models still depend on the installed CLI version and account
+entitlements.
 
 ### Easiest path
 
-If you already use Codex or Claude Code, paste the prompt below into a new
-conversation.
+1. Download the `notarized` DMG for your Mac architecture from
+   [Releases](https://github.com/neosp8888-design/office/releases). Files marked
+   `adhoc` or `unnotarized` are development artifacts, not general installers.
+2. Open the DMG, drag `OFFICESTRA.app` to `Applications`, and launch it.
+3. Choose the project folder your teammates will work in.
+4. Review Docker, Codex, and Claude on the setup screen. Prepare only the items
+   that need attention, then choose **Check Again**. Database and backend setup
+   resume automatically.
+5. On a new installation, signing in to either Codex or Claude Code maps all
+   five teammates to that available CLI so you can send the first task. If
+   existing data still assigns a teammate to another CLI, setup preserves the
+   conversation and settings and asks you to sign in to that provider.
 
-```text
-Install the latest version of OFFICESTRA on this Mac and verify that it actually
-runs.
-Repository: https://github.com/neosp8888-design/office.git
+Choose **Open Logs** on the setup screen if installation fails. OFFICESTRA does
+not terminate an unknown process on port 4317. It also stops and shows the path
+when another OFFICESTRA backend is serving a different project.
 
-Install only missing prerequisites and clone the latest version into ~/OFFICESTRA.
-Ask me which coworker workspace to use, or use ~/Projects if I have no preference.
-Write that absolute path to characters.json as workdir. If only one AI CLI is
-available, set all five coworkers to provider and model values supported by that
-CLI. Preserve my existing login, start Docker, the backend, and the app, then
-verify that /health returns {"ok":true}. Do not delete an existing folder or
-Docker data; tell me first if either already exists.
-```
+Maintainers can follow the [release guide](docs/RELEASING.md) for Developer ID
+signing, Apple notarization, and tag publishing.
 
 <details>
-<summary><strong>Show manual installation commands</strong></summary>
+<summary><strong>Show developer commands for building from source</strong></summary>
 
 ### Manual setup on a new Mac
 
@@ -296,7 +309,8 @@ cd "$HOME/OFFICESTRA"
 
 The first run downloads the PostgreSQL image and Node packages, so it can take a
 while. The startup script waits for PostgreSQL, then runs the database migrations
-and backend. It is ready when the health check returns `{"ok":true}`.
+and backend. It is ready when the health response includes `"ok":true` and
+`"service":"officestra-backend"`.
 
 ```sh
 curl -fsS http://127.0.0.1:4317/health
@@ -448,7 +462,9 @@ codesign --verify --deep --strict --verbose=2 dist/OFFICESTRA.app
 open dist/OFFICESTRA.app
 ```
 
-The bundle uses ad hoc signing for local execution. The backend must still run as a separate process when launching the app bundle.
+The bundle uses ad hoc signing for local execution. It includes Node and the
+backend, and the first-run assistant starts that backend as a separate local
+process automatically.
 
 ## Project layout
 

@@ -28,6 +28,26 @@ private struct OfficeLaunchRootView: View {
                 validationError: coordinator.validationError,
                 chooseWorkspace: coordinator.chooseWorkspace
             )
+        case .preparing(let stage):
+            OfficeSetupPreparingView(stage: stage)
+        case .needsSetup(let snapshot):
+            OfficeEnvironmentSetupView(
+                snapshot: snapshot,
+                retry: coordinator.retrySetup,
+                chooseWorkspace: coordinator.chooseWorkspace,
+                useCurrentDatabase: coordinator.useCurrentDatabase,
+                useLegacyDatabase: coordinator.useConfirmedLegacyDatabase,
+                remapExistingCharacters: coordinator.remapExistingCharacters,
+                replaceIdleBackend: coordinator.replaceIdleBackend,
+                openDocker: coordinator.openDocker,
+                setupCodex: {
+                    coordinator.openProviderSetup(.codex)
+                },
+                setupClaude: {
+                    coordinator.openProviderSetup(.claude)
+                },
+                openLogs: coordinator.openSetupLogs
+            )
         case .ready:
             if let director = coordinator.director {
                 OfficeGameView(director: director)
