@@ -439,7 +439,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
                 .foregroundStyle(ClaudePalette.accent.opacity(0.65))
                 .frame(width: 15, height: 15)
 
-            Text(displayText(thought))
+            Text(thought.text)
                 .font(.system(size: 12.5, weight: .regular))
                 .italic()
                 .foregroundStyle(.secondary)
@@ -457,7 +457,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
         }
         .padding(.vertical, isLatest ? 4 : 3)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("추론, \(displayText(thought))")
+        .accessibilityLabel("추론, \(thought.text)")
     }
 
     private var visibleHistory: [ClaudeThought] {
@@ -465,10 +465,6 @@ private struct ClaudeThoughtRunView: View, Equatable {
             showsAll: showsAllHistory,
             limit: Self.compactHistoryLimit
         )
-    }
-
-    private func displayText(_ thought: ClaudeThought) -> String {
-        thought.isPlaceholder ? "생각을 정리하는 중" : thought.text
     }
 }
 
