@@ -818,16 +818,63 @@ struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
     }
 }
 
-private struct LiveWorkspaceFeedMetadata: Equatable {
+struct LiveWorkspaceFeedMetadata: Equatable {
     let latestTerminalTurnID: String?
     let latestSubmittedTurnID: String?
     let latestStartedCommandID: UUID?
+
+    init(
+        latestTerminalTurnID: String?,
+        latestSubmittedTurnID: String?,
+        latestStartedCommandID: UUID?
+    ) {
+        self.latestTerminalTurnID = latestTerminalTurnID
+        self.latestSubmittedTurnID = latestSubmittedTurnID
+        self.latestStartedCommandID = latestStartedCommandID
+    }
 
     @MainActor
     init(director: AgentDirector) {
         latestTerminalTurnID = director.latestTerminalTurnID
         latestSubmittedTurnID = director.latestSubmittedTurnID
         latestStartedCommandID = director.latestStartedCommandID
+    }
+}
+
+@MainActor
+final class LiveWorkspaceFeedMetadataStore: ObservableObject {
+    @Published private(set) var metadata: LiveWorkspaceFeedMetadata
+    private var desiredMetadata: LiveWorkspaceFeedMetadata
+    private var publicationTask: Task<Void, Never>?
+
+    init(metadata: LiveWorkspaceFeedMetadata) {
+        self.metadata = metadata
+        desiredMetadata = metadata
+    }
+
+    func setMetadata(_ metadata: LiveWorkspaceFeedMetadata) {
+        guard desiredMetadata != metadata else {
+            return
+        }
+        desiredMetadata = metadata
+        publicationTask?.cancel()
+        publicationTask = Task { [weak self] in
+            // updateNSView 안에서 ObservableObject를 즉시 발행하면 SwiftUI가
+            // 호스트 갱신 도중 다시 무효화될 수 있으므로 다음 MainActor
+            // 차례에 마지막 snapshot만 한 번 전달한다.
+            await Task.yield()
+            guard
+                let self,
+                !Task.isCancelled,
+                self.desiredMetadata == metadata
+            else {
+                return
+            }
+            if self.metadata != metadata {
+                self.metadata = metadata
+            }
+            self.publicationTask = nil
+        }
     }
 }
 
@@ -868,7 +915,7 @@ final class LiveWorkspaceFeedPresentationStore: ObservableObject {
 private struct HostedLiveWorkspaceFeed: View {
     let director: AgentDirector
     let characterID: OfficeCharacter
-    let metadata: LiveWorkspaceFeedMetadata
+    @ObservedObject var metadataStore: LiveWorkspaceFeedMetadataStore
     let presentationStore: LiveWorkspaceFeedPresentationStore
 
     var body: some View {
@@ -876,7 +923,7 @@ private struct HostedLiveWorkspaceFeed: View {
             director: director,
             characterID: characterID,
             presentationStore: presentationStore,
-            metadata: metadata
+            metadata: metadataStore.metadata
         )
         .equatable()
         .environment(
@@ -892,9 +939,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     @MainActor
     private final class Entry {
         let characterID: OfficeCharacter
+        let metadataStore: LiveWorkspaceFeedMetadataStore
         let presentationStore: LiveWorkspaceFeedPresentationStore
-        let hostingView: NSHostingView<HostedLiveWorkspaceFeed>
-        var metadata: LiveWorkspaceFeedMetadata
+        // NSView로 타입을 소거해 생성 이후 rootView 재할당을 컴파일 단계에서
+        // 막는다. 메타데이터 갱신은 metadataStore만 담당한다.
+        let hostingView: NSView
 
         init(
             director: AgentDirector,
@@ -902,34 +951,29 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             metadata: LiveWorkspaceFeedMetadata
         ) {
             self.characterID = characterID
-            self.metadata = metadata
-            presentationStore = LiveWorkspaceFeedPresentationStore(
-                isPresented: false
+            let metadataStore = LiveWorkspaceFeedMetadataStore(
+                metadata: metadata
             )
+            self.metadataStore = metadataStore
+            // Entry는 선택된 직원에게만 처음 생성된다. 첫 mount부터 표시
+            // 상태로 만들면 재시작 뒤 첫 직원 진입에서 false→true 발행을
+            // 기다리는 동안 빈 호스트가 노출되지 않는다.
+            let presentationStore = LiveWorkspaceFeedPresentationStore(
+                isPresented: true
+            )
+            self.presentationStore = presentationStore
             hostingView = NSHostingView(
                 rootView: HostedLiveWorkspaceFeed(
                     director: director,
                     characterID: characterID,
-                    metadata: metadata,
+                    metadataStore: metadataStore,
                     presentationStore: presentationStore
                 )
             )
         }
 
-        func refreshRootIfNeeded(
-            director: AgentDirector,
-            metadata: LiveWorkspaceFeedMetadata
-        ) {
-            guard self.metadata != metadata else {
-                return
-            }
-            self.metadata = metadata
-            hostingView.rootView = HostedLiveWorkspaceFeed(
-                director: director,
-                characterID: characterID,
-                metadata: metadata,
-                presentationStore: presentationStore
-            )
+        func updateMetadata(_ metadata: LiveWorkspaceFeedMetadata) {
+            metadataStore.setMetadata(metadata)
         }
     }
 
@@ -993,10 +1037,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             characterID: selectedCharacterID,
             metadata: metadata
         )
-        selectedEntry.refreshRootIfNeeded(
-            director: director,
-            metadata: metadata
-        )
+        selectedEntry.updateMetadata(metadata)
         selectedEntry.presentationStore.setPresented(true)
         selectedEntry.hostingView.isHidden = false
         if didChangeSelection {

@@ -666,6 +666,83 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedCharacterFeedID, latestID)
     }
 
+    func testMetadataStoreDefersPublicationBeyondViewUpdate() async {
+        let initial = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedTurnID: nil,
+            latestStartedCommandID: nil
+        )
+        let updated = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: "terminal-turn",
+            latestSubmittedTurnID: "server-turn",
+            latestStartedCommandID: UUID(
+                uuidString: "11111111-1111-1111-1111-111111111111"
+            )
+        )
+        let store = LiveWorkspaceFeedMetadataStore(metadata: initial)
+        let publication = expectation(
+            description: "다음 MainActor 차례에서 메타데이터 발행"
+        )
+        let cancellable = store.objectWillChange.sink {
+            publication.fulfill()
+        }
+
+        store.setMetadata(updated)
+
+        XCTAssertEqual(store.metadata, initial)
+
+        await fulfillment(of: [publication], timeout: 1)
+
+        XCTAssertEqual(store.metadata, updated)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testMetadataStoreCoalescesSubmitTransitionsToLatestSnapshot() async {
+        let initial = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedTurnID: nil,
+            latestStartedCommandID: nil
+        )
+        let local = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedTurnID: "local-command",
+            latestStartedCommandID: nil
+        )
+        let server = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedTurnID: "server-turn",
+            latestStartedCommandID: nil
+        )
+        let startedCommandID = UUID(
+            uuidString: "22222222-2222-2222-2222-222222222222"
+        )
+        let started = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedTurnID: "server-turn",
+            latestStartedCommandID: startedCommandID
+        )
+        let store = LiveWorkspaceFeedMetadataStore(metadata: initial)
+        var publicationCount = 0
+        let publication = expectation(
+            description: "마지막 제출 메타데이터만 한 번 발행"
+        )
+        publication.assertForOverFulfill = true
+        let cancellable = store.objectWillChange.sink {
+            publicationCount += 1
+            publication.fulfill()
+        }
+
+        store.setMetadata(local)
+        store.setMetadata(server)
+        store.setMetadata(started)
+
+        await fulfillment(of: [publication], timeout: 1)
+
+        XCTAssertEqual(store.metadata, started)
+        XCTAssertEqual(publicationCount, 1)
+        withExtendedLifetime(cancellable) {}
+    }
+
     func testPresentationStoreDefersPublicationBeyondViewUpdate() async {
         let store = LiveWorkspaceFeedPresentationStore(isPresented: false)
         var publicationCount = 0
