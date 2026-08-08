@@ -37,6 +37,8 @@ STAGED_APP="$STAGING_ROOT/OFFICESTRA.app"
 CONTENTS_DIR="$STAGED_APP/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+RUNTIME_DIR="$RESOURCES_DIR/OFFICESTRARuntime"
+BACKEND_RUNTIME_DIR="$RUNTIME_DIR/backend"
 
 cleanup() {
     if [[ -d "$STAGING_ROOT" ]]; then
@@ -71,6 +73,42 @@ cp "$PROJECT_DIR/Resources/OFFICESTRA.icns" "$RESOURCES_DIR/OFFICESTRA.icns"
     --delete \
     "$GAME_RESOURCE_BUNDLE/" \
     "$RESOURCES_DIR/OfficeLLM_OfficeGame.bundle/"
+
+# 백엔드 코드와 production 의존성을 앱에 포함해 사용자 프로젝트와
+# OFFICESTRA 설치 소스의 경로를 서로 독립시킨다.
+mkdir -p "$BACKEND_RUNTIME_DIR/src" "$RUNTIME_DIR/database/migrations"
+/usr/bin/rsync \
+    -a \
+    --delete \
+    "$PROJECT_DIR/backend/src/" \
+    "$BACKEND_RUNTIME_DIR/src/"
+cp "$PROJECT_DIR/backend/package.json" "$BACKEND_RUNTIME_DIR/package.json"
+cp "$PROJECT_DIR/backend/package-lock.json" \
+    "$BACKEND_RUNTIME_DIR/package-lock.json"
+/usr/bin/rsync \
+    -a \
+    --delete \
+    "$PROJECT_DIR/database/migrations/" \
+    "$RUNTIME_DIR/database/migrations/"
+npm \
+    --prefix "$BACKEND_RUNTIME_DIR" \
+    ci \
+    --omit=dev \
+    --ignore-scripts \
+    --no-audit \
+    --no-fund
+
+for packaged_runtime_path in \
+    "$BACKEND_RUNTIME_DIR/src/server.mjs" \
+    "$BACKEND_RUNTIME_DIR/node_modules/pg/package.json" \
+    "$BACKEND_RUNTIME_DIR/node_modules/ws/package.json" \
+    "$BACKEND_RUNTIME_DIR/node_modules/@slack/bolt/package.json" \
+    "$RUNTIME_DIR/database/migrations/001_initial.sql"; do
+    if [[ ! -e "$packaged_runtime_path" ]]; then
+        print -u2 "필수 백엔드 런타임이 없습니다. $packaged_runtime_path"
+        exit 1
+    fi
+done
 
 RUNTIME_CONFIG="$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/characters.json"
 RUNTIME_WORKDIR="${OFFICESTRA_WORKDIR:-}"
