@@ -150,6 +150,31 @@ final class CommandEntryDraftTests: XCTestCase {
         }
     }
 
+    func testComposerHeightGrowsAfterTrailingNewlineAndCapsAtMaximum() {
+        let textView = makeComposerTextView()
+
+        textView.string = "첫째 줄"
+        let singleLineHeight = CommandComposerLayout.measuredHeight(
+            for: textView
+        )
+
+        textView.string = "첫째 줄\n"
+        let twoLineHeight = CommandComposerLayout.measuredHeight(
+            for: textView
+        )
+
+        textView.string = Array(repeating: "여러 줄", count: 30)
+            .joined(separator: "\n")
+        let cappedHeight = CommandComposerLayout.measuredHeight(for: textView)
+
+        XCTAssertEqual(
+            singleLineHeight,
+            CommandComposerLayout.minimumHeight
+        )
+        XCTAssertGreaterThan(twoLineHeight, singleLineHeight)
+        XCTAssertEqual(cappedHeight, CommandComposerLayout.maximumHeight)
+    }
+
     private func makeCoordinator(
         initialText: String
     ) -> (CommandComposerView.Coordinator, TextBox) {
@@ -159,11 +184,29 @@ final class CommandEntryDraftTests: XCTestCase {
                 get: { textBox.value },
                 set: { textBox.value = $0 }
             ),
+            measuredHeight: .constant(CommandComposerLayout.minimumHeight),
             placeholder: "업무를 입력하세요",
             isEnabled: true,
             onSubmit: {}
         )
         return (composer.makeCoordinator(), textBox)
+    }
+
+    private func makeComposerTextView() -> NSTextView {
+        let textView = NSTextView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 40)
+        )
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.font = .systemFont(ofSize: 14, weight: .medium)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 400,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainerInset = NSSize(width: 0, height: 12)
+        return textView
     }
 }
 

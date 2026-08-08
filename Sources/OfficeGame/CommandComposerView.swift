@@ -49,6 +49,45 @@ struct CommandEntryAvailability: Equatable {
     }
 }
 
+enum CommandComposerLayout {
+    static let minimumHeight: CGFloat = 40
+    static let maximumHeight: CGFloat = 160
+
+    static func measuredHeight(for textView: NSTextView) -> CGFloat {
+        guard
+            !textView.string.isEmpty,
+            let layoutManager = textView.layoutManager,
+            let textContainer = textView.textContainer
+        else {
+            return minimumHeight
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let glyphRange = layoutManager.glyphRange(for: textContainer)
+        var lineCount = 0
+        var lineHeight: CGFloat = 0
+        layoutManager.enumerateLineFragments(
+            forGlyphRange: glyphRange
+        ) { lineRect, _, _, _, _ in
+            lineCount += 1
+            lineHeight = max(lineHeight, ceil(lineRect.height))
+        }
+        if textView.string.hasSuffix("\n") {
+            lineCount += 1
+            lineHeight = max(
+                lineHeight,
+                ceil(layoutManager.extraLineFragmentRect.height)
+            )
+        }
+        let additionalLineHeight = CGFloat(max(0, lineCount - 1))
+            * lineHeight
+        return min(
+            minimumHeight + additionalLineHeight,
+            maximumHeight
+        )
+    }
+}
+
 struct CommandEntryRow: View {
     @ObservedObject var director: AgentDirector
     let placeholder: String
@@ -57,6 +96,7 @@ struct CommandEntryRow: View {
     let onSubmit: (String) -> Bool
 
     @State private var draft = CommandEntryDraft()
+    @State private var composerHeight = CommandComposerLayout.minimumHeight
 
     private var availability: CommandEntryAvailability {
         CommandEntryAvailability(
@@ -96,13 +136,14 @@ struct CommandEntryRow: View {
 
             CommandComposerView(
                 text: $draft.text,
+                measuredHeight: $composerHeight,
                 placeholder: placeholder,
                 isEnabled:
                     director.isReadyForSubmissions
                         && !director.isUpdatingConfiguration,
                 onSubmit: submitDraft
             )
-            .frame(height: 40)
+            .frame(height: composerHeight)
 
             if director.isSelectedCharacterRunning {
                 Button(action: director.cancelSelectedJob) {
@@ -170,6 +211,7 @@ struct CommandEntryRow: View {
 
 struct CommandComposerView: NSViewRepresentable {
     @Binding var text: String
+    @Binding var measuredHeight: CGFloat
     let placeholder: String
     let isEnabled: Bool
     let onSubmit: () -> Void
@@ -188,6 +230,7 @@ struct CommandComposerView: NSViewRepresentable {
 
         let textView = CommandComposerTextView()
         textView.delegate = context.coordinator
+        textView.onMeasuredHeightChange = context.coordinator.updateMeasuredHeight
         textView.drawsBackground = false
         textView.isRichText = false
         textView.importsGraphics = false
@@ -199,7 +242,10 @@ struct CommandComposerView: NSViewRepresentable {
             origin: .zero,
             size: scrollView.contentSize
         )
-        textView.minSize = NSSize(width: 0, height: 40)
+        textView.minSize = NSSize(
+            width: 0,
+            height: CommandComposerLayout.minimumHeight
+        )
         textView.maxSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude
@@ -231,10 +277,16 @@ struct CommandComposerView: NSViewRepresentable {
         else {
             return
         }
-        updateTextView(textView)
+        let textChanged = updateTextView(textView)
+        if textChanged {
+            DispatchQueue.main.async { [weak textView] in
+                textView?.reportMeasuredHeight()
+            }
+        }
     }
 
-    private func updateTextView(_ textView: CommandComposerTextView) {
+    @discardableResult
+    private func updateTextView(_ textView: CommandComposerTextView) -> Bool {
         textView.onSubmit = onSubmit
         if textView.placeholder != placeholder {
             textView.placeholder = placeholder
@@ -250,7 +302,7 @@ struct CommandComposerView: NSViewRepresentable {
         }
 
         guard textView.string != text else {
-            return
+            return false
         }
         let previousLocation = textView.selectedRange().location
         textView.string = text
@@ -264,6 +316,7 @@ struct CommandComposerView: NSViewRepresentable {
         if text.isEmpty {
             textView.scrollToBeginningOfDocument(nil)
         }
+        return true
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -277,6 +330,7 @@ struct CommandComposerView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else {
                 return
             }
+            (textView as? CommandComposerTextView)?.reportMeasuredHeight()
             guard parent.text != textView.string else {
                 return
             }
@@ -286,6 +340,13 @@ struct CommandComposerView: NSViewRepresentable {
             if changesPlaceholderVisibility {
                 textView.needsDisplay = true
             }
+        }
+
+        func updateMeasuredHeight(_ newHeight: CGFloat) {
+            guard abs(parent.measuredHeight - newHeight) >= 0.5 else {
+                return
+            }
+            parent.measuredHeight = newHeight
         }
     }
 }
@@ -299,6 +360,13 @@ private final class CommandComposerTextView: NSTextView {
         }
     }
     var onSubmit: (() -> Void)?
+    var onMeasuredHeightChange: ((CGFloat) -> Void)?
+
+    func reportMeasuredHeight() {
+        onMeasuredHeightChange?(
+            CommandComposerLayout.measuredHeight(for: self)
+        )
+    }
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76
