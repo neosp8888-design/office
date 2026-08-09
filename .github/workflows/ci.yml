@@ -76,7 +76,9 @@ jobs:
         run: python3 scripts/test-backend-release-id.py
 
       - name: Test Swift package
-        run: swift test -Xswiftc -warnings-as-errors
+        run: |
+          /usr/bin/defaults write NSGlobalDomain AppleLanguages -array ko
+          swift test -Xswiftc -warnings-as-errors
 
       - name: Build signed app bundle
         run: |

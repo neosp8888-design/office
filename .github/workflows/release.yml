@@ -118,6 +118,7 @@ jobs:
           npm --prefix backend ci --ignore-scripts --no-audit --no-fund
           npm --prefix backend run check
           npm --prefix backend test
+          /usr/bin/defaults write NSGlobalDomain AppleLanguages -array ko
           swift test -Xswiftc -warnings-as-errors
           identity="$(
             /usr/bin/security find-identity -v -p codesigning \
