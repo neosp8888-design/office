@@ -168,25 +168,48 @@ entitlements.
 
 ### Easiest path
 
-1. Download the `notarized` DMG for your Mac architecture from
-   [Releases](https://github.com/neosp8888-design/office/releases). Files marked
-   `adhoc` or `unnotarized` are development artifacts, not general installers.
+1. Download the `adhoc` DMG for your Mac architecture from
+   [Releases](https://github.com/neosp8888-design/office/releases). Choose
+   `arm64` for Apple silicon (M1 or later) or `x86_64` for an Intel Mac. The
+   Community Preview is not Developer ID signed or notarized by Apple, so
+   macOS may block its first launch. Install only files from this official
+   repository after matching them against the supplied `SHA256SUMS`.
 2. Open the DMG, drag `OFFICESTRA.app` to `Applications`, and launch it.
-3. Choose the project folder your teammates will work in.
-4. Review Docker, Codex, and Claude on the setup screen. Prepare only the items
+3. If macOS blocks the app, do not run an arbitrary Terminal command. Attempt
+   one launch, then open `Apple menu → System Settings → Privacy & Security →
+   Security → Open Anyway`. Authenticate with your login password or Touch ID
+   and choose **Open**. This creates an exception for OFFICESTRA only. **Open
+   Anyway** is available for about one hour after the blocked launch attempt;
+   see [Apple's official guidance](https://support.apple.com/en-us/102445).
+4. Choose the project folder your teammates will work in.
+5. Review Docker, Codex, and Claude on the setup screen. Prepare only the items
    that need attention, then choose **Check Again**. Database and backend setup
    resume automatically.
-5. On a new installation, signing in to either Codex or Claude Code maps all
+6. On a new installation, signing in to either Codex or Claude Code maps all
    five teammates to that available CLI so you can send the first task. If
    existing data still assigns a teammate to another CLI, setup preserves the
    conversation and settings and asks you to sign in to that provider.
+
+Do not use `xattr`, `sudo spctl --master-disable`, or any global Gatekeeper
+disablement. Build this tag from source using the developer instructions below
+if you do not want to allow a security exception. Checksums verify Release-file
+integrity; they do not replace Apple notarization. Organization-managed Macs
+may block **Open Anyway** through policy.
+
+After downloading the Apple silicon DMG and `SHA256SUMS`, run the following
+single line in Terminal and require an `OK` result. On an Intel Mac, replace
+`arm64` in the filename with `x86_64`.
+
+```sh
+cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.0-3-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
+```
 
 Choose **Open Logs** on the setup screen if installation fails. OFFICESTRA does
 not terminate an unknown process on port 4317. It also stops and shows the path
 when another OFFICESTRA backend is serving a different project.
 
-Maintainers can follow the [release guide](docs/RELEASING.md) for Developer ID
-signing, Apple notarization, and tag publishing.
+Maintainers can follow the [release guide](docs/RELEASING.md) for Community
+Preview publishing and a future Developer ID notarized release.
 
 <details>
 <summary><strong>Show developer commands for building from source</strong></summary>
@@ -279,12 +302,14 @@ for current provider-specific details.
 
 Run the clone command only when `~/OFFICESTRA` does not already exist. If it
 does exist, do not delete or overwrite it; ask Codex or Claude to inspect the
-existing installation first. This command downloads the latest version from
-the default branch.
+existing installation first. This command pins the public `v1.3.0` source.
 
 ```sh
-git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone --branch v1.3.0 --depth 1 \
+  https://github.com/neosp8888-design/office.git \
+  "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
+git describe --tags --exact-match
 ```
 
 Create a workspace for your AI coworkers and replace the public placeholder.

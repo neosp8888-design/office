@@ -192,21 +192,43 @@ Git 저장소를 선택해 worktree 격리·검토·병합 기능을 쓰려는 �
 ### 가장 쉬운 방법
 
 1. [Releases](https://github.com/neosp8888-design/office/releases)에서 Mac
-   아키텍처에 맞는 `notarized` DMG를 받는다. 파일명에 `adhoc` 또는
-   `unnotarized`가 있으면 개발 검증용이므로 일반 설치본으로 사용하지 않는다.
+   아키텍처에 맞는 `adhoc` DMG를 받는다. Apple Silicon(M1 이상)은 `arm64`,
+   Intel Mac은 `x86_64` 파일을 선택한다. Community Preview는 Apple Developer
+   ID 서명이나 Apple 공증을 받지 않았으므로 macOS가 첫 실행을 차단할 수 있다.
+   공식 저장소의 Release 파일인지 확인하고 함께 제공되는 `SHA256SUMS`와
+   일치할 때만 설치한다.
 2. DMG를 열어 `OFFICESTRA.app`을 `Applications`로 끌어 놓고 실행한다.
-3. 직원들이 작업할 프로젝트 폴더를 선택한다.
-4. 준비 화면에서 Docker·Codex·Claude 상태를 확인한다. 누락된 항목만 준비한 뒤
+3. macOS가 차단하면 임의의 터미널 명령을 실행하지 않는다. 앱을 한 번 실행한 뒤
+   `Apple 메뉴 → 시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`를
+   누르고 로그인 암호 또는 Touch ID로 인증한 다음 **열기**를 선택한다. 이 예외는
+   OFFICESTRA 앱 하나에만 적용된다. **그래도 열기**는 첫 실행 시도 뒤 약 1시간
+   동안 표시된다. 자세한 내용은 [Apple 공식 안내](https://support.apple.com/ko-kr/102445)를 참고한다.
+4. 직원들이 작업할 프로젝트 폴더를 선택한다.
+5. 준비 화면에서 Docker·Codex·Claude 상태를 확인한다. 누락된 항목만 준비한 뒤
    **다시 확인**을 누르면 DB와 백엔드가 자동으로 이어서 시작된다.
-5. 새 설치에서는 Codex 또는 Claude Code 하나만 로그인돼 있어도 다섯 직원이
+6. 새 설치에서는 Codex 또는 Claude Code 하나만 로그인돼 있어도 다섯 직원이
    그 CLI로 자동 맞춰지고 바로 첫 업무를 보낼 수 있다. 기존 데이터에 다른 CLI
    직원 설정이 남아 있으면 대화와 설정을 바꾸지 않고 해당 로그인을 요청한다.
+
+`xattr`, `sudo spctl --master-disable` 또는 Gatekeeper 전체 비활성화는 필요하지
+않으며 권장하지 않는다. 보안 예외를 허용하고 싶지 않으면 아래 개발자용 절차로
+이 태그의 소스를 직접 빌드한다. 체크섬은 Release 파일의 무결성을 확인하지만
+Apple 공증을 대신하지 않는다. 회사에서 관리하는 Mac은 조직 정책에 따라
+**그래도 열기**가 제한될 수 있다.
+
+Apple Silicon DMG와 `SHA256SUMS`를 다운로드한 경우 터미널에서 아래 한 줄을
+실행해 `OK`가 나오는지 확인한다. Intel Mac은 파일명의 `arm64`를 `x86_64`로
+바꾼다.
+
+```sh
+cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.0-3-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
+```
 
 설치 오류가 나면 준비 화면의 **로그 열기**로 진단 폴더를 열 수 있다. 앱은
 모르는 4317 프로세스를 종료하지 않으며, 다른 프로젝트용 OFFICESTRA 백엔드가
 실행 중이면 경로를 표시하고 중단한다.
 
-릴리스 담당자의 Developer ID 서명·Apple 공증·태그 배포 절차는
+릴리스 담당자의 Community Preview와 향후 Developer ID 공증 배포 절차는
 [릴리스 가이드](docs/RELEASING.md)에 정리되어 있다.
 
 <details>
@@ -300,11 +322,14 @@ claude
 
 아래 clone 명령은 `~/OFFICESTRA` 폴더가 없을 때만 실행한다. 이미 있다면 삭제하거나
 덮어쓰지 말고 Codex나 Claude에게 기존 설치 상태 확인을 맡긴다.
-이 명령은 기본 브랜치의 최신 버전을 내려받는다.
+이 명령은 공개된 `v1.3.0` 버전을 고정해 내려받는다.
 
 ```sh
-git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone --branch v1.3.0 --depth 1 \
+  https://github.com/neosp8888-design/office.git \
+  "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
+git describe --tags --exact-match
 ```
 
 직원들이 작업할 폴더를 하나 만든 뒤 공개 예시 경로를 자신의 경로로 바꾼다.

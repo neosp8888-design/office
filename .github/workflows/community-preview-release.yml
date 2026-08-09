@@ -1,10 +1,10 @@
-name: Notarized Release
+name: Community Preview Release
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to sign, notarize, and publish
+        description: Existing release tag to package as an ad-hoc Community Preview
         required: true
         type: string
 
@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  notarized-macos:
-    name: Signed and notarized macOS (${{ matrix.arch }})
+  preview-macos:
+    name: Ad-hoc Community Preview macOS (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -56,10 +56,6 @@ jobs:
               ;;
           esac
           git fetch \
-            --force \
-            origin \
-            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
-          git fetch \
             --no-tags \
             origin \
             +refs/heads/main:refs/remotes/origin/main
@@ -80,57 +76,10 @@ jobs:
           )"
           test "$RELEASE_TAG" = "v${version}"
 
-      - name: Reject unsafe tagged source before loading credentials
+      - name: Reject unsafe tagged source
         run: python3 scripts/verify-release-safety.py --tracked-only
 
-      - name: Import Developer ID certificate
-        env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_CI_KEYCHAIN_PASSWORD }}
-        run: |
-          set -euo pipefail
-          : "${CERTIFICATE_P12_BASE64:?Missing APPLE_DEVELOPER_ID_P12_BASE64}"
-          : "${CERTIFICATE_PASSWORD:?Missing APPLE_DEVELOPER_ID_P12_PASSWORD}"
-          : "${KEYCHAIN_PASSWORD:?Missing APPLE_CI_KEYCHAIN_PASSWORD}"
-          certificate="$RUNNER_TEMP/developer-id.p12"
-          keychain="$RUNNER_TEMP/officestra-signing.keychain-db"
-          printf '%s' "$CERTIFICATE_P12_BASE64" \
-            | /usr/bin/base64 -D > "$certificate"
-          /usr/bin/security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
-          /usr/bin/security set-keychain-settings -lut 21600 "$keychain"
-          /usr/bin/security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
-          /usr/bin/security import "$certificate" \
-            -k "$keychain" \
-            -P "$CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          /usr/bin/security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$keychain"
-          /usr/bin/security list-keychains -d user -s "$keychain"
-          /usr/bin/security default-keychain -d user -s "$keychain"
-          rm -f "$certificate"
-          echo "OFFICESTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-
-      - name: Configure Apple notarization credentials
-        env:
-          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          : "${APPLE_ID:?Missing APPLE_NOTARY_APPLE_ID}"
-          : "${APPLE_TEAM_ID:?Missing APPLE_NOTARY_TEAM_ID}"
-          : "${APPLE_APP_PASSWORD:?Missing APPLE_NOTARY_APP_PASSWORD}"
-          /usr/bin/xcrun notarytool store-credentials OFFICESTRA-CI \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_PASSWORD"
-
-      - name: Test, build, sign, and notarize
+      - name: Test, build, and package ad-hoc preview
         run: |
           set -euo pipefail
           npm --prefix backend ci --ignore-scripts --no-audit --no-fund
@@ -138,21 +87,18 @@ jobs:
           npm --prefix backend test
           /usr/bin/defaults write NSGlobalDomain AppleLanguages -array ko
           swift test -Xswiftc -warnings-as-errors
-          identity="$(
-            /usr/bin/security find-identity -v -p codesigning \
-              | /usr/bin/sed -n \
-                's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
-              | /usr/bin/head -n 1
-          )"
-          test -n "$identity"
           OFFICESTRA_NODE_EXECUTABLE="$(command -v node)" \
-          OFFICESTRA_CODESIGN_IDENTITY="$identity" \
+          OFFICESTRA_CODESIGN_IDENTITY=- \
             ./scripts/build-app.sh
           python3 scripts/backend-release-id.py \
             --verify \
             --verify-node-signature \
             dist/OFFICESTRA.app
           python3 scripts/verify-release-safety.py --require-app
+          signature_details="$(
+            /usr/bin/codesign -dv --verbose=4 dist/OFFICESTRA.app 2>&1
+          )"
+          printf '%s\n' "$signature_details" | /usr/bin/grep -q '^Signature=adhoc$'
           app_architecture="$(
             /usr/bin/lipo -archs dist/OFFICESTRA.app/Contents/MacOS/OfficeLLM
           )"
@@ -162,35 +108,33 @@ jobs:
           )"
           test "$app_architecture" = "${{ matrix.arch }}"
           test "$node_architecture" = "$app_architecture"
-          OFFICESTRA_NOTARY_PROFILE=OFFICESTRA-CI \
-            ./scripts/notarize-app.sh
           ./scripts/smoke-test-macos-release.sh dist/OFFICESTRA.app
-          OFFICESTRA_CODESIGN_IDENTITY="$identity" \
-          OFFICESTRA_NOTARY_PROFILE=OFFICESTRA-CI \
-            ./scripts/package-release.sh
+          ./scripts/package-release.sh
           dmg_path="$(
             find dist/release \
               -maxdepth 1 \
               -type f \
-              -name '*-notarized.dmg' \
+              -name '*-adhoc.dmg' \
+              -print \
+              -quit
+          )"
+          zip_path="$(
+            find dist/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*-adhoc.zip' \
               -print \
               -quit
           )"
           test -n "$dmg_path"
-          /usr/bin/xcrun stapler validate "$dmg_path"
-          /usr/sbin/spctl \
-            --assess \
-            --type open \
-            --context context:primary-signature \
-            --verbose=4 \
-            "$dmg_path"
+          test -n "$zip_path"
           ./scripts/smoke-test-macos-release.sh "$dmg_path"
           (
             cd dist/release
             shasum -a 256 -c SHA256SUMS
           )
 
-      - name: Stage the signed packaged runtime for Docker E2E
+      - name: Stage the packaged runtime for Docker E2E
         run: |
           set -euo pipefail
           source_app="dist/OFFICESTRA.app"
@@ -209,34 +153,27 @@ jobs:
             -C dist/packaged-runtime-e2e \
             OFFICESTRA.app
 
-      - name: Upload notarized architecture artifacts
+      - name: Upload ad-hoc architecture artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: officestra-release-${{ matrix.arch }}
+          name: officestra-preview-release-${{ matrix.arch }}
           path: |
-            dist/release/*-notarized.zip
-            dist/release/*-notarized.dmg
+            dist/release/*-adhoc.zip
+            dist/release/*-adhoc.dmg
           if-no-files-found: error
           retention-days: 7
 
       - name: Upload packaged runtime E2E fixture
         uses: actions/upload-artifact@v4
         with:
-          name: officestra-runtime-e2e-${{ matrix.arch }}
+          name: officestra-preview-runtime-e2e-${{ matrix.arch }}
           path: dist/packaged-runtime-e2e-${{ matrix.arch }}.tgz
           if-no-files-found: error
           retention-days: 2
 
-      - name: Remove temporary keychain
-        if: always()
-        run: |
-          if [[ -n "${OFFICESTRA_CI_KEYCHAIN:-}" ]]; then
-            /usr/bin/security delete-keychain "$OFFICESTRA_CI_KEYCHAIN" || true
-          fi
-
   packaged-runtime-e2e:
-    name: Packaged first task (${{ matrix.arch }})
-    needs: notarized-macos
+    name: Packaged preview first task (${{ matrix.arch }})
+    needs: preview-macos
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -257,10 +194,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Download the signed packaged runtime
+      - name: Download the packaged runtime
         uses: actions/download-artifact@v4
         with:
-          name: officestra-runtime-e2e-${{ matrix.arch }}
+          name: officestra-preview-runtime-e2e-${{ matrix.arch }}
           path: dist
 
       - name: Run the packaged runtime against Docker
@@ -275,19 +212,19 @@ jobs:
               dist/packaged-runtime-e2e/OFFICESTRA.app
 
   publish:
-    name: Publish GitHub release
+    name: Publish Community Preview
     needs:
-      - notarized-macos
+      - preview-macos
       - packaged-runtime-e2e
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Download all notarized architectures
+      - name: Download both preview architectures
         uses: actions/download-artifact@v4
         with:
-          pattern: officestra-release-*
+          pattern: officestra-preview-release-*
           path: dist/release
           merge-multiple: true
 
@@ -295,10 +232,10 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          arm_zip=(dist/release/*-arm64-notarized.zip)
-          intel_zip=(dist/release/*-x86_64-notarized.zip)
-          arm_dmg=(dist/release/*-arm64-notarized.dmg)
-          intel_dmg=(dist/release/*-x86_64-notarized.dmg)
+          arm_zip=(dist/release/*-arm64-adhoc.zip)
+          intel_zip=(dist/release/*-x86_64-adhoc.zip)
+          arm_dmg=(dist/release/*-arm64-adhoc.dmg)
+          intel_dmg=(dist/release/*-x86_64-adhoc.dmg)
           test "${#arm_zip[@]}" -eq 1
           test "${#intel_zip[@]}" -eq 1
           test "${#arm_dmg[@]}" -eq 1
@@ -309,17 +246,40 @@ jobs:
             sha256sum -c SHA256SUMS
           )
 
-      - name: Publish GitHub release once
+      - name: Publish GitHub prerelease once
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          notes="$RUNNER_TEMP/community-preview-notes.md"
+          cat > "$notes" <<'EOF'
+          ## Community Preview — Apple 미공증
+
+          이 DMG와 ZIP은 ad-hoc 서명되었으며 Apple Developer ID 서명이나 Apple 공증을 받지 않았습니다. macOS가 첫 실행을 차단할 수 있습니다. 이 공식 저장소에서 받은 파일인지 확인하고 `SHA256SUMS`와 일치할 때만 앱 하나에 대한 예외를 허용하세요.
+
+          1. Mac에 맞는 `arm64`(Apple Silicon) 또는 `x86_64`(Intel) DMG를 받습니다.
+          2. 앱을 Applications로 옮긴 뒤 한 번 실행합니다.
+          3. 차단되면 `시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`에서 이 앱만 허용합니다.
+
+          Apple Silicon 사용자는 DMG와 `SHA256SUMS`를 같은 폴더에 받은 뒤 `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`를 실행해 `OK`를 확인합니다. Intel 사용자는 `arm64`를 `x86_64`로 바꿉니다.
+
+          Gatekeeper 전체 비활성화나 광범위한 `xattr` 명령은 필요하지 않으며 권장하지 않습니다. 보안 예외를 원치 않으면 이 태그의 소스를 직접 빌드하세요. 체크섬은 파일 무결성만 확인하며 Apple 공증을 대신하지 않습니다.
+
+          ## Community Preview — not notarized by Apple
+
+          These DMG and ZIP files are ad-hoc signed. They are not Developer ID signed or notarized by Apple, so macOS may block the first launch. Download only from this official repository and verify the matching `SHA256SUMS` before allowing a per-app exception.
+
+          Move the app to Applications, attempt one launch, then use `System Settings → Privacy & Security → Security → Open Anyway` if macOS blocks it. Do not disable Gatekeeper globally or run broad `xattr` commands. Build this tag from source instead if you do not want to allow the exception. Checksums verify file integrity; they do not replace Apple notarization.
+
+          Apple silicon users can place the DMG and `SHA256SUMS` in one folder and run `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`; require an `OK` result. Intel users replace `arm64` with `x86_64`.
+          EOF
           gh release create "$RELEASE_TAG" \
-            dist/release/*-notarized.zip \
-            dist/release/*-notarized.dmg \
+            dist/release/*-adhoc.zip \
+            dist/release/*-adhoc.dmg \
             dist/release/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
-            --generate-notes \
-            --title "OFFICESTRA ${RELEASE_TAG}"
+            --prerelease \
+            --notes-file "$notes" \
+            --title "OFFICESTRA ${RELEASE_TAG} Community Preview (Apple Unnotarized)"

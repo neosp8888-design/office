@@ -36,7 +36,7 @@ print "이 스크립트는 앱 자체를 새로 서명하거나 공증하지 않
 RELEASE_FLAVOR="unnotarized"
 if print -r -- "$SIGNATURE_DETAILS" | /usr/bin/grep -q '^Signature=adhoc$'; then
     RELEASE_FLAVOR="adhoc"
-    print -u2 "경고: 입력 앱은 ad-hoc 서명입니다. Apple 공증 산출물이나 일반 사용자용 정식 배포본으로 표시하지 않습니다."
+    print -u2 "경고: 입력 앱은 ad-hoc 서명이며 Apple 공증을 받지 않았습니다. 공개할 때는 Community Preview와 macOS의 앱별 '그래도 열기' 절차를 명시해야 합니다."
 elif print -r -- "$SIGNATURE_DETAILS" \
     | /usr/bin/grep -q '^Authority=Developer ID Application:'; then
     SPCTL_OUTPUT=""
