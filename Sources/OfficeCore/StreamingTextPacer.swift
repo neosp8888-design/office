@@ -6,7 +6,7 @@ public enum StreamingTextPacer {
     public static let animatedTailCharacterCount = 180
     public static let animationTickInterval = TimeInterval(0.016)
     // 메인 RunLoop 지연 여유를 남겨 실제 화면도 1초 안에 끝나게 한다.
-    public static let maximumLineRevealDuration = TimeInterval(0.9)
+    public static let maximumLineRevealDuration = TimeInterval(0.8)
 
     public static func immediatelyVisibleCharacterCount(
         remainingCharacterCount: Int

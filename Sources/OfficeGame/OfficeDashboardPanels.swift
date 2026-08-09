@@ -3041,19 +3041,49 @@ struct CompletedResponseLineTypingView: View {
                     advanceLine(line.index, in: sequence)
                 }
         default:
-            StreamingPlainTextView(
-                source: line.source,
-                animates: true,
-                animatesInitialSource: true,
-                fontSize: fontSize,
-                lineSpacing: 3,
-                revealMode: .fullLine,
-                onFinishedTyping: {
-                    advanceLine(line.index, in: sequence)
-                }
-            )
-            .id("\(typingIdentity):line:\(line.index)")
-            .fixedSize(horizontal: false, vertical: true)
+            // 최종 Markdown 줄이 처음부터 높이를 맡고, 타이핑 텍스트는
+            // 크기에 관여하지 않는 overlay에서만 그린다. 줄을 치는 동안
+            // ScrollView 문서 높이가 16ms마다 변하지 않는다.
+            ZStack(alignment: .topLeading) {
+                CompletedResponseCommittedLineView(
+                    line: line,
+                    fontSize: fontSize,
+                    fileBaseDirectory: fileBaseDirectory
+                )
+                .equatable()
+                .accessibilityHidden(true)
+                .hidden()
+
+                // 링크 URL처럼 원문이 최종 Markdown보다 길어도 타이핑
+                // 텍스트가 잘리지 않도록 두 높이 중 큰 쪽을 예약한다.
+                Text(line.source.isEmpty ? " " : line.source)
+                    .font(.system(size: fontSize))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityHidden(true)
+                    .hidden()
+            }
+            .overlay(alignment: .topLeading) {
+                StreamingPlainTextView(
+                    source: line.source,
+                    animates: true,
+                    animatesInitialSource: true,
+                    fontSize: fontSize,
+                    lineSpacing: 3,
+                    revealMode: .fullLine,
+                    onFinishedTyping: {
+                        advanceLine(line.index, in: sequence)
+                    }
+                )
+                .id("\(typingIdentity):line:\(line.index)")
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: .topLeading
+                )
+                .clipped()
+            }
         }
     }
 

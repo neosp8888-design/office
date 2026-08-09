@@ -1,6 +1,7 @@
 // 이 파일은 긴 한글과 이모지 응답의 적응형 타자 표시량을 검증한다.
 
 import AppKit
+import SwiftUI
 import XCTest
 @testable import OfficeCore
 @testable import OfficeGame
@@ -165,24 +166,24 @@ final class StreamingTextPacerTests: XCTestCase {
             previousDuration = duration
         }
 
-        let fiftySix = StreamingTextPacer.fullLineUpdatePlan(
+        let fifty = StreamingTextPacer.fullLineUpdatePlan(
             current: "",
-            target: String(repeating: "a", count: 56),
+            target: String(repeating: "a", count: 50),
             animates: true
         )
-        let fiftySeven = StreamingTextPacer.fullLineUpdatePlan(
+        let fiftyOne = StreamingTextPacer.fullLineUpdatePlan(
             current: "",
-            target: String(repeating: "a", count: 57),
+            target: String(repeating: "a", count: 51),
             animates: true
         )
         XCTAssertEqual(
-            fiftySix.animationDuration ?? .infinity,
-            0.896,
+            fifty.animationDuration ?? .infinity,
+            0.8,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
-            fiftySeven.animationDuration ?? .infinity,
-            0.9,
+            fiftyOne.animationDuration ?? .infinity,
+            0.8,
             accuracy: 0.000_001
         )
     }
@@ -298,5 +299,344 @@ final class StreamingTextPacerTests: XCTestCase {
             1.0
         )
         window.contentView = nil
+    }
+
+    func testFullLineTypingDoesNotAdvanceDuringEventTracking() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 160),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let scrollView = NSScrollView(frame: window.contentView?.bounds ?? .zero)
+        let documentView = NSView(
+            frame: NSRect(x: 0, y: 0, width: 240, height: 160)
+        )
+        let view = IncrementalStreamingTextView(
+            fontSize: 14,
+            lineSpacing: 3
+        )
+        view.frame = documentView.bounds
+        documentView.addSubview(view)
+        scrollView.documentView = documentView
+        window.contentView = scrollView
+        view.apply(
+            source: String(repeating: "스크롤 중에는 멈춥니다. ", count: 80),
+            animates: true,
+            revealMode: .fullLine
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+
+        guard let textView = view.subviews.first as? NSTextView else {
+            XCTFail("타이핑 NSTextView를 찾지 못했습니다.")
+            window.contentView = nil
+            return
+        }
+        let beforeEventTracking = textView.string
+
+        NotificationCenter.default.post(
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        let deadline = Date(timeIntervalSinceNow: 0.95)
+        while Date() < deadline {
+            _ = RunLoop.main.run(
+                mode: .eventTracking,
+                before: deadline
+            )
+        }
+
+        XCTAssertEqual(
+            textView.string,
+            beforeEventTracking,
+            "live-scroll event tracking 중에도 타이핑 timer가 실행됐습니다."
+        )
+        NotificationCenter.default.post(
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        XCTAssertNotEqual(
+            textView.string,
+            beforeEventTracking,
+            "event tracking이 끝난 뒤 타이핑이 재개되지 않았습니다."
+        )
+        XCTAssertLessThan(
+            textView.string.count,
+            String(repeating: "스크롤 중에는 멈춥니다. ", count: 80).count,
+            "긴 live-scroll 뒤 현재 줄이 한 번에 완료됐습니다."
+        )
+        window.contentView = nil
+    }
+
+    func testFullLineTypingKeepsIntrinsicHeightStableAcrossTicks() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 180, height: 240),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let view = IncrementalStreamingTextView(
+            fontSize: 14,
+            lineSpacing: 3
+        )
+        view.frame = window.contentView?.bounds ?? .zero
+        window.contentView = view
+        view.apply(
+            source: String(repeating: "높이가 바뀌지 않는 긴 문장 ", count: 100),
+            animates: true,
+            revealMode: .fullLine
+        )
+        let initialHeight = view.intrinsicContentSize.height
+
+        try? await Task.sleep(for: .milliseconds(450))
+        guard let textView = view.subviews.first as? NSTextView else {
+            XCTFail("타이핑 NSTextView를 찾지 못했습니다.")
+            window.contentView = nil
+            return
+        }
+        XCTAssertGreaterThan(textView.string.count, 100)
+        XCTAssertEqual(
+            view.intrinsicContentSize.height,
+            initialHeight,
+            accuracy: 0.5,
+            "fullLine tick이 intrinsic height를 다시 변경했습니다."
+        )
+        window.contentView = nil
+    }
+
+    func testCompletedLineTypingReservesFinalMarkdownHeight() {
+        let source = "## " + String(
+            repeating: "완성된 Markdown 높이를 먼저 확보합니다. ",
+            count: 18
+        )
+        let width = CGFloat(220)
+        let typingController = NSHostingController(
+            rootView: CompletedResponseLineTypingView(
+                typingIdentity: "height-reservation",
+                source: source,
+                fontSize: 14,
+                fileBaseDirectory: nil,
+                animates: true,
+                animatesInitialSource: true,
+                presentsTyping: true,
+                onFinishedTyping: {}
+            )
+            .frame(width: width)
+        )
+        let markdownController = NSHostingController(
+            rootView: ConversationMarkdownView(
+                source: source,
+                fontSize: 14,
+                fileBaseDirectory: nil
+            )
+            .frame(width: width)
+        )
+        let proposal = NSSize(width: width, height: 10_000)
+
+        let typingHeight = typingController.sizeThatFits(in: proposal).height
+        let markdownHeight = markdownController.sizeThatFits(
+            in: proposal
+        ).height
+        XCTAssertGreaterThanOrEqual(
+            typingHeight,
+            markdownHeight,
+            "타이핑 시작 전 최종 Markdown 높이가 예약되지 않았습니다."
+        )
+        XCTAssertLessThanOrEqual(
+            typingHeight - markdownHeight,
+            5.5,
+            "높이 예약이 줄 사이 간격보다 크게 문서 높이를 늘렸습니다."
+        )
+    }
+
+    func testCompletedLineTypingReservesLongMarkdownLinkSourceHeight() {
+        let source = "[짧은 제목]("
+            + String(
+                repeating: "https://example.com/very-long-path/",
+                count: 20
+            )
+            + ")"
+        let width = CGFloat(220)
+        let typingController = NSHostingController(
+            rootView: CompletedResponseLineTypingView(
+                typingIdentity: "long-link-height-reservation",
+                source: source,
+                fontSize: 14,
+                fileBaseDirectory: nil,
+                animates: true,
+                animatesInitialSource: true,
+                presentsTyping: true,
+                onFinishedTyping: {}
+            )
+            .frame(width: width)
+        )
+        let rawTextController = NSHostingController(
+            rootView: Text(source)
+                .font(.system(size: 14))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: width, alignment: .leading)
+        )
+        let proposal = NSSize(width: width, height: 10_000)
+
+        XCTAssertGreaterThanOrEqual(
+            typingController.sizeThatFits(in: proposal).height,
+            rawTextController.sizeThatFits(in: proposal).height,
+            "긴 Markdown 링크 원문이 타이핑 중 잘릴 수 있습니다."
+        )
+    }
+
+    func testCompletedTypingInsideLazyScrollKeepsDocumentHeightStable() {
+        let source = String(
+            repeating: "스크롤과 동시에 표시되는 긴 완성 응답입니다. ",
+            count: 70
+        )
+        let rootView = ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                Color.clear.frame(height: 300)
+                CompletedResponseLineTypingView(
+                    typingIdentity: "lazy-scroll-height",
+                    source: source,
+                    fontSize: 14,
+                    fileBaseDirectory: nil,
+                    animates: true,
+                    animatesInitialSource: true,
+                    presentsTyping: true,
+                    onFinishedTyping: {}
+                )
+                Color.clear.frame(height: 300)
+            }
+            .frame(width: 240)
+        }
+        .frame(width: 260, height: 180)
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 260, height: 180)
+        let window = NSWindow(
+            contentRect: hostingView.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        hostingView.layoutSubtreeIfNeeded()
+
+        guard
+            let scrollView = firstDescendant(
+                of: hostingView,
+                as: NSScrollView.self
+            ),
+            let documentView = scrollView.documentView
+        else {
+            XCTFail("SwiftUI LazyVStack의 NSScrollView를 찾지 못했습니다.")
+            window.contentView = nil
+            return
+        }
+        // LazyVStack의 최초 실체화에 따른 추정 높이 보정은 검증 대상이
+        // 아니다. 한 번 전 구간을 지나 안정화한 뒤 같은 burst를 측정한다.
+        NotificationCenter.default.post(
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        for step in 0..<80 {
+            let maximumY = max(
+                0,
+                documentView.frame.height - scrollView.contentView.bounds.height
+            )
+            let fraction = CGFloat(step % 20) / 19
+            scrollView.contentView.scroll(
+                to: NSPoint(x: 0, y: maximumY * fraction)
+            )
+            _ = RunLoop.main.run(
+                mode: .eventTracking,
+                before: Date(timeIntervalSinceNow: 0.002)
+            )
+        }
+        NotificationCenter.default.post(
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        hostingView.layoutSubtreeIfNeeded()
+
+        documentView.postsFrameChangedNotifications = true
+        var documentFrameChanges = 0
+        let registration = NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: documentView,
+            queue: .main
+        ) { _ in
+            documentFrameChanges += 1
+        }
+        defer {
+            NotificationCenter.default.removeObserver(registration)
+            window.contentView = nil
+        }
+
+        NotificationCenter.default.post(
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        for step in 0..<80 {
+            let maximumY = max(
+                0,
+                documentView.frame.height - scrollView.contentView.bounds.height
+            )
+            let fraction = CGFloat(step % 20) / 19
+            scrollView.contentView.scroll(
+                to: NSPoint(x: 0, y: maximumY * fraction)
+            )
+            _ = RunLoop.main.run(
+                mode: .eventTracking,
+                before: Date(timeIntervalSinceNow: 0.002)
+            )
+        }
+        NotificationCenter.default.post(
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        hostingView.layoutSubtreeIfNeeded()
+
+        XCTAssertLessThanOrEqual(
+            documentFrameChanges,
+            120,
+            "한 번의 live-scroll 입력보다 문서 레이아웃이 과도하게 반복됐습니다."
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
+        hostingView.layoutSubtreeIfNeeded()
+        let settledHeight = documentView.frame.height
+        let settledFrameChanges = documentFrameChanges
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
+        hostingView.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            documentView.frame.height,
+            settledHeight,
+            accuracy: 0.5,
+            "입력과 타이핑 종료 뒤 문서 높이가 계속 변했습니다."
+        )
+        XCTAssertLessThanOrEqual(
+            documentFrameChanges - settledFrameChanges,
+            5,
+            "입력과 타이핑 종료 뒤에도 문서 레이아웃이 계속 재촉발됐습니다."
+        )
+    }
+
+    private func firstDescendant<ViewType: NSView>(
+        of root: NSView,
+        as type: ViewType.Type
+    ) -> ViewType? {
+        for subview in root.subviews {
+            if let match = subview as? ViewType {
+                return match
+            }
+            if let match = firstDescendant(of: subview, as: type) {
+                return match
+            }
+        }
+        return nil
     }
 }
