@@ -14,14 +14,40 @@ disabling Gatekeeper or applying broad `xattr` commands.
 1. Set `CFBundleShortVersionString` and `CFBundleVersion` in
    `Resources/Info.plist`.
 2. Merge a clean, passing commit into `main` and wait for the main CI workflow.
-3. Confirm that the semantic tag and GitHub Release do not already exist.
-4. Create and push the exact semantic tag, for example `v1.3.0` for app version
+3. Record the exact 40-character `origin/main` commit SHA. Manually run
+   `Release UI Preflight` for that SHA and require both the `arm64` and
+   `x86_64` jobs to pass. The workflow repeats the release-sensitive streaming
+   and live-feed lifecycle tests in separate XCTest processes. The tests set
+   their Reduce Motion environment explicitly instead of inheriting a runner
+   preference.
+4. Confirm that the semantic tag and GitHub Release do not already exist.
+5. Create and push the exact semantic tag, for example `v1.3.0` for app version
    `1.3.0`.
-5. Manually run `Community Preview Release` with that existing tag. The
+6. Manually run `Community Preview Release` with that existing tag. The
    workflow builds ad-hoc arm64 and x86_64 apps, creates ZIP and DMG artifacts,
    verifies checksums, runs the packaged backend against Docker, and publishes
    a GitHub Pre-release only after every gate passes. Do not run `Notarized
    Release` for the same tag.
+
+For example, after fetching the current remote state:
+
+```sh
+target_sha="$(git rev-parse origin/main)"
+gh workflow run release-ui-preflight.yml \
+  --ref main \
+  -f commit="$target_sha"
+```
+
+The release workflow queries GitHub Actions and refuses to build unless a
+successful `Release UI Preflight` run has the exact tag commit as its
+`head_sha`. The preflight itself also requires its dispatch `GITHUB_SHA`, input
+SHA, checked-out commit, and tested architecture to agree. A preflight for a
+neighboring commit does not count.
+
+Treat every pushed release tag as immutable. If a workflow fails after the tag
+is pushed, keep the failed run as evidence, fix and validate `main`, increment
+the semantic version, and create a new tag. Do not force-move or reuse the old
+remote tag, even when no GitHub Release was published.
 
 The workflow fetches `origin/main` and refuses a tag whose commit is not part
 of that branch or whose name differs from the app version. It scans both the
@@ -46,6 +72,24 @@ entitlements.
 Do not replace the files attached to an existing ad-hoc tag with notarized
 files. A future notarized build must use a new semantic version so users can
 tell exactly which security model they downloaded.
+
+## Release-sensitive UI test rules
+
+AppKit and SwiftUI mount views asynchronously, and hosted runner accessibility
+settings are not stable inputs. Tests that gate a release must therefore:
+
+- set the animation or Reduce Motion environment explicitly when timing is
+  part of the assertion;
+- wait for an observable condition with a bounded deadline instead of assuming
+  a view exists after a fixed sleep;
+- run the streaming and live-feed lifecycle suites repeatedly on both release
+  architectures before a release tag is created; and
+- retain the full release test, package, Docker first-task, checksum, and smoke
+  gates after the preflight. The preflight is an early warning, not a
+  replacement for release verification.
+
+The incident that established these rules is recorded in
+[`release-incidents/2026-08-10-v1.3.1.md`](release-incidents/2026-08-10-v1.3.1.md).
 
 ## Future Developer ID and notarized release
 

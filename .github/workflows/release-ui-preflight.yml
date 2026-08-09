@@ -1,0 +1,100 @@
+name: Release UI Preflight
+
+run-name: Release UI Preflight ${{ inputs.commit }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact 40-character main commit SHA to validate before tagging
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-ui-preflight-${{ inputs.commit }}
+  cancel-in-progress: false
+
+jobs:
+  ui-timing:
+    name: UI timing (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+
+    steps:
+      - name: Check out exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit }}
+
+      - name: Verify exact main commit and architecture
+        env:
+          TARGET_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Preflight requires a full lowercase commit SHA: $TARGET_COMMIT" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_SHA" != "$TARGET_COMMIT" ]]; then
+            echo \
+              "Dispatch ref resolved to ${GITHUB_SHA}, not ${TARGET_COMMIT}." \
+              >&2
+            echo \
+              "Dispatch the workflow from main while that exact commit is its head." \
+              >&2
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "$TARGET_COMMIT"
+          git fetch \
+            --no-tags \
+            origin \
+            +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base \
+            --is-ancestor \
+            "$TARGET_COMMIT" \
+            refs/remotes/origin/main; then
+            echo "Preflight commit is not part of origin/main: $TARGET_COMMIT" >&2
+            exit 1
+          fi
+          test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Repeat release-sensitive UI lifecycle tests
+        run: |
+          set -euo pipefail
+          /usr/bin/defaults write NSGlobalDomain AppleLanguages -array ko
+
+          # Separate XCTest processes expose scheduling variance. The tests
+          # must control their own animation environment and wait for
+          # observable UI state instead of changing protected macOS settings.
+          swift test \
+            -Xswiftc -warnings-as-errors \
+            --filter StreamingTextPacerTests
+          swift test \
+            --skip-build \
+            --filter CachedLiveWorkspaceFeedsLifecycleTests
+
+          swift test \
+            --skip-build \
+            --filter StreamingTextPacerTests
+          swift test \
+            --skip-build \
+            --filter CachedLiveWorkspaceFeedsLifecycleTests
+
+          swift test \
+            --skip-build \
+            --filter StreamingTextPacerTests
+          swift test \
+            --skip-build \
+            --filter CachedLiveWorkspaceFeedsLifecycleTests
