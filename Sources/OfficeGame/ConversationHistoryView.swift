@@ -120,7 +120,6 @@ private struct SessionHistoryCard: View {
                         .foregroundStyle(.secondary)
                     Text(session.externalId ?? "외부 세션 ID 없음")
                         .font(.system(size: 14, design: .monospaced))
-                        .textSelection(.enabled)
                 }
 
                 Spacer()
@@ -460,7 +459,6 @@ private struct ArchiveTurnCard: View {
                             .foregroundStyle(.secondary)
                         Text(sessionID)
                             .font(.system(size: 13, design: .monospaced))
-                            .textSelection(.enabled)
                     }
                 }
             }

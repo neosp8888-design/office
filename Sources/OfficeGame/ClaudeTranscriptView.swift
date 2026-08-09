@@ -443,7 +443,6 @@ private struct ClaudeThoughtRunView: View, Equatable {
                 .font(.system(size: 12.5, weight: .regular))
                 .italic()
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
                 .lineLimit(isLatest ? nil : 4)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -611,7 +610,6 @@ private struct ClaudeToolRunView: View, Equatable {
             Text(detailText(step))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -847,7 +845,6 @@ private struct ClaudePlanBoardView: View {
                             )
                             .foregroundStyle(color(for: step.state))
                             .strikethrough(step.state == .done, color: .secondary)
-                            .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }

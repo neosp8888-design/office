@@ -30,7 +30,6 @@ struct ConversationCodeBlockView: View {
                         .foregroundStyle(Color.white.opacity(0.27))
                         .multilineTextAlignment(.trailing)
                         .lineSpacing(3)
-                        .textSelection(.disabled)
 
                     Rectangle()
                         .fill(Color.white.opacity(0.08))

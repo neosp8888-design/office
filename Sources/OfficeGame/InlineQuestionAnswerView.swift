@@ -58,7 +58,6 @@ struct InlineQuestionAnswerView: View {
                 )
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(Color.red)
-                .textSelection(.enabled)
             }
 
             if !presentation.choices.isEmpty {

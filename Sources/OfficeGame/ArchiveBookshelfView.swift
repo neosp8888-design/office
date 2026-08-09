@@ -291,7 +291,6 @@ struct ArchiveOpenBook: View {
                     Text(promptPresentation.text)
                         .font(.system(size: 11, weight: .semibold))
                         .lineSpacing(2)
-                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -346,7 +345,6 @@ struct ArchiveOpenBook: View {
                     Text(error)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.red.opacity(0.86))
-                        .textSelection(.enabled)
                 } else {
                     Text("업무가 진행 중입니다.")
                         .font(.system(size: 11, weight: .medium))
@@ -454,7 +452,6 @@ struct ArchiveOpenBook: View {
                         ? .system(size: 8.5, design: .monospaced)
                         : .system(size: 9.5, weight: .medium)
                 )
-                .textSelection(.enabled)
                 .lineLimit(monospaced ? 1 : 2)
                 .truncationMode(.middle)
 
