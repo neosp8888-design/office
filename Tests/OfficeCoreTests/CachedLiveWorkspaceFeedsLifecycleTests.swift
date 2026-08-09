@@ -292,7 +292,11 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             ]
             rootHost.layoutSubtreeIfNeeded()
             try await settle(for: .milliseconds(4))
-            guard let scrollView = primaryScrollView(in: rootHost) else {
+            guard
+                let scrollView = try await waitForPrimaryScrollView(
+                    in: rootHost
+                )
+            else {
                 XCTFail("직원 전환 직후 live feed scroll view가 사라졌습니다.")
                 return
             }
@@ -579,6 +583,23 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 lhs.bounds.width * lhs.bounds.height
                     < rhs.bounds.width * rhs.bounds.height
             }
+    }
+
+    private func waitForPrimaryScrollView(
+        in root: NSView,
+        timeout: Duration = .milliseconds(500)
+    ) async throws -> NSScrollView? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        repeat {
+            root.layoutSubtreeIfNeeded()
+            if let scrollView = primaryScrollView(in: root) {
+                return scrollView
+            }
+            try await settle(for: .milliseconds(4))
+        } while clock.now < deadline
+        root.layoutSubtreeIfNeeded()
+        return primaryScrollView(in: root)
     }
 
     private func allDescendants(of view: NSView) -> [NSView] {
