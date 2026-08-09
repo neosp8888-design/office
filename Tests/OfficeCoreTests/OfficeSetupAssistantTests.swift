@@ -286,6 +286,92 @@ final class OfficeSetupAssistantTests: XCTestCase {
         )
     }
 
+    func testReleaseMismatchDoesNotBlockAppLaunch() {
+        let availableBackends: Set<AgentBackend> = [.codex]
+        let executablePaths: [AgentBackend: String] = [
+            .codex: "/usr/local/bin/codex",
+        ]
+        guard let result = OfficeSetupAssistant.readyResultForReleaseMismatch(
+            connection: .versionMismatch("another-release"),
+            snapshot: OfficeSetupSnapshot(workspace: "/tmp/project"),
+            availableBackends: availableBackends,
+            executablePaths: executablePaths
+        ) else {
+            return XCTFail("릴리스 불일치는 비차단 준비 결과여야 합니다.")
+        }
+        guard case let .ready(
+            snapshot,
+            resultBackends,
+            resultExecutablePaths
+        ) = result else {
+            return XCTFail("릴리스 불일치는 앱 시작을 막으면 안 됩니다.")
+        }
+
+        XCTAssertEqual(resultBackends, availableBackends)
+        XCTAssertEqual(resultExecutablePaths, executablePaths)
+        XCTAssertTrue(snapshot.docker.isReady)
+        XCTAssertTrue(snapshot.database.isReady)
+        XCTAssertTrue(snapshot.backend.isReady)
+        XCTAssertEqual(
+            snapshot.backendReplacement,
+            .differentRelease("another-release")
+        )
+        guard let unversionedResult = OfficeSetupAssistant
+            .readyResultForReleaseMismatch(
+                connection: .versionMismatch(nil),
+                snapshot: snapshot,
+                availableBackends: availableBackends,
+                executablePaths: executablePaths
+            ) else {
+            return XCTFail("릴리스 정보가 없어도 앱 시작을 막으면 안 됩니다.")
+        }
+        guard case let .ready(unversionedSnapshot, _, _) = unversionedResult else {
+            return XCTFail("릴리스 정보가 없는 백엔드도 준비 완료여야 합니다.")
+        }
+        XCTAssertEqual(
+            unversionedSnapshot.backendReplacement,
+            .differentRelease(nil)
+        )
+
+        for blockedConnection: OfficeBackendConnection in [
+            .ready,
+            .unavailable,
+            .legacy,
+            .wrongWorkspace("/tmp/other"),
+            .foreignService,
+        ] {
+            XCTAssertNil(
+                OfficeSetupAssistant.readyResultForReleaseMismatch(
+                    connection: blockedConnection,
+                    snapshot: snapshot,
+                    availableBackends: availableBackends,
+                    executablePaths: executablePaths
+                )
+            )
+        }
+    }
+
+    @MainActor
+    func testReleaseMismatchReadySnapshotKeepsNonblockingNotice() {
+        var snapshot = OfficeSetupSnapshot(workspace: "/tmp/project")
+        snapshot.backend = .ready(
+            "다른 릴리스의 백엔드에 연결됐습니다. 앱은 계속 사용할 수 있습니다."
+        )
+        snapshot.backendReplacement = .differentRelease(nil)
+
+        let notice = OfficeLaunchCoordinator.compatibilityNotice(
+            from: snapshot
+        )
+
+        XCTAssertEqual(notice?.replacement, .differentRelease(nil))
+        XCTAssertEqual(
+            notice?.message,
+            "다른 릴리스의 백엔드에 연결됐습니다. 앱은 계속 사용할 수 있습니다."
+        )
+        XCTAssertFalse(notice?.isReplacing ?? true)
+        XCTAssertNil(notice?.errorMessage)
+    }
+
     func testBackendReplacementRequiresExactLaunchdListenerOwnership() {
         let launchctl = """
         gui/501/com.neo.office-backend-4317 = {

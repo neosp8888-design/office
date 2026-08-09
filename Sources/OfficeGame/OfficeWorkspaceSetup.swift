@@ -86,10 +86,19 @@ enum OfficeLaunchState: Equatable {
     case failed(String)
 }
 
+struct OfficeBackendCompatibilityNotice: Equatable {
+    let message: String
+    let replacement: OfficeBackendReplacement
+    var isReplacing = false
+    var errorMessage: String?
+}
+
 @MainActor
 final class OfficeLaunchCoordinator: ObservableObject {
     @Published private(set) var state: OfficeLaunchState
     @Published private(set) var validationError: String?
+    @Published private(set) var backendCompatibilityNotice:
+        OfficeBackendCompatibilityNotice?
     private(set) var director: AgentDirector?
 
     private let userDefaults: UserDefaults
@@ -104,6 +113,7 @@ final class OfficeLaunchCoordinator: ObservableObject {
         self.userDefaults = userDefaults
         self.fileManager = fileManager
         validationError = nil
+        backendCompatibilityNotice = nil
         director = nil
         preparationTask = nil
         selectedWorkspace = nil
@@ -226,6 +236,39 @@ final class OfficeLaunchCoordinator: ObservableObject {
     }
 
     func replaceIdleBackend() {
+        if case .ready = state,
+           var notice = backendCompatibilityNotice,
+           !notice.isReplacing
+        {
+            notice.isReplacing = true
+            notice.errorMessage = nil
+            backendCompatibilityNotice = notice
+
+            Task { [weak self] in
+                do {
+                    let healthURL = try CharacterConfigurationAsset.load()
+                        .databaseBaseURL
+                        .appending(path: "health")
+                    try await OfficeBackendReplacementSafety
+                        .replaceIdleBackend(healthURL: healthURL)
+                    guard let self else {
+                        return
+                    }
+                    self.retrySetup()
+                } catch {
+                    guard let self,
+                          var currentNotice = self.backendCompatibilityNotice
+                    else {
+                        return
+                    }
+                    currentNotice.isReplacing = false
+                    currentNotice.errorMessage = error.localizedDescription
+                    self.backendCompatibilityNotice = currentNotice
+                }
+            }
+            return
+        }
+
         guard case .needsSetup(var snapshot) = state,
               snapshot.backendReplacement != nil
         else {
@@ -345,6 +388,7 @@ final class OfficeLaunchCoordinator: ObservableObject {
 
     private func beginPreparation(for path: String) {
         preparationTask?.cancel()
+        backendCompatibilityNotice = nil
         director = nil
         state = .preparing("로컬 실행 환경을 확인하는 중")
         guard let resourceURL = Bundle.main.resourceURL else {
@@ -395,7 +439,14 @@ final class OfficeLaunchCoordinator: ObservableObject {
                 return
             }
             switch result {
-            case let .ready(_, availableBackends, executablePaths):
+            case let .ready(
+                snapshot,
+                availableBackends,
+                executablePaths
+            ):
+                self.backendCompatibilityNotice = Self.compatibilityNotice(
+                    from: snapshot
+                )
                 self.director = AgentDirector(
                     workspaceDirectory: path,
                     availableBackends: availableBackends,
@@ -408,6 +459,21 @@ final class OfficeLaunchCoordinator: ObservableObject {
                 self.state = .failed(message)
             }
         }
+    }
+
+    static func compatibilityNotice(
+        from snapshot: OfficeSetupSnapshot
+    ) -> OfficeBackendCompatibilityNotice? {
+        guard let replacement = snapshot.backendReplacement,
+              case .differentRelease = replacement,
+              case .ready(let message) = snapshot.backend
+        else {
+            return nil
+        }
+        return OfficeBackendCompatibilityNotice(
+            message: message,
+            replacement: replacement
+        )
     }
 
     private func openWebPage(_ value: String) {
