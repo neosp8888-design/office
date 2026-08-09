@@ -647,6 +647,76 @@ final class StreamingTextPacerTests: XCTestCase {
         )
     }
 
+    func testTypingMountedAfterScrollStartPausesOnFirstLiveUpdate() {
+        let scrollView = NSScrollView(
+            frame: NSRect(x: 0, y: 0, width: 260, height: 180)
+        )
+        let documentView = NSView(
+            frame: NSRect(x: 0, y: 0, width: 260, height: 800)
+        )
+        scrollView.documentView = documentView
+        let window = NSWindow(
+            contentRect: scrollView.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = scrollView
+
+        let typingView = IncrementalStreamingTextView(
+            fontSize: 14,
+            lineSpacing: 3
+        )
+        typingView.frame = NSRect(x: 0, y: 0, width: 240, height: 120)
+
+        // 실제 회귀 순서: 기존 피드에서 gesture가 시작된 뒤 직원 전환으로
+        // 새 타이핑 뷰가 mount된다. 새 뷰는 willStart를 받을 수 없다.
+        NotificationCenter.default.post(
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        documentView.addSubview(typingView)
+        let source = String(
+            repeating: "전환 직후 스크롤 중에는 타자를 멈춥니다. ",
+            count: 120
+        )
+        typingView.apply(
+            source: source,
+            animates: true,
+            revealMode: .fullLine
+        )
+        NotificationCenter.default.post(
+            name: NSScrollView.didLiveScrollNotification,
+            object: scrollView
+        )
+
+        guard let textView = typingView.subviews.first as? NSTextView else {
+            XCTFail("타이핑 NSTextView를 찾지 못했습니다.")
+            window.contentView = nil
+            return
+        }
+        let pausedText = textView.string
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.12))
+        XCTAssertEqual(
+            textView.string,
+            pausedText,
+            "willStart 뒤 mount된 뷰가 didLiveScroll을 놓쳐 타이핑했습니다."
+        )
+
+        NotificationCenter.default.post(
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+        let pausedCount = textView.string.count
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.12))
+        XCTAssertGreaterThan(
+            textView.string.count,
+            pausedCount,
+            "live-scroll 종료 뒤 늦게 mount된 타이핑이 재개되지 않았습니다."
+        )
+        window.contentView = nil
+    }
+
     private func firstDescendant<ViewType: NSView>(
         of root: NSView,
         as type: ViewType.Type

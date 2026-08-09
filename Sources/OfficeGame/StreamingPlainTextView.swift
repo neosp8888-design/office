@@ -278,8 +278,14 @@ final class IncrementalStreamingTextView: NSView {
     private func observeLiveScroll() {
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(liveScrollWillStart(_:)),
+            selector: #selector(liveScrollDidBeginOrUpdate(_:)),
             name: NSScrollView.willStartLiveScrollNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(liveScrollDidBeginOrUpdate(_:)),
+            name: NSScrollView.didLiveScrollNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -290,7 +296,12 @@ final class IncrementalStreamingTextView: NSView {
         )
     }
 
-    @objc private func liveScrollWillStart(_ notification: Notification) {
+    @objc private func liveScrollDidBeginOrUpdate(
+        _ notification: Notification
+    ) {
+        // 직원 전환이 willStart 알림 뒤에 끝나면 새 텍스트 뷰는 그 알림을
+        // 받지 못한다. 이어지는 didLiveScroll에서도 상태를 복구해야 전환
+        // 직후 짧은 휠 입력과 타자 tick이 같은 레이아웃을 동시에 바꾸지 않는다.
         guard
             pausedLiveScrollView == nil,
             pendingIndex < pendingCharacters.count,
