@@ -7,6 +7,8 @@ import SwiftUI
 struct CodexTranscriptPresentation: Equatable {
     let entries: [CodexTranscriptEntry]
     let showsWaiting: Bool
+    /// 실행 중에는 숨기고 완료 뒤 타이핑할 타임라인 끝 응답 후보다.
+    let deferredResponseMessageID: String?
 
     var latestMessage: CodexTranscriptMessage? {
         for entry in entries.reversed() {
@@ -15,6 +17,47 @@ struct CodexTranscriptPresentation: Equatable {
             }
         }
         return nil
+    }
+
+    var deferredResponseMessage: CodexTranscriptMessage? {
+        guard let deferredResponseMessageID else {
+            return nil
+        }
+        for entry in entries {
+            if
+                case .message(let message) = entry,
+                message.id == deferredResponseMessageID
+            {
+                return message
+            }
+        }
+        return nil
+    }
+
+    func visibleEntries(
+        showsAll: Bool,
+        compactLimit: Int
+    ) -> [CodexTranscriptEntry] {
+        let limit = max(1, compactLimit)
+        guard !showsAll, entries.count > limit else {
+            return entries
+        }
+
+        let suffixStart = entries.count - limit
+        var visibleIndices = Array(suffixStart..<entries.count)
+        if
+            let deferredResponseMessageID,
+            let candidateIndex = entries.firstIndex(where: {
+                $0.id == deferredResponseMessageID
+            }),
+            !visibleIndices.contains(candidateIndex)
+        {
+            // 최종 응답 후보가 compact 범위 밖으로 밀려도 반드시 화면에
+            // 남겨 완료 콜백과 줄 타이핑이 끊기지 않게 한다.
+            visibleIndices[0] = candidateIndex
+            visibleIndices.sort()
+        }
+        return visibleIndices.map { entries[$0] }
     }
 
     static func make(
@@ -98,14 +141,20 @@ struct CodexTranscriptPresentation: Equatable {
                 response,
                 promotedMessages: promotedMessages
             )
+        var deferredResponseMessageID = activities.reversed().first(where: {
+            $0.kind == "message" && $0.text == response
+        }).map { "activity:\($0.id)" }
         if
+            deferredResponseMessageID == nil,
             AgentTranscriptText
                 .isGeneratedImagePreviewSuffix(remainingResponse),
-            let messageIndex = entries.lastIndex(where: { entry in
-                if case .message = entry {
-                    return true
-                }
-                return false
+            let previewOwnerID = generatedImagePreviewOwnerID(
+                response: response,
+                preview: remainingResponse,
+                activities: activities
+            ),
+            let messageIndex = entries.firstIndex(where: {
+                $0.id == previewOwnerID
             }),
             case .message(let message) = entries[messageIndex]
         {
@@ -116,11 +165,17 @@ struct CodexTranscriptPresentation: Equatable {
                     occurredAt: responseUpdatedAt
                 )
             )
-        } else if !remainingResponse.isEmpty {
+            deferredResponseMessageID = message.id
+        } else if
+            deferredResponseMessageID == nil,
+            !remainingResponse.isEmpty
+        {
+            let responseMessageID = "response:\(turnID)"
+            deferredResponseMessageID = responseMessageID
             entries.append(
                 .message(
                     CodexTranscriptMessage(
-                        id: "response:\(turnID)",
+                        id: responseMessageID,
                         text: remainingResponse,
                         occurredAt: responseUpdatedAt
                     )
@@ -128,10 +183,70 @@ struct CodexTranscriptPresentation: Equatable {
             )
         }
 
+        if
+            deferredResponseMessageID == nil,
+            !response.isEmpty
+        {
+            for activity in activities.reversed()
+            where activity.kind == "message" {
+                let separatorAndMessage = "\n\n" + activity.text
+                if
+                    response == activity.text
+                        || response.hasSuffix(separatorAndMessage)
+                {
+                    deferredResponseMessageID =
+                        "activity:\(activity.id)"
+                    break
+                }
+            }
+        }
+        if
+            deferredResponseMessageID == nil,
+            isRunning,
+            let latestMessage = entries.reversed().compactMap({
+                entry -> CodexTranscriptMessage? in
+                guard case .message(let message) = entry else {
+                    return nil
+                }
+                return message
+            }).first
+        {
+            // activity와 response 초안이 서로 다른 피드 틱에 도착하는
+            // 짧은 구간에도 공개 메시지가 먼저 번쩍이지 않게 한다.
+            deferredResponseMessageID = latestMessage.id
+        }
+
         return CodexTranscriptPresentation(
             entries: entries,
-            showsWaiting: isRunning
+            showsWaiting: isRunning,
+            deferredResponseMessageID: deferredResponseMessageID
         )
+    }
+
+    private static func generatedImagePreviewOwnerID(
+        response: String,
+        preview: String,
+        activities: [LiveFeedActivity]
+    ) -> String? {
+        guard response.hasSuffix(preview) else {
+            return nil
+        }
+        let responseBeforePreview = String(
+            response.dropLast(preview.count)
+        )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for activity in activities.reversed()
+        where activity.kind == "message" {
+            if
+                responseBeforePreview == activity.text
+                    || responseBeforePreview.hasSuffix(
+                        "\n\n" + activity.text
+                    )
+            {
+                return "activity:\(activity.id)"
+            }
+        }
+        return nil
     }
 
 }
@@ -462,6 +577,47 @@ struct CodexTranscriptMessage: Identifiable, Equatable {
     let occurredAt: Date
 }
 
+enum CodexResponseDisplayMode: Equatable {
+    case deferred
+    case typing
+    case committed
+    case `static`
+}
+
+enum CodexResponseDisplayPolicy {
+    static func mode(
+        isDeferredResponseCandidate: Bool,
+        isRunning: Bool,
+        isCurrentRevisionPresented: Bool,
+        animatesResponse: Bool
+    ) -> CodexResponseDisplayMode {
+        guard isDeferredResponseCandidate else {
+            return .static
+        }
+        if isRunning {
+            return .deferred
+        }
+        if isCurrentRevisionPresented {
+            return .committed
+        }
+        guard animatesResponse else {
+            return .static
+        }
+        return .typing
+    }
+
+    static func showsInlineQuestionAnswer(
+        needsInput: Bool,
+        backend: AgentBackend,
+        animatesResponse: Bool
+    ) -> Bool {
+        guard needsInput else {
+            return false
+        }
+        return backend != .codex || !animatesResponse
+    }
+}
+
 private struct CodexResponsePresentationRevision: Equatable {
     let messageID: String
     let text: String
@@ -782,14 +938,18 @@ struct CodexTranscriptView: View {
             0,
             presentation.entries.count - Self.compactEntryLimit
         )
-        let visibleEntries = showsAllEntries
-            ? presentation.entries
-            : Array(presentation.entries.suffix(Self.compactEntryLimit))
+        let visibleEntries = presentation.visibleEntries(
+            showsAll: showsAllEntries,
+            compactLimit: Self.compactEntryLimit
+        )
         let latestMessage = presentation.latestMessage
-        let latestMessageRevision = latestMessage.map(
+        let deferredResponseMessage = presentation.deferredResponseMessage
+        let deferredResponseRevision = deferredResponseMessage.map(
             CodexResponsePresentationRevision.init(message:)
         )
-        let conclusionMessageID = isCompleted ? latestMessage?.id : nil
+        let conclusionMessageID = isCompleted
+            ? presentation.deferredResponseMessageID ?? latestMessage?.id
+            : nil
 
         VStack(alignment: .leading, spacing: 14) {
             if hiddenCount > 0, !showsAllEntries {
@@ -811,7 +971,9 @@ struct CodexTranscriptView: View {
             ForEach(visibleEntries) { entry in
                 transcriptEntry(
                     entry,
-                    isConclusion: entry.id == conclusionMessageID
+                    isConclusion: entry.id == conclusionMessageID,
+                    isDeferredResponseCandidate:
+                        entry.id == presentation.deferredResponseMessageID
                 )
             }
 
@@ -833,7 +995,11 @@ struct CodexTranscriptView: View {
             if
                 animatesResponse,
                 !running,
-                presentedResponseRevision == latestMessageRevision
+                (
+                    deferredResponseRevision == nil
+                        || presentedResponseRevision
+                            == deferredResponseRevision
+                )
             {
                 onResponsePresented()
             }
@@ -842,7 +1008,16 @@ struct CodexTranscriptView: View {
             if
                 animatesResponse,
                 !isRunning,
-                revision == latestMessageRevision
+                revision == deferredResponseRevision
+            {
+                onResponsePresented()
+            }
+        }
+        .task(id: isCompleted) {
+            if
+                animatesResponse,
+                isCompleted,
+                deferredResponseRevision == nil
             {
                 onResponsePresented()
             }
@@ -857,7 +1032,8 @@ struct CodexTranscriptView: View {
     @ViewBuilder
     private func transcriptEntry(
         _ entry: CodexTranscriptEntry,
-        isConclusion: Bool
+        isConclusion: Bool,
+        isDeferredResponseCandidate: Bool
     ) -> some View {
         switch entry {
         case .activityGroup(let group):
@@ -879,25 +1055,38 @@ struct CodexTranscriptView: View {
                 .equatable()
             }
         case .message(let message):
-            CodexMessageView(
-                turnID: turnID,
-                workspaceDirectory: workspaceDirectory,
-                message: message,
-                isConclusion: isConclusion,
-                needsInput: isConclusion && needsInput,
-                animatesResponse:
-                    animatesResponse && isConclusion,
-                animatesInitialResponse: animatesInitialResponse,
-                responseFeedback: responseFeedback,
-                updateResponseFeedback: updateResponseFeedback,
-                onResponsePresented: {
-                    guard isConclusion else {
-                        return
-                    }
-                    presentedResponseRevision =
-                        CodexResponsePresentationRevision(message: message)
-                }
+            let revision = CodexResponsePresentationRevision(
+                message: message
             )
+            let displayMode = CodexResponseDisplayPolicy.mode(
+                isDeferredResponseCandidate:
+                    isDeferredResponseCandidate,
+                isRunning: isRunning,
+                isCurrentRevisionPresented:
+                    presentedResponseRevision == revision,
+                animatesResponse: animatesResponse
+            )
+            if displayMode != .deferred {
+                CodexMessageView(
+                    turnID: turnID,
+                    workspaceDirectory: workspaceDirectory,
+                    message: message,
+                    isConclusion: isConclusion,
+                    needsInput: isConclusion && needsInput,
+                    responseDisplayMode: displayMode,
+                    typingIdentity: "\(turnID):\(message.id)",
+                    animatesResponse: animatesResponse,
+                    animatesInitialResponse: animatesInitialResponse,
+                    responseFeedback: responseFeedback,
+                    updateResponseFeedback: updateResponseFeedback,
+                    onResponsePresented: {
+                        guard isDeferredResponseCandidate else {
+                            return
+                        }
+                        presentedResponseRevision = revision
+                    }
+                )
+            }
         }
     }
 }
@@ -1589,13 +1778,14 @@ private struct CodexMessageView: View {
     let message: CodexTranscriptMessage
     let isConclusion: Bool
     let needsInput: Bool
+    let responseDisplayMode: CodexResponseDisplayMode
+    let typingIdentity: String
     let animatesResponse: Bool
     let animatesInitialResponse: Bool
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onResponsePresented: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
 
@@ -1603,10 +1793,8 @@ private struct CodexMessageView: View {
         VStack(alignment: .leading, spacing: 7) {
             if isConclusion || needsInput {
                 Label(
-                    needsInput ? "답변 필요" : "최종 응답",
-                    systemImage: needsInput
-                        ? "questionmark.bubble.fill"
-                        : "checkmark.bubble.fill"
+                    headerTitle,
+                    systemImage: headerIcon
                 )
                 .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(
@@ -1614,19 +1802,21 @@ private struct CodexMessageView: View {
                 )
             }
 
-            if animatesResponse, !reduceMotion {
-                WaterfallResponseRevealView(
+            if
+                responseDisplayMode == .typing
+                    || responseDisplayMode == .committed
+            {
+                CompletedResponseLineTypingView(
+                    typingIdentity: typingIdentity,
                     source: message.text,
                     fontSize: 14,
                     fileBaseDirectory: workspaceDirectory,
+                    animates: animatesResponse,
                     animatesInitialSource: animatesInitialResponse,
-                    onFinished: onResponsePresented
+                    presentsTyping:
+                        responseDisplayMode == .typing,
+                    onFinishedTyping: onResponsePresented
                 )
-            } else if animatesResponse {
-                renderedMessage
-                    .task(id: message.text) {
-                        onResponsePresented()
-                    }
             } else {
                 renderedMessage
             }
@@ -1651,6 +1841,20 @@ private struct CodexMessageView: View {
         .onDisappear {
             copyResetTask?.cancel()
         }
+    }
+
+    private var headerTitle: String {
+        if needsInput {
+            return "답변 필요"
+        }
+        return "최종 응답"
+    }
+
+    private var headerIcon: String {
+        if needsInput {
+            return "questionmark.bubble.fill"
+        }
+        return "checkmark.bubble.fill"
     }
 
     private var renderedMessage: some View {

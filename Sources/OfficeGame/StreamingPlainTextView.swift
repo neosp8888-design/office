@@ -4,12 +4,18 @@ import AppKit
 import OfficeCore
 import SwiftUI
 
+enum StreamingPlainTextRevealMode: Equatable {
+    case trailingCharacters
+    case fullLine
+}
+
 struct StreamingPlainTextView: NSViewRepresentable {
     let source: String
     let animates: Bool
     let animatesInitialSource: Bool
     let fontSize: CGFloat
     let lineSpacing: CGFloat
+    let revealMode: StreamingPlainTextRevealMode
     let onFinishedTyping: () -> Void
 
     func makeNSView(context: Context) -> IncrementalStreamingTextView {
@@ -20,7 +26,8 @@ struct StreamingPlainTextView: NSViewRepresentable {
         view.onFinishedTyping = onFinishedTyping
         view.apply(
             source: source,
-            animates: animates && animatesInitialSource
+            animates: animates && animatesInitialSource,
+            revealMode: revealMode
         )
         return view
     }
@@ -30,7 +37,11 @@ struct StreamingPlainTextView: NSViewRepresentable {
         context: Context
     ) {
         nsView.onFinishedTyping = onFinishedTyping
-        nsView.apply(source: source, animates: animates)
+        nsView.apply(
+            source: source,
+            animates: animates,
+            revealMode: revealMode
+        )
     }
 
     func sizeThatFits(
@@ -49,8 +60,6 @@ struct StreamingPlainTextView: NSViewRepresentable {
 }
 
 final class IncrementalStreamingTextView: NSView {
-    private static let characterInterval = TimeInterval(0.016)
-
     private let textView = NSTextView()
     private let fontSize: CGFloat
     private let lineSpacing: CGFloat
@@ -58,6 +67,11 @@ final class IncrementalStreamingTextView: NSView {
     private var targetText = ""
     private var pendingCharacters: [Character] = []
     private var pendingIndex = 0
+    private var charactersPerTick = 1
+    private var animationStartedAt: TimeInterval?
+    private var animationDuration: TimeInterval?
+    private var updateGeneration = 0
+    private var finishedGeneration: Int?
     private var typingTimer: Timer?
     private var measuredHeight = CGFloat.zero
     private var measuredWidth = CGFloat.zero
@@ -114,22 +128,48 @@ final class IncrementalStreamingTextView: NSView {
         replaceRenderedText(renderedText)
     }
 
-    func apply(source: String, animates: Bool) {
+    func apply(
+        source: String,
+        animates: Bool,
+        revealMode: StreamingPlainTextRevealMode = .trailingCharacters
+    ) {
         guard source != targetText else {
             return
         }
 
-        stopTyping()
+        stopTyping(resetTiming: true)
+        updateGeneration += 1
+        let generation = updateGeneration
+        finishedGeneration = nil
         targetText = source
-        let plan = StreamingTextPacer.updatePlan(
-            current: renderedText,
-            target: source,
-            animates: animates
-        )
+        let plan: StreamingTextUpdatePlan
+        switch revealMode {
+        case .trailingCharacters:
+            plan = StreamingTextPacer.updatePlan(
+                current: renderedText,
+                target: source,
+                animates: animates
+            )
+        case .fullLine:
+            plan = StreamingTextPacer.fullLineUpdatePlan(
+                current: renderedText,
+                target: source,
+                animates: animates
+            )
+        }
         replaceRenderedText(plan.immediateText)
         pendingCharacters = plan.animatedCharacters
         pendingIndex = 0
-        startTypingIfNeeded()
+        charactersPerTick = plan.charactersPerTick
+        animationDuration = plan.animationDuration
+        if pendingCharacters.isEmpty {
+            scheduleImmediateCompletion(
+                generation: generation,
+                target: source
+            )
+        } else {
+            startTypingIfNeeded()
+        }
     }
 
     func heightThatFits(width: CGFloat) -> CGFloat {
@@ -201,8 +241,12 @@ final class IncrementalStreamingTextView: NSView {
             return
         }
 
+        if animationStartedAt == nil {
+            animationStartedAt = ProcessInfo.processInfo.systemUptime
+        }
+
         let timer = Timer(
-            timeInterval: Self.characterInterval,
+            timeInterval: StreamingTextPacer.animationTickInterval,
             repeats: true
         ) { [weak self] _ in
             self?.appendNextCharacter()
@@ -211,25 +255,49 @@ final class IncrementalStreamingTextView: NSView {
         typingTimer = timer
     }
 
-    private func stopTyping() {
+    private func stopTyping(resetTiming: Bool = false) {
         typingTimer?.invalidate()
         typingTimer = nil
+        if resetTiming {
+            animationStartedAt = nil
+            animationDuration = nil
+        }
     }
 
     private func appendNextCharacter() {
         guard pendingIndex < pendingCharacters.count else {
             pendingCharacters = []
             pendingIndex = 0
-            stopTyping()
+            stopTyping(resetTiming: true)
             return
         }
 
-        let character = pendingCharacters[pendingIndex]
-        pendingIndex += 1
-        renderedText.append(character)
+        var endIndex = min(
+            pendingCharacters.count,
+            pendingIndex + charactersPerTick
+        )
+        if
+            let animationStartedAt,
+            let animationDuration,
+            animationDuration > 0
+        {
+            let elapsed = max(
+                0,
+                ProcessInfo.processInfo.systemUptime - animationStartedAt
+            )
+            endIndex = StreamingTextPacer.elapsedRevealCharacterCount(
+                totalCharacterCount: pendingCharacters.count,
+                minimumCharacterCount: endIndex,
+                elapsed: elapsed,
+                duration: animationDuration
+            )
+        }
+        let text = String(pendingCharacters[pendingIndex..<endIndex])
+        pendingIndex = endIndex
+        renderedText.append(text)
         textView.textStorage?.append(
             NSAttributedString(
-                string: String(character),
+                string: text,
                 attributes: typingAttributes
             )
         )
@@ -239,9 +307,36 @@ final class IncrementalStreamingTextView: NSView {
         if pendingIndex >= pendingCharacters.count {
             pendingCharacters = []
             pendingIndex = 0
-            stopTyping()
-            onFinishedTyping()
+            stopTyping(resetTiming: true)
+            finishCurrentUpdate()
         }
+    }
+
+    private func scheduleImmediateCompletion(
+        generation: Int,
+        target: String
+    ) {
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard
+                let self,
+                self.updateGeneration == generation,
+                self.targetText == target,
+                self.pendingCharacters.isEmpty,
+                self.renderedText == target
+            else {
+                return
+            }
+            self.finishCurrentUpdate()
+        }
+    }
+
+    private func finishCurrentUpdate() {
+        guard finishedGeneration != updateGeneration else {
+            return
+        }
+        finishedGeneration = updateGeneration
+        onFinishedTyping()
     }
 
     private func updateTextContainerWidth(_ width: CGFloat) {
