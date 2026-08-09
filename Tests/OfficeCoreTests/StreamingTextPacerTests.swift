@@ -422,6 +422,7 @@ final class StreamingTextPacerTests: XCTestCase {
                 presentsTyping: true,
                 onFinishedTyping: {}
             )
+            .environment(\._accessibilityReduceMotion, false)
             .frame(width: width)
         )
         let markdownController = NSHostingController(
@@ -469,6 +470,7 @@ final class StreamingTextPacerTests: XCTestCase {
                 presentsTyping: true,
                 onFinishedTyping: {}
             )
+            .environment(\._accessibilityReduceMotion, false)
             .frame(width: width)
         )
         let rawTextController = NSHostingController(
@@ -508,6 +510,7 @@ final class StreamingTextPacerTests: XCTestCase {
             }
             .frame(width: 240)
         }
+        .environment(\._accessibilityReduceMotion, false)
         .frame(width: 260, height: 180)
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.frame = NSRect(x: 0, y: 0, width: 260, height: 180)
