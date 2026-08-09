@@ -354,4 +354,3 @@ test("server는 신뢰된 JSON PUT route와 400 검증 계약을 연결한다", 
     /RuntimeCLIPathsValidationError[\s\S]*?send\(response, 400/,
   );
 });
-
