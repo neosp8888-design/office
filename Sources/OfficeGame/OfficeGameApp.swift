@@ -1674,6 +1674,8 @@ private struct AgentQuickSettingsView: View {
             }
         }
         .menuStyle(.borderlessButton)
+        // Menu는 남는 가로 폭을 나눠 가지므로 내용 폭으로 고정해 좌측에 붙인다.
+        .fixedSize(horizontal: true, vertical: false)
         .disabled(
             !director.isReadyForSubmissions
                 || director.isUpdatingConfiguration
