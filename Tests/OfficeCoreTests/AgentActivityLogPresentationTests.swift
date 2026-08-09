@@ -68,11 +68,11 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.showsWaiting)
     }
 
-    func testCodexTranscriptKeepsWaitingBelowRunningActivity() throws {
+    func testCodexTranscriptHidesRedundantWaitingBelowReasoning() throws {
         let activity = try makeActivity(
-            id: "command-1",
-            kind: "command",
-            text: "swift test",
+            id: "reasoning-1",
+            kind: "thinking",
+            text: "원인을 분석하고 있습니다.",
             status: "running"
         )
         let presentation = CodexTranscriptPresentation.make(
@@ -83,7 +83,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             isRunning: true
         )
 
-        XCTAssertTrue(presentation.showsWaiting)
+        XCTAssertFalse(presentation.showsWaiting)
         XCTAssertEqual(presentation.entries.count, 1)
     }
 
@@ -156,7 +156,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             presentation.deferredResponseMessageID,
             "activity:message-1"
         )
-        XCTAssertTrue(presentation.showsWaiting)
+        XCTAssertFalse(presentation.showsWaiting)
     }
 
     func testCodexTranscriptDefersActivityBeforeResponseDraftArrives() throws {

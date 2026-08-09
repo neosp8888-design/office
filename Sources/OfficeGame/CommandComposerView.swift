@@ -92,6 +92,7 @@ struct CommandEntryRow: View {
     @ObservedObject var director: AgentDirector
     let placeholder: String
     let attachmentCount: Int
+    let isPreparingAttachments: Bool
     let onChooseAttachments: () -> Void
     let onSubmit: (String) -> Bool
 
@@ -110,12 +111,16 @@ struct CommandEntryRow: View {
     private var submissionPrompt: String? {
         draft.submissionPrompt(
             hasAttachments: attachmentCount > 0,
-            isSubmissionAllowed: availability.canSubmit
+            isSubmissionAllowed:
+                availability.canSubmit && !isPreparingAttachments
         )
     }
 
     private var attachmentSelectionIsDisabled: Bool {
-        !availability.canChooseAttachments(currentCount: attachmentCount)
+        isPreparingAttachments
+            || !availability.canChooseAttachments(
+                currentCount: attachmentCount
+            )
     }
 
     var body: some View {
@@ -123,13 +128,22 @@ struct CommandEntryRow: View {
 
         HStack(spacing: 9) {
             Button(action: onChooseAttachments) {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 32, height: 32)
-                    .foregroundStyle(.secondary)
+                Group {
+                    if isPreparingAttachments {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("파일 첨부")
+            .accessibilityLabel(
+                isPreparingAttachments ? "첨부 준비 중" : "파일 첨부"
+            )
             .help("파일 첨부 · 한 번에 최대 20개")
             .disabled(attachmentSelectionIsDisabled)
             .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)

@@ -964,7 +964,8 @@ final class AgentDirector: ObservableObject {
     func submit(
         _ prompt: String,
         attachmentPaths: [String] = [],
-        to requestedCharacter: OfficeCharacter? = nil
+        to requestedCharacter: OfficeCharacter? = nil,
+        onRequestFinished: (() -> Void)? = nil
     ) {
         let character: CharacterConfiguration?
         if let requestedCharacter {
@@ -980,6 +981,7 @@ final class AgentDirector: ObservableObject {
             !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             !runningCharacters.contains(character.id)
         else {
+            onRequestFinished?()
             return
         }
 
@@ -1042,6 +1044,9 @@ final class AgentDirector: ObservableObject {
         latestSubmittedCommandID = commandID
 
         Task {
+            defer {
+                onRequestFinished?()
+            }
             do {
                 let started = try await database.startAgentJob(
                     character: character.id,

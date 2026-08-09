@@ -172,7 +172,7 @@ final class LiveWorkspaceFeedScrollObserverTests: XCTestCase {
                 didPerformInitialScroll: false,
                 isFollowingLatest: true
             ),
-            .restartInitialScroll
+            .settleInitialAnchor
         )
         XCTAssertEqual(
             LiveWorkspaceFeedContentRevisionPolicy.action(
