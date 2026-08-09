@@ -334,6 +334,55 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
     }
 
+    /// 표 각 행이 회색 고정폭 블록으로 굳어 보이던 문제를 고정한다.
+    /// 줄 단위 렌더는 타자 중에만 쓰고, 끝나면 원문 전체를 다시 그려야 한다.
+    func testFinishedTypingRendersWholeSourceMarkdown() {
+        XCTAssertTrue(
+            CompletedResponseRenderPlan.rendersWholeSourceMarkdown(
+                playsSequence: true,
+                reduceMotion: false,
+                hasLines: true,
+                didFinishTyping: true
+            )
+        )
+        XCTAssertFalse(
+            CompletedResponseRenderPlan.rendersWholeSourceMarkdown(
+                playsSequence: true,
+                reduceMotion: false,
+                hasLines: true,
+                didFinishTyping: false
+            )
+        )
+    }
+
+    func testNonTypingResponseSkipsLineByLineRendering() {
+        // 과거 턴을 다시 열 때는 타자 없이 곧바로 표가 보여야 한다.
+        XCTAssertTrue(
+            CompletedResponseRenderPlan.rendersWholeSourceMarkdown(
+                playsSequence: false,
+                reduceMotion: false,
+                hasLines: true,
+                didFinishTyping: false
+            )
+        )
+        XCTAssertTrue(
+            CompletedResponseRenderPlan.rendersWholeSourceMarkdown(
+                playsSequence: true,
+                reduceMotion: true,
+                hasLines: true,
+                didFinishTyping: false
+            )
+        )
+        XCTAssertTrue(
+            CompletedResponseRenderPlan.rendersWholeSourceMarkdown(
+                playsSequence: true,
+                reduceMotion: false,
+                hasLines: false,
+                didFinishTyping: false
+            )
+        )
+    }
+
     func testDeferredCandidateResolvesBeforeLaterPublicMessage() throws {
         let earlierMessage = try makeActivity(
             id: "message-earlier",

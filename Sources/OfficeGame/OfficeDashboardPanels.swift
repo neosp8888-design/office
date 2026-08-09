@@ -2895,6 +2895,20 @@ struct CompletedResponseLineSequence: Equatable {
     }
 }
 
+enum CompletedResponseRenderPlan {
+    /// 줄 단위 렌더는 타자 중 높이를 고정하려는 수단이라 표·목록·코드펜스처럼
+    /// 여러 줄이 모여야 의미가 생기는 블록을 복원하지 못한다.
+    /// 타자가 끝났거나 아예 재생하지 않으면 원문 전체를 한 번에 그린다.
+    static func rendersWholeSourceMarkdown(
+        playsSequence: Bool,
+        reduceMotion: Bool,
+        hasLines: Bool,
+        didFinishTyping: Bool
+    ) -> Bool {
+        !playsSequence || reduceMotion || !hasLines || didFinishTyping
+    }
+}
+
 private struct CompletedResponseCommittedLineView: View, Equatable {
     let line: CompletedResponseLine
     let fontSize: CGFloat
@@ -2987,15 +3001,15 @@ struct CompletedResponseLineTypingView: View {
 
     var body: some View {
         Group {
-            if playsSequence, !reduceMotion, !sequence.lines.isEmpty {
-                typingBody(sequence: sequence)
-            } else {
-                committedBody(lines: sequence.lines)
+            if rendersWholeSourceMarkdown {
+                wholeSourceMarkdownBody
                     .task(id: "presented:\(typingIdentity):\(source.hashValue)") {
                         if presentsTyping {
                             finishSequence()
                         }
                     }
+            } else {
+                typingBody(sequence: sequence)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3011,6 +3025,25 @@ struct CompletedResponseLineTypingView: View {
             didFinish = !presentsTyping
             playsSequence = shouldPlay
         }
+    }
+
+    private var rendersWholeSourceMarkdown: Bool {
+        CompletedResponseRenderPlan.rendersWholeSourceMarkdown(
+            playsSequence: playsSequence,
+            reduceMotion: reduceMotion,
+            hasLines: !sequence.lines.isEmpty,
+            didFinishTyping: didFinish
+        )
+    }
+
+    /// 타자가 끝난 뒤의 최종 화면이다. 표·목록·코드블록이 여기서 복원된다.
+    private var wholeSourceMarkdownBody: some View {
+        ConversationMarkdownView(
+            source: source,
+            fontSize: fontSize,
+            fileBaseDirectory: fileBaseDirectory
+        )
+        .textSelection(.enabled)
     }
 
     private func committedBody(
