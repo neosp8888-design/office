@@ -145,4 +145,3 @@ export async function synchronizeRuntimeCLIPaths({ pool, body }) {
     },
   );
 }
-
