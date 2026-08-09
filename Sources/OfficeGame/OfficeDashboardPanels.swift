@@ -2336,7 +2336,6 @@ struct LiveTurnPromptBlock: View {
             if !presentation.text.isEmpty {
                 Text(presentation.text)
                     .font(.system(size: 13, weight: .semibold))
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -2592,7 +2591,6 @@ private struct LiveTurnCard: View {
         Label(error, systemImage: "exclamationmark.triangle.fill")
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(Color.red.opacity(0.88))
-            .textSelection(.enabled)
     }
 
     private var statusBadge: some View {
@@ -2927,8 +2925,7 @@ private struct CompletedResponseCommittedLineView: View, Equatable {
                 ConversationMarkdownView(
                     source: line.source,
                     fontSize: fontSize,
-                    fileBaseDirectory: fileBaseDirectory,
-                    allowsTextSelection: false
+                    fileBaseDirectory: fileBaseDirectory
                 )
             case .blank:
                 Color.clear.frame(height: 4)

@@ -1310,7 +1310,6 @@ private struct CodexCollaborationGroupView: View {
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -1416,7 +1415,6 @@ private struct CodexCollaborationAgentView: View {
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(4)
-                                    .textSelection(.enabled)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1445,7 +1443,6 @@ private struct CodexCollaborationAgentView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(lineLimit)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -1647,7 +1644,6 @@ private struct CodexActivityGroupView: View, Equatable {
             Text(activity.text)
                 .font(activityFont)
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
                 .lineLimit(
                     isLatest && group.kind == .reasoning ? nil : 4
                 )
@@ -2245,7 +2241,6 @@ struct WorkspaceFileRevealButton: View {
                 .foregroundStyle(foregroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

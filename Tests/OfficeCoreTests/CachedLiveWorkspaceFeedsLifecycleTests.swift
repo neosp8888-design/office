@@ -110,7 +110,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertEqual(topLoadCount, settledCounts.3)
     }
 
-    func testHostedSelectionAndLiveScrollStressQuiesces() async throws {
+    func testHostedLiveScrollStressQuiesces() async throws {
         let director = AgentDirector(startBackgroundTasks: false)
         director.liveFeedStore.replace(with: makeTurns(streamingStep: 1))
         director.liveFeedStore.finishInitialLoading()
@@ -131,7 +131,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         try await settle(for: .milliseconds(200))
         XCTAssertTrue(
             rootHost.window === window,
-            "실제 window가 없으면 scroll observer와 SelectionOverlay가 "
+            "실제 window가 없으면 scroll observer와 live feed AppKit 뷰가 "
                 + "mount되지 않습니다."
         )
 
@@ -150,7 +150,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         }
 
         // 실제 NSWindow 안에서 representable update, NSScrollView observer,
-        // SelectionOverlay와 자동 하단 이동을 함께 동작하게 한다.
+        // 타자 뷰와 자동 하단 이동을 함께 동작하게 한다.
         for index in 0..<10 {
             let character = OfficeCharacter.allCases[
                 index % OfficeCharacter.allCases.count
@@ -309,7 +309,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertLessThan(
             startedAt.duration(to: clock.now),
             .seconds(4),
-            "입력 종료 뒤에도 SelectionOverlay transaction이 "
+            "입력 종료 뒤에도 live feed transaction이 "
                 + "메인 스레드를 점유합니다."
         )
         XCTAssertEqual(container.subviews.count, 1)

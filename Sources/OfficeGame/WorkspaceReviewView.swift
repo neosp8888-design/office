@@ -46,7 +46,6 @@ struct WorkspaceReviewPanel: View {
                 )
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.red)
-                .textSelection(.enabled)
             }
 
             actions
@@ -148,13 +147,11 @@ struct WorkspaceReviewPanel: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .textSelection(.enabled)
 
                 if let commit = resultCommit {
                     Text(String(commit.prefix(12)))
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
                 }
             }
 
@@ -716,7 +713,6 @@ struct WorkspaceReviewPanel: View {
             Text(diff)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Color.primary.opacity(0.82))
-                .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(9)

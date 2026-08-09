@@ -8,7 +8,6 @@ struct ResponseSourceWarningView: View {
     var body: some View {
         Label {
             Text(message)
-                .textSelection(.enabled)
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
         }
@@ -92,7 +91,6 @@ private struct ResponseSourceRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(source.title)
                     .font(.system(size: 10.5, weight: .semibold))
-                    .textSelection(.enabled)
 
                 if source.sourceKind == .file {
                     WorkspaceFileRevealButton(
@@ -116,7 +114,6 @@ private struct ResponseSourceRow: View {
                         .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
-                        .textSelection(.enabled)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -146,6 +143,5 @@ private struct ResponseSourceRow: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
-            .textSelection(.enabled)
     }
 }
