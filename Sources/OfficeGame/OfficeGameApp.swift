@@ -781,7 +781,9 @@ private struct LiveWorkspaceCommandBar: View {
     @ObservedObject private var director: AgentDirector
     @ObservedObject private var characterSelectionStore:
         CharacterSelectionStore
-    @State private var attachments: [URL] = []
+    @State private var attachments: [PendingAttachment] = []
+    @State private var attachmentSelectionError: String?
+    @State private var isPreparingAttachments = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let onShowProfile: (OfficeCharacter) -> Void
@@ -799,6 +801,14 @@ private struct LiveWorkspaceCommandBar: View {
 
     var body: some View {
         commandBar
+            .task {
+                await Task.detached(priority: .utility) {
+                    guard let inbox = try? AttachmentInbox.live() else {
+                        return
+                    }
+                    inbox.removeStaleItems()
+                }.value
+            }
     }
 
     private var selectedCharacterID: OfficeCharacter? {
@@ -820,10 +830,23 @@ private struct LiveWorkspaceCommandBar: View {
                 attachmentStrip
             }
 
+            if let attachmentSelectionError {
+                Label(
+                    attachmentSelectionError,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.red)
+                .accessibilityLabel(
+                    "첨부 오류: \(attachmentSelectionError)"
+                )
+            }
+
             CommandEntryRow(
                 director: director,
                 placeholder: commandPlaceholder,
                 attachmentCount: attachments.count,
+                isPreparingAttachments: isPreparingAttachments,
                 onChooseAttachments: chooseAttachments,
                 onSubmit: submitCommand
             )
@@ -865,12 +888,12 @@ private struct LiveWorkspaceCommandBar: View {
     private var attachmentStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
-                ForEach(attachments, id: \.path) { attachment in
+                ForEach(attachments) { attachment in
                     HStack(spacing: 5) {
                         Image(systemName: "doc.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(DashboardPalette.accent)
-                        Text(attachment.lastPathComponent)
+                        Text(attachment.displayName)
                             .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
                         Button {
@@ -882,7 +905,7 @@ private struct LiveWorkspaceCommandBar: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(
-                            "\(attachment.lastPathComponent) 첨부 제거"
+                            "\(attachment.displayName) 첨부 제거"
                         )
                     }
                     .padding(.horizontal, 9)
@@ -1132,11 +1155,20 @@ private extension LiveWorkspaceCommandBar {
             return false
         }
 
-        let attachmentPaths = attachments.map(\.path)
+        let submittedAttachments = attachments
+        let attachmentPaths = submittedAttachments.map(\.stagedURL.path)
         attachments = []
         director.submit(
             prompt,
-            attachmentPaths: attachmentPaths
+            attachmentPaths: attachmentPaths,
+            onRequestFinished: {
+                guard let inbox = try? AttachmentInbox.live() else {
+                    return
+                }
+                for attachment in submittedAttachments {
+                    inbox.remove(attachment)
+                }
+            }
         )
         return true
     }
@@ -1154,19 +1186,45 @@ private extension LiveWorkspaceCommandBar {
         guard panel.runModal() == .OK else {
             return
         }
-        let existingPaths = Set(attachments.map(\.standardizedFileURL.path))
+        attachmentSelectionError = nil
+        let existingPaths = Set(attachments.map(\.id))
         let newAttachments = panel.urls.filter {
             !existingPaths.contains($0.standardizedFileURL.path)
         }
-        attachments.append(
-            contentsOf: newAttachments.prefix(20 - attachments.count)
+        let selectedURLs = Array(
+            newAttachments.prefix(20 - attachments.count)
         )
+        guard !selectedURLs.isEmpty else {
+            return
+        }
+        let activeAttachments = attachments
+        isPreparingAttachments = true
+        Task {
+            let batch = await Task.detached(priority: .userInitiated) {
+                do {
+                    let inbox = try AttachmentInbox.live()
+                    inbox.removeStaleItems(
+                        excluding: activeAttachments
+                    )
+                    return inbox.stage(selectedURLs)
+                } catch {
+                    return AttachmentStagingBatch(
+                        attachments: [],
+                        errorDescriptions: [error.localizedDescription]
+                    )
+                }
+            }.value
+            attachments.append(contentsOf: batch.attachments)
+            attachmentSelectionError = batch.errorDescriptions.first
+            isPreparingAttachments = false
+        }
     }
 
-    private func removeAttachment(_ attachment: URL) {
+    private func removeAttachment(_ attachment: PendingAttachment) {
         attachments.removeAll {
-            $0.standardizedFileURL == attachment.standardizedFileURL
+            $0.id == attachment.id
         }
+        try? AttachmentInbox.live().remove(attachment)
     }
     }
 
@@ -1184,10 +1242,19 @@ private struct CharacterTaskStatusIndicator: View {
     var body: some View {
         Group {
             if isRunning {
-                CoreAnimationRunningIndicator(
+                CoreAnimationDotsView(
+                    dotSize: 4,
+                    spacing: 2.5,
+                    travel: 2.5,
+                    color: NSColor(
+                        calibratedRed: 0.13,
+                        green: 0.55,
+                        blue: 0.52,
+                        alpha: 1
+                    ),
                     isAnimated: !reduceMotion
                 )
-                .frame(width: 24, height: 24)
+                .frame(width: 20, height: 14)
                 .accessibilityLabel("업무 중")
             } else if isCompleted {
                 Image(systemName: "exclamationmark")

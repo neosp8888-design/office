@@ -939,7 +939,7 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertTrue(state.isFollowingLatest)
     }
 
-    func testInitialScrollStopsAfterTwoStablePasses() {
+    func testProgrammaticBottomScrollStopsAfterTwoStablePasses() {
         var policy = LiveWorkspaceFeedScrollPolicy()
 
         XCTAssertFalse(
@@ -956,7 +956,7 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
-    func testInitialScrollResetsStabilityAndCapsRetries() {
+    func testSubmittedScrollResetsStabilityAndCapsRetries() {
         var policy = LiveWorkspaceFeedScrollPolicy()
 
         XCTAssertFalse(
@@ -976,10 +976,6 @@ final class LiveFeedStoreTests: XCTestCase {
                 distanceFromBottom: 15,
                 tolerance: 20
             )
-        )
-        XCTAssertEqual(
-            LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts,
-            4
         )
         XCTAssertEqual(
             LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts,

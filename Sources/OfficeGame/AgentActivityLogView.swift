@@ -247,7 +247,10 @@ struct CodexTranscriptPresentation: Equatable {
 
         return CodexTranscriptPresentation(
             entries: entries,
-            showsWaiting: isRunning,
+            // 실제 작업 항목이 나타난 뒤에는 그 최신 한 건이 진행 상태를
+            // 설명한다. 별도 `생각 중`을 겹쳐 보여 추론이 두 번인 것처럼
+            // 보이지 않게, 아무 작업도 도착하지 않은 짧은 공백에만 둔다.
+            showsWaiting: isRunning && workItems.isEmpty,
             deferredResponseMessageID: deferredResponseMessageID
         )
     }

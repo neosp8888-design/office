@@ -767,7 +767,7 @@ struct LiveWorkspaceFeedFollowState: Equatable {
 }
 
 enum LiveWorkspaceFeedContentRevisionAction: Equatable {
-    case restartInitialScroll
+    case settleInitialAnchor
     case followLatest
     case revealContentBelow
 }
@@ -778,14 +778,13 @@ struct LiveWorkspaceFeedContentRevisionPolicy: Equatable {
         isFollowingLatest: Bool
     ) -> LiveWorkspaceFeedContentRevisionAction {
         guard didPerformInitialScroll else {
-            return .restartInitialScroll
+            return .settleInitialAnchor
         }
         return isFollowingLatest ? .followLatest : .revealContentBelow
     }
 }
 
 struct LiveWorkspaceFeedScrollPolicy: Equatable {
-    static let initialMaximumAttempts = 4
     static let submittedMaximumAttempts = 3
     static let stablePassesRequired = 2
 
@@ -1323,10 +1322,6 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
     }
 
-    private var isResponsePreparing: Bool {
-        displayTurns.contains { $0.status.isRunning }
-    }
-
     var body: some View {
         ScrollViewReader { proxy in
             Group {
@@ -1434,7 +1429,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                     }
                     .defaultScrollAnchor(.bottom)
                     .onAppear {
-                        performInitialScrollIfNeeded(proxy: proxy)
+                        settleInitialAnchorIfNeeded()
                     }
                     .onChange(
                         of: characterFeedStore.isLoadingInitialFeed
@@ -1442,15 +1437,15 @@ struct LiveWorkspaceFeed: View, Equatable {
                         guard !isLoading else {
                             return
                         }
-                        restartInitialScroll(proxy: proxy)
+                        settleInitialAnchorIfNeeded()
                     }
                     .onChange(of: initialLayoutRevision) { _, _ in
                         switch LiveWorkspaceFeedContentRevisionPolicy.action(
                             didPerformInitialScroll: didPerformInitialScroll,
                             isFollowingLatest: followState.isFollowingLatest
                         ) {
-                        case .restartInitialScroll:
-                            restartInitialScroll(proxy: proxy)
+                        case .settleInitialAnchor:
+                            settleInitialAnchorIfNeeded()
                         case .followLatest:
                             scheduleScrollToLatest(proxy)
                         case .revealContentBelow:
@@ -1517,8 +1512,8 @@ struct LiveWorkspaceFeed: View, Equatable {
         scrollMetrics.viewportHeight = metrics.viewportHeight
         scrollMetrics.contentHeight = metrics.contentHeight
 
+        settleInitialAnchorIfNeeded()
         if !didPerformInitialScroll {
-            performInitialScrollIfNeeded(proxy: proxy)
             return
         }
 
@@ -1589,8 +1584,8 @@ struct LiveWorkspaceFeed: View, Equatable {
     ) {
         guard
             presentationStore.isPresentationRequested,
+            didPerformInitialScroll,
             followState.isFollowingLatest,
-            scrollMetrics.initialScrollTask == nil,
             scrollMetrics.submittedScrollTask == nil
         else {
             return
@@ -1620,16 +1615,11 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
     }
 
-    private func performInitialScrollIfNeeded(
-        proxy: ScrollViewProxy
-    ) {
+    private func settleInitialAnchorIfNeeded() {
         guard
             !didPerformInitialScroll,
             !characterFeedStore.isLoadingInitialFeed,
             !displayTurns.isEmpty,
-            scrollMetrics.initialScrollTask == nil,
-            scrollMetrics.submittedScrollTask == nil,
-            scrollMetrics.followScrollTask == nil,
             scrollMetrics.hasSnapshot,
             scrollMetrics.viewportHeight > 0,
             scrollMetrics.contentHeight > 0
@@ -1637,68 +1627,10 @@ struct LiveWorkspaceFeed: View, Equatable {
             return
         }
 
-        markAtBottom()
-        let generation = beginProgrammaticScroll()
-        scrollMetrics.initialScrollTask = Task { @MainActor in
-            defer {
-                if scrollMetrics.scrollGeneration == generation {
-                    scrollMetrics.initialScrollTask = nil
-                    finishProgrammaticScroll(generation: generation)
-                }
-            }
-            var policy = LiveWorkspaceFeedScrollPolicy()
-            for _ in 0..<LiveWorkspaceFeedScrollPolicy.initialMaximumAttempts {
-                guard
-                    !Task.isCancelled,
-                    presentationStore.isPresentationRequested,
-                    scrollMetrics.scrollGeneration == generation
-                else {
-                    return
-                }
-                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-                try? await Task.sleep(for: .milliseconds(90))
-                if policy.shouldStop(
-                    distanceFromBottom:
-                        scrollMetrics.distanceFromBottom,
-                    tolerance: Self.bottomTolerance
-                ) {
-                    break
-                }
-            }
-            guard
-                !Task.isCancelled,
-                presentationStore.isPresentationRequested,
-                scrollMetrics.scrollGeneration == generation
-            else {
-                return
-            }
-            proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
-            await Task.yield()
-            guard
-                !Task.isCancelled,
-                presentationStore.isPresentationRequested,
-                scrollMetrics.scrollGeneration == generation
-            else {
-                return
-            }
-            markAtBottom()
-            didPerformInitialScroll = true
-        }
-    }
-
-    private func restartInitialScroll(proxy: ScrollViewProxy) {
-        guard
-            !didPerformInitialScroll,
-            scrollMetrics.initialScrollTask == nil
-        else {
-            return
-        }
-        DispatchQueue.main.async {
-            guard presentationStore.isPresentationRequested else {
-                return
-            }
-            performInitialScrollIfNeeded(proxy: proxy)
-        }
+        didPerformInitialScroll = true
+        // 기본 하단 앵커가 적용되기 전의 첫 측정값만으로 자동 추적을
+        // 끄지 않는다. 추적 중단은 실제 사용자 스크롤 콜백만 담당한다.
+        updateBottomState()
     }
 
     private func cancelScheduledScrolls() {
@@ -1706,8 +1638,6 @@ struct LiveWorkspaceFeed: View, Equatable {
         scrollMetrics.isProgrammaticScrollInFlight = false
         scrollMetrics.followScrollTask?.cancel()
         scrollMetrics.followScrollTask = nil
-        scrollMetrics.initialScrollTask?.cancel()
-        scrollMetrics.initialScrollTask = nil
         scrollMetrics.submittedScrollTask?.cancel()
         scrollMetrics.submittedScrollTask = nil
     }
@@ -1822,14 +1752,8 @@ struct LiveWorkspaceFeed: View, Equatable {
         Button {
             scrollToLatest(proxy)
         } label: {
-            Group {
-                if isResponsePreparing {
-                    LiveWorkspacePreparingDots()
-                } else {
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 13, weight: .black))
-                }
-            }
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .black))
             .foregroundStyle(DashboardPalette.accent)
             .frame(width: 32, height: 32)
             .background {
@@ -1851,16 +1775,8 @@ struct LiveWorkspaceFeed: View, Equatable {
             .shadow(color: .black.opacity(0.12), radius: 3, y: 2)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(
-            isResponsePreparing
-                ? "응답 준비 중, 맨 아래로 이동"
-                : "맨 아래로 이동"
-        )
-        .help(
-            isResponsePreparing
-                ? "응답 준비 중 · 맨 아래로 이동"
-                : "맨 아래로 이동"
-        )
+        .accessibilityLabel("맨 아래로 이동")
+        .help("맨 아래로 이동")
     }
 
     private var archivedTurnsNotice: some View {
@@ -1916,26 +1832,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     }
 }
 
-private struct LiveWorkspacePreparingDots: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        CoreAnimationDotsView(
-            dotSize: 4,
-            spacing: 2.5,
-            travel: 2.5,
-            color: NSColor(
-                calibratedRed: 0.13,
-                green: 0.55,
-                blue: 0.52,
-                alpha: 1
-            ),
-            isAnimated: !reduceMotion
-        )
-        .frame(width: 20, height: 14)
-    }
-}
-
 private struct LiveWorkspaceFeedTurnRevision: Equatable {
     let id: String
     let updatedAt: Date
@@ -1954,7 +1850,6 @@ private final class LiveWorkspaceFeedScrollMetrics {
     var isProgrammaticScrollInFlight = false
     var scrollGeneration = 0
     var followScrollTask: Task<Void, Never>?
-    var initialScrollTask: Task<Void, Never>?
     var submittedScrollTask: Task<Void, Never>?
 }
 
