@@ -125,60 +125,299 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             "activity:message-2"
         )
         XCTAssertEqual(presentation.latestMessage?.text, "최신 응답")
+        XCTAssertEqual(
+            presentation.deferredResponseMessageID,
+            "activity:message-2"
+        )
     }
 
-    func testCodexWaterfallPacingIsVisibleAndBounded() {
+    func testCodexTranscriptDefersMessageAtTimelineEnd() throws {
+        let command = try makeActivity(
+            id: "command-1",
+            kind: "command",
+            text: "swift test",
+            status: "completed"
+        )
+        let message = try makeActivity(
+            id: "message-1",
+            kind: "message",
+            text: "작성 중인 응답",
+            status: "completed"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [command, message],
+            response: "작성 중인 응답",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+
         XCTAssertEqual(
-            CodexWaterfallRevealPacing.pendingContentOpacity,
-            0
+            presentation.deferredResponseMessageID,
+            "activity:message-1"
+        )
+        XCTAssertTrue(presentation.showsWaiting)
+    }
+
+    func testCodexTranscriptDefersActivityBeforeResponseDraftArrives() throws {
+        let message = try makeActivity(
+            id: "message-early",
+            kind: "message",
+            text: "먼저 도착한 공개 메시지",
+            status: "completed"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [message],
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+
+        XCTAssertEqual(
+            presentation.deferredResponseMessageID,
+            "activity:message-early"
+        )
+    }
+
+    func testCodexStreamingCandidateSurvivesTerminalSnapshot() throws {
+        let message = try makeActivity(
+            id: "message-1",
+            kind: "message",
+            text: "완료 응답",
+            status: "completed"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [message],
+            response: "완료 응답",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        XCTAssertEqual(
+            presentation.deferredResponseMessageID,
+            "activity:message-1"
+        )
+        XCTAssertFalse(presentation.showsWaiting)
+    }
+
+    func testCodexRunningCandidateIsDeferredUntilComplete() {
+        XCTAssertEqual(
+            CodexResponseDisplayPolicy.mode(
+                isDeferredResponseCandidate: true,
+                isRunning: true,
+                isCurrentRevisionPresented: false,
+                animatesResponse: true
+            ),
+            .deferred
+        )
+    }
+
+    func testCodexTypingFinishesUnseenTerminalCandidateOnce() {
+        XCTAssertEqual(
+            CodexResponseDisplayPolicy.mode(
+                isDeferredResponseCandidate: true,
+                isRunning: false,
+                isCurrentRevisionPresented: false,
+                animatesResponse: true
+            ),
+            .typing
         )
         XCTAssertEqual(
-            CodexWaterfallRevealPacing.featherHeight(
-                forVisibleHeight: 0
+            CodexResponseDisplayPolicy.mode(
+                isDeferredResponseCandidate: true,
+                isRunning: false,
+                isCurrentRevisionPresented: true,
+                animatesResponse: true
             ),
-            0
+            .committed
+        )
+    }
+
+    func testCodexTypingSkipsNoncandidateAndInactiveMessages() {
+        XCTAssertEqual(
+            CodexResponseDisplayPolicy.mode(
+                isDeferredResponseCandidate: false,
+                isRunning: true,
+                isCurrentRevisionPresented: false,
+                animatesResponse: true
+            ),
+            .static
         )
         XCTAssertEqual(
-            CodexWaterfallRevealPacing.revealDuration(
-                forContentHeight: 20
+            CodexResponseDisplayPolicy.mode(
+                isDeferredResponseCandidate: true,
+                isRunning: true,
+                isCurrentRevisionPresented: false,
+                animatesResponse: false
             ),
-            1.755,
-            accuracy: 0.001
+            .deferred
+        )
+    }
+
+    func testCodexQuestionComposerWaitsForTypedResponse() {
+        XCTAssertFalse(
+            CodexResponseDisplayPolicy.showsInlineQuestionAnswer(
+                needsInput: true,
+                backend: .codex,
+                animatesResponse: true
+            )
+        )
+        XCTAssertTrue(
+            CodexResponseDisplayPolicy.showsInlineQuestionAnswer(
+                needsInput: true,
+                backend: .codex,
+                animatesResponse: false
+            )
+        )
+        XCTAssertTrue(
+            CodexResponseDisplayPolicy.showsInlineQuestionAnswer(
+                needsInput: true,
+                backend: .claude,
+                animatesResponse: true
+            )
+        )
+    }
+
+    func testCompletedResponseLineSequencePreservesBlankLines() {
+        let sequence = CompletedResponseLineSequence(
+            source: "첫 줄\n\n세 번째 줄\n"
+        )
+
+        XCTAssertEqual(
+            sequence.lines,
+            [
+                CompletedResponseLine(
+                    index: 0,
+                    source: "첫 줄",
+                    renderKind: .markdown
+                ),
+                CompletedResponseLine(
+                    index: 1,
+                    source: "",
+                    renderKind: .blank
+                ),
+                CompletedResponseLine(
+                    index: 2,
+                    source: "세 번째 줄",
+                    renderKind: .markdown
+                ),
+                CompletedResponseLine(
+                    index: 3,
+                    source: "",
+                    renderKind: .blank
+                ),
+            ]
+        )
+        XCTAssertFalse(sequence.isLastLine(2))
+        XCTAssertTrue(sequence.isLastLine(3))
+    }
+
+    func testCompletedResponseChoosesStableRendererForEveryLine() {
+        let sequence = CompletedResponseLineSequence(
+            source: "**서문**\n\n| 항목 | 값 |\n|---|---|\n| 하나 | 1 |\n```swift\nlet value = 1\n```"
+        )
+
+        XCTAssertEqual(
+            sequence.lines.map(\.renderKind),
+            [
+                .markdown,
+                .blank,
+                .table,
+                .table,
+                .table,
+                .codeFence,
+                .code,
+                .codeFence,
+            ]
+        )
+    }
+
+    func testDeferredCandidateResolvesBeforeLaterPublicMessage() throws {
+        let earlierMessage = try makeActivity(
+            id: "message-earlier",
+            kind: "message",
+            text: "이전 공개 메시지",
+            status: "completed"
+        )
+        let finalMessage = try makeActivity(
+            id: "message-final",
+            kind: "message",
+            text: "완료 응답",
+            status: "completed"
+        )
+        let tool = try makeActivity(
+            id: "tool-after",
+            kind: "tool",
+            text: "후처리",
+            status: "completed"
+        )
+        let laterMessage = try makeActivity(
+            id: "message-after",
+            kind: "message",
+            text: "후처리 알림",
+            status: "completed"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [
+                earlierMessage,
+                finalMessage,
+                tool,
+                laterMessage,
+            ],
+            response: "완료 응답",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        XCTAssertEqual(
+            presentation.deferredResponseMessageID,
+            "activity:message-final"
         )
         XCTAssertEqual(
-            CodexWaterfallRevealPacing.revealDuration(
-                forContentHeight: 640
-            ),
-            2.6,
-            accuracy: 0.001
+            presentation.deferredResponseMessage?.text,
+            "완료 응답"
         )
         XCTAssertEqual(
-            CodexWaterfallRevealPacing.revealDuration(
-                forContentHeight: 2_000
-            ),
-            3.64,
-            accuracy: 0.001
+            presentation.latestMessage?.id,
+            "activity:message-after"
         )
-        XCTAssertEqual(
-            CodexWaterfallRevealPacing.featherHeight(
-                forVisibleHeight: 24
+    }
+
+    func testCompactEntriesAlwaysIncludeDeferredCandidate() throws {
+        var activities = [
+            try makeActivity(
+                id: "message-final",
+                kind: "message",
+                text: "완료 응답",
+                status: "completed"
             ),
-            11.52,
-            accuracy: 0.001
+        ]
+        activities += try (0..<20).map { index in
+            try makeActivity(
+                id: "message-after-\(index)",
+                kind: "message",
+                text: "후속 \(index)",
+                status: "completed"
+            )
+        }
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "완료 응답",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
         )
-        XCTAssertEqual(
-            CodexWaterfallRevealPacing.featherHeight(
-                forVisibleHeight: 120
-            ),
-            57.6,
-            accuracy: 0.001
+        let visible = presentation.visibleEntries(
+            showsAll: false,
+            compactLimit: 18
         )
-        XCTAssertEqual(
-            CodexWaterfallRevealPacing.featherHeight(
-                forVisibleHeight: 200
-            ),
-            72,
-            accuracy: 0.001
+
+        XCTAssertEqual(visible.count, 18)
+        XCTAssertTrue(
+            visible.contains { $0.id == "activity:message-final" }
         )
     }
 
@@ -796,11 +1035,17 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             text: "이미지를 만들었습니다.",
             status: "completed"
         )
+        let laterMessage = try makeActivity(
+            id: "message-later",
+            kind: "message",
+            text: "후속 알림",
+            status: "completed"
+        )
         let preview = "[![생성 이미지 1](<file:///tmp/result.png>)](<file:///tmp/result.png>)"
 
         let presentation = CodexTranscriptPresentation.make(
             turnID: "turn-1",
-            activities: [message],
+            activities: [message, laterMessage],
             response: "이미지를 만들었습니다.\n\n\(preview)",
             responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
             isRunning: false
@@ -812,7 +1057,14 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             }
             return message.text
         }
-        XCTAssertEqual(messages, ["이미지를 만들었습니다.\n\n\(preview)"])
+        XCTAssertEqual(
+            messages,
+            ["이미지를 만들었습니다.\n\n\(preview)", "후속 알림"]
+        )
+        XCTAssertEqual(
+            presentation.deferredResponseMessageID,
+            "activity:message-1"
+        )
     }
 
     func testFileSummaryCountsRepeatedPathOnce() throws {

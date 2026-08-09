@@ -2424,7 +2424,12 @@ private struct LiveTurnCard: View {
 
                 // 확인 질문은 팝업 대신 이 카드 안에서 바로 답변한다.
                 if
-                    turn.needsInput,
+                    CodexResponseDisplayPolicy
+                        .showsInlineQuestionAnswer(
+                            needsInput: turn.needsInput,
+                            backend: effectiveBackend,
+                            animatesResponse: shouldAnimateResponse
+                        ),
                     let character = OfficeCharacter(
                         rawValue: turn.characterId
                     )
@@ -2800,8 +2805,7 @@ private func groupedTokenCount(_ value: Int) -> String {
 }
 
 struct EquatableLiveTypingResponseView: View, Equatable {
-    let turnID: String
-    let backend: AgentBackend
+    let typingIdentity: String
     let source: String
     let fileBaseDirectory: String?
     let animates: Bool
@@ -2813,8 +2817,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
         lhs: EquatableLiveTypingResponseView,
         rhs: EquatableLiveTypingResponseView
     ) -> Bool {
-        lhs.turnID == rhs.turnID
-            && lhs.backend == rhs.backend
+        lhs.typingIdentity == rhs.typingIdentity
             && lhs.source == rhs.source
             && lhs.fileBaseDirectory == rhs.fileBaseDirectory
             && lhs.animates == rhs.animates
@@ -2824,8 +2827,7 @@ struct EquatableLiveTypingResponseView: View, Equatable {
 
     var body: some View {
         LiveTypingResponseView(
-            turnID: turnID,
-            backend: backend,
+            typingIdentity: typingIdentity,
             source: source,
             fileBaseDirectory: fileBaseDirectory,
             animates: animates,
@@ -2836,9 +2838,280 @@ struct EquatableLiveTypingResponseView: View, Equatable {
     }
 }
 
+enum CompletedResponseLineRenderKind: Equatable {
+    case markdown
+    case blank
+    case codeFence
+    case code
+    case table
+}
+
+struct CompletedResponseLine: Identifiable, Equatable {
+    let index: Int
+    let source: String
+    let renderKind: CompletedResponseLineRenderKind
+
+    var id: Int { index }
+}
+
+struct CompletedResponseLineSequence: Equatable {
+    let lines: [CompletedResponseLine]
+
+    init(source: String) {
+        let rawLines = source.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        var inCodeFence = false
+        lines = rawLines.enumerated().map { index, line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isFence = trimmed.hasPrefix("```")
+                || trimmed.hasPrefix("~~~")
+            let renderKind: CompletedResponseLineRenderKind
+            if isFence {
+                renderKind = .codeFence
+                inCodeFence.toggle()
+            } else if inCodeFence {
+                renderKind = .code
+            } else if trimmed.isEmpty {
+                renderKind = .blank
+            } else if trimmed.hasPrefix("|"), trimmed.hasSuffix("|") {
+                // 표는 여러 줄을 다시 합쳐 렌더링하면 완료된 앞줄이
+                // 교체된다. 각 행을 고정 폭 한 줄로 보존한다.
+                renderKind = .table
+            } else {
+                renderKind = .markdown
+            }
+            return CompletedResponseLine(
+                index: index,
+                source: line,
+                renderKind: renderKind
+            )
+        }
+    }
+
+    func isLastLine(_ lineIndex: Int) -> Bool {
+        lineIndex >= lines.count - 1
+    }
+}
+
+private struct CompletedResponseCommittedLineView: View, Equatable {
+    let line: CompletedResponseLine
+    let fontSize: CGFloat
+    let fileBaseDirectory: String?
+
+    var body: some View {
+        Group {
+            switch line.renderKind {
+            case .markdown:
+                ConversationMarkdownView(
+                    source: line.source,
+                    fontSize: fontSize,
+                    fileBaseDirectory: fileBaseDirectory
+                )
+                .textSelection(.enabled)
+            case .blank:
+                Color.clear.frame(height: 4)
+            case .codeFence:
+                Color.clear.frame(height: 0)
+            case .code, .table:
+                Text(line.source.isEmpty ? " " : line.source)
+                    .font(.system(size: fontSize, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color.primary.opacity(0.045),
+                        in: RoundedRectangle(
+                            cornerRadius: 4,
+                            style: .continuous
+                        )
+                    )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// 완성된 Codex 응답을 한 줄씩 빠르게 타이핑하고, 끝난 줄은 Markdown으로
+/// 고정한다. 긴 한 줄은 프레임당 글자 수를 늘려 1초 안에 마친다.
+struct CompletedResponseLineTypingView: View {
+    let typingIdentity: String
+    let source: String
+    let fontSize: CGFloat
+    let fileBaseDirectory: String?
+    let animates: Bool
+    let animatesInitialSource: Bool
+    let presentsTyping: Bool
+    let onFinishedTyping: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sequence: CompletedResponseLineSequence
+    @State private var committedLines: [CompletedResponseLine]
+    @State private var currentLineIndex = 0
+    @State private var didFinish = false
+    @State private var playsSequence: Bool
+
+    init(
+        typingIdentity: String,
+        source: String,
+        fontSize: CGFloat,
+        fileBaseDirectory: String?,
+        animates: Bool,
+        animatesInitialSource: Bool,
+        presentsTyping: Bool,
+        onFinishedTyping: @escaping () -> Void
+    ) {
+        let sequence = CompletedResponseLineSequence(source: source)
+        let playsSequence =
+            presentsTyping && animates && animatesInitialSource
+        self.typingIdentity = typingIdentity
+        self.source = source
+        self.fontSize = fontSize
+        self.fileBaseDirectory = fileBaseDirectory
+        self.animates = animates
+        self.animatesInitialSource = animatesInitialSource
+        self.presentsTyping = presentsTyping
+        self.onFinishedTyping = onFinishedTyping
+        _sequence = State(initialValue: sequence)
+        _committedLines = State(
+            initialValue: playsSequence ? [] : sequence.lines
+        )
+        _currentLineIndex = State(
+            initialValue: playsSequence ? 0 : sequence.lines.count
+        )
+        _didFinish = State(initialValue: !presentsTyping)
+        _playsSequence = State(initialValue: playsSequence)
+    }
+
+    var body: some View {
+        Group {
+            if playsSequence, !reduceMotion, !sequence.lines.isEmpty {
+                typingBody(sequence: sequence)
+            } else {
+                committedBody(lines: sequence.lines)
+                    .task(id: "presented:\(typingIdentity):\(source.hashValue)") {
+                        if presentsTyping {
+                            finishSequence()
+                        }
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: source) { _, newSource in
+            let newSequence = CompletedResponseLineSequence(
+                source: newSource
+            )
+            let shouldPlay =
+                presentsTyping && animates && animatesInitialSource
+            sequence = newSequence
+            committedLines = shouldPlay ? [] : newSequence.lines
+            currentLineIndex = shouldPlay ? 0 : newSequence.lines.count
+            didFinish = !presentsTyping
+            playsSequence = shouldPlay
+        }
+    }
+
+    private func committedBody(
+        lines: [CompletedResponseLine]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(lines) { line in
+                CompletedResponseCommittedLineView(
+                    line: line,
+                    fontSize: fontSize,
+                    fileBaseDirectory: fileBaseDirectory
+                )
+                .equatable()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func currentLineView(
+        _ line: CompletedResponseLine,
+        in sequence: CompletedResponseLineSequence
+    ) -> some View {
+        switch line.renderKind {
+        case .blank, .codeFence:
+            Color.clear
+                .frame(height: line.renderKind == .blank ? 4 : 0)
+                .task(id: "skip:\(typingIdentity):\(line.index)") {
+                    advanceLine(line.index, in: sequence)
+                }
+        default:
+            StreamingPlainTextView(
+                source: line.source,
+                animates: true,
+                animatesInitialSource: true,
+                fontSize: fontSize,
+                lineSpacing: 3,
+                revealMode: .fullLine,
+                onFinishedTyping: {
+                    advanceLine(line.index, in: sequence)
+                }
+            )
+            .id("\(typingIdentity):line:\(line.index)")
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func typingBody(
+        sequence: CompletedResponseLineSequence
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            committedBody(lines: committedLines)
+
+            if currentLineIndex >= sequence.lines.count {
+                Color.clear.frame(height: 0)
+            } else {
+                let line = sequence.lines[currentLineIndex]
+                currentLineView(line, in: sequence)
+            }
+        }
+    }
+
+    private func advanceLine(
+        _ expectedLineIndex: Int,
+        in sequence: CompletedResponseLineSequence
+    ) {
+        guard
+            !didFinish,
+            expectedLineIndex == currentLineIndex
+        else {
+            return
+        }
+        committedLines.append(sequence.lines[expectedLineIndex])
+        currentLineIndex += 1
+        while currentLineIndex < sequence.lines.count {
+            let nextLine = sequence.lines[currentLineIndex]
+            guard
+                nextLine.renderKind == .blank
+                    || nextLine.renderKind == .codeFence
+            else {
+                break
+            }
+            committedLines.append(nextLine)
+            currentLineIndex += 1
+        }
+        if currentLineIndex >= sequence.lines.count {
+            finishSequence()
+        }
+    }
+
+    private func finishSequence() {
+        guard !didFinish else {
+            return
+        }
+        didFinish = true
+        onFinishedTyping()
+    }
+}
+
 struct LiveTypingResponseView: View {
-    let turnID: String
-    let backend: AgentBackend
+    let typingIdentity: String
     let source: String
     let fileBaseDirectory: String?
     let animates: Bool
@@ -2850,8 +3123,7 @@ struct LiveTypingResponseView: View {
     private let animatesInitialSource: Bool
 
     init(
-        turnID: String,
-        backend: AgentBackend,
+        typingIdentity: String,
         source: String,
         fileBaseDirectory: String? = nil,
         animates: Bool,
@@ -2859,8 +3131,7 @@ struct LiveTypingResponseView: View {
         isStreaming: Bool,
         onFinishedTyping: @escaping () -> Void
     ) {
-        self.turnID = turnID
-        self.backend = backend
+        self.typingIdentity = typingIdentity
         self.source = source
         self.fileBaseDirectory = fileBaseDirectory
         self.animates = animates
@@ -2870,30 +3141,12 @@ struct LiveTypingResponseView: View {
             animates
                 && animatesInitialSource
                 && LiveTypingAppearanceCache.shared
-                    .shouldAnimateInitialSource(for: turnID)
+                    .shouldAnimateInitialSource(for: typingIdentity)
     }
 
     var body: some View {
         Group {
-            if isStreaming, backend == .codex {
-                if reduceMotion {
-                    ConversationMarkdownView(
-                        source: source,
-                        fontSize: Self.responseFontSize,
-                        fileBaseDirectory: fileBaseDirectory
-                    )
-                    .textSelection(.enabled)
-                    .task { onFinishedTyping() }
-                } else {
-                    WaterfallResponseRevealView(
-                        source: source,
-                        fontSize: Self.responseFontSize,
-                        fileBaseDirectory: fileBaseDirectory,
-                        animatesInitialSource: animatesInitialSource,
-                        onFinished: onFinishedTyping
-                    )
-                }
-            } else if isStreaming {
+            if isStreaming {
                 let segments = StreamingMarkdownSplitter.split(source)
 
                 VStack(alignment: .leading, spacing: 9) {
@@ -2931,6 +3184,7 @@ struct LiveTypingResponseView: View {
                                 animatesInitialSource && !reduceMotion,
                             fontSize: Self.responseFontSize,
                             lineSpacing: 3,
+                            revealMode: .trailingCharacters,
                             onFinishedTyping: onFinishedTyping
                         )
                         .fixedSize(horizontal: false, vertical: true)
@@ -2949,180 +3203,6 @@ struct LiveTypingResponseView: View {
     }
 }
 
-private struct WaterfallResponseSegment: Identifiable, Equatable {
-    let id = UUID()
-    let source: String
-}
-
-struct WaterfallResponseRevealView: View {
-    let source: String
-    let fontSize: CGFloat
-    let fileBaseDirectory: String?
-    let animatesInitialSource: Bool
-    let onFinished: () -> Void
-
-    @State private var segments: [WaterfallResponseSegment]
-    @State private var cumulativeSource: String
-    @State private var revealingSegmentID: UUID?
-
-    init(
-        source: String,
-        fontSize: CGFloat,
-        fileBaseDirectory: String? = nil,
-        animatesInitialSource: Bool = true,
-        onFinished: @escaping () -> Void
-    ) {
-        self.source = source
-        self.fontSize = fontSize
-        self.fileBaseDirectory = fileBaseDirectory
-        self.animatesInitialSource = animatesInitialSource
-        self.onFinished = onFinished
-
-        let initialSegment = WaterfallResponseSegment(source: source)
-        _segments = State(initialValue: [initialSegment])
-        _cumulativeSource = State(initialValue: source)
-        _revealingSegmentID = State(
-            initialValue: animatesInitialSource ? initialSegment.id : nil
-        )
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            ForEach(segments) { segment in
-                if segment.id == revealingSegmentID {
-                    WaterfallResponseSegmentView(
-                        animationID: segment.id,
-                        source: segment.source,
-                        fontSize: fontSize,
-                        fileBaseDirectory: fileBaseDirectory
-                    ) {
-                        finishReveal(for: segment.id)
-                    }
-                } else {
-                    ConversationMarkdownView(
-                        source: segment.source,
-                        fontSize: fontSize,
-                        fileBaseDirectory: fileBaseDirectory
-                    )
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task {
-            if !animatesInitialSource, revealingSegmentID == nil {
-                onFinished()
-            }
-        }
-        .onChange(of: source) { _, updatedSource in
-            appendNewSource(updatedSource)
-        }
-    }
-
-    private func appendNewSource(_ updatedSource: String) {
-        guard updatedSource != cumulativeSource else {
-            return
-        }
-
-        guard updatedSource.hasPrefix(cumulativeSource) else {
-            let replacement = WaterfallResponseSegment(
-                source: updatedSource
-            )
-            segments = [replacement]
-            cumulativeSource = updatedSource
-            revealingSegmentID = replacement.id
-            return
-        }
-
-        let suffix = String(
-            updatedSource.dropFirst(cumulativeSource.count)
-        )
-        cumulativeSource = updatedSource
-        guard !suffix.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).isEmpty else {
-            return
-        }
-
-        let segment = WaterfallResponseSegment(source: suffix)
-        segments.append(segment)
-        revealingSegmentID = segment.id
-    }
-
-    private func finishReveal(for segmentID: UUID) {
-        guard revealingSegmentID == segmentID else {
-            return
-        }
-        revealingSegmentID = nil
-        onFinished()
-    }
-}
-
-private struct WaterfallResponseSegmentView: View {
-    let animationID: UUID
-    let source: String
-    let fontSize: CGFloat
-    let fileBaseDirectory: String?
-    let onFinished: () -> Void
-
-    var body: some View {
-        ConversationMarkdownView(
-            source: source,
-            fontSize: fontSize,
-            fileBaseDirectory: fileBaseDirectory
-        )
-        .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
-        .mask {
-            CoreAnimationWaterfallMaskView(
-                animationID: animationID,
-                onFinished: onFinished
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .onDisappear {
-            onFinished()
-        }
-    }
-}
-
-// Markdown은 고정한 채 하나의 마스크 위치만 움직여 렌더링 부하를 제한한다.
-enum CodexWaterfallRevealPacing {
-    static let durationScale = TimeInterval(1.3)
-    static let startDelayMilliseconds = 40
-    static let minimumDuration = TimeInterval(1.35) * durationScale
-    static let maximumDuration = TimeInterval(2.8) * durationScale
-    static let pointsPerSecond = CGFloat(320 / durationScale)
-    static let maximumFeatherHeight = CGFloat(72)
-    static let featherHeightFraction = CGFloat(0.48)
-    static let pendingContentOpacity = Double.zero
-
-    static func revealDuration(
-        forContentHeight height: CGFloat
-    ) -> TimeInterval {
-        min(
-            maximumDuration,
-            max(
-                minimumDuration,
-                TimeInterval(max(0, height) / pointsPerSecond)
-            )
-        )
-    }
-
-    static func featherHeight(
-        forVisibleHeight height: CGFloat
-    ) -> CGFloat {
-        guard height > 0 else {
-            return 0
-        }
-        return min(
-            maximumFeatherHeight,
-            max(1, height * featherHeightFraction)
-        )
-    }
-}
-
 @MainActor
 private final class LiveTypingAppearanceCache {
     static let shared = LiveTypingAppearanceCache()
@@ -3133,8 +3213,8 @@ private final class LiveTypingAppearanceCache {
         storage.countLimit = 256
     }
 
-    func shouldAnimateInitialSource(for turnID: String) -> Bool {
-        let key = turnID as NSString
+    func shouldAnimateInitialSource(for identity: String) -> Bool {
+        let key = identity as NSString
         guard storage.object(forKey: key) == nil else {
             return false
         }

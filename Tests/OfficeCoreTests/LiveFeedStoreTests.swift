@@ -228,7 +228,7 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedCharacterFeedID, rightManID)
     }
 
-    func testRestoredRunningTurnShowsExistingTextImmediatelyButKeepsEffects() {
+    func testRestoredRunningCodexTurnDefersExistingTextUntilCompletion() {
         let store = LiveFeedStore()
         let running = makeTurn(
             id: "restored-running-turn",
@@ -242,7 +242,7 @@ final class LiveFeedStoreTests: XCTestCase {
         store.replace(with: [running])
 
         XCTAssertTrue(store.shouldAnimateResponse(for: running))
-        XCTAssertFalse(store.shouldAnimateInitialResponse(for: running))
+        XCTAssertTrue(store.shouldAnimateInitialResponse(for: running))
 
         let updatedRunning = makeTurn(
             id: running.id,
@@ -256,7 +256,7 @@ final class LiveFeedStoreTests: XCTestCase {
         store.replace(with: [updatedRunning])
 
         XCTAssertTrue(store.shouldAnimateResponse(for: updatedRunning))
-        XCTAssertFalse(
+        XCTAssertTrue(
             store.shouldAnimateInitialResponse(for: updatedRunning)
         )
     }
@@ -453,7 +453,7 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertTrue(store.shouldAnimateInitialResponse(for: updatedRunning))
     }
 
-    func testHiddenRestoredCodexTurnDoesNotReplayAccumulatedResponse() {
+    func testHiddenRestoredCodexTurnKeepsDeferredCompletionAnimation() {
         let store = LiveFeedStore()
         let running = makeTurn(
             id: "hidden-restored-codex-turn",
@@ -479,7 +479,7 @@ final class LiveFeedStoreTests: XCTestCase {
         store.replace(with: [updatedRunning])
 
         XCTAssertTrue(store.shouldAnimateResponse(for: updatedRunning))
-        XCTAssertFalse(
+        XCTAssertTrue(
             store.shouldAnimateInitialResponse(for: updatedRunning)
         )
     }

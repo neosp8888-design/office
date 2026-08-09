@@ -924,8 +924,7 @@ private struct ClaudeMessageView: View {
 
             if isStreaming {
                 EquatableLiveTypingResponseView(
-                    turnID: turnID,
-                    backend: .claude,
+                    typingIdentity: turnID,
                     source: message.text,
                     fileBaseDirectory: workspaceDirectory,
                     animates: animates,

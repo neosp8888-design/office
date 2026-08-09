@@ -317,7 +317,9 @@ final class LiveFeedStore: ObservableObject {
         _ turn: LiveFeedTurn
     ) -> Bool {
         guard (turn.backend ?? turn.characterBackend) == .claude else {
-            return turn.response.isEmpty
+            // Codex 공개 메시지는 실행 중에는 숨기고 종료 뒤 처음부터
+            // 타이핑하므로, 복원 당시 응답 초안이 있어도 재생을 유지한다.
+            return true
         }
         return ClaudeTranscriptPresentation.make(
             turnID: turn.id,
