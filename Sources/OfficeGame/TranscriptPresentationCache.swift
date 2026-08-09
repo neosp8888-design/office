@@ -12,6 +12,7 @@ private struct TranscriptPresentationRevision: Equatable {
     let response: String
     let responseUpdatedAt: Date
     let isRunning: Bool
+    let isCompleted: Bool
 }
 
 @MainActor
@@ -48,6 +49,7 @@ final class TranscriptPresentationCache {
         response: String,
         responseUpdatedAt: Date,
         isRunning: Bool,
+        isCompleted: Bool = false,
         make: () -> Value
     ) -> Value {
         let key = "\(provider.rawValue):\(turnID)" as NSString
@@ -55,7 +57,8 @@ final class TranscriptPresentationCache {
             activities: activities,
             response: response,
             responseUpdatedAt: responseUpdatedAt,
-            isRunning: isRunning
+            isRunning: isRunning,
+            isCompleted: isCompleted
         )
 
         if
