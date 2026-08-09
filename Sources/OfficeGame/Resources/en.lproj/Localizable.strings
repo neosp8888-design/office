@@ -91,6 +91,7 @@
 "역할·업무 지침" = "Role and work instructions";
 "모델" = "Model";
 "추론" = "Reasoning";
+"작업 내역" = "Work log";
 "권한" = "Permission";
 "직접 입력" = "Enter manually";
 "답변은 같은 CLI 세션으로 이어집니다." = "The answer continues in the same CLI session.";

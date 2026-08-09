@@ -65,155 +65,184 @@ struct CodexTranscriptPresentation: Equatable {
         activities: [LiveFeedActivity],
         response: String,
         responseUpdatedAt: Date,
-        isRunning: Bool
+        isRunning: Bool,
+        isCompleted: Bool = true
     ) -> CodexTranscriptPresentation {
-        var entries: [CodexTranscriptEntry] = []
-        var groupOrder: [CodexActivityGroupKind] = []
-        var groupedItems: [CodexActivityGroupKind: [CodexActivityGroupItem]] =
-            [:]
-
-        func append(
-            _ item: CodexActivityGroupItem,
-            to kind: CodexActivityGroupKind
-        ) {
-            if groupedItems[kind] == nil {
-                groupOrder.append(kind)
-                groupedItems[kind] = []
-            }
-            groupedItems[kind]?.append(item)
+        let visibleActivities = activities.filter {
+            !CodexCollaborationSummary.isHiddenHousekeeping($0)
         }
-
-        func flushActivityGroups() {
-            for kind in groupOrder {
-                guard let items = groupedItems[kind], !items.isEmpty else {
-                    continue
-                }
-                entries.append(
-                    .activityGroup(
-                        CodexActivityGroup(kind: kind, items: items)
-                    )
-                )
-            }
-            groupOrder.removeAll(keepingCapacity: true)
-            groupedItems.removeAll(keepingCapacity: true)
+        let messageActivities = visibleActivities.filter {
+            $0.kind == "message"
         }
-
-        for activity in activities {
-            if CodexCollaborationSummary.isHiddenHousekeeping(activity) {
-                continue
-            }
-            if activity.kind == "message" {
-                flushActivityGroups()
-                entries.append(
-                    .message(
-                        CodexTranscriptMessage(
-                            id: "activity:\(activity.id)",
-                            text: activity.text,
-                            occurredAt: activity.occurredAt
-                        )
-                    )
-                )
-                continue
-            }
-
-            if
-                CodexFileChangeSummary.isFileChange(activity),
-                let summary = CodexFileChangeSummary.make(from: [activity])
-            {
-                append(
-                    .changes(activity: activity, summary: summary),
-                    to: .changes
-                )
-            } else {
-                append(
-                    .activity(activity),
-                    to: CodexActivityGroupKind(activity: activity)
-                )
-            }
-        }
-        flushActivityGroups()
-
-        let promotedMessages = activities
-            .filter { $0.kind == "message" }
-            .map(\.text)
+        let promotedMessages = messageActivities.map(\.text)
         let remainingResponse = AgentTranscriptText
             .responseAfterRemovingPromotedMessages(
                 response,
                 promotedMessages: promotedMessages
             )
-        var deferredResponseMessageID = activities.reversed().first(where: {
-            $0.kind == "message" && $0.text == response
-        }).map { "activity:\($0.id)" }
+        var deferredResponseMessage: CodexTranscriptMessage?
+
+        func transcriptMessage(
+            from activity: LiveFeedActivity,
+            text: String? = nil,
+            occurredAt: Date? = nil
+        ) -> CodexTranscriptMessage {
+            CodexTranscriptMessage(
+                id: "activity:\(activity.id)",
+                text: text ?? activity.text,
+                occurredAt: occurredAt ?? activity.occurredAt
+            )
+        }
+
+        if let exactResponse = messageActivities.reversed().first(where: {
+            $0.text == response
+        }) {
+            deferredResponseMessage = transcriptMessage(from: exactResponse)
+        }
         if
-            deferredResponseMessageID == nil,
+            deferredResponseMessage == nil,
             AgentTranscriptText
                 .isGeneratedImagePreviewSuffix(remainingResponse),
             let previewOwnerID = generatedImagePreviewOwnerID(
                 response: response,
                 preview: remainingResponse,
-                activities: activities
+                activities: visibleActivities
             ),
-            let messageIndex = entries.firstIndex(where: {
-                $0.id == previewOwnerID
-            }),
-            case .message(let message) = entries[messageIndex]
+            let previewOwner = messageActivities.first(where: {
+                "activity:\($0.id)" == previewOwnerID
+            })
         {
-            entries[messageIndex] = .message(
-                CodexTranscriptMessage(
-                    id: message.id,
-                    text: message.text + "\n\n" + remainingResponse,
-                    occurredAt: responseUpdatedAt
-                )
+            deferredResponseMessage = transcriptMessage(
+                from: previewOwner,
+                text: previewOwner.text + "\n\n" + remainingResponse,
+                occurredAt: responseUpdatedAt
             )
-            deferredResponseMessageID = message.id
         } else if
-            deferredResponseMessageID == nil,
+            deferredResponseMessage == nil,
             !remainingResponse.isEmpty
         {
-            let responseMessageID = "response:\(turnID)"
-            deferredResponseMessageID = responseMessageID
-            entries.append(
-                .message(
-                    CodexTranscriptMessage(
-                        id: responseMessageID,
-                        text: remainingResponse,
-                        occurredAt: responseUpdatedAt
-                    )
-                )
+            deferredResponseMessage = CodexTranscriptMessage(
+                id: "response:\(turnID)",
+                text: remainingResponse,
+                occurredAt: responseUpdatedAt
             )
         }
 
         if
-            deferredResponseMessageID == nil,
+            deferredResponseMessage == nil,
             !response.isEmpty
         {
-            for activity in activities.reversed()
-            where activity.kind == "message" {
+            for activity in messageActivities.reversed() {
                 let separatorAndMessage = "\n\n" + activity.text
                 if
                     response == activity.text
                         || response.hasSuffix(separatorAndMessage)
                 {
-                    deferredResponseMessageID =
-                        "activity:\(activity.id)"
+                    deferredResponseMessage = transcriptMessage(
+                        from: activity
+                    )
                     break
                 }
             }
         }
         if
-            deferredResponseMessageID == nil,
-            isRunning,
-            let latestMessage = entries.reversed().compactMap({
-                entry -> CodexTranscriptMessage? in
-                guard case .message(let message) = entry else {
-                    return nil
-                }
-                return message
-            }).first
+            deferredResponseMessage == nil,
+            let latestMessage = messageActivities.last,
+            isRunning || response.isEmpty
         {
-            // activity와 response 초안이 서로 다른 피드 틱에 도착하는
-            // 짧은 구간에도 공개 메시지가 먼저 번쩍이지 않게 한다.
-            deferredResponseMessageID = latestMessage.id
+            deferredResponseMessage = transcriptMessage(from: latestMessage)
+        }
+
+        if isRunning, let latestMessage = messageActivities.last {
+            // 백엔드는 message 활동을 먼저 내보내고 response 초안을 바로
+            // 뒤이어 저장한다. 그 한 틱 동안 이전 response와 일치하는
+            // 메시지를 고르면 새 메시지가 번쩍이므로 최신 활동을 우선한다.
+            deferredResponseMessage = transcriptMessage(from: latestMessage)
+        }
+
+        if !isRunning, !isCompleted {
+            // 실패·중단 턴의 마지막 공개 진행문을 최종 답변으로
+            // 오인하지 않는다. 활동에 없는 부분 응답만 별도 본문으로
+            // 보존하고 공개 메시지는 작업 내역에 그대로 남긴다.
+            deferredResponseMessage = remainingResponse.isEmpty
+                ? nil
+                : CodexTranscriptMessage(
+                    id: "response:\(turnID)",
+                    text: remainingResponse,
+                    occurredAt: responseUpdatedAt
+                )
+        }
+
+        let deferredResponseMessageID = deferredResponseMessage?.id
+        var entries: [CodexTranscriptEntry] = []
+        var workItems: [CodexActivityGroupItem] = []
+
+        func isCollaborationActivity(
+            _ activity: LiveFeedActivity
+        ) -> Bool {
+            activity.kind == "collaboration"
+                || (
+                    activity.kind == "tool"
+                        && activity.text.hasPrefix("협업 ·")
+                )
+        }
+
+        let collaborationActivities = visibleActivities.filter {
+            isCollaborationActivity($0)
+        }
+        let collaborationSummary = CodexCollaborationSummary.make(
+            from: collaborationActivities.map(
+                CodexActivityGroupItem.activity
+            )
+        )
+        let collaborationAnchorID = collaborationActivities.first?.id
+
+        for activity in visibleActivities {
+            let activityMessageID = "activity:\(activity.id)"
+            if activityMessageID == deferredResponseMessageID {
+                // 실행 중에는 마지막 공개 메시지를 잠시 보류한다. 다음
+                // 메시지가 오면 진행문으로 확정되어 이 자리에 들어오고,
+                // 완료되면 맨 아래의 정식 응답으로 한 번만 표시된다.
+                continue
+            }
+
+            if isCollaborationActivity(activity) {
+                if
+                    activity.id == collaborationAnchorID,
+                    let collaborationSummary
+                {
+                    // 협업 호출 위치는 한 번만 남기고 이후 결과는 같은
+                    // 항목을 갱신한다. 앞뒤의 일반 작업 순서는 움직이지 않는다.
+                    workItems.append(
+                        .collaboration(
+                            activity: activity,
+                            summary: collaborationSummary
+                        )
+                    )
+                }
+            } else if
+                CodexFileChangeSummary.isFileChange(activity),
+                let summary = CodexFileChangeSummary.make(from: [activity])
+            {
+                workItems.append(
+                    .changes(activity: activity, summary: summary),
+                )
+            } else {
+                // 추론·명령·도구·공개 진행문을 원본 순서 그대로 한
+                // 카드에 모아 메시지마다 카드가 다시 생기지 않게 한다.
+                workItems.append(.activity(activity))
+            }
+        }
+
+        if !workItems.isEmpty {
+            entries.append(
+                .activityGroup(
+                    CodexActivityGroup(kind: .work, items: workItems)
+                )
+            )
+        }
+        if let deferredResponseMessage {
+            entries.append(.message(deferredResponseMessage))
         }
 
         return CodexTranscriptPresentation(
@@ -266,6 +295,7 @@ enum CodexTranscriptEntry: Identifiable, Equatable {
 }
 
 enum CodexActivityGroupKind: String, Equatable, Hashable {
+    case work
     case reasoning
     case command
     case tool
@@ -297,17 +327,25 @@ enum CodexActivityGroupItem: Identifiable, Equatable {
         activity: LiveFeedActivity,
         summary: CodexFileChangeSummary
     )
+    case collaboration(
+        activity: LiveFeedActivity,
+        summary: CodexCollaborationSummary
+    )
 
     var id: String {
         switch self {
-        case .activity(let activity), .changes(let activity, _):
+        case .activity(let activity),
+            .changes(let activity, _),
+            .collaboration(let activity, _):
             activity.id
         }
     }
 
     var activity: LiveFeedActivity {
         switch self {
-        case .activity(let activity), .changes(let activity, _):
+        case .activity(let activity),
+            .changes(let activity, _),
+            .collaboration(let activity, _):
             activity
         }
     }
@@ -318,6 +356,22 @@ enum CodexActivityGroupItem: Identifiable, Equatable {
         }
         return summary
     }
+
+    var collaborationSummary: CodexCollaborationSummary? {
+        guard case .collaboration(_, let summary) = self else {
+            return nil
+        }
+        return summary
+    }
+
+    var isRunning: Bool {
+        switch self {
+        case .collaboration(_, let summary):
+            summary.isRunning
+        case .activity(let activity), .changes(let activity, _):
+            activity.status == .running
+        }
+    }
 }
 
 struct CodexActivityGroup: Identifiable, Equatable {
@@ -325,12 +379,11 @@ struct CodexActivityGroup: Identifiable, Equatable {
     let items: [CodexActivityGroupItem]
 
     var id: String {
-        let first = items.first?.id ?? "empty"
-        return "activity-group:\(kind.rawValue):\(first)"
+        "activity-group:\(kind.rawValue)"
     }
 
     var isRunning: Bool {
-        items.contains { $0.activity.status == .running }
+        items.contains(where: \.isRunning)
     }
 
     var latestItem: CodexActivityGroupItem? {
@@ -924,14 +977,16 @@ struct CodexTranscriptView: View {
             activities: activities,
             response: response,
             responseUpdatedAt: responseUpdatedAt,
-            isRunning: isRunning
+            isRunning: isRunning,
+            isCompleted: isCompleted
         ) {
             CodexTranscriptPresentation.make(
                 turnID: turnID,
                 activities: activities,
                 response: response,
                 responseUpdatedAt: responseUpdatedAt,
-                isRunning: isRunning
+                isRunning: isRunning,
+                isCompleted: isCompleted
             )
         }
         let hiddenCount = max(
@@ -1539,10 +1594,6 @@ private struct CodexActivityGroupView: View, Equatable {
         VStack(alignment: .leading, spacing: 8) {
             groupHeader
 
-            if let latestItem = group.latestItem {
-                itemView(latestItem, isLatest: true)
-            }
-
             if historyCount > 0 {
                 DisclosureGroup(isExpanded: $isExpanded) {
                     if isExpanded {
@@ -1584,6 +1635,12 @@ private struct CodexActivityGroupView: View, Equatable {
                         .contentShape(Rectangle())
                 }
                 .tint(.secondary)
+            }
+
+            if let latestItem = group.latestItem {
+                // 접었을 때는 최신 한 건만, 펼쳤을 때는 과거부터
+                // 최신까지 위에서 아래로 자연스럽게 읽히게 한다.
+                itemView(latestItem, isLatest: true)
             }
         }
         .padding(.horizontal, 10)
@@ -1630,6 +1687,11 @@ private struct CodexActivityGroupView: View, Equatable {
                 summary: summary,
                 workspaceDirectory: workspaceDirectory
             )
+        case .collaboration(_, let summary):
+            CodexCollaborationGroupView(
+                summary: summary,
+                workspaceDirectory: workspaceDirectory
+            )
         }
     }
 
@@ -1642,10 +1704,10 @@ private struct CodexActivityGroupView: View, Equatable {
                 .frame(width: 15, height: 15)
 
             Text(activity.text)
-                .font(activityFont)
+                .font(activityFont(for: activity))
                 .foregroundStyle(.secondary)
                 .lineLimit(
-                    isLatest && group.kind == .reasoning ? nil : 4
+                    isLatest && activity.kind == "thinking" ? nil : 4
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1692,14 +1754,19 @@ private struct CodexActivityGroupView: View, Equatable {
         }
     }
 
-    private var activityFont: Font {
-        group.kind == .reasoning
-            ? .system(size: 12.5, weight: .medium)
-            : .system(size: 10.5, design: .monospaced)
+    private func activityFont(for activity: LiveFeedActivity) -> Font {
+        switch activity.kind {
+        case "thinking", "message":
+            .system(size: 12.5, weight: .medium)
+        default:
+            .system(size: 10.5, design: .monospaced)
+        }
     }
 
     private var groupTitle: String {
         switch group.kind {
+        case .work:
+            OfficeLocalization.string("작업 내역")
         case .reasoning:
             OfficeLocalization.string("추론")
         case .command:
@@ -1717,6 +1784,8 @@ private struct CodexActivityGroupView: View, Equatable {
 
     private var historyNoun: String {
         switch group.kind {
+        case .work:
+            "작업"
         case .reasoning:
             "추론"
         case .command:
@@ -1734,6 +1803,8 @@ private struct CodexActivityGroupView: View, Equatable {
 
     private var groupIcon: String {
         switch group.kind {
+        case .work:
+            "list.bullet.rectangle"
         case .reasoning:
             "brain.head.profile"
         case .command:
@@ -1751,6 +1822,8 @@ private struct CodexActivityGroupView: View, Equatable {
 
     private var groupColor: Color {
         switch group.kind {
+        case .work:
+            DashboardPalette.accent
         case .reasoning:
             DashboardPalette.accent
         case .command:

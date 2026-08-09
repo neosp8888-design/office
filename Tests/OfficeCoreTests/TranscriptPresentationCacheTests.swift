@@ -125,6 +125,25 @@ final class TranscriptPresentationCacheTests: XCTestCase {
         XCTAssertEqual(buildCount, 3)
     }
 
+    func testCompletionStateChangeRebuildsTerminalRevision() {
+        let cache = TranscriptPresentationCache()
+        var buildCount = 0
+
+        for isCompleted in [false, false, true] {
+            _ = cachedValue(
+                cache: cache,
+                turnID: "turn-1",
+                isCompleted: isCompleted,
+                make: {
+                    buildCount += 1
+                    return buildCount
+                }
+            ) as Int
+        }
+
+        XCTAssertEqual(buildCount, 2)
+    }
+
     func testProvidersDoNotShareTurnEntry() {
         let cache = TranscriptPresentationCache()
         var buildCount = 0
@@ -181,6 +200,7 @@ final class TranscriptPresentationCacheTests: XCTestCase {
         response: String = "response",
         responseUpdatedAt: Date = Date(timeIntervalSince1970: 1_000),
         isRunning: Bool = false,
+        isCompleted: Bool = false,
         make: () -> Value
     ) -> Value {
         cache.presentation(
@@ -190,6 +210,7 @@ final class TranscriptPresentationCacheTests: XCTestCase {
             response: response,
             responseUpdatedAt: responseUpdatedAt,
             isRunning: isRunning,
+            isCompleted: isCompleted,
             make: make
         )
     }
