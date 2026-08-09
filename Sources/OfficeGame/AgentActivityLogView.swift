@@ -9,6 +9,9 @@ struct CodexTranscriptPresentation: Equatable {
     let showsWaiting: Bool
     /// 실행 중에는 숨기고 완료 뒤 타이핑할 타임라인 끝 응답 후보다.
     let deferredResponseMessageID: String?
+    /// 완료 뒤 최종 응답 표시와 피드백을 붙일 메시지다. 이미 중간에
+    /// 공개된 메시지는 deferred와 분리해 원래 위치를 유지한다.
+    let conclusionMessageID: String?
 
     var latestMessage: CodexTranscriptMessage? {
         for entry in entries.reversed() {
@@ -46,9 +49,10 @@ struct CodexTranscriptPresentation: Equatable {
         let suffixStart = entries.count - limit
         var visibleIndices = Array(suffixStart..<entries.count)
         if
-            let deferredResponseMessageID,
+            let preservedMessageID =
+                deferredResponseMessageID ?? conclusionMessageID,
             let candidateIndex = entries.firstIndex(where: {
-                $0.id == deferredResponseMessageID
+                $0.id == preservedMessageID
             }),
             !visibleIndices.contains(candidateIndex)
         {
@@ -154,10 +158,12 @@ struct CodexTranscriptPresentation: Equatable {
         }
 
         if isRunning, let latestMessage = messageActivities.last {
-            // 백엔드는 message 활동을 먼저 내보내고 response 초안을 바로
-            // 뒤이어 저장한다. 그 한 틱 동안 이전 response와 일치하는
-            // 메시지를 고르면 새 메시지가 번쩍이므로 최신 활동을 우선한다.
-            deferredResponseMessage = transcriptMessage(from: latestMessage)
+            if visibleActivities.last?.id == latestMessage.id {
+                // 백엔드는 message 활동을 먼저 내보내고 response 초안을 바로
+                // 뒤이어 저장한다. 타임라인 끝 메시지만 최종 후보로 잠시
+                // 보류해 완료 전 번쩍임과 중복 타이핑을 막는다.
+                deferredResponseMessage = transcriptMessage(from: latestMessage)
+            }
         }
 
         if !isRunning, !isCompleted {
@@ -173,9 +179,36 @@ struct CodexTranscriptPresentation: Equatable {
                 )
         }
 
+        let conclusionMessageID = deferredResponseMessage?.id
+        if
+            let candidateMessage = deferredResponseMessage,
+            let candidateActivity = messageActivities.first(where: {
+                "activity:\($0.id)" == candidateMessage.id
+            }),
+            candidateMessage.text == candidateActivity.text,
+            visibleActivities.last?.id != candidateActivity.id
+        {
+            // 뒤에 명령·도구나 다른 메시지가 이어졌다면 이미 공개된 중간
+            // 진행문이다. 완료 전후 모두 원래 위치에 고정하고 최종 표식만
+            // 붙여 재이동·재타이핑을 막는다.
+            deferredResponseMessage = nil
+        }
+
         let deferredResponseMessageID = deferredResponseMessage?.id
         var entries: [CodexTranscriptEntry] = []
         var workItems: [CodexActivityGroupItem] = []
+
+        func flushWorkItems() {
+            guard !workItems.isEmpty else {
+                return
+            }
+            entries.append(
+                .activityGroup(
+                    CodexActivityGroup(kind: .work, items: workItems)
+                )
+            )
+            workItems.removeAll(keepingCapacity: true)
+        }
 
         func isCollaborationActivity(
             _ activity: LiveFeedActivity
@@ -206,6 +239,14 @@ struct CodexTranscriptPresentation: Equatable {
                 continue
             }
 
+            if activity.kind == "message" {
+                // 공개 진행문은 접힌 작업 기록에 숨기지 않는다. 직전 작업을
+                // 먼저 닫고 원래 시간 위치의 대화 메시지로 남긴다.
+                flushWorkItems()
+                entries.append(.message(transcriptMessage(from: activity)))
+                continue
+            }
+
             if isCollaborationActivity(activity) {
                 if
                     activity.id == collaborationAnchorID,
@@ -228,30 +269,24 @@ struct CodexTranscriptPresentation: Equatable {
                     .changes(activity: activity, summary: summary),
                 )
             } else {
-                // 추론·명령·도구·공개 진행문을 원본 순서 그대로 한
-                // 카드에 모아 메시지마다 카드가 다시 생기지 않게 한다.
+                // 공개 메시지 사이의 추론·명령·도구는 하나의 작업 카드로
+                // 모아 세부 기록을 간결하게 유지한다.
                 workItems.append(.activity(activity))
             }
         }
 
-        if !workItems.isEmpty {
-            entries.append(
-                .activityGroup(
-                    CodexActivityGroup(kind: .work, items: workItems)
-                )
-            )
-        }
+        flushWorkItems()
         if let deferredResponseMessage {
             entries.append(.message(deferredResponseMessage))
         }
 
         return CodexTranscriptPresentation(
             entries: entries,
-            // 실제 작업 항목이 나타난 뒤에는 그 최신 한 건이 진행 상태를
-            // 설명한다. 별도 `생각 중`을 겹쳐 보여 추론이 두 번인 것처럼
-            // 보이지 않게, 아무 작업도 도착하지 않은 짧은 공백에만 둔다.
-            showsWaiting: isRunning && workItems.isEmpty,
-            deferredResponseMessageID: deferredResponseMessageID
+            // 작업 기록은 이미 일어난 일이고, `생각 중`은 현재 실행 상태다.
+            // 둘을 함께 보여 사용자가 완료 전임을 항상 알 수 있게 한다.
+            showsWaiting: isRunning,
+            deferredResponseMessageID: deferredResponseMessageID,
+            conclusionMessageID: conclusionMessageID
         )
     }
 
@@ -382,7 +417,10 @@ struct CodexActivityGroup: Identifiable, Equatable {
     let items: [CodexActivityGroupItem]
 
     var id: String {
-        "activity-group:\(kind.rawValue)"
+        // 같은 종류의 작업 카드가 공개 메시지 앞뒤에 여러 번 생길 수 있다.
+        // 첫 항목을 앵커로 삼아 각 카드의 펼침 상태와 SwiftUI identity를
+        // 안정적으로 분리한다.
+        "activity-group:\(kind.rawValue):\(items.first?.id ?? "empty")"
     }
 
     var isRunning: Bool {
@@ -1006,7 +1044,7 @@ struct CodexTranscriptView: View {
             CodexResponsePresentationRevision.init(message:)
         )
         let conclusionMessageID = isCompleted
-            ? presentation.deferredResponseMessageID ?? latestMessage?.id
+            ? presentation.conclusionMessageID ?? latestMessage?.id
             : nil
 
         VStack(alignment: .leading, spacing: 14) {
