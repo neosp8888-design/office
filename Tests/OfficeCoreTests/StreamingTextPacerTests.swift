@@ -494,7 +494,6 @@ final class StreamingTextPacerTests: XCTestCase {
         )
         let rootView = ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
-                Color.clear.frame(height: 300)
                 CompletedResponseLineTypingView(
                     typingIdentity: "lazy-scroll-height",
                     source: source,
@@ -505,7 +504,7 @@ final class StreamingTextPacerTests: XCTestCase {
                     presentsTyping: true,
                     onFinishedTyping: {}
                 )
-                Color.clear.frame(height: 300)
+                Color.clear.frame(height: 600)
             }
             .frame(width: 240)
         }
@@ -528,38 +527,20 @@ final class StreamingTextPacerTests: XCTestCase {
                 of: hostingView,
                 as: NSScrollView.self
             ),
-            let documentView = scrollView.documentView
+            let documentView = scrollView.documentView,
+            let typingView = firstDescendant(
+                of: hostingView,
+                as: IncrementalStreamingTextView.self
+            ),
+            let textView = typingView.subviews.first as? NSTextView
         else {
-            XCTFail("SwiftUI LazyVStack의 NSScrollView를 찾지 못했습니다.")
+            XCTFail("LazyVStack 안의 실제 타이핑 NSView를 찾지 못했습니다.")
             window.contentView = nil
             return
         }
-        // LazyVStack의 최초 실체화에 따른 추정 높이 보정은 검증 대상이
-        // 아니다. 한 번 전 구간을 지나 안정화한 뒤 같은 burst를 측정한다.
-        NotificationCenter.default.post(
-            name: NSScrollView.willStartLiveScrollNotification,
-            object: scrollView
-        )
-        for step in 0..<80 {
-            let maximumY = max(
-                0,
-                documentView.frame.height - scrollView.contentView.bounds.height
-            )
-            let fraction = CGFloat(step % 20) / 19
-            scrollView.contentView.scroll(
-                to: NSPoint(x: 0, y: maximumY * fraction)
-            )
-            _ = RunLoop.main.run(
-                mode: .eventTracking,
-                before: Date(timeIntervalSinceNow: 0.002)
-            )
-        }
-        NotificationCenter.default.post(
-            name: NSScrollView.didEndLiveScrollNotification,
-            object: scrollView
-        )
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-        hostingView.layoutSubtreeIfNeeded()
+        XCTAssertTrue(typingView.window === window)
+        XCTAssertGreaterThan(textView.string.count, 0)
+        XCTAssertLessThan(textView.string.count, source.count)
 
         documentView.postsFrameChangedNotifications = true
         var documentFrameChanges = 0
@@ -575,53 +556,94 @@ final class StreamingTextPacerTests: XCTestCase {
             window.contentView = nil
         }
 
+        let textBeforeLiveScroll = textView.string
+        var minimumDocumentHeight = documentView.frame.height
+        var maximumDocumentHeight = documentView.frame.height
         NotificationCenter.default.post(
             name: NSScrollView.willStartLiveScrollNotification,
             object: scrollView
         )
-        for step in 0..<80 {
-            let maximumY = max(
+        for step in 0..<120 {
+            let scrollableY = max(
                 0,
                 documentView.frame.height - scrollView.contentView.bounds.height
             )
-            let fraction = CGFloat(step % 20) / 19
+            let offset = min(scrollableY, CGFloat(step % 30) * 2)
             scrollView.contentView.scroll(
-                to: NSPoint(x: 0, y: maximumY * fraction)
+                to: NSPoint(x: 0, y: offset)
             )
             _ = RunLoop.main.run(
                 mode: .eventTracking,
-                before: Date(timeIntervalSinceNow: 0.002)
+                before: Date(timeIntervalSinceNow: 0.003)
+            )
+            hostingView.layoutSubtreeIfNeeded()
+            minimumDocumentHeight = min(
+                minimumDocumentHeight,
+                documentView.frame.height
+            )
+            maximumDocumentHeight = max(
+                maximumDocumentHeight,
+                documentView.frame.height
             )
         }
+        XCTAssertTrue(typingView.window === window)
+        XCTAssertEqual(
+            textView.string,
+            textBeforeLiveScroll,
+            "실제 LazyVStack 안에서 live-scroll 중 타이핑이 진행됐습니다."
+        )
+        XCTAssertLessThanOrEqual(
+            maximumDocumentHeight - minimumDocumentHeight,
+            0.5,
+            "타이핑 활성 구간의 live-scroll 중 문서 높이가 변했습니다."
+        )
+        XCTAssertLessThanOrEqual(
+            documentFrameChanges,
+            5,
+            "live-scroll 중 문서 프레임이 반복해서 무효화됐습니다."
+        )
+
         NotificationCenter.default.post(
             name: NSScrollView.didEndLiveScrollNotification,
             object: scrollView
         )
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        hostingView.layoutSubtreeIfNeeded()
+        let textCountBeforeResume = textView.string.count
+        minimumDocumentHeight = documentView.frame.height
+        maximumDocumentHeight = documentView.frame.height
+        let frameChangesBeforeResume = documentFrameChanges
+        let resumeDeadline = Date(timeIntervalSinceNow: 0.25)
+        while Date() < resumeDeadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.016))
+            hostingView.layoutSubtreeIfNeeded()
+            minimumDocumentHeight = min(
+                minimumDocumentHeight,
+                documentView.frame.height
+            )
+            maximumDocumentHeight = max(
+                maximumDocumentHeight,
+                documentView.frame.height
+            )
+        }
 
-        XCTAssertLessThanOrEqual(
-            documentFrameChanges,
-            120,
-            "한 번의 live-scroll 입력보다 문서 레이아웃이 과도하게 반복됐습니다."
+        XCTAssertGreaterThan(
+            textView.string.count,
+            textCountBeforeResume,
+            "live-scroll 종료 뒤 실제 타이핑이 재개되지 않았습니다."
         )
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
-        hostingView.layoutSubtreeIfNeeded()
-        let settledHeight = documentView.frame.height
-        let settledFrameChanges = documentFrameChanges
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
-        hostingView.layoutSubtreeIfNeeded()
-
-        XCTAssertEqual(
-            documentView.frame.height,
-            settledHeight,
-            accuracy: 0.5,
-            "입력과 타이핑 종료 뒤 문서 높이가 계속 변했습니다."
+        XCTAssertLessThan(
+            textView.string.count,
+            source.count,
+            "긴 live-scroll 뒤 줄 전체가 한 번에 나타났습니다."
         )
         XCTAssertLessThanOrEqual(
-            documentFrameChanges - settledFrameChanges,
+            maximumDocumentHeight - minimumDocumentHeight,
+            0.5,
+            "타이핑이 진행되는 동안 문서 높이가 tick마다 변했습니다."
+        )
+        XCTAssertLessThanOrEqual(
+            documentFrameChanges - frameChangesBeforeResume,
             5,
-            "입력과 타이핑 종료 뒤에도 문서 레이아웃이 계속 재촉발됐습니다."
+            "타이핑이 진행되는 동안 문서 프레임이 반복해서 무효화됐습니다."
         )
     }
 
