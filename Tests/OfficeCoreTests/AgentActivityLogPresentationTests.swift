@@ -790,7 +790,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.showsWaiting)
     }
 
-    func testCodexTranscriptEmbedsCollaborationAtOriginalCallPosition()
+    func testCodexTranscriptGroupsCollaborationAndChangesOutsideWorkLog()
         throws
     {
         let activities = try [
@@ -864,38 +864,245 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             isRunning: false
         )
 
-        XCTAssertEqual(presentation.entries.count, 5)
+        XCTAssertEqual(presentation.entries.count, 6)
         guard
             case .message(let firstMessage) = presentation.entries[0],
-            case .activityGroup(let firstWorkGroup) =
+            case .activityGroup(let changeGroup) =
                 presentation.entries[1],
-            case .message(let middleMessage) = presentation.entries[2],
-            case .activityGroup(let secondWorkGroup) =
-                presentation.entries[3],
-            case .message(let finalMessage) = presentation.entries[4]
+            case .activityGroup(let collaborationGroup) =
+                presentation.entries[2],
+            case .message(let middleMessage) = presentation.entries[3],
+            case .activityGroup(let workGroup) =
+                presentation.entries[4],
+            case .message(let finalMessage) = presentation.entries[5]
         else {
-            return XCTFail("공개 메시지를 포함한 작업 순서가 다릅니다.")
+            return XCTFail("공개 메시지와 전용 그룹의 순서가 다릅니다.")
         }
         XCTAssertEqual(firstMessage.text, "검토 준비를 마쳤습니다.")
-        XCTAssertEqual(firstWorkGroup.kind, .work)
+        XCTAssertEqual(changeGroup.kind, .changes)
+        XCTAssertEqual(changeGroup.items.map(\.id), ["files-1"])
+        XCTAssertEqual(collaborationGroup.kind, .collaboration)
         XCTAssertEqual(
-            firstWorkGroup.items.map(\.id),
-            [
-                "files-1",
-                "collab-spawn",
-            ]
-        )
-        XCTAssertEqual(middleMessage.text, "첫 검토를 요청했습니다.")
-        XCTAssertEqual(secondWorkGroup.items.map(\.id), ["command-1"])
-        XCTAssertNotEqual(firstWorkGroup.id, secondWorkGroup.id)
-        let collaborationItem = try XCTUnwrap(
-            firstWorkGroup.items.first { $0.id == "collab-spawn" }
+            collaborationGroup.items.map(\.id),
+            ["collab-spawn"]
         )
         XCTAssertEqual(
-            collaborationItem.collaborationSummary?.activityIDs,
+            collaborationGroup.items[0]
+                .collaborationSummary?.activityIDs,
             ["collab-spawn", "collab-result"]
         )
+        XCTAssertEqual(middleMessage.text, "첫 검토를 요청했습니다.")
+        XCTAssertEqual(workGroup.kind, .work)
+        XCTAssertEqual(workGroup.items.map(\.id), ["command-1"])
+        XCTAssertEqual(
+            collaborationGroup.items[0]
+                .collaborationSummary?.completedCount,
+            1
+        )
         XCTAssertEqual(finalMessage.text, "완료했습니다.")
+    }
+
+    func testNewCollaborationAfterMessageStartsNewDedicatedGroup() throws {
+        let first = try makeActivity(
+            id: "collab-1",
+            kind: "collaboration",
+            text: "첫 검토를 요청합니다.",
+            status: "running",
+            collaboration: [
+                "action": "spawn",
+                "agentThreadId": "reviewer-1",
+                "prompt": "첫 검토를 요청합니다.",
+                "agentStatus": "running",
+            ]
+        )
+        let message = try makeActivity(
+            id: "message-1",
+            kind: "message",
+            text: "첫 검토를 요청했습니다.",
+            status: "completed"
+        )
+        let second = try makeActivity(
+            id: "collab-2",
+            kind: "collaboration",
+            text: "새 검토를 요청합니다.",
+            status: "running",
+            collaboration: [
+                "action": "spawn",
+                "agentThreadId": "reviewer-2",
+                "prompt": "새 검토를 요청합니다.",
+                "agentStatus": "running",
+            ]
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [first, message, second],
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+
+        guard
+            presentation.entries.count == 3,
+            case .activityGroup(let firstGroup) = presentation.entries[0],
+            case .message = presentation.entries[1],
+            case .activityGroup(let secondGroup) = presentation.entries[2]
+        else {
+            return XCTFail("메시지 뒤 새 협업 그룹이 없습니다.")
+        }
+        XCTAssertEqual(firstGroup.kind, .collaboration)
+        XCTAssertEqual(secondGroup.kind, .collaboration)
+        XCTAssertNotEqual(firstGroup.id, secondGroup.id)
+        XCTAssertEqual(
+            firstGroup.items[0].collaborationSummary?.activityIDs,
+            ["collab-1"]
+        )
+        XCTAssertEqual(
+            secondGroup.items[0].collaborationSummary?.activityIDs,
+            ["collab-2"]
+        )
+        XCTAssertTrue(presentation.showsWaiting)
+    }
+
+    func testCollaborationGroupKeepsIdentityWhenStatusUpdates() throws {
+        let running = try makeActivity(
+            id: "collab-1",
+            kind: "collaboration",
+            text: "UI 구조를 검토해 주세요.",
+            status: "running",
+            collaboration: [
+                "action": "spawn",
+                "agentThreadId": "reviewer-1",
+                "prompt": "UI 구조를 검토해 주세요.",
+                "agentStatus": "running",
+            ]
+        )
+        let completed = try makeActivity(
+            id: "collab-1",
+            kind: "collaboration",
+            text: "UI 구조 검토 완료",
+            status: "completed",
+            collaboration: [
+                "action": "result",
+                "agentThreadId": "reviewer-1",
+                "message": "UI 구조 검토 완료",
+                "agentStatus": "completed",
+            ]
+        )
+        let runningPresentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [running],
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+        let completedPresentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [completed],
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_001),
+            isRunning: false
+        )
+
+        guard
+            case .activityGroup(let runningGroup) =
+                runningPresentation.entries[0],
+            case .activityGroup(let completedGroup) =
+                completedPresentation.entries[0]
+        else {
+            return XCTFail("협업 전용 그룹이 없습니다.")
+        }
+        XCTAssertEqual(runningGroup.kind, .collaboration)
+        XCTAssertEqual(completedGroup.kind, .collaboration)
+        XCTAssertEqual(runningGroup.id, completedGroup.id)
+        XCTAssertTrue(runningPresentation.showsWaiting)
+        XCTAssertFalse(completedPresentation.showsWaiting)
+        XCTAssertEqual(
+            completedGroup.items[0].collaborationSummary?.completedCount,
+            1
+        )
+    }
+
+    func testCollaborationResultAfterMessageUpdatesOriginalGroup() throws {
+        let spawn = try makeActivity(
+            id: "collab-spawn",
+            kind: "collaboration",
+            text: "UI 구조를 검토해 주세요.",
+            status: "running",
+            collaboration: [
+                "action": "spawn",
+                "agentThreadId": "reviewer-1",
+                "agentLabel": "UI 검토자",
+                "prompt": "UI 구조를 검토해 주세요.",
+                "agentStatus": "running",
+            ]
+        )
+        let message = try makeActivity(
+            id: "message-1",
+            kind: "message",
+            text: "검토를 요청했습니다.",
+            status: "completed"
+        )
+        let result = try makeActivity(
+            id: "collab-result",
+            kind: "collaboration",
+            text: "UI 구조 검토 완료",
+            status: "completed",
+            collaboration: [
+                "action": "result",
+                "agentThreadId": "reviewer-1",
+                "message": "UI 구조 검토 완료",
+                "agentStatus": "completed",
+            ]
+        )
+        let beforeResult = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [spawn, message],
+            response: message.text,
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: true
+        )
+        let afterResult = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [spawn, message, result],
+            response: message.text,
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_001),
+            isRunning: true
+        )
+
+        guard
+            case .activityGroup(let runningGroup) = beforeResult.entries[0],
+            case .activityGroup(let updatedGroup) = afterResult.entries[0]
+        else {
+            return XCTFail("원래 협업 그룹이 유지되지 않았습니다.")
+        }
+        let runningSummary = try XCTUnwrap(
+            runningGroup.items[0].collaborationSummary
+        )
+        let updatedSummary = try XCTUnwrap(
+            updatedGroup.items[0].collaborationSummary
+        )
+        XCTAssertEqual(runningGroup.id, updatedGroup.id)
+        XCTAssertEqual(runningSummary.runningCount, 1)
+        XCTAssertEqual(updatedSummary.completedCount, 1)
+        XCTAssertEqual(updatedSummary.agents[0].label, "UI 검토자")
+        XCTAssertEqual(
+            updatedSummary.agents[0].prompt,
+            "UI 구조를 검토해 주세요."
+        )
+        XCTAssertEqual(updatedSummary.agents[0].result, "UI 구조 검토 완료")
+        XCTAssertEqual(
+            updatedSummary.activityIDs,
+            ["collab-spawn", "collab-result"]
+        )
+        XCTAssertEqual(
+            afterResult.entries.filter {
+                if case .activityGroup(let group) = $0 {
+                    return group.kind == .collaboration
+                }
+                return false
+            }.count,
+            1
+        )
     }
 
     func testCollaborationSummaryCombinesRequestsAndLatestResultsByReviewer()
@@ -1026,7 +1233,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
     }
 
-    func testLegacyCollaborationToolStaysEmbeddedInWorkLog() throws {
+    func testLegacyCollaborationToolUsesDedicatedGroup() throws {
         let activity = try makeActivity(
             id: "legacy-collaboration",
             kind: "tool",
@@ -1041,13 +1248,18 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             isRunning: false
         )
 
-        guard case .activityGroup(let workGroup) = presentation.entries[0]
+        guard case .activityGroup(let collaborationGroup) =
+            presentation.entries[0]
         else {
-            return XCTFail("과거 협업 기록이 작업 내역에 없습니다.")
+            return XCTFail("과거 협업 기록의 전용 그룹이 없습니다.")
         }
-        XCTAssertEqual(workGroup.items.map(\.id), ["legacy-collaboration"])
+        XCTAssertEqual(collaborationGroup.kind, .collaboration)
         XCTAssertEqual(
-            workGroup.items[0].collaborationSummary?.activityIDs,
+            collaborationGroup.items.map(\.id),
+            ["legacy-collaboration"]
+        )
+        XCTAssertEqual(
+            collaborationGroup.items[0].collaborationSummary?.activityIDs,
             ["legacy-collaboration"]
         )
     }
@@ -1173,7 +1385,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         else {
             return XCTFail("파일 변경 카드가 실제 위치에 없습니다.")
         }
-        XCTAssertEqual(changeGroup.kind, .work)
+        XCTAssertEqual(changeGroup.kind, .changes)
         let changes = try XCTUnwrap(
             changeGroup.latestItem?.changeSummary
         )
@@ -1505,7 +1717,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
             return XCTFail("실행 중 파일 변경의 타임라인 위치가 다릅니다.")
         }
         XCTAssertEqual(visibleBefore.text, before.text)
-        XCTAssertEqual(runningChangeGroup.kind, .work)
+        XCTAssertEqual(runningChangeGroup.kind, .changes)
         XCTAssertEqual(
             runningChangeGroup.items.map(\.id),
             ["files-1"]
@@ -1559,7 +1771,7 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         XCTAssertEqual(completedChanges.deletions, 1)
     }
 
-    func testSamePhaseFileChangesShareCategoryGroup() throws {
+    func testFileChangesStayOutsideWorkWithoutReordering() throws {
         let first = try makeActivity(
             id: "files-1",
             kind: "tool",
@@ -1588,30 +1800,62 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
 
         guard
-            presentation.entries.count == 1,
-            case .activityGroup(let workGroup) = presentation.entries[0]
+            presentation.entries.count == 3,
+            case .activityGroup(let firstChangeGroup) =
+                presentation.entries[0],
+            case .activityGroup(let workGroup) = presentation.entries[1],
+            case .activityGroup(let secondChangeGroup) =
+                presentation.entries[2]
         else {
-            return XCTFail("같은 구간의 파일 변경 그룹이 다릅니다.")
+            return XCTFail("파일 변경과 일반 작업의 시간순 그룹이 다릅니다.")
         }
+        XCTAssertEqual(firstChangeGroup.kind, .changes)
+        XCTAssertEqual(firstChangeGroup.items.map(\.id), ["files-1"])
         XCTAssertEqual(workGroup.kind, .work)
+        XCTAssertEqual(workGroup.items.map(\.id), ["command-1"])
+        XCTAssertEqual(secondChangeGroup.kind, .changes)
+        XCTAssertEqual(secondChangeGroup.items.map(\.id), ["files-2"])
+        XCTAssertNotEqual(firstChangeGroup.id, secondChangeGroup.id)
+        let firstChangeItem = try XCTUnwrap(firstChangeGroup.latestItem)
+        let secondChangeItem = try XCTUnwrap(secondChangeGroup.latestItem)
+        let firstChanges = try XCTUnwrap(firstChangeItem.changeSummary)
+        let secondChanges = try XCTUnwrap(secondChangeItem.changeSummary)
         XCTAssertEqual(
-            workGroup.items.map(\.id),
-            ["files-1", "command-1", "files-2"]
+            firstChanges.files,
+            ["수정 A.swift"]
         )
-        let firstChangeItem = try XCTUnwrap(
-            workGroup.items.first { $0.id == "files-1" }
-        )
-        let secondChangeItem = try XCTUnwrap(
-            workGroup.items.first { $0.id == "files-2" }
-        )
-        let firstChanges = try XCTUnwrap(
-            firstChangeItem.changeSummary
-        )
-        let secondChanges = try XCTUnwrap(
-            secondChangeItem.changeSummary
-        )
-        XCTAssertEqual(firstChanges.files, ["수정 A.swift"])
         XCTAssertEqual(secondChanges.files, ["수정 B.swift"])
+    }
+
+    func testAdjacentFileChangesShareDedicatedGroup() throws {
+        let first = try makeActivity(
+            id: "files-1",
+            kind: "tool",
+            text: "파일 1개를 편집했습니다\n수정 A.swift",
+            status: "completed"
+        )
+        let second = try makeActivity(
+            id: "files-2",
+            kind: "tool",
+            text: "파일 1개를 편집했습니다\n수정 B.swift",
+            status: "completed"
+        )
+        let presentation = CodexTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: [first, second],
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        guard
+            presentation.entries.count == 1,
+            case .activityGroup(let changeGroup) = presentation.entries[0]
+        else {
+            return XCTFail("인접 파일 변경이 하나로 묶이지 않았습니다.")
+        }
+        XCTAssertEqual(changeGroup.kind, .changes)
+        XCTAssertEqual(changeGroup.items.map(\.id), ["files-1", "files-2"])
     }
 
     func testFileSummaryOmitsPartialStatistics() throws {

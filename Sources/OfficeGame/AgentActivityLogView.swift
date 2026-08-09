@@ -196,19 +196,6 @@ struct CodexTranscriptPresentation: Equatable {
 
         let deferredResponseMessageID = deferredResponseMessage?.id
         var entries: [CodexTranscriptEntry] = []
-        var workItems: [CodexActivityGroupItem] = []
-
-        func flushWorkItems() {
-            guard !workItems.isEmpty else {
-                return
-            }
-            entries.append(
-                .activityGroup(
-                    CodexActivityGroup(kind: .work, items: workItems)
-                )
-            )
-            workItems.removeAll(keepingCapacity: true)
-        }
 
         func isCollaborationActivity(
             _ activity: LiveFeedActivity
@@ -220,15 +207,132 @@ struct CodexTranscriptPresentation: Equatable {
                 )
         }
 
-        let collaborationActivities = visibleActivities.filter {
-            isCollaborationActivity($0)
+        // 공개 메시지는 새 협업 묶음의 경계지만, 같은 검토자의 결과는
+        // 메시지 뒤에 도착해도 원래 요청 카드에 귀속한다. 그래야 앞에는
+        // `진행 중`, 뒤에는 `완료`가 동시에 남거나 검토자명이 사라지지
+        // 않는다. 메시지 뒤의 새로운 검토자 요청만 새 카드가 된다.
+        var collaborationBatches: [[LiveFeedActivity]] = []
+        var currentCollaborationBatchIndex: Int?
+        var collaborationBatchIndexByAgentID: [String: Int] = [:]
+        var collaborationBatchIndexByActivityID: [String: Int] = [:]
+
+        for activity in visibleActivities {
+            if activity.kind == "message" {
+                currentCollaborationBatchIndex = nil
+                continue
+            }
+            guard isCollaborationActivity(activity) else {
+                continue
+            }
+
+            let agentID = activity.collaboration?.agentThreadID
+                ?? activity.id
+            let batchIndex: Int
+            if let existingIndex = collaborationBatchIndexByAgentID[agentID] {
+                batchIndex = existingIndex
+            } else if let currentCollaborationBatchIndex {
+                batchIndex = currentCollaborationBatchIndex
+                collaborationBatchIndexByAgentID[agentID] = batchIndex
+            } else {
+                batchIndex = collaborationBatches.count
+                collaborationBatches.append([])
+                currentCollaborationBatchIndex = batchIndex
+                collaborationBatchIndexByAgentID[agentID] = batchIndex
+            }
+            collaborationBatches[batchIndex].append(activity)
+            collaborationBatchIndexByActivityID[activity.id] = batchIndex
         }
-        let collaborationSummary = CodexCollaborationSummary.make(
-            from: collaborationActivities.map(
-                CodexActivityGroupItem.activity
-            )
-        )
-        let collaborationAnchorID = collaborationActivities.first?.id
+
+        var collaborationSummaryByBatchIndex:
+            [Int: CodexCollaborationSummary] = [:]
+        var collaborationAnchorIDByBatchIndex: [Int: String] = [:]
+        for (batchIndex, activities) in collaborationBatches.enumerated() {
+            guard
+                let anchorID = activities.first?.id,
+                let summary = CodexCollaborationSummary.make(
+                    from: activities.map(CodexActivityGroupItem.activity)
+                )
+            else {
+                continue
+            }
+            collaborationAnchorIDByBatchIndex[batchIndex] = anchorID
+            collaborationSummaryByBatchIndex[batchIndex] = summary
+        }
+
+        func appendActivityPhase(_ activities: [LiveFeedActivity]) {
+            guard !activities.isEmpty else {
+                return
+            }
+
+            var groupKind: CodexActivityGroupKind?
+            var groupItems: [CodexActivityGroupItem] = []
+
+            func flushGroup() {
+                guard let groupKind, !groupItems.isEmpty else {
+                    return
+                }
+                entries.append(
+                    .activityGroup(
+                        CodexActivityGroup(
+                            kind: groupKind,
+                            items: groupItems
+                        )
+                    )
+                )
+                groupItems.removeAll(keepingCapacity: true)
+            }
+
+            func appendGroupedItem(
+                _ item: CodexActivityGroupItem,
+                kind: CodexActivityGroupKind
+            ) {
+                if let groupKind, groupKind != kind {
+                    flushGroup()
+                }
+                groupKind = kind
+                groupItems.append(item)
+            }
+
+            for activity in activities {
+                if isCollaborationActivity(activity) {
+                    if
+                        let batchIndex =
+                            collaborationBatchIndexByActivityID[activity.id],
+                        activity.id
+                            == collaborationAnchorIDByBatchIndex[batchIndex],
+                        let collaborationSummary =
+                            collaborationSummaryByBatchIndex[batchIndex]
+                    {
+                        appendGroupedItem(
+                            .collaboration(
+                                activity: activity,
+                                summary: collaborationSummary
+                            ),
+                            kind: .collaboration
+                        )
+                    }
+                } else if
+                    CodexFileChangeSummary.isFileChange(activity),
+                    let summary = CodexFileChangeSummary.make(
+                        from: [activity]
+                    )
+                {
+                    appendGroupedItem(
+                        .changes(activity: activity, summary: summary),
+                        kind: .changes
+                    )
+                } else {
+                    appendGroupedItem(
+                        .activity(activity),
+                        kind: .work
+                    )
+                }
+            }
+
+            flushGroup()
+        }
+
+        var phaseActivities: [LiveFeedActivity] = []
 
         for activity in visibleActivities {
             let activityMessageID = "activity:\(activity.id)"
@@ -241,41 +345,18 @@ struct CodexTranscriptPresentation: Equatable {
 
             if activity.kind == "message" {
                 // 공개 진행문은 접힌 작업 기록에 숨기지 않는다. 직전 작업을
-                // 먼저 닫고 원래 시간 위치의 대화 메시지로 남긴다.
-                flushWorkItems()
+                // 먼저 닫고 원래 시간 위치의 대화 메시지로 남긴다. 메시지
+                // 뒤의 협업은 별도 카드가 되어 이전 협업과 섞이지 않는다.
+                appendActivityPhase(phaseActivities)
+                phaseActivities.removeAll(keepingCapacity: true)
                 entries.append(.message(transcriptMessage(from: activity)))
                 continue
             }
 
-            if isCollaborationActivity(activity) {
-                if
-                    activity.id == collaborationAnchorID,
-                    let collaborationSummary
-                {
-                    // 협업 호출 위치는 한 번만 남기고 이후 결과는 같은
-                    // 항목을 갱신한다. 앞뒤의 일반 작업 순서는 움직이지 않는다.
-                    workItems.append(
-                        .collaboration(
-                            activity: activity,
-                            summary: collaborationSummary
-                        )
-                    )
-                }
-            } else if
-                CodexFileChangeSummary.isFileChange(activity),
-                let summary = CodexFileChangeSummary.make(from: [activity])
-            {
-                workItems.append(
-                    .changes(activity: activity, summary: summary),
-                )
-            } else {
-                // 공개 메시지 사이의 추론·명령·도구는 하나의 작업 카드로
-                // 모아 세부 기록을 간결하게 유지한다.
-                workItems.append(.activity(activity))
-            }
+            phaseActivities.append(activity)
         }
 
-        flushWorkItems()
+        appendActivityPhase(phaseActivities)
         if let deferredResponseMessage {
             entries.append(.message(deferredResponseMessage))
         }
@@ -1135,11 +1216,24 @@ struct CodexTranscriptView: View {
         case .activityGroup(let group):
             if
                 group.kind == .collaboration,
-                let summary = CodexCollaborationSummary.make(
-                    from: group.items
-                )
+                let summary = group.items
+                    .compactMap(\.collaborationSummary)
+                    .last
+                    ?? CodexCollaborationSummary.make(from: group.items)
             {
                 CodexCollaborationGroupView(
+                    summary: summary,
+                    workspaceDirectory: workspaceDirectory
+                )
+            } else if
+                group.kind == .changes,
+                let summary = CodexFileChangeSummary.make(
+                    from: group.items.map(\.activity)
+                )
+            {
+                // 파일 변경은 일반 작업 카드 안에 다시 카드를 중첩하지
+                // 않고, 합산된 전용 카드 하나로 바로 표시한다.
+                CodexFileChangeSummaryView(
                     summary: summary,
                     workspaceDirectory: workspaceDirectory
                 )
