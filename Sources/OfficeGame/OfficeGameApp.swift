@@ -51,12 +51,78 @@ private struct OfficeLaunchRootView: View {
         case .ready:
             if let director = coordinator.director {
                 OfficeGameView(director: director)
+                    .overlay(alignment: .top) {
+                        if let notice = coordinator.backendCompatibilityNotice {
+                            OfficeBackendCompatibilityBanner(
+                                notice: notice,
+                                replaceBackend: coordinator.replaceIdleBackend
+                            )
+                            .padding(.top, 12)
+                        }
+                    }
             } else {
                 ProgressView()
             }
         case .failed(let message):
             OfficeLaunchFailureView(message: message)
         }
+    }
+}
+
+private struct OfficeBackendCompatibilityBanner: View {
+    let notice: OfficeBackendCompatibilityNotice
+    let replaceBackend: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(OfficeLocalization.string(notice.message))
+                    .font(.system(size: 12, weight: .semibold))
+                Text(
+                    OfficeLocalization.string(
+                        "현재 백엔드로 계속 사용할 수 있습니다. 업무가 없을 때만 안전 전환됩니다."
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                if let errorMessage = notice.errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            if notice.isReplacing {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.top, 3)
+            } else {
+                Button(
+                    notice.replacement.actionTitle,
+                    action: replaceBackend
+                )
+                .controlSize(.small)
+                .accessibilityIdentifier(
+                    "officeReadyReplaceBackendButton"
+                )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 620)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.orange.opacity(0.55), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+        .accessibilityIdentifier("officeBackendCompatibilityNotice")
     }
 }
 

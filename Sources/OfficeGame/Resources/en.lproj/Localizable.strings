@@ -314,9 +314,11 @@
 "직원 전환은 진행 중 업무가 없을 때만 가능하며, 기존 대화 기록은 보존됩니다." = "Teammates can be switched only when no task is running. Existing conversation history is preserved.";
 "구형 백엔드를 안전하게 교체" = "Safely Replace Older Backend";
 "이 프로젝트 백엔드로 전환" = "Switch Backend to This Project";
-"최신 백엔드로 전환" = "Switch to Latest Backend";
+"이 앱에 포함된 백엔드로 안전하게 전환" = "Safely Switch to This App's Backend";
+"릴리스 정보가 없는 백엔드에 연결됐습니다. 앱은 계속 사용할 수 있습니다." = "Connected to a backend without release metadata. You can keep using the app.";
+"다른 릴리스의 백엔드에 연결됐습니다. 앱은 계속 사용할 수 있습니다." = "Connected to a backend from another release. You can keep using the app.";
+"현재 백엔드로 계속 사용할 수 있습니다. 업무가 없을 때만 안전 전환됩니다." = "You can keep using the current backend. A safe switch is available only when no task is active.";
 "기존 백엔드를 안전하게 확인" = "Safely Check Existing Backend";
-"설치된 앱보다 오래된 백엔드가 실행 중입니다. 진행 중인 업무가 없을 때 최신 백엔드로 전환하세요." = "A backend older than the installed app is running. Switch to the latest backend when no task is active.";
 "실행 중 업무와 백엔드 소유권을 확인하는 중" = "Checking active work and backend ownership";
 "백엔드 전환은 실행 중 업무가 0건이고 4317 리스너가 OFFICESTRA launchd 작업과 일치할 때만 수행됩니다." = "The backend is switched only when no task is active and the port 4317 listener matches the OFFICESTRA launchd job.";
 "실행 중인 업무가 %d건 있어 백엔드를 바꾸지 않았습니다." = "The backend was not switched because %d task(s) are active.";

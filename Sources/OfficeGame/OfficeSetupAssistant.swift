@@ -40,7 +40,7 @@ enum OfficeDockerDataSelection: Equatable, Sendable {
 enum OfficeBackendReplacement: Equatable, Sendable {
     case legacy
     case wrongWorkspace(String)
-    case outdated(String?)
+    case differentRelease(String?)
     case unresponsive
 
     var actionTitle: String {
@@ -49,8 +49,8 @@ enum OfficeBackendReplacement: Equatable, Sendable {
             OfficeLocalization.string("구형 백엔드를 안전하게 교체")
         case .wrongWorkspace:
             OfficeLocalization.string("이 프로젝트 백엔드로 전환")
-        case .outdated:
-            OfficeLocalization.string("최신 백엔드로 전환")
+        case .differentRelease:
+            OfficeLocalization.string("이 앱에 포함된 백엔드로 안전하게 전환")
         case .unresponsive:
             OfficeLocalization.string("기존 백엔드를 안전하게 확인")
         }
@@ -1049,6 +1049,32 @@ enum OfficeRuntimeConfigurationWriter {
 enum OfficeSetupAssistant {
     typealias Progress = @Sendable (String) async -> Void
 
+    static func readyResultForReleaseMismatch(
+        connection: OfficeBackendConnection,
+        snapshot sourceSnapshot: OfficeSetupSnapshot,
+        availableBackends: Set<AgentBackend>,
+        executablePaths: [AgentBackend: String]
+    ) -> OfficeSetupResult? {
+        guard case .versionMismatch(let actual) = connection else {
+            return nil
+        }
+
+        var snapshot = sourceSnapshot
+        snapshot.docker = .ready("기존 로컬 데이터 사용")
+        snapshot.database = .ready("연결됨")
+        snapshot.backendReplacement = .differentRelease(actual)
+        snapshot.backend = .ready(
+            actual == nil
+                ? "릴리스 정보가 없는 백엔드에 연결됐습니다. 앱은 계속 사용할 수 있습니다."
+                : "다른 릴리스의 백엔드에 연결됐습니다. 앱은 계속 사용할 수 있습니다."
+        )
+        return .ready(
+            snapshot: snapshot,
+            availableBackends: availableBackends,
+            executablePaths: executablePaths
+        )
+    }
+
     static func prepare(
         workdir: String,
         healthURL: URL,
@@ -1129,11 +1155,20 @@ enum OfficeSetupAssistant {
 
         await progress("기존 백엔드 연결을 확인하는 중")
         let initialHealth = await OfficeBackendHealthProbe.fetch(at: healthURL)
-        switch OfficeBackendHealthProbe.classify(
+        let initialConnection = OfficeBackendHealthProbe.classify(
             initialHealth,
             expectedWorkdir: workdir,
             expectedReleaseID: releaseID
+        )
+        if let result = readyResultForReleaseMismatch(
+            connection: initialConnection,
+            snapshot: snapshot,
+            availableBackends: authenticated,
+            executablePaths: executablePaths
         ) {
+            return result
+        }
+        switch initialConnection {
         case .ready:
             if let issue = await readyStateIssue(
                 healthURL: healthURL,
@@ -1168,14 +1203,8 @@ enum OfficeSetupAssistant {
                 "다른 프로젝트에 연결돼 있습니다: \(actual)"
             )
             return .needsAction(snapshot)
-        case .versionMismatch(let actual):
-            snapshot.backendReplacement = .outdated(actual)
-            snapshot.backend = .actionRequired(
-                OfficeLocalization.string(
-                    "설치된 앱보다 오래된 백엔드가 실행 중입니다. 진행 중인 업무가 없을 때 최신 백엔드로 전환하세요."
-                )
-            )
-            return .needsAction(snapshot)
+        case .versionMismatch:
+            preconditionFailure("릴리스 불일치는 비차단 준비 결과로 처리해야 합니다.")
         case .foreignService:
             snapshot.backend = .actionRequired(
                 "4317 포트를 다른 프로그램이 사용하고 있습니다."
@@ -1262,11 +1291,20 @@ enum OfficeSetupAssistant {
         // DB만 잠시 내려갔던 기존 백엔드가 회복됐으면 그 프로세스를
         // 무조건 bootout하지 않는다. 소유권·업무 폴더·릴리스를 다시 판정한다.
         let recoveredHealth = await OfficeBackendHealthProbe.fetch(at: healthURL)
-        switch OfficeBackendHealthProbe.classify(
+        let recoveredConnection = OfficeBackendHealthProbe.classify(
             recoveredHealth,
             expectedWorkdir: workdir,
             expectedReleaseID: releaseID
+        )
+        if let result = readyResultForReleaseMismatch(
+            connection: recoveredConnection,
+            snapshot: snapshot,
+            availableBackends: authenticated,
+            executablePaths: executablePaths
         ) {
+            return result
+        }
+        switch recoveredConnection {
         case .ready:
             if let issue = await readyStateIssue(
                 healthURL: healthURL,
@@ -1297,12 +1335,8 @@ enum OfficeSetupAssistant {
                 "다른 프로젝트 백엔드가 회복됐습니다: \(actual)"
             )
             return .needsAction(snapshot)
-        case .versionMismatch(let actual):
-            snapshot.backendReplacement = .outdated(actual)
-            snapshot.backend = .actionRequired(
-                "구형 백엔드가 회복됐습니다. 안전 확인 후 최신 백엔드로 전환하세요."
-            )
-            return .needsAction(snapshot)
+        case .versionMismatch:
+            preconditionFailure("릴리스 불일치는 비차단 준비 결과로 처리해야 합니다.")
         case .foreignService:
             snapshot.backend = .actionRequired(
                 "4317 포트를 다른 프로그램이 사용하고 있습니다."
@@ -1362,11 +1396,20 @@ enum OfficeSetupAssistant {
         for _ in 0..<60 {
             try? await Task.sleep(for: .milliseconds(500))
             let health = await OfficeBackendHealthProbe.fetch(at: healthURL)
-            switch OfficeBackendHealthProbe.classify(
+            let startedConnection = OfficeBackendHealthProbe.classify(
                 health,
                 expectedWorkdir: workdir,
                 expectedReleaseID: releaseID
+            )
+            if let result = readyResultForReleaseMismatch(
+                connection: startedConnection,
+                snapshot: snapshot,
+                availableBackends: authenticated,
+                executablePaths: executablePaths
             ) {
+                return result
+            }
+            switch startedConnection {
             case .ready:
                 if let issue = await readyStateIssue(
                     healthURL: healthURL,
@@ -1399,12 +1442,8 @@ enum OfficeSetupAssistant {
                     "다른 프로젝트에 연결돼 있습니다: \(actual)"
                 )
                 return .needsAction(snapshot)
-            case .versionMismatch(let actual):
-                snapshot.backendReplacement = .outdated(actual)
-                snapshot.backend = .actionRequired(
-                    "실행된 백엔드의 릴리스가 앱과 일치하지 않습니다."
-                )
-                return .needsAction(snapshot)
+            case .versionMismatch:
+                preconditionFailure("릴리스 불일치는 비차단 준비 결과로 처리해야 합니다.")
             case .foreignService:
                 snapshot.backend = .actionRequired(
                     "4317 포트를 다른 프로그램이 사용하고 있습니다."
