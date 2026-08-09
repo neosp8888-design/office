@@ -201,7 +201,7 @@ single line in Terminal and require an `OK` result. On an Intel Mac, replace
 `arm64` in the filename with `x86_64`.
 
 ```sh
-cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.0-3-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
+cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.1-4-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
 ```
 
 Choose **Open Logs** on the setup screen if installation fails. OFFICESTRA does
@@ -302,10 +302,10 @@ for current provider-specific details.
 
 Run the clone command only when `~/OFFICESTRA` does not already exist. If it
 does exist, do not delete or overwrite it; ask Codex or Claude to inspect the
-existing installation first. This command pins the public `v1.3.0` source.
+existing installation first. This command pins the public `v1.3.1` source.
 
 ```sh
-git clone --branch v1.3.0 --depth 1 \
+git clone --branch v1.3.1 --depth 1 \
   https://github.com/neosp8888-design/office.git \
   "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
