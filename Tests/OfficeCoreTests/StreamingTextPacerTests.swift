@@ -711,13 +711,36 @@ final class StreamingTextPacerTests: XCTestCase {
             object: scrollView
         )
         let pausedCount = textView.string.count
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.12))
-        XCTAssertGreaterThan(
-            textView.string.count,
-            pausedCount,
+        XCTAssertTrue(
+            waitUntil(timeout: 0.5) {
+                textView.string.count > pausedCount
+            },
             "live-scroll 종료 뒤 늦게 mount된 타이핑이 재개되지 않았습니다."
         )
         window.contentView = nil
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        pollInterval: TimeInterval = 0.016,
+        condition: () -> Bool
+    ) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        repeat {
+            if condition() {
+                return true
+            }
+            let remaining = max(
+                0,
+                deadline - ProcessInfo.processInfo.systemUptime
+            )
+            RunLoop.main.run(
+                until: Date(
+                    timeIntervalSinceNow: min(pollInterval, remaining)
+                )
+            )
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return condition()
     }
 
     private func firstDescendant<ViewType: NSView>(

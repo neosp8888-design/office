@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ inputs.tag }}
@@ -35,13 +36,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
 
       - name: Verify tag and app version
         env:
@@ -75,6 +69,39 @@ jobs:
               Resources/Info.plist
           )"
           test "$RELEASE_TAG" = "v${version}"
+
+      - name: Require exact release UI preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          preflight_url="$(
+            gh api \
+              --paginate \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/release-ui-preflight.yml/runs?event=workflow_dispatch&status=success&per_page=100" \
+              --jq '.workflow_runs[] | [.head_sha, .html_url] | @tsv' \
+              | awk -F '\t' -v sha="$tag_commit" \
+                  '$1 == sha { url=$2 } END { print url }'
+          )"
+          if [[ -z "$preflight_url" ]]; then
+            echo \
+              "No successful Release UI Preflight exists for ${tag_commit}." \
+              >&2
+            echo \
+              "Run release-ui-preflight.yml on that exact main commit before tagging." \
+              >&2
+            exit 1
+          fi
+          echo "Using Release UI Preflight: $preflight_url"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
       - name: Reject unsafe tagged source
         run: python3 scripts/verify-release-safety.py --tracked-only

@@ -212,6 +212,9 @@ jobs:
             .github/workflows/community-preview-release.yml
           ruby -e \
             'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
+            .github/workflows/release-ui-preflight.yml
+          ruby -e \
+            'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
             infra/compose.yaml
 
   packaged-runtime-e2e:
