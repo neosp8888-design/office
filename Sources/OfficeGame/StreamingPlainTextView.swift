@@ -70,11 +70,14 @@ final class IncrementalStreamingTextView: NSView {
     private var charactersPerTick = 1
     private var animationStartedAt: TimeInterval?
     private var animationDuration: TimeInterval?
+    private var revealMode = StreamingPlainTextRevealMode.trailingCharacters
     private var updateGeneration = 0
     private var finishedGeneration: Int?
     private var typingTimer: Timer?
     private var measuredHeight = CGFloat.zero
     private var measuredWidth = CGFloat.zero
+    private weak var pausedLiveScrollView: NSScrollView?
+    private var liveScrollPausedAt: TimeInterval?
     var onFinishedTyping: () -> Void = {}
 
     init(fontSize: CGFloat, lineSpacing: CGFloat) {
@@ -82,6 +85,7 @@ final class IncrementalStreamingTextView: NSView {
         self.lineSpacing = lineSpacing
         super.init(frame: .zero)
         configureTextView()
+        observeLiveScroll()
     }
 
     @available(*, unavailable)
@@ -91,6 +95,7 @@ final class IncrementalStreamingTextView: NSView {
 
     deinit {
         typingTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 
     override var isFlipped: Bool {
@@ -111,7 +116,9 @@ final class IncrementalStreamingTextView: NSView {
         }
         textView.frame = bounds
         updateTextContainerWidth(bounds.width)
-        updateMeasuredHeight()
+        if revealMode == .trailingCharacters {
+            updateMeasuredHeight()
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -142,6 +149,7 @@ final class IncrementalStreamingTextView: NSView {
         let generation = updateGeneration
         finishedGeneration = nil
         targetText = source
+        self.revealMode = revealMode
         let plan: StreamingTextUpdatePlan
         switch revealMode {
         case .trailingCharacters:
@@ -236,6 +244,7 @@ final class IncrementalStreamingTextView: NSView {
         guard
             window != nil,
             typingTimer == nil,
+            pausedLiveScrollView == nil,
             pendingIndex < pendingCharacters.count
         else {
             return
@@ -251,7 +260,9 @@ final class IncrementalStreamingTextView: NSView {
         ) { [weak self] _ in
             self?.appendNextCharacter()
         }
-        RunLoop.main.add(timer, forMode: .common)
+        // live-scroll의 event-tracking 중에는 타이핑을 잠시 멈춘다. 강한 휠
+        // 입력과 60Hz 텍스트 갱신이 같은 SwiftUI 레이아웃을 경쟁하지 않는다.
+        RunLoop.main.add(timer, forMode: .default)
         typingTimer = timer
     }
 
@@ -262,6 +273,64 @@ final class IncrementalStreamingTextView: NSView {
             animationStartedAt = nil
             animationDuration = nil
         }
+    }
+
+    private func observeLiveScroll() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(liveScrollWillStart(_:)),
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(liveScrollDidEnd(_:)),
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: nil
+        )
+    }
+
+    @objc private func liveScrollWillStart(_ notification: Notification) {
+        guard
+            pausedLiveScrollView == nil,
+            pendingIndex < pendingCharacters.count,
+            let scrollView = notification.object as? NSScrollView,
+            belongs(to: scrollView)
+        else {
+            return
+        }
+        pausedLiveScrollView = scrollView
+        liveScrollPausedAt = ProcessInfo.processInfo.systemUptime
+        stopTyping()
+    }
+
+    @objc private func liveScrollDidEnd(_ notification: Notification) {
+        guard
+            let scrollView = notification.object as? NSScrollView,
+            pausedLiveScrollView === scrollView
+        else {
+            return
+        }
+        if
+            let pausedAt = liveScrollPausedAt,
+            let startedAt = animationStartedAt
+        {
+            let pausedDuration = max(
+                0,
+                ProcessInfo.processInfo.systemUptime - pausedAt
+            )
+            animationStartedAt = startedAt + pausedDuration
+        }
+        pausedLiveScrollView = nil
+        liveScrollPausedAt = nil
+        startTypingIfNeeded()
+    }
+
+    private func belongs(to scrollView: NSScrollView) -> Bool {
+        guard let documentView = scrollView.documentView else {
+            return false
+        }
+        return self === documentView || isDescendant(of: documentView)
     }
 
     private func appendNextCharacter() {
@@ -302,7 +371,12 @@ final class IncrementalStreamingTextView: NSView {
             )
         )
         textView.needsDisplay = true
-        updateMeasuredHeight()
+        // 완성 응답의 한 줄은 SwiftUI 쪽에서 최종 Markdown 높이를 먼저
+        // 예약한다. 매 tick 고유 높이를 다시 계산하면 외부 ScrollView의
+        // LazyVStack 측정까지 연쇄적으로 무효화된다.
+        if revealMode == .trailingCharacters {
+            updateMeasuredHeight()
+        }
 
         if pendingIndex >= pendingCharacters.count {
             pendingCharacters = []
