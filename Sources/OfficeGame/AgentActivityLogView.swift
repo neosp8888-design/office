@@ -1399,7 +1399,6 @@ private struct CodexCollaborationAgentView: View {
                                 fontSize: 11.5,
                                 fileBaseDirectory: workspaceDirectory
                             )
-                            .textSelection(.enabled)
                             .padding(.top, 7)
                         }
                     } label: {
@@ -1802,10 +1801,7 @@ private struct CodexMessageView: View {
                 )
             }
 
-            if
-                responseDisplayMode == .typing
-                    || responseDisplayMode == .committed
-            {
+            if responseDisplayMode == .typing {
                 CompletedResponseLineTypingView(
                     typingIdentity: typingIdentity,
                     source: message.text,
@@ -1813,11 +1809,13 @@ private struct CodexMessageView: View {
                     fileBaseDirectory: workspaceDirectory,
                     animates: animatesResponse,
                     animatesInitialSource: animatesInitialResponse,
-                    presentsTyping:
-                        responseDisplayMode == .typing,
+                    presentsTyping: true,
                     onFinishedTyping: onResponsePresented
                 )
             } else {
+                // 타자가 끝난 응답은 한 개의 Markdown 트리로 수렴시킨다.
+                // 줄별 selectable 뷰를 남기면 직원 전환 직후 스크롤에서
+                // SelectionOverlay가 대량 재배치될 수 있다.
                 renderedMessage
             }
 
@@ -1863,7 +1861,6 @@ private struct CodexMessageView: View {
             fontSize: 14,
             fileBaseDirectory: workspaceDirectory
         )
-        .textSelection(.enabled)
     }
 
     private func copyMessage() {

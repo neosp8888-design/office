@@ -939,7 +939,6 @@ private struct ClaudeMessageView: View {
                     fontSize: 14,
                     fileBaseDirectory: workspaceDirectory
                 )
-                .textSelection(.enabled)
             }
 
             ResponseMessageFooter(

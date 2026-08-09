@@ -120,28 +120,37 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 .frame(width: 900, height: 700)
         )
         rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
-        let parentView = NSView(frame: rootHost.bounds)
-        parentView.addSubview(rootHost)
+        let window = NSWindow(
+            contentRect: rootHost.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = rootHost
         rootHost.layoutSubtreeIfNeeded()
         try await settle(for: .milliseconds(200))
+        XCTAssertTrue(
+            rootHost.window === window,
+            "실제 window가 없으면 scroll observer와 SelectionOverlay가 "
+                + "mount되지 않습니다."
+        )
 
         guard let container = allDescendants(of: rootHost)
             .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
             .first
         else {
             XCTFail("SwiftUI representable이 live feed container를 만들지 못했습니다.")
-            rootHost.removeFromSuperview()
+            window.contentView = nil
             return
         }
 
         defer {
             container.tearDown()
-            rootHost.removeFromSuperview()
+            window.contentView = nil
         }
 
-        // 실제 NSHostingView 안에서 representable update, NSScrollView
-        // 관찰자, 자동 하단 이동을 함께 동작하게 한다. 테스트 프로세스의
-        // 전역 NSWindow 전환 애니메이션은 검증 범위가 아니므로 만들지 않는다.
+        // 실제 NSWindow 안에서 representable update, NSScrollView observer,
+        // SelectionOverlay와 자동 하단 이동을 함께 동작하게 한다.
         for index in 0..<10 {
             let character = OfficeCharacter.allCases[
                 index % OfficeCharacter.allCases.count
@@ -231,6 +240,79 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 + "\(geometryNotificationCount)회 발생했습니다. 자동 스크롤과 "
                 + "layout 측정이 서로 재촉발되는 상태입니다."
         )
+    }
+
+    func testImmediateScrollAfterSelectionWithCompletedTypingQuiesces()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let response = (0..<12).map { index in
+            "### 완료 줄 \(index)\n직원 전환 직후에도 안정적으로 표시합니다."
+        }.joined(separator: "\n")
+        let turns = makeTurns(completedResponse: response)
+        director.liveFeedStore.replace(with: turns)
+        director.liveFeedStore.finishInitialLoading()
+        for character in OfficeCharacter.allCases {
+            director.liveFeedStore.beginResponseAnimation(
+                for: "\(character.rawValue)-29"
+            )
+        }
+
+        let rootHost = NSHostingView(
+            rootView: CachedLiveWorkspaceFeeds(director: director)
+                .frame(width: 900, height: 700)
+        )
+        rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(
+            contentRect: rootHost.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = rootHost
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(120))
+
+        guard let container = allDescendants(of: rootHost)
+            .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
+            .first
+        else {
+            XCTFail("완료 타이핑용 live feed container를 만들지 못했습니다.")
+            window.contentView = nil
+            return
+        }
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        for index in 0..<15 {
+            director.selectedCharacterID = OfficeCharacter.allCases[
+                index % OfficeCharacter.allCases.count
+            ]
+            rootHost.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(4))
+            guard let scrollView = primaryScrollView(in: rootHost) else {
+                XCTFail("직원 전환 직후 live feed scroll view가 사라졌습니다.")
+                return
+            }
+            performSmallLiveScroll(
+                scrollView,
+                delta: index.isMultiple(of: 2) ? 8 : -8
+            )
+        }
+
+        XCTAssertEqual(container.subviews.count, 1)
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        try await settle(for: .seconds(2))
+        XCTAssertLessThan(
+            startedAt.duration(to: clock.now),
+            .seconds(4),
+            "입력 종료 뒤에도 SelectionOverlay transaction이 "
+                + "메인 스레드를 점유합니다."
+        )
+        XCTAssertEqual(container.subviews.count, 1)
     }
 
     func testRapidSelectionReleasesInactiveHostsAndCreatesFreshHosts()
@@ -436,7 +518,10 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
-    private func makeTurns(streamingStep: Int? = nil) -> [LiveFeedTurn] {
+    private func makeTurns(
+        streamingStep: Int? = nil,
+        completedResponse: String? = nil
+    ) -> [LiveFeedTurn] {
         let origin = Date(timeIntervalSinceReferenceDate: 10_000)
         return OfficeCharacter.allCases.flatMap { character in
             (0..<30).map { index in
@@ -461,7 +546,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                             repeating: "진행 중인 응답 줄입니다.\n",
                             count: streamingStep ?? 1
                         )
-                        : "완료 \(index)",
+                        : completedResponse ?? "완료 \(index)",
                     feedback: nil,
                     status: isStreaming ? .running : .completed,
                     needsInput: false,
@@ -521,6 +606,38 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             targetY = toTop ? scrollableHeight : documentView.bounds.minY
         }
 
+        NotificationCenter.default.post(
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        clipView.scroll(to: NSPoint(x: clipView.bounds.minX, y: targetY))
+        scrollView.reflectScrolledClipView(clipView)
+        NotificationCenter.default.post(
+            name: NSScrollView.didLiveScrollNotification,
+            object: scrollView
+        )
+        NotificationCenter.default.post(
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+    }
+
+    private func performSmallLiveScroll(
+        _ scrollView: NSScrollView,
+        delta: CGFloat
+    ) {
+        guard let documentView = scrollView.documentView else {
+            return
+        }
+        let clipView = scrollView.contentView
+        let maximumY = max(
+            documentView.bounds.minY,
+            documentView.bounds.height - clipView.bounds.height
+        )
+        let targetY = min(
+            maximumY,
+            max(documentView.bounds.minY, clipView.bounds.minY + delta)
+        )
         NotificationCenter.default.post(
             name: NSScrollView.willStartLiveScrollNotification,
             object: scrollView

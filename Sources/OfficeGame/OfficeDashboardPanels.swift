@@ -2090,6 +2090,12 @@ struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
             self.onUserScroll = onUserScroll
         }
 
+        deinit {
+            // SwiftUI가 빠른 직원 전환 중 dismantle 콜백을 건너뛰더라도
+            // NotificationCenter observer가 다음 호스트까지 남지 않게 한다.
+            detach()
+        }
+
         func attach(to scrollView: NSScrollView?) {
             let documentView = scrollView?.documentView
             guard
@@ -2921,9 +2927,9 @@ private struct CompletedResponseCommittedLineView: View, Equatable {
                 ConversationMarkdownView(
                     source: line.source,
                     fontSize: fontSize,
-                    fileBaseDirectory: fileBaseDirectory
+                    fileBaseDirectory: fileBaseDirectory,
+                    allowsTextSelection: false
                 )
-                .textSelection(.enabled)
             case .blank:
                 Color.clear.frame(height: 4)
             case .codeFence:
@@ -2931,7 +2937,6 @@ private struct CompletedResponseCommittedLineView: View, Equatable {
             case .code, .table:
                 Text(line.source.isEmpty ? " " : line.source)
                     .font(.system(size: fontSize, design: .monospaced))
-                    .textSelection(.enabled)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -3043,7 +3048,6 @@ struct CompletedResponseLineTypingView: View {
             fontSize: fontSize,
             fileBaseDirectory: fileBaseDirectory
         )
-        .textSelection(.enabled)
     }
 
     private func committedBody(
@@ -3220,7 +3224,6 @@ struct LiveTypingResponseView: View {
                             fontSize: Self.responseFontSize,
                             fileBaseDirectory: fileBaseDirectory
                         )
-                        .textSelection(.enabled)
                     }
 
                     // 작성 중 블록은 줄이 완성될 때마다 Markdown으로 갱신한다.
@@ -3230,7 +3233,6 @@ struct LiveTypingResponseView: View {
                             fontSize: Self.responseFontSize,
                             fileBaseDirectory: fileBaseDirectory
                         )
-                        .textSelection(.enabled)
                     }
 
                     // 개행 전 마지막 조각만 평문으로 타자 출력한다.
@@ -3260,7 +3262,6 @@ struct LiveTypingResponseView: View {
                     fontSize: Self.responseFontSize,
                     fileBaseDirectory: fileBaseDirectory
                 )
-                .textSelection(.enabled)
             }
         }
     }

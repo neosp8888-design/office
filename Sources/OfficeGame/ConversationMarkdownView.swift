@@ -24,22 +24,26 @@ struct ConversationMarkdownView: View {
     let source: String
     let fontSize: CGFloat
     let fileBaseDirectory: String?
+    let allowsTextSelection: Bool
 
     init(
         source: String,
         fontSize: CGFloat = 12,
-        fileBaseDirectory: String? = nil
+        fileBaseDirectory: String? = nil,
+        allowsTextSelection: Bool = true
     ) {
         self.source = source
         self.fontSize = fontSize
         self.fileBaseDirectory = fileBaseDirectory
+        self.allowsTextSelection = allowsTextSelection
     }
 
     var body: some View {
         ConversationMarkdownContent(
             source: source,
             fontSize: fontSize,
-            fileBaseDirectory: fileBaseDirectory
+            fileBaseDirectory: fileBaseDirectory,
+            allowsTextSelection: allowsTextSelection
         )
         .equatable()
     }
@@ -49,6 +53,7 @@ private struct ConversationMarkdownContent: View, Equatable {
     let source: String
     let fontSize: CGFloat
     let fileBaseDirectory: String?
+    let allowsTextSelection: Bool
 
     var body: some View {
         let fallbackDirectory = fileBaseDirectory.flatMap {
@@ -59,7 +64,7 @@ private struct ConversationMarkdownContent: View, Equatable {
             fallbackDirectory: fallbackDirectory
         )
 
-        VStack(alignment: .leading, spacing: 9) {
+        let content = VStack(alignment: .leading, spacing: 9) {
             Markdown(
                 ConversationMarkdownCache.shared.content(
                     for: source,
@@ -140,8 +145,18 @@ private struct ConversationMarkdownContent: View, Equatable {
                     return .handled
                 }
             )
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+        if allowsTextSelection {
+            content
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            // 완료 응답을 타이핑하는 동안에는 이 Markdown이 실제 표시용이
+            // 아니라 높이 예약용으로도 만들어진다. 선택 오버레이를 만들면
+            // 직원 전환 직후 스크롤과 겹쳐 SwiftUI가 갱신 루프에 빠질 수 있다.
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
