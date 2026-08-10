@@ -669,12 +669,14 @@ final class LiveFeedStoreTests: XCTestCase {
     func testMetadataStoreDefersPublicationBeyondViewUpdate() async {
         let initial = LiveWorkspaceFeedMetadata(
             latestTerminalTurnID: nil,
-            latestSubmittedTurnID: nil,
+            latestSubmittedCommandID: nil,
             latestStartedCommandID: nil
         )
         let updated = LiveWorkspaceFeedMetadata(
             latestTerminalTurnID: "terminal-turn",
-            latestSubmittedTurnID: "server-turn",
+            latestSubmittedCommandID: UUID(
+                uuidString: "00000000-0000-0000-0000-000000000001"
+            ),
             latestStartedCommandID: UUID(
                 uuidString: "11111111-1111-1111-1111-111111111111"
             )
@@ -698,28 +700,37 @@ final class LiveFeedStoreTests: XCTestCase {
     }
 
     func testMetadataStoreCoalescesSubmitTransitionsToLatestSnapshot() async {
-        let initial = LiveWorkspaceFeedMetadata(
-            latestTerminalTurnID: nil,
-            latestSubmittedTurnID: nil,
-            latestStartedCommandID: nil
-        )
-        let local = LiveWorkspaceFeedMetadata(
-            latestTerminalTurnID: nil,
-            latestSubmittedTurnID: "local-command",
-            latestStartedCommandID: nil
-        )
-        let server = LiveWorkspaceFeedMetadata(
-            latestTerminalTurnID: nil,
-            latestSubmittedTurnID: "server-turn",
-            latestStartedCommandID: nil
+        let submittedCommandID = UUID(
+            uuidString: "22222222-2222-2222-2222-222222222221"
         )
         let startedCommandID = UUID(
             uuidString: "22222222-2222-2222-2222-222222222222"
         )
+        let initial = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedCommandID: nil,
+            latestStartedCommandID: nil
+        )
+        let local = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedCommandID: submittedCommandID,
+            latestStartedCommandID: nil
+        )
+        let server = LiveWorkspaceFeedMetadata(
+            latestTerminalTurnID: nil,
+            latestSubmittedCommandID: submittedCommandID,
+            latestStartedCommandID: nil
+        )
         let started = LiveWorkspaceFeedMetadata(
             latestTerminalTurnID: nil,
-            latestSubmittedTurnID: "server-turn",
+            latestSubmittedCommandID: submittedCommandID,
             latestStartedCommandID: startedCommandID
+        )
+        XCTAssertEqual(
+            local,
+            server,
+            "임시 턴 ID가 서버 ID로 바뀌어도 제출 스크롤 기준은 "
+                + "같은 command ID로 유지되어야 합니다."
         )
         let store = LiveWorkspaceFeedMetadataStore(metadata: initial)
         var publicationCount = 0
