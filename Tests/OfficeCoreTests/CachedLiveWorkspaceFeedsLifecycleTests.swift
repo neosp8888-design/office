@@ -422,6 +422,57 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertNotNil(container.subviews.first)
     }
 
+    func testPostMountRefreshWaitsUntilSelectedHostIsInWindow()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.liveFeedStore.replace(with: makeTurns())
+        director.liveFeedStore.finishInitialLoading()
+        let characterStore = director.liveFeedStore.characterStore(
+            for: OfficeCharacter.boss.rawValue
+        )
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+
+        defer {
+            container.tearDown()
+        }
+
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss
+        )
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(50))
+
+        XCTAssertEqual(
+            characterStore.presentationRevision,
+            0,
+            "window에 연결되기 전의 갱신은 새 SwiftUI 그래프가 구독하기 "
+                + "전에 유실될 수 있습니다."
+        )
+
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(100))
+
+        XCTAssertEqual(characterStore.presentationRevision, 1)
+        XCTAssertTrue(container.window === window)
+        let scrollView = try await waitForPrimaryScrollView(in: container)
+        XCTAssertNotNil(
+            scrollView,
+            "창에 연결된 뒤 선택 직원 대화 목록이 실제로 mount되어야 합니다."
+        )
+        window.contentView = nil
+    }
+
     func testScrollGeometryReportsFlippedTopAndBottomWithoutPreferenceKeys() {
         let documentBounds = CGRect(x: 0, y: 0, width: 500, height: 1_000)
 

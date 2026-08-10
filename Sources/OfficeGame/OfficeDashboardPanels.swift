@@ -907,23 +907,23 @@ struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
 
 struct LiveWorkspaceFeedMetadata: Equatable {
     let latestTerminalTurnID: String?
-    let latestSubmittedTurnID: String?
+    let latestSubmittedCommandID: UUID?
     let latestStartedCommandID: UUID?
 
     init(
         latestTerminalTurnID: String?,
-        latestSubmittedTurnID: String?,
+        latestSubmittedCommandID: UUID?,
         latestStartedCommandID: UUID?
     ) {
         self.latestTerminalTurnID = latestTerminalTurnID
-        self.latestSubmittedTurnID = latestSubmittedTurnID
+        self.latestSubmittedCommandID = latestSubmittedCommandID
         self.latestStartedCommandID = latestStartedCommandID
     }
 
     @MainActor
     init(director: AgentDirector) {
         latestTerminalTurnID = director.latestTerminalTurnID
-        latestSubmittedTurnID = director.latestSubmittedTurnID
+        latestSubmittedCommandID = director.latestSubmittedCommandID
         latestStartedCommandID = director.latestStartedCommandID
     }
 }
@@ -1073,6 +1073,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var selectedCharacterID: OfficeCharacter?
     private var postMountRefreshTask: Task<Void, Never>?
     private var selectionGeneration = 0
+    private var pendingPostMountRefreshGeneration: Int?
+
+    private static let postMountRefreshMaximumAttempts = 12
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1089,6 +1092,12 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         for subview in subviews where subview.frame != bounds {
             subview.frame = bounds
         }
+        schedulePostMountRefreshIfNeeded()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        schedulePostMountRefreshIfNeeded()
     }
 
     func configure(
@@ -1107,6 +1116,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             postMountRefreshTask?.cancel()
             postMountRefreshTask = nil
             selectionGeneration &+= 1
+            pendingPostMountRefreshGeneration = selectedCharacterID == nil
+                ? nil
+                : selectionGeneration
         }
 
         if didChangeSelection {
@@ -1145,11 +1157,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         selectedEntry.presentationStore.setPresented(true)
         selectedEntry.hostingView.isHidden = false
         if didChangeSelection {
-            schedulePostMountRefresh(
-                director: director,
-                characterID: selectedCharacterID,
-                generation: selectionGeneration
-            )
+            needsLayout = true
+            schedulePostMountRefreshIfNeeded()
         }
     }
 
@@ -1157,6 +1166,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         postMountRefreshTask?.cancel()
         postMountRefreshTask = nil
         selectionGeneration &+= 1
+        pendingPostMountRefreshGeneration = nil
         releaseActiveEntry()
         selectedCharacterID = nil
         director = nil
@@ -1171,27 +1181,73 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         self.activeEntry = nil
     }
 
-    private func schedulePostMountRefresh(
-        director: AgentDirector,
-        characterID: OfficeCharacter,
-        generation: Int
-    ) {
+    private func schedulePostMountRefreshIfNeeded() {
+        guard
+            postMountRefreshTask == nil,
+            window != nil,
+            let director,
+            let characterID = selectedCharacterID,
+            let generation = pendingPostMountRefreshGeneration,
+            generation == selectionGeneration
+        else {
+            return
+        }
+
         postMountRefreshTask = Task { [weak self, weak director] in
-            // updateNSView가 반환되어 선택된 NSHostingView가 실제로 표시된
-            // 다음 MainActor 차례에 한 번만 발행한다.
-            await Task.yield()
+            // NSHostingView가 window와 크기를 얻은 뒤 SwiftUI 구독이 붙을
+            // 시간을 준다. 단일 Task.yield()는 updateNSView와 window attach
+            // 순서에 따라 구독 전에 끝날 수 있으므로 짧고 제한된 횟수만
+            // 준비 상태를 확인한다.
+            for attempt in 0..<Self.postMountRefreshMaximumAttempts {
+                await Task.yield()
+                if attempt > 0 {
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                guard
+                    let self,
+                    let director,
+                    !Task.isCancelled,
+                    self.selectionGeneration == generation,
+                    self.selectedCharacterID == characterID,
+                    self.pendingPostMountRefreshGeneration == generation,
+                    let activeEntry = self.activeEntry,
+                    activeEntry.characterID == characterID
+                else {
+                    return
+                }
+
+                guard
+                    let window = self.window,
+                    activeEntry.hostingView.superview === self,
+                    activeEntry.hostingView.window === window,
+                    self.bounds.width > 0,
+                    self.bounds.height > 0,
+                    activeEntry.hostingView.bounds.width > 0,
+                    activeEntry.hostingView.bounds.height > 0
+                else {
+                    continue
+                }
+
+                activeEntry.hostingView.needsLayout = true
+                activeEntry.hostingView.layoutSubtreeIfNeeded()
+                activeEntry.hostingView.needsDisplay = true
+                director.liveFeedStore.refreshSelectedCharacterFeedAfterMount(
+                    characterID.rawValue
+                )
+                self.pendingPostMountRefreshGeneration = nil
+                self.postMountRefreshTask = nil
+                return
+            }
+
             guard
                 let self,
-                let director,
-                !Task.isCancelled,
                 self.selectionGeneration == generation,
                 self.selectedCharacterID == characterID
             else {
                 return
             }
-            director.liveFeedStore.refreshSelectedCharacterFeedAfterMount(
-                characterID.rawValue
-            )
+            // 아직 준비되지 않았으면 pending 상태를 남긴다. 다음 실제
+            // window/layout 콜백에서 다시 시도하며 자체 반복은 만들지 않는다.
             self.postMountRefreshTask = nil
         }
     }
@@ -1205,7 +1261,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     private let presentationStore: LiveWorkspaceFeedPresentationStore
     private let workspaceDirectory: String
     private let latestTerminalTurnID: String?
-    private let latestSubmittedTurnID: String?
+    private let latestSubmittedCommandID: UUID?
     private let latestStartedCommandID: UUID?
     private let fetchWorkspaceReview: WorkspaceReviewFetcher
     private let resolveWorkspaceReview: WorkspaceReviewResolver
@@ -1243,7 +1299,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         self.presentationStore = presentationStore
         workspaceDirectory = director.workspaceDirectory
         latestTerminalTurnID = metadata.latestTerminalTurnID
-        latestSubmittedTurnID = metadata.latestSubmittedTurnID
+        latestSubmittedCommandID = metadata.latestSubmittedCommandID
         latestStartedCommandID = metadata.latestStartedCommandID
         fetchWorkspaceReview = { turnID in
             try await director.fetchWorkspaceReview(turnID: turnID)
@@ -1273,7 +1329,7 @@ struct LiveWorkspaceFeed: View, Equatable {
             && lhs.presentationStore === rhs.presentationStore
             && lhs.workspaceDirectory == rhs.workspaceDirectory
             && lhs.latestTerminalTurnID == rhs.latestTerminalTurnID
-            && lhs.latestSubmittedTurnID == rhs.latestSubmittedTurnID
+            && lhs.latestSubmittedCommandID == rhs.latestSubmittedCommandID
             && lhs.latestStartedCommandID == rhs.latestStartedCommandID
     }
 
@@ -1454,15 +1510,12 @@ struct LiveWorkspaceFeed: View, Equatable {
                             }
                         }
                     }
-                    .onChange(of: latestSubmittedTurnID) {
-                        _, turnID in
-                        guard let turnID else {
+                    .onChange(of: latestSubmittedCommandID) {
+                        _, commandID in
+                        guard commandID != nil else {
                             return
                         }
-                        revealSubmittedTurn(
-                            turnID: turnID,
-                            proxy: proxy
-                        )
+                        revealSubmittedTurn(proxy: proxy)
                     }
                     .onChange(of: latestStartedCommandID) {
                         _, commandID in
@@ -1655,10 +1708,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         scrollMetrics.isProgrammaticScrollInFlight = false
     }
 
-    private func revealSubmittedTurn(
-        turnID: String,
-        proxy: ScrollViewProxy
-    ) {
+    private func revealSubmittedTurn(proxy: ScrollViewProxy) {
         cancelScheduledScrolls()
         markAtBottom()
         let generation = beginProgrammaticScroll()
@@ -1677,8 +1727,6 @@ struct LiveWorkspaceFeed: View, Equatable {
             else {
                 return
             }
-            proxy.scrollTo(turnID, anchor: .bottom)
-
             var policy = LiveWorkspaceFeedScrollPolicy()
             for _ in 0..<LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts {
                 guard
