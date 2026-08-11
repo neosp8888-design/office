@@ -107,6 +107,7 @@ final class LiveFeedStore: ObservableObject {
     @Published private(set) var isLoadingInitialFeed = true
     private(set) var persistedTurns: [LiveFeedTurn] = []
     private var optimisticTurns: [String: LiveFeedTurn] = [:]
+    private var presentationIDsByTurnID: [String: String] = [:]
     private var turnsByCharacterID: [String: [LiveFeedTurn]] = [:]
     private var characterStores: [String: CharacterLiveFeedStore] = [:]
     private var responseAnimations: [String: ResponseAnimationState] = [:]
@@ -140,20 +141,35 @@ final class LiveFeedStore: ObservableObject {
     }
 
     func replace(with turns: [LiveFeedTurn]) {
+        for optimisticTurn in optimisticTurns.values {
+            guard let persistedTurn = matchingPersistedTurn(
+                for: optimisticTurn,
+                in: turns
+            ) else {
+                continue
+            }
+            transferPresentationID(
+                from: optimisticTurn.id,
+                to: persistedTurn.id
+            )
+        }
         persistedTurns = turns
         let persistedIDs = Set(turns.map(\.id))
         optimisticTurns = optimisticTurns.filter {
             !persistedIDs.contains($0.key)
-                && !hasMatchingPersistedTurn(
+                && matchingPersistedTurn(
                     for: $0.value,
                     in: turns
-                )
+                ) == nil
         }
         publishMergedTurns()
     }
 
     func insertOptimisticTurn(_ turn: LiveFeedTurn) {
         optimisticTurns[turn.id] = turn
+        if presentationIDsByTurnID[turn.id] == nil {
+            presentationIDsByTurnID[turn.id] = turn.id
+        }
         publishMergedTurns()
     }
 
@@ -164,6 +180,7 @@ final class LiveFeedStore: ObservableObject {
         guard let turn = optimisticTurns.removeValue(forKey: id) else {
             return
         }
+        transferPresentationID(from: id, to: persistedTurnID)
         if !persistedTurns.contains(where: { $0.id == persistedTurnID }) {
             optimisticTurns[persistedTurnID] = turn.replacingID(
                 with: persistedTurnID
@@ -176,6 +193,7 @@ final class LiveFeedStore: ObservableObject {
         guard optimisticTurns.removeValue(forKey: id) != nil else {
             return
         }
+        presentationIDsByTurnID[id] = nil
         publishMergedTurns()
     }
 
@@ -200,6 +218,10 @@ final class LiveFeedStore: ObservableObject {
 
     func turns(for characterID: String) -> [LiveFeedTurn] {
         turnsByCharacterID[characterID] ?? []
+    }
+
+    func presentationID(forTurnID turnID: String) -> String {
+        presentationIDsByTurnID[turnID] ?? turnID
     }
 
     func characterStore(
@@ -242,14 +264,19 @@ final class LiveFeedStore: ObservableObject {
         characterStores[characterID]?.refreshPresentation()
     }
 
-    private func hasMatchingPersistedTurn(
+    private func matchingPersistedTurn(
         for optimisticTurn: LiveFeedTurn,
         in turns: [LiveFeedTurn]
-    ) -> Bool {
+    ) -> LiveFeedTurn? {
+        if let exactMatch = turns.first(where: {
+            $0.id == optimisticTurn.id
+        }) {
+            return exactMatch
+        }
         let optimisticPrompt = TaskPromptPresentation(
             prompt: optimisticTurn.prompt
         ).text
-        return turns.contains { turn in
+        return turns.first { turn in
             turn.characterId == optimisticTurn.characterId
                 && TaskPromptPresentation(prompt: turn.prompt).text
                     == optimisticPrompt
@@ -260,6 +287,16 @@ final class LiveFeedStore: ObservableObject {
         }
     }
 
+    private func transferPresentationID(
+        from sourceTurnID: String,
+        to destinationTurnID: String
+    ) {
+        let presentationID =
+            presentationIDsByTurnID.removeValue(forKey: sourceTurnID)
+            ?? sourceTurnID
+        presentationIDsByTurnID[destinationTurnID] = presentationID
+    }
+
     private func publishMergedTurns() {
         var mergedTurns = persistedTurns
         mergedTurns.append(contentsOf: optimisticTurns.values)
@@ -268,6 +305,10 @@ final class LiveFeedStore: ObservableObject {
                 return $0.id > $1.id
             }
             return $0.startedAt > $1.startedAt
+        }
+        let mergedTurnIDs = Set(mergedTurns.map(\.id))
+        presentationIDsByTurnID = presentationIDsByTurnID.filter {
+            mergedTurnIDs.contains($0.key)
         }
         pruneResponseAnimations(for: mergedTurns)
         suppressHiddenInitialResponseAnimations(in: mergedTurns)

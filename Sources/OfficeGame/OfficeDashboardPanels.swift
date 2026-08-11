@@ -1350,6 +1350,15 @@ struct LiveWorkspaceFeed: View, Equatable {
         )
     }
 
+    private var displayItems: [LiveWorkspaceFeedTurnItem] {
+        displayTurns.map { turn in
+            LiveWorkspaceFeedTurnItem(
+                id: liveFeedStore.presentationID(forTurnID: turn.id),
+                turn: turn
+            )
+        }
+    }
+
     private var hiddenTurnCount: Int {
         max(0, selectedTurns.count - displayTurns.count)
     }
@@ -1365,9 +1374,10 @@ struct LiveWorkspaceFeed: View, Equatable {
     private var initialLayoutRevision:
         [LiveWorkspaceFeedTurnRevision]
     {
-        displayTurns.map { turn in
-            LiveWorkspaceFeedTurnRevision(
-                id: turn.id,
+        displayItems.map { item in
+            let turn = item.turn
+            return LiveWorkspaceFeedTurnRevision(
+                id: item.id,
                 updatedAt: turn.updatedAt,
                 status: turn.status,
                 activityCount: turn.activities.count,
@@ -1446,7 +1456,8 @@ struct LiveWorkspaceFeed: View, Equatable {
                                     archivedTurnsNotice
                                 }
 
-                                ForEach(displayTurns) { turn in
+                                ForEach(displayItems) { item in
+                                    let turn = item.turn
                                     EquatableLiveTurnCard(
                                         director: director,
                                         turn: turn,
@@ -1472,7 +1483,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                                             )
                                     }
                                         .equatable()
-                                        .id(turn.id)
+                                        .id(item.id)
                                 }
                             }
 
@@ -1768,7 +1779,7 @@ struct LiveWorkspaceFeed: View, Equatable {
             return
         }
 
-        let readingAnchorID = displayTurns.first?.id
+        let readingAnchorID = displayItems.first?.id
         let nextLimit = min(
             visibleTurnLimit + Self.pageSize,
             Self.maximumVisibleTurnCount,
@@ -1878,6 +1889,11 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
         cancelScheduledScrolls()
     }
+}
+
+private struct LiveWorkspaceFeedTurnItem: Identifiable {
+    let id: String
+    let turn: LiveFeedTurn
 }
 
 private struct LiveWorkspaceFeedTurnRevision: Equatable {
