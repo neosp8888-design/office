@@ -36,7 +36,7 @@ OFFICESTRA replaces a collection of separate terminal sessions with one interact
 | Live office | Select five coworkers, inspect status, and switch between 2D, 3D, day, and night scenes |
 | Coworker monitors | Open the selected coworker's conversations and provider session history |
 | Archive cabinet | Search and inspect work from every coworker |
-| Whiteboard | View Codex and Claude quota data plus optional CodexBar statistics |
+| Whiteboard | View Codex and Claude account quotas plus PostgreSQL usage statistics |
 | Live workspace | Follow progress events and final responses in chronological order |
 | Command bar | Select coworkers, provider, model, speed, reasoning, permissions, attachments, and run or stop tasks |
 
@@ -81,8 +81,8 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Search across coworker name, task, response, session ID, model, reasoning effort, and Fast or Standard mode.
 - Preserve the provider, model, effort, speed tier, and external session ID used by every turn.
 - Show the execution mode consistently in live cards, coworker history, and the complete archive.
-- Display Codex and Claude five-hour and seven-day quota information and account-plan labels.
-- Optionally display today's and trailing 30-day CodexBar cost and token statistics.
+- Display Codex and Claude 5-hour and 7-day quotas fetched directly from provider accounts, with account-plan labels.
+- Display today's and trailing 30-day cost and token statistics recorded by this OFFICESTRA instance in PostgreSQL.
 - Store completed work as source-of-truth records in PostgreSQL `work_records` and synchronize searchable records into derived `rag_documents`.
 - Automatically inject up to three relevant records from the same repository as untrusted reference data for each new task.
 - Show RAG, database, file, web, tool, and skill evidence actually used by a response, with clickable web links and Finder actions for files.

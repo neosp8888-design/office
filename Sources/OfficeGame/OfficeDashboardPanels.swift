@@ -117,7 +117,8 @@ struct OfficeDetailPanel: View {
                 case .usage:
                     UsageBoardContent(
                         refreshRequestID: usageRefreshRequestID,
-                        isRefreshing: $usageIsRefreshing
+                        isRefreshing: $usageIsRefreshing,
+                        databaseBaseURL: director.databaseBaseURL
                     )
                 }
             }
@@ -382,6 +383,7 @@ private struct ArchiveShelfContent: View {
 private struct UsageBoardContent: View {
     let refreshRequestID: UUID
     @Binding var isRefreshing: Bool
+    let databaseBaseURL: URL
     @State private var snapshot: AIUsageSnapshot?
     @State private var errorMessage: String?
 
@@ -426,11 +428,11 @@ private struct UsageBoardContent: View {
                     .disabled(isRefreshing)
                 }
             } else {
-                ProgressView("CLI 한도를 확인하는 중")
+                ProgressView("계정 한도를 확인하는 중")
             }
         }
         .task(id: refreshRequestID) {
-            await refresh(force: true)
+            await refresh(force: snapshot != nil)
         }
     }
 
@@ -479,10 +481,9 @@ private struct UsageBoardContent: View {
         }
 
         do {
-            snapshot = try await CodexBarUsageReader.fetch(
-                force: force,
-                scope: .limitsAndActivity
-            )
+            snapshot = try await OfficeDatabaseClient(
+                baseURL: databaseBaseURL
+            ).fetchUsageSummary(force: force)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -595,7 +596,7 @@ private struct UsageActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(
-                "사용 통계(API 요금 추정 환산)",
+                "이 사무실 사용 통계(API 요금 추정)",
                 systemImage: "chart.bar.xaxis"
             )
                 .font(.system(size: 10, weight: .bold))
@@ -616,7 +617,7 @@ private struct UsageActivityCard: View {
                 }
                 GridRow {
                     UsageMetricCell(
-                        label: "최근 토큰",
+                        label: "오늘 토큰",
                         value: tokenText(activity?.recentTokens),
                         tint: tint
                     )

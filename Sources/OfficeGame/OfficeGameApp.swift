@@ -549,7 +549,8 @@ private struct OfficeGameView: View {
 
             WhiteboardUsageLayer(
                 isActive: scenePhase == .active,
-                artStyle: artStyle
+                artStyle: artStyle,
+                databaseBaseURL: director.databaseBaseURL
             )
         }
     }

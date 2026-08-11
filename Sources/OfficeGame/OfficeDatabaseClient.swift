@@ -28,6 +28,37 @@ struct OfficeDatabaseClient: Sendable {
         return payload.sessions
     }
 
+    func usageSummaryURL(force: Bool = false) -> URL {
+        let endpoint = baseURL
+            .appending(path: "api")
+            .appending(path: "usage-summary")
+        guard force else {
+            return endpoint
+        }
+        var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "force", value: "1")
+        ]
+        return components?.url ?? endpoint
+    }
+
+    func fetchUsageSummary(
+        force: Bool = false
+    ) async throws -> AIUsageSnapshot {
+        let (data, response) = try await URLSession.shared.data(
+            from: usageSummaryURL(force: force)
+        )
+        try validate(response, data: data)
+        return try decodeUsageSummary(data)
+    }
+
+    func decodeUsageSummary(_ data: Data) throws -> AIUsageSnapshot {
+        try historyDecoder().decode(AIUsageSnapshot.self, from: data)
+    }
+
     func fetchAutomationSettings() async throws -> AutomationSettings {
         let url = baseURL.appending(path: "api/automation-settings")
         let (data, response) = try await URLSession.shared.data(from: url)
