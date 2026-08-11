@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.neo.officestra-deploy-5e2cc1e</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/neo/.officestra/worktrees/03ffd78858a8/right-woman-3a7e5a25-b4a6-4c9f-ae3f-431f3ff931f3/.officestra-deploy-5e2cc1e.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/officestra-deploy-5e2cc1e.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/officestra-deploy-5e2cc1e.log</string>
+</dict>
+</plist>
