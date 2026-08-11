@@ -27,7 +27,6 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             },
             onUserScrollStarted: {
                 userScrollStartedCount += 1
-                topLoadGate.userScrollStarted()
             },
             onUserScrollActivity: {
                 userScrollActivityCount += 1
@@ -635,6 +634,215 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
+    func testSecondSubmissionKeepsTallCompletedCardsAndViewportInBounds()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let characterID = OfficeCharacter.boss.rawValue
+        let tallResponse = (0..<70)
+            .map { "완료된 응답 본문 \($0)번째 줄입니다. 내용이 길어 카드가 화면보다 큽니다." }
+            .joined(separator: "\n")
+        let tallerResponse = (0..<200)
+            .map { "첫 카드 본문 \($0)번째 줄입니다. 카드가 매우 큽니다." }
+            .joined(separator: "\n")
+        let baseDate = Date(timeIntervalSinceReferenceDate: 50_000)
+        let completedTurns = [
+            makeTurn(
+                id: "tall-first",
+                characterID: characterID,
+                prompt: "첫 번째 질문",
+                response: tallerResponse,
+                status: .completed,
+                startedAt: baseDate
+            ),
+            makeTurn(
+                id: "tall-second",
+                characterID: characterID,
+                prompt: "두 번째 질문",
+                response: tallResponse,
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(60)
+            ),
+        ]
+        director.liveFeedStore.replace(with: completedTurns)
+        director.liveFeedStore.finishInitialLoading()
+
+        let rootHost = NSHostingView(
+            rootView: CachedLiveWorkspaceFeeds(director: director)
+                .frame(width: 900, height: 700)
+        )
+        rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(
+            contentRect: rootHost.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = rootHost
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(300))
+
+        guard
+            let container = allDescendants(of: rootHost)
+                .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
+                .first,
+            let scrollView = try await waitForPrimaryScrollView(
+                in: rootHost
+            ),
+            let documentView = scrollView.documentView
+        else {
+            XCTFail("긴 완료 카드 2개의 NSScrollView 계층이 없습니다.")
+            window.contentView = nil
+            return
+        }
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        let mountedHeight = documentView.bounds.height
+        XCTAssertGreaterThan(
+            mountedHeight,
+            scrollView.contentView.bounds.height * 2,
+            "긴 완료 카드 2개가 화면보다 충분히 커야 재현 조건이 됩니다."
+        )
+
+        func assertViewportInBounds(_ step: String) {
+            guard let currentDocument = scrollView.documentView else {
+                XCTFail("\(step): 대화 문서가 사라졌습니다.")
+                return
+            }
+            XCTAssertGreaterThan(
+                scrollView.documentVisibleRect.intersection(
+                    currentDocument.bounds
+                ).height,
+                0,
+                "\(step): viewport가 문서 밖 흰 영역에 남았습니다."
+            )
+        }
+
+        // 1) 같은 직원에게 두 번째 질문 제출: 빈 optimistic 턴 삽입.
+        let localID = "local-third"
+        let serverID = "server-third"
+        let submittedAt = baseDate.addingTimeInterval(120)
+        director.liveFeedStore.insertOptimisticTurn(
+            makeTurn(
+                id: localID,
+                characterID: characterID,
+                prompt: "세 번째 질문",
+                status: .running,
+                startedAt: submittedAt
+            )
+        )
+        let presentationID = director.liveFeedStore.presentationID(
+            forTurnID: localID
+        )
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(60))
+
+        let heightAfterOptimistic =
+            scrollView.documentView?.bounds.height ?? 0
+        XCTAssertGreaterThanOrEqual(
+            heightAfterOptimistic,
+            mountedHeight - 1,
+            "빈 optimistic 턴 삽입이 기존 긴 카드를 제거해 문서 높이가 "
+                + "\(Int(mountedHeight)) → \(Int(heightAfterOptimistic))로 "
+                + "급락했습니다. 이 급락이 흰 화면의 원인입니다."
+        )
+        assertViewportInBounds("optimistic 삽입 직후")
+
+        // 2) local → server ID 전환.
+        director.liveFeedStore.reconcileOptimisticTurn(
+            id: localID,
+            with: serverID
+        )
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(60))
+        XCTAssertEqual(
+            director.liveFeedStore.presentationID(forTurnID: serverID),
+            presentationID,
+            "server ID 전환이 카드 정체성을 바꿨습니다."
+        )
+        XCTAssertGreaterThanOrEqual(
+            scrollView.documentView?.bounds.height ?? 0,
+            mountedHeight - 1,
+            "server ID 전환 중 기존 카드가 제거돼 문서가 줄었습니다."
+        )
+        assertViewportInBounds("server ID 전환 직후")
+
+        // 3) 활동·응답 증가를 반영한 서버 스냅샷 반영.
+        var persisted = Array(completedTurns.reversed())
+        persisted.insert(
+            makeTurn(
+                id: serverID,
+                characterID: characterID,
+                prompt: "세 번째 질문",
+                response: String(
+                    repeating: "생성 중 응답 줄입니다.\n",
+                    count: 12
+                ),
+                status: .running,
+                startedAt: submittedAt
+            ),
+            at: 0
+        )
+        director.liveFeedStore.replace(with: persisted)
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(60))
+        XCTAssertGreaterThanOrEqual(
+            scrollView.documentView?.bounds.height ?? 0,
+            mountedHeight - 1,
+            "응답 증가 반영 중 기존 카드가 제거돼 문서가 줄었습니다."
+        )
+        assertViewportInBounds("응답 증가 반영 직후")
+
+        // 4) 위로 스크롤해 카드를 실체화한 상태에서 또 한 번 제출한다.
+        //    과거 기록을 읽는 중의 새 제출에서 기존 카드 identity와
+        //    문서 높이가 유지되고 viewport가 문서 안에 남는지 본다.
+        //    표시 창 재슬라이스 제거 자체의 판별 회귀는
+        //    LiveWorkspaceFeedDisplayAnchor 단위 테스트가 담당한다.
+        //    (흰 화면의 화면 픽셀 상태는 윈도서버 밖에서 관찰할 수
+        //    없어 in-process 테스트로는 직접 판정하지 못한다.)
+        performLiveScroll(scrollView, toTop: true)
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(150))
+        assertViewportInBounds("위로 스크롤 직후")
+        let materializedHeight =
+            scrollView.documentView?.bounds.height ?? 0
+        XCTAssertGreaterThan(
+            materializedHeight,
+            mountedHeight - 1,
+            "위로 스크롤 뒤에는 모든 카드가 실체화돼 있어야 합니다."
+        )
+
+        director.liveFeedStore.insertOptimisticTurn(
+            makeTurn(
+                id: "local-fourth",
+                characterID: characterID,
+                prompt: "네 번째 질문",
+                status: .running,
+                startedAt: baseDate.addingTimeInterval(180)
+            )
+        )
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(80))
+
+        let heightAfterFourth =
+            scrollView.documentView?.bounds.height ?? 0
+        XCTAssertGreaterThanOrEqual(
+            heightAfterFourth,
+            materializedHeight - 200,
+            "과거 기록을 읽는 중의 새 제출이 표시 중이던 카드를 "
+                + "제거해 문서가 \(Int(materializedHeight)) → "
+                + "\(Int(heightAfterFourth))로 붕괴했습니다. 이 붕괴가 "
+                + "흰 화면과 스크롤바 튐의 원인입니다."
+        )
+        assertViewportInBounds("실체화 상태 제출 직후")
+
+        try await settle(for: .milliseconds(250))
+        assertViewportInBounds("정착 후")
+    }
+
     func testScrollGeometryReportsFlippedTopAndBottomWithoutPreferenceKeys() {
         let documentBounds = CGRect(x: 0, y: 0, width: 500, height: 1_000)
 
@@ -725,10 +933,35 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 isProgrammaticScrollInFlight: false
             )
         )
-        gate.userScrollStarted()
-        XCTAssertTrue(
+        // 로드 뒤 상단 임계 안에 머무는 동안에는 새 휠 세션이
+        // 시작돼도 다음 페이지를 연쇄 로드하지 않는다. 문서가 짧아진
+        // 비정상 상태에서 페이지가 계속 쌓여 CPU가 치솟는 것을 막는다.
+        XCTAssertFalse(
             gate.shouldLoad(
                 distanceFromTop: 0,
+                threshold: 120,
+                isProgrammaticScrollInFlight: false
+            )
+        )
+        XCTAssertFalse(
+            gate.shouldLoad(
+                distanceFromTop: 60,
+                threshold: 120,
+                isProgrammaticScrollInFlight: false
+            )
+        )
+        // 임계 밖으로 나가면 재장전되고, 다시 상단에 닿으면 다음
+        // 페이지를 한 번 로드한다.
+        XCTAssertFalse(
+            gate.shouldLoad(
+                distanceFromTop: 300,
+                threshold: 120,
+                isProgrammaticScrollInFlight: false
+            )
+        )
+        XCTAssertTrue(
+            gate.shouldLoad(
+                distanceFromTop: 10,
                 threshold: 120,
                 isProgrammaticScrollInFlight: false
             )

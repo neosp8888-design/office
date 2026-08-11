@@ -816,8 +816,56 @@ struct LiveWorkspaceFeedPagingPolicy: Equatable {
     }
 }
 
+// 최신 N개 인덱스로 매번 다시 자르면 새 턴이 앞에 삽입될 때 기존
+// 카드가 밀려나 문서 높이가 급락하고 viewport가 문서 밖에 남는다.
+// 가장 오래된 표시 턴의 ID를 앵커로 고정해, 앵커보다 새로운 턴은
+// 삽입·ID 교체 중에도 전부 창에 포함시킨다.
+struct LiveWorkspaceFeedDisplayAnchor: Equatable {
+    private(set) var oldestVisibleTurnID: String?
+    private(set) var lastKnownLimit =
+        LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
+
+    func effectiveLimit(turnIDsNewestFirst: [String]) -> Int {
+        guard
+            let oldestVisibleTurnID,
+            let index = turnIDsNewestFirst.firstIndex(
+                of: oldestVisibleTurnID
+            )
+        else {
+            // 앵커가 아직 없거나(첫 마운트) 목록에서 사라졌으면
+            // (optimistic ID 교체·정리) 직전 표시 규모를 유지해
+            // 창이 다시 줄어들며 카드가 제거되는 일을 막는다.
+            return lastKnownLimit
+        }
+        return max(index + 1, 1)
+    }
+
+    func pinning(turnIDsNewestFirst: [String]) -> Self {
+        pinning(
+            limit: effectiveLimit(turnIDsNewestFirst: turnIDsNewestFirst),
+            turnIDsNewestFirst: turnIDsNewestFirst
+        )
+    }
+
+    func pinning(
+        limit: Int,
+        turnIDsNewestFirst: [String]
+    ) -> Self {
+        let boundedLimit = min(limit, turnIDsNewestFirst.count)
+        guard boundedLimit > 0 else {
+            return self
+        }
+        var pinned = self
+        pinned.oldestVisibleTurnID = turnIDsNewestFirst[boundedLimit - 1]
+        pinned.lastKnownLimit = boundedLimit
+        return pinned
+    }
+}
+
 struct LiveWorkspaceFeedScrollPolicy: Equatable {
-    static let submittedMaximumAttempts = 3
+    // 제출 직후 하단 보정은 레이아웃 확정 뒤 한 번만 수행한다.
+    // 반복 보정은 문서 높이가 변하는 중에 스크롤바 왕복을 만든다.
+    static let submittedMaximumAttempts = 1
     static let stablePassesRequired = 2
 
     private(set) var stablePassCount = 0
@@ -836,11 +884,12 @@ struct LiveWorkspaceFeedScrollPolicy: Equatable {
 }
 
 struct LiveWorkspaceFeedTopLoadGate: Equatable {
-    private(set) var didLoadDuringCurrentScroll = false
-
-    mutating func userScrollStarted() {
-        didLoadDuringCurrentScroll = false
-    }
+    // 한 번 로드하면 상단 임계 밖으로 나갔다 돌아와야 다시 장전된다.
+    // 제스처 시작마다 재장전하면 짧은 휠 세션이 연달아 페이지를
+    // 연쇄 로드해 무거운 과거 카드가 한꺼번에 쌓인다. 정상 흐름은
+    // 로드 직후 위쪽에 새 카드가 붙어 임계 밖으로 밀려나므로
+    // 자연스럽게 재장전된다.
+    private(set) var isArmed = true
 
     mutating func shouldLoad(
         distanceFromTop: CGFloat,
@@ -848,16 +897,16 @@ struct LiveWorkspaceFeedTopLoadGate: Equatable {
         isProgrammaticScrollInFlight: Bool
     ) -> Bool {
         if distanceFromTop > threshold {
-            didLoadDuringCurrentScroll = false
+            isArmed = true
             return false
         }
         guard
             !isProgrammaticScrollInFlight,
-            !didLoadDuringCurrentScroll
+            isArmed
         else {
             return false
         }
-        didLoadDuringCurrentScroll = true
+        isArmed = false
         return true
     }
 }
@@ -1302,8 +1351,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
-    @State private var visibleTurnLimit =
-        LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
+    @State private var displayAnchor = LiveWorkspaceFeedDisplayAnchor()
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
     @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
@@ -1368,8 +1416,15 @@ struct LiveWorkspaceFeed: View, Equatable {
         characterFeedStore.turns
     }
 
+    private var visibleTurnLimit: Int {
+        displayAnchor.effectiveLimit(
+            turnIDsNewestFirst: selectedTurns.map(\.id)
+        )
+    }
+
     private var displayTurns: [LiveFeedTurn] {
-        Array(
+        let visibleTurnLimit = visibleTurnLimit
+        return Array(
             selectedTurns.enumerated().compactMap { index, turn in
                 LiveWorkspaceFeedPagingPolicy.includesTurn(
                     at: index,
@@ -1383,6 +1438,15 @@ struct LiveWorkspaceFeed: View, Equatable {
             }
             .reversed()
         )
+    }
+
+    private func repinDisplayAnchor() {
+        let pinned = displayAnchor.pinning(
+            turnIDsNewestFirst: selectedTurns.map(\.id)
+        )
+        if displayAnchor != pinned {
+            displayAnchor = pinned
+        }
     }
 
     private var displayItems: [LiveWorkspaceFeedTurnItem] {
@@ -1472,7 +1536,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                                     )
                                 },
                                 onUserScrollStarted: {
-                                    topLoadGate.userScrollStarted()
                                     if !didPerformInitialScroll {
                                         didPerformInitialScroll = true
                                     }
@@ -1549,6 +1612,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                         settleInitialAnchorIfNeeded()
                     }
                     .onChange(of: initialLayoutRevision) { _, _ in
+                        repinDisplayAnchor()
                         switch LiveWorkspaceFeedContentRevisionPolicy.action(
                             didPerformInitialScroll: didPerformInitialScroll,
                             isFollowingLatest: followState.isFollowingLatest
@@ -1563,19 +1627,17 @@ struct LiveWorkspaceFeed: View, Equatable {
                             }
                         }
                     }
+                    // 제출 시 revealSubmittedTurn이 하단 보정을 1회
+                    // 수행하고, 시작·진행 갱신은 followLatest 경로가
+                    // 담당한다. latestStartedCommandID의 별도 하단
+                    // 이동은 같은 프레임에 스크롤을 중복 예약해
+                    // 깜빡임을 만들므로 두지 않는다.
                     .onChange(of: latestSubmittedCommandID) {
                         _, commandID in
                         guard commandID != nil else {
                             return
                         }
                         revealSubmittedTurn(proxy: proxy)
-                    }
-                    .onChange(of: latestStartedCommandID) {
-                        _, commandID in
-                        guard commandID != nil else {
-                            return
-                        }
-                        scheduleScrollToLatest(proxy)
                     }
                     .overlay(alignment: .bottom) {
                         Group {
@@ -1734,6 +1796,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
 
         didPerformInitialScroll = true
+        repinDisplayAnchor()
         // 기본 하단 앵커가 적용되기 전의 첫 측정값만으로 자동 추적을
         // 끄지 않는다. 추적 중단은 실제 사용자 스크롤 콜백만 담당한다.
         updateBottomState()
@@ -1822,19 +1885,28 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
 
         let readingAnchorID = displayItems.first?.id
+        let currentLimit = visibleTurnLimit
         let nextLimit = LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
-            current: visibleTurnLimit,
+            current: currentLimit,
             total: selectedTurns.count
         )
-        guard nextLimit > visibleTurnLimit else {
+        guard nextLimit > currentLimit else {
             return
         }
 
         isLoadingOlderTurns = true
-        visibleTurnLimit = nextLimit
+        displayAnchor = displayAnchor.pinning(
+            limit: nextLimit,
+            turnIDsNewestFirst: selectedTurns.map(\.id)
+        )
+        // 읽던 위치 복원 scrollTo도 programmatic으로 표시해, 복원
+        // 이동이 상단 근접으로 해석돼 다음 페이지를 연쇄 로드하는
+        // 재진입을 막는다.
+        let generation = beginProgrammaticScroll()
         DispatchQueue.main.async {
             guard presentationStore.isPresentationRequested else {
                 isLoadingOlderTurns = false
+                finishProgrammaticScroll(generation: generation)
                 return
             }
             if let readingAnchorID {
@@ -1842,6 +1914,7 @@ struct LiveWorkspaceFeed: View, Equatable {
             }
             DispatchQueue.main.async {
                 isLoadingOlderTurns = false
+                finishProgrammaticScroll(generation: generation)
             }
         }
     }
