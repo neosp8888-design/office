@@ -473,6 +473,168 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         window.contentView = nil
     }
 
+    func testSameEmployeeTurnIDTransitionKeepsConversationMountedAtBottom()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let questionID = "existing-inline-question"
+        let question = """
+        다음 작업 방향을 선택해 주세요.
+
+        1. 첫 번째 선택지
+        2. 두 번째 선택지
+        3. 세 번째 선택지
+        4. 네 번째 선택지
+        5. 다섯 번째 선택지
+        6. 여섯 번째 선택지
+        7. 일곱 번째 선택지
+        8. 여덟 번째 선택지
+        """
+        var existingTurns = Array(
+            makeTurns()
+                .filter {
+                    $0.characterId == OfficeCharacter.boss.rawValue
+                }
+                .prefix(9)
+        )
+        existingTurns.insert(
+            makeTurn(
+                id: questionID,
+                characterID: OfficeCharacter.boss.rawValue,
+                prompt: "기존 확인 질문",
+                response: question,
+                status: .completed,
+                needsInput: true,
+                startedAt: Date(timeIntervalSinceReferenceDate: 25_000)
+            ),
+            at: 0
+        )
+        director.liveFeedStore.replace(with: existingTurns)
+        director.liveFeedStore.finishInitialLoading()
+
+        let rootHost = NSHostingView(
+            rootView: CachedLiveWorkspaceFeeds(director: director)
+                .frame(width: 900, height: 700)
+        )
+        rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(
+            contentRect: rootHost.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = rootHost
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(250))
+
+        guard
+            let container = allDescendants(of: rootHost)
+                .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
+                .first,
+            let mountedHost = container.subviews.first,
+            let mountedScrollView = try await waitForPrimaryScrollView(
+                in: rootHost
+            ),
+            let mountedDocumentView = mountedScrollView.documentView
+        else {
+            XCTFail("기존 대화의 실제 NSHostingView/NSScrollView 계층이 없습니다.")
+            window.contentView = nil
+            return
+        }
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        performLiveScroll(mountedScrollView, toTop: false)
+        try await settle(for: .milliseconds(100))
+
+        var persistedTurns = existingTurns
+        let submittedAt = Date(timeIntervalSinceReferenceDate: 30_000)
+        for index in 0..<8 {
+            let localID = "local-same-employee-\(index)"
+            let serverID = "server-same-employee-\(index)"
+            let prompt = "동일 직원 새 업무 \(index)"
+            let startedAt = submittedAt.addingTimeInterval(
+                TimeInterval(index)
+            )
+            let optimistic = makeTurn(
+                id: localID,
+                characterID: OfficeCharacter.boss.rawValue,
+                prompt: prompt,
+                status: .running,
+                startedAt: startedAt
+            )
+
+            director.liveFeedStore.insertOptimisticTurn(optimistic)
+            let presentationID = director.liveFeedStore.presentationID(
+                forTurnID: localID
+            )
+            rootHost.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(8))
+            director.liveFeedStore.reconcileOptimisticTurn(
+                id: localID,
+                with: serverID
+            )
+            XCTAssertEqual(
+                director.liveFeedStore.presentationID(forTurnID: serverID),
+                presentationID,
+                "서버 turn ID 전환이 같은 카드의 SwiftUI 정체성을 "
+                    + "삭제 후 재삽입으로 바꿨습니다."
+            )
+            rootHost.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(8))
+
+            let persisted = optimistic.replacingID(with: serverID)
+            persistedTurns.insert(persisted, at: 0)
+            director.liveFeedStore.replace(with: persistedTurns)
+            rootHost.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(16))
+
+            XCTAssertTrue(
+                container.subviews.first === mountedHost,
+                "동일 직원 제출 중 NSHostingView가 교체됐습니다."
+            )
+            XCTAssertTrue(
+                primaryScrollView(in: rootHost) === mountedScrollView,
+                "optimistic/server ID 전환 중 NSScrollView가 교체됐습니다."
+            )
+            XCTAssertTrue(
+                mountedScrollView.documentView === mountedDocumentView,
+                "optimistic/server ID 전환 중 대화 문서가 교체됐습니다."
+            )
+        }
+
+        try await settle(for: .milliseconds(350))
+        rootHost.layoutSubtreeIfNeeded()
+
+        guard let documentView = mountedScrollView.documentView else {
+            XCTFail("새 업무 제출 뒤 대화 문서가 사라졌습니다.")
+            return
+        }
+        let snapshot = LiveWorkspaceFeedScrollGeometry.snapshot(
+            documentBounds: documentView.bounds,
+            visibleRect: mountedScrollView.documentVisibleRect,
+            isFlipped: documentView.isFlipped
+        )
+
+        XCTAssertEqual(director.selectedCharacterID, .boss)
+        XCTAssertEqual(container.subviews.count, 1)
+        XCTAssertLessThanOrEqual(
+            snapshot.distanceFromBottom,
+            20,
+            "기존 대화가 있는 동일 직원에게 새 업무를 제출한 뒤 "
+                + "대화 화면이 문서 위쪽/빈 영역으로 이동했습니다."
+        )
+        XCTAssertGreaterThan(
+            mountedScrollView.documentVisibleRect.intersection(
+                documentView.bounds
+            ).height,
+            0,
+            "대화 viewport가 문서 밖의 흰 영역에 남았습니다."
+        )
+    }
+
     func testScrollGeometryReportsFlippedTopAndBottomWithoutPreferenceKeys() {
         let documentBounds = CGRect(x: 0, y: 0, width: 500, height: 1_000)
 
@@ -620,6 +782,44 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 )
             }
         }
+    }
+
+    private func makeTurn(
+        id: String,
+        characterID: String,
+        prompt: String,
+        response: String = "",
+        status: LiveTurnStatus,
+        needsInput: Bool = false,
+        startedAt: Date
+    ) -> LiveFeedTurn {
+        LiveFeedTurn(
+            id: id,
+            characterId: characterID,
+            characterName: characterID,
+            characterBackend: .codex,
+            backend: .codex,
+            model: "gpt-5.6-sol",
+            effort: "high",
+            fastMode: false,
+            externalSessionId: nil,
+            conversationWorkdir: "/repo",
+            prompt: prompt,
+            response: response,
+            feedback: nil,
+            status: status,
+            needsInput: needsInput,
+            errorMessage: nil,
+            responseSourceWarning: nil,
+            startedAt: startedAt,
+            endedAt: status.isRunning ? nil : startedAt,
+            updatedAt: startedAt,
+            estimatedCostUsd: nil,
+            sessionContext: nil,
+            activities: [],
+            sources: nil,
+            workspace: nil
+        )
     }
 
     private func settle(for duration: Duration) async throws {

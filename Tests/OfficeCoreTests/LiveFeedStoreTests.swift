@@ -848,6 +848,43 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.response, "확인했습니다.")
     }
 
+    func testOptimisticServerTransitionKeepsCardPresentationIdentity() {
+        let store = LiveFeedStore()
+        let optimistic = makeTurn(
+            id: "local-stable-card",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "동일 직원에게 이어서 보내는 업무",
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_500)
+        )
+
+        store.insertOptimisticTurn(optimistic)
+        let localPresentationID = store.presentationID(
+            forTurnID: optimistic.id
+        )
+        store.reconcileOptimisticTurn(
+            id: optimistic.id,
+            with: "server-stable-card"
+        )
+
+        XCTAssertEqual(
+            store.presentationID(forTurnID: "server-stable-card"),
+            localPresentationID,
+            "optimistic turn을 서버 turn으로 바꿀 때 SwiftUI 카드가 "
+                + "삭제·재삽입되면 대화 문서와 스크롤 정체성이 흔들립니다."
+        )
+
+        store.replace(with: [
+            optimistic.replacingID(with: "server-stable-card"),
+        ])
+
+        XCTAssertEqual(
+            store.presentationID(forTurnID: "server-stable-card"),
+            localPresentationID,
+            "서버 snapshot이 도착한 뒤에도 같은 화면 카드 정체성을 "
+                + "유지해야 합니다."
+        )
+    }
+
     func testMatchingServerTurnRemovesOptimisticDuplicateBeforeReconcile() {
         let store = LiveFeedStore()
         let submittedAt = Date(timeIntervalSinceReferenceDate: 2_000)
@@ -859,6 +896,9 @@ final class LiveFeedStoreTests: XCTestCase {
                 startedAt: submittedAt
             )
         )
+        let localPresentationID = store.presentationID(
+            forTurnID: "local-command"
+        )
 
         let persisted = makeTurn(
             id: "server-turn",
@@ -869,6 +909,12 @@ final class LiveFeedStoreTests: XCTestCase {
         store.replace(with: [persisted])
 
         XCTAssertEqual(store.turns.map(\.id), ["server-turn"])
+        XCTAssertEqual(
+            store.presentationID(forTurnID: "server-turn"),
+            localPresentationID,
+            "명시적 reconcile보다 서버 snapshot이 먼저 와도 카드 "
+                + "정체성을 이어받아야 합니다."
+        )
         XCTAssertEqual(
             store.optimisticCharacterIDs,
             Set<String>()
