@@ -71,18 +71,21 @@ final class UsageBoardLayoutTests: XCTestCase {
         )
     }
 
-    func testUsageWindowDecodesResetTimestamp() throws {
+    func testUsageSummaryDecodesProviderResetTimestamp() throws {
         let data = Data(
-            #"{"usedPercent":10,"windowMinutes":300,"resetsAt":"2026-08-07T19:00:00Z"}"#
+            #"{"codexFiveHour":90,"codexFiveHourResetAt":"2026-08-07T19:00:00.000Z","codexWeekly":null,"codexWeeklyResetAt":null,"claudeFiveHour":null,"claudeFiveHourResetAt":null,"claudeWeekly":null,"claudeWeeklyResetAt":null,"codexPlan":"Pro","claudePlan":null,"codexActivity":null,"claudeActivity":null,"codexLimitError":null,"claudeLimitError":null,"fetchedAt":"2026-08-07T18:00:00.000Z"}"#
                 .utf8
         )
+        let client = OfficeDatabaseClient(
+            baseURL: URL(string: "http://127.0.0.1:4317")!
+        )
 
-        let window = try JSONDecoder().decode(UsageWindow.self, from: data)
+        let snapshot = try client.decodeUsageSummary(data)
 
-        XCTAssertEqual(window.usedPercent, 10)
-        XCTAssertEqual(window.windowMinutes, 300)
+        XCTAssertEqual(snapshot.codexFiveHour, 90)
+        XCTAssertEqual(snapshot.codexPlan, "Pro")
         XCTAssertEqual(
-            window.resetsAt,
+            snapshot.codexFiveHourResetAt,
             ISO8601DateFormatter().date(from: "2026-08-07T19:00:00Z")
         )
     }

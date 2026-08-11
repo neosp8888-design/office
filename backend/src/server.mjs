@@ -62,6 +62,7 @@ import {
   replaceTurnFeedback,
 } from "./turn-feedback.mjs";
 import { startSlackBridge } from "./slack-bridge.mjs";
+import { createUsageSummaryReader } from "./usage-summary.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const automaticWorkspaceApprovalRetryIntervalMs = 10_000;
@@ -70,6 +71,7 @@ const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
 let automaticWorkspaceApprovalRetryInFlight = false;
+const readUsageSummary = createUsageSummaryReader({ pool });
 
 function startAutomaticWorkspaceApprovalRetryLoop() {
   const timer = setInterval(() => {
@@ -262,6 +264,13 @@ async function readAutomationSettings(response) {
     autoApproveAndMerge:
       result.rows?.[0]?.autoApproveAndMerge ?? true,
   });
+}
+
+async function usageSummary(response, url) {
+  const force = ["1", "true"].includes(
+    String(url.searchParams.get("force") ?? "").toLowerCase(),
+  );
+  send(response, 200, await readUsageSummary({ force }));
 }
 
 async function updateAutomationSettings(response, body) {
@@ -1857,6 +1866,11 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/automation-settings"
     ) {
       await readAutomationSettings(response);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/usage-summary"
+    ) {
+      await usageSummary(response, url);
     } else if (
       request.method === "PUT" &&
       url.pathname === "/api/automation-settings"
