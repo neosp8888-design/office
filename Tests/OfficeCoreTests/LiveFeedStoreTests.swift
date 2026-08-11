@@ -1036,8 +1036,116 @@ final class LiveFeedStoreTests: XCTestCase {
         )
         XCTAssertEqual(
             LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts,
+            1,
+            "제출 직후 하단 보정은 레이아웃 확정 뒤 1회를 넘으면 "
+                + "문서 높이 변동과 겹쳐 스크롤바 왕복을 만듭니다."
+        )
+    }
+
+    func testDisplayAnchorKeepsInitialMountWindowBeforePinning() {
+        let anchor = LiveWorkspaceFeedDisplayAnchor()
+
+        XCTAssertEqual(
+            anchor.effectiveLimit(
+                turnIDsNewestFirst: ["t9", "t8", "t7", "t6"]
+            ),
+            LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
+            "앵커 고정 전 첫 마운트는 최신 2건만 표시해 CPU를 방어합니다."
+        )
+    }
+
+    func testDisplayAnchorGrowsWindowWhenNewTurnArrivesInFront() {
+        var anchor = LiveWorkspaceFeedDisplayAnchor()
+        anchor = anchor.pinning(turnIDsNewestFirst: ["t2", "t1"])
+        XCTAssertEqual(anchor.oldestVisibleTurnID, "t1")
+        XCTAssertEqual(
+            anchor.effectiveLimit(turnIDsNewestFirst: ["t2", "t1"]),
+            2
+        )
+
+        // 새 optimistic 턴이 index 0에 삽입돼도 기존 카드는 창에서
+        // 밀려나지 않고 창이 2→3으로 늘어난다.
+        XCTAssertEqual(
+            anchor.effectiveLimit(
+                turnIDsNewestFirst: ["local-new", "t2", "t1"]
+            ),
+            3,
+            "새 턴 삽입이 기존 표시 카드를 제거하는 이동 창으로 "
+                + "동작하면 문서 높이가 급락해 흰 화면이 됩니다."
+        )
+
+        // 연속 제출에도 계속 누적된다.
+        XCTAssertEqual(
+            anchor.effectiveLimit(
+                turnIDsNewestFirst: [
+                    "local-next", "server-new", "t2", "t1",
+                ]
+            ),
+            4
+        )
+    }
+
+    func testDisplayAnchorSurvivesOptimisticServerIDSwap() {
+        var anchor = LiveWorkspaceFeedDisplayAnchor()
+        // 마운트 시점: 완료 카드 2개가 보이는 상태에서 고정.
+        anchor = anchor.pinning(turnIDsNewestFirst: ["t2", "t1"])
+        XCTAssertEqual(anchor.oldestVisibleTurnID, "t1")
+
+        // 제출로 optimistic 턴이 앞에 삽입된 뒤 재고정.
+        anchor = anchor.pinning(
+            turnIDsNewestFirst: ["local-a", "t2", "t1"]
+        )
+        XCTAssertEqual(anchor.oldestVisibleTurnID, "t1")
+
+        // 앵커가 아닌 턴의 local → server ID 교체는 창을 흔들지 않는다.
+        XCTAssertEqual(
+            anchor.effectiveLimit(
+                turnIDsNewestFirst: ["server-a", "t2", "t1"]
+            ),
             3
         )
+    }
+
+    func testDisplayAnchorFallsBackToLastKnownLimitWhenAnchorVanishes() {
+        var anchor = LiveWorkspaceFeedDisplayAnchor()
+        let ids = (0..<20).map { "t\(19 - $0)" }
+        anchor = anchor.pinning(limit: 12, turnIDsNewestFirst: ids)
+        XCTAssertEqual(anchor.oldestVisibleTurnID, "t8")
+        XCTAssertEqual(anchor.effectiveLimit(turnIDsNewestFirst: ids), 12)
+
+        // 앵커 턴이 목록에서 사라져도(스냅샷 정리) 직전 표시 규모를
+        // 유지해 창 축소로 카드가 제거되는 일을 막는다.
+        let pruned = ids.filter { $0 != "t8" }
+        XCTAssertEqual(
+            anchor.effectiveLimit(turnIDsNewestFirst: pruned),
+            12
+        )
+
+        // 이후 재고정하면 새 목록 기준으로 앵커가 복구된다.
+        anchor = anchor.pinning(turnIDsNewestFirst: pruned)
+        XCTAssertEqual(anchor.oldestVisibleTurnID, pruned[11])
+    }
+
+    func testDisplayAnchorPagingExpandsTowardOlderTurns() {
+        var anchor = LiveWorkspaceFeedDisplayAnchor()
+        let ids = (0..<30).map { "t\(29 - $0)" }
+        anchor = anchor.pinning(turnIDsNewestFirst: ids)
+        XCTAssertEqual(anchor.effectiveLimit(turnIDsNewestFirst: ids), 2)
+
+        let nextLimit = LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
+            current: anchor.effectiveLimit(turnIDsNewestFirst: ids),
+            total: ids.count
+        )
+        XCTAssertEqual(nextLimit, 12)
+        anchor = anchor.pinning(
+            limit: nextLimit,
+            turnIDsNewestFirst: ids
+        )
+        XCTAssertEqual(
+            anchor.effectiveLimit(turnIDsNewestFirst: ids),
+            12
+        )
+        XCTAssertEqual(anchor.oldestVisibleTurnID, ids[11])
     }
 
     func testFreshEmployeeMountLimitsInitialConversationWindow() {
