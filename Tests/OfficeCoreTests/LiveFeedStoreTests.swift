@@ -1040,6 +1040,65 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
+    func testFreshEmployeeMountLimitsInitialConversationWindow() {
+        let includedIndices = (0..<10).filter { index in
+            LiveWorkspaceFeedPagingPolicy.includesTurn(
+                at: index,
+                visibleTurnLimit:
+                    LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
+                isRunning: false,
+                isLatestTerminalTurn: false
+            )
+        }
+
+        XCTAssertEqual(includedIndices, [0, 1])
+        XCTAssertTrue(
+            LiveWorkspaceFeedPagingPolicy.includesTurn(
+                at: 9,
+                visibleTurnLimit:
+                    LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
+                isRunning: true,
+                isLatestTerminalTurn: false
+            ),
+            "과거 위치에 남은 실행 중 턴은 첫 화면에서도 숨기면 안 됩니다."
+        )
+        XCTAssertTrue(
+            LiveWorkspaceFeedPagingPolicy.includesTurn(
+                at: 8,
+                visibleTurnLimit:
+                    LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
+                isRunning: false,
+                isLatestTerminalTurn: true
+            ),
+            "방금 완료된 턴은 첫 화면에서도 숨기면 안 됩니다."
+        )
+    }
+
+    func testFirstTopLoadRestoresRemainingTenTurnSnapshot() {
+        XCTAssertEqual(
+            LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
+                current:
+                    LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
+                total: 10
+            ),
+            10
+        )
+        XCTAssertEqual(
+            LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
+                current: 10,
+                total: 30
+            ),
+            20
+        )
+        XCTAssertEqual(
+            LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
+                current: 30,
+                total: 50
+            ),
+            30
+        )
+    }
+
     func testExecutionModeTitleTreatsHistoricalValuesAsStandard() {
         XCTAssertEqual(agentExecutionModeTitle(true), "Fast")
         XCTAssertEqual(agentExecutionModeTitle(false), "Standard")

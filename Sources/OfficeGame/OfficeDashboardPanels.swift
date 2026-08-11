@@ -784,6 +784,38 @@ struct LiveWorkspaceFeedContentRevisionPolicy: Equatable {
     }
 }
 
+struct LiveWorkspaceFeedPagingPolicy: Equatable {
+    // 직원 전환 때 NSHostingView를 새로 만드는 CPU 방어는 유지하되,
+    // 첫 mount에서 과거 10턴의 Markdown과 활동 트리를 한꺼번에 만들지
+    // 않는다. 최신 대화 두 건을 먼저 안정적으로 표시하고 사용자가
+    // 위로 올릴 때 기존 단위대로 과거 기록을 추가한다.
+    static let initialVisibleTurnCount = 2
+    static let pageSize = 10
+    static let maximumVisibleTurnCount = 30
+
+    static func includesTurn(
+        at index: Int,
+        visibleTurnLimit: Int,
+        isRunning: Bool,
+        isLatestTerminalTurn: Bool
+    ) -> Bool {
+        index < visibleTurnLimit
+            || isRunning
+            || isLatestTerminalTurn
+    }
+
+    static func nextVisibleTurnLimit(
+        current: Int,
+        total: Int
+    ) -> Int {
+        min(
+            current + pageSize,
+            maximumVisibleTurnCount,
+            total
+        )
+    }
+}
+
 struct LiveWorkspaceFeedScrollPolicy: Equatable {
     static let submittedMaximumAttempts = 3
     static let stablePassesRequired = 2
@@ -1270,7 +1302,8 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
-    @State private var visibleTurnLimit = Self.pageSize
+    @State private var visibleTurnLimit =
+        LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
     @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
@@ -1278,8 +1311,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     private static let bottomTolerance = CGFloat(20)
     private static let topLoadThreshold = CGFloat(120)
     private static let bottomMarkerID = "live-workspace-feed-bottom"
-    private static let pageSize = 10
-    private static let maximumVisibleTurnCount = 30
 
     fileprivate init(
         director: AgentDirector,
@@ -1340,9 +1371,13 @@ struct LiveWorkspaceFeed: View, Equatable {
     private var displayTurns: [LiveFeedTurn] {
         Array(
             selectedTurns.enumerated().compactMap { index, turn in
-                index < visibleTurnLimit
-                    || turn.status.isRunning
-                    || turn.id == latestTerminalTurnID
+                LiveWorkspaceFeedPagingPolicy.includesTurn(
+                    at: index,
+                    visibleTurnLimit: visibleTurnLimit,
+                    isRunning: turn.status.isRunning,
+                    isLatestTerminalTurn:
+                        turn.id == latestTerminalTurnID
+                )
                     ? turn
                     : nil
             }
@@ -1366,9 +1401,16 @@ struct LiveWorkspaceFeed: View, Equatable {
     private var canLoadOlderTurns: Bool {
         visibleTurnLimit
             < min(
-                Self.maximumVisibleTurnCount,
+                LiveWorkspaceFeedPagingPolicy.maximumVisibleTurnCount,
                 selectedTurns.count
             )
+    }
+
+    private var nextArchivedTurnCount: Int {
+        min(
+            LiveWorkspaceFeedPagingPolicy.pageSize,
+            hiddenTurnCount
+        )
     }
 
     private var initialLayoutRevision:
@@ -1780,10 +1822,9 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
 
         let readingAnchorID = displayItems.first?.id
-        let nextLimit = min(
-            visibleTurnLimit + Self.pageSize,
-            Self.maximumVisibleTurnCount,
-            selectedTurns.count
+        let nextLimit = LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
+            current: visibleTurnLimit,
+            total: selectedTurns.count
         )
         guard nextLimit > visibleTurnLimit else {
             return
@@ -1844,7 +1885,7 @@ struct LiveWorkspaceFeed: View, Equatable {
             if canLoadOlderTurns {
                 Text(
                     "위로 더 올리면 이전 "
-                        + "\(min(Self.pageSize, hiddenTurnCount))건 추가"
+                        + "\(nextArchivedTurnCount)건 추가"
                 )
             } else {
                 Text(
