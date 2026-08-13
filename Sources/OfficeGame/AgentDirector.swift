@@ -555,6 +555,40 @@ final class SpeechBubbleStore: ObservableObject {
     }
 }
 
+enum SpeechBubbleIdleChatterPolicy {
+    static func candidates(
+        characters: [CharacterConfiguration],
+        runningCharacters: Set<OfficeCharacter>,
+        occupiedCharacters: Set<OfficeCharacter>,
+        questionCharacters: Set<OfficeCharacter>,
+        failedCharacters: Set<OfficeCharacter>,
+        offDutyCharacters: Set<OfficeCharacter>,
+        lastCharacter: OfficeCharacter?
+    ) -> [CharacterConfiguration] {
+        var candidates = characters.filter {
+            !runningCharacters.contains($0.id)
+                && !occupiedCharacters.contains($0.id)
+                && !questionCharacters.contains($0.id)
+                && !failedCharacters.contains($0.id)
+                && !offDutyCharacters.contains($0.id)
+        }
+        if candidates.count > 1, let lastCharacter {
+            candidates.removeAll { $0.id == lastCharacter }
+        }
+        return candidates
+    }
+
+    static func messages(
+        from messages: [String],
+        excluding lastMessage: String?
+    ) -> [String] {
+        guard messages.count > 1, let lastMessage else {
+            return messages
+        }
+        return messages.filter { $0 != lastMessage }
+    }
+}
+
 @MainActor
 final class AgentDirector: ObservableObject {
     @Published private(set) var characters: [CharacterConfiguration]
@@ -637,7 +671,9 @@ final class AgentDirector: ObservableObject {
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
     private var workingBubbleTask: Task<Void, Never>?
+    private var activeIdleChatterCharacter: OfficeCharacter?
     private var lastIdleChatterCharacter: OfficeCharacter?
+    private var lastIdleChatterMessage: String?
     private var workingBubbleStep = 0
     private var hasAppliedDefaultSelection = false
     private var hasAppliedLatestConversationSelection = false
@@ -975,11 +1011,19 @@ final class AgentDirector: ObservableObject {
         offDutyCharacters[character]
     }
 
-    func acknowledgeWarningBubble(for character: OfficeCharacter) {
-        guard let message = warningMessage(for: character) else {
+    func dismissViewedBubble(for character: OfficeCharacter) {
+        if let message = warningMessage(for: character) {
+            acknowledgedWarningMessages[character] = message
+        }
+        guard
+            pendingQuestions[character] == nil,
+            !runningCharacters.contains(character)
+        else {
             return
         }
-        acknowledgedWarningMessages[character] = message
+        if activeIdleChatterCharacter == character {
+            activeIdleChatterCharacter = nil
+        }
         bubbleDismissTasks.removeValue(forKey: character)?.cancel()
         speechBubbleStore.remove(for: character)
     }
@@ -1443,6 +1487,9 @@ final class AgentDirector: ObservableObject {
         for character: OfficeCharacter,
         autoDismiss: Bool = true
     ) {
+        if activeIdleChatterCharacter == character {
+            activeIdleChatterCharacter = nil
+        }
         bubbleDismissTasks.removeValue(forKey: character)?.cancel()
         speechBubbleStore.set(text, for: character)
 
@@ -1456,6 +1503,9 @@ final class AgentDirector: ObservableObject {
                 return
             }
             self?.speechBubbleStore.remove(for: character)
+            if self?.activeIdleChatterCharacter == character {
+                self?.activeIdleChatterCharacter = nil
+            }
             self?.bubbleDismissTasks[character] = nil
         }
     }
@@ -1468,6 +1518,7 @@ final class AgentDirector: ObservableObject {
             task.cancel()
         }
         bubbleDismissTasks = [:]
+        activeIdleChatterCharacter = nil
         var updatedBubbles = bubbles.filter {
             pendingQuestions[$0.key] != nil
                 || runningCharacters.contains($0.key)
@@ -1512,24 +1563,35 @@ final class AgentDirector: ObservableObject {
     }
 
     private func showIdleChatter() -> Bool {
-        guard bubbles.isEmpty, runningCharacters.isEmpty else {
+        guard activeIdleChatterCharacter == nil else {
             return false
         }
 
-        var idleCharacters = characters
-        if idleCharacters.count > 1, let lastIdleChatterCharacter {
-            idleCharacters.removeAll { $0.id == lastIdleChatterCharacter }
-        }
+        let idleCharacters = SpeechBubbleIdleChatterPolicy.candidates(
+            characters: characters,
+            runningCharacters: runningCharacters,
+            occupiedCharacters: Set(bubbles.keys),
+            questionCharacters: Set(pendingQuestions.keys),
+            failedCharacters: Set(failedCharacters.keys),
+            offDutyCharacters: Set(offDutyCharacters.keys),
+            lastCharacter: lastIdleChatterCharacter
+        )
+        let messages = SpeechBubbleIdleChatterPolicy.messages(
+            from: Self.idleChatterMessages,
+            excluding: lastIdleChatterMessage
+        )
 
         guard
             let character = idleCharacters.randomElement(),
-            let message = Self.idleChatterMessages.randomElement()
+            let message = messages.randomElement()
         else {
             return false
         }
 
         lastIdleChatterCharacter = character.id
+        lastIdleChatterMessage = message
         showBubble(message, for: character.id)
+        activeIdleChatterCharacter = character.id
         return true
     }
 
