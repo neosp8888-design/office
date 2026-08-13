@@ -1,4 +1,4 @@
-// 이 파일은 대화 원문의 Markdown 블록을 안정적인 SwiftUI 콘텐츠로 표시한다.
+// 이 파일은 대화 원문의 Markdown 블록을 선택 가능한 SwiftUI 콘텐츠로 표시한다.
 
 import AppKit
 import AVFoundation
@@ -141,10 +141,6 @@ private struct ConversationMarkdownContent: View, Equatable {
                 }
             )
 
-        // macOS SwiftUI의 네이티브 선택 오버레이는 직원 전환 직후
-        // 스크롤과 겹치면 AttributeGraph 갱신을 끝없이 재촉발한다.
-        // 응답 복사는 카드의 명시적인 복사 버튼으로 제공하고, 자주
-        // 교체되는 Markdown 트리에는 SelectionOverlay를 만들지 않는다.
         content
             .frame(maxWidth: .infinity, alignment: .leading)
     }

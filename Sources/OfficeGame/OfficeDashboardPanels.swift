@@ -1117,6 +1117,10 @@ private struct HostedLiveWorkspaceFeed: View {
             presentationStore
         )
         .environment(\.locale, OfficeLocalization.locale)
+        // 이 NSHostingView는 앱 루트와 분리된 SwiftUI 트리라 루트에서
+        // 켠 환경 값이 넘어오지 않는다. 대화 카드 전체를 드래그로
+        // 선택해 복사할 수 있도록 여기서 다시 켠다.
+        .textSelection(.enabled)
     }
 }
 
