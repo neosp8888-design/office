@@ -87,6 +87,7 @@ const MAX_TURN_SNAPSHOT_BYTES = 24 * 1024 * 1024;
 const ROLLOUT_TAIL_CHUNK_BYTES = 64 * 1024;
 const MAX_WORKSPACE_DIFF_BYTES = 512 * 1024;
 const MAX_AUTO_WORKSPACE_RETRIES = 3;
+const AUTOMATIC_MERGE_SUCCESS_RESPONSE = "완료되었습니다.";
 const CODEX_ROLLOUT_MONITOR_INTERVAL_MS = 400;
 const rolloutPathCache = new Map();
 
@@ -470,7 +471,8 @@ export class AgentRuntime {
       `
         SELECT
           workspace.*,
-          session.character_id AS "characterID"
+          session.character_id AS "characterID",
+          session.conversation_id AS "conversationID"
         FROM task_workspaces AS workspace
         JOIN cli_sessions AS session
           ON session.id = workspace.cli_session_id
@@ -500,6 +502,7 @@ export class AgentRuntime {
       await this.handleAutomaticWorkspaceApproval(
         {
           turnID: workspace.reviewTurnID,
+          conversationID: row.conversationID,
           character: { id: row.characterID },
           workspace,
         },
@@ -545,7 +548,13 @@ export class AgentRuntime {
 
   async start(options) {
     const automaticRepair = options?.automaticRepair ?? null;
-    if (!automaticRepair && this.draining) {
+    const automaticMergeNotification =
+      options?.automaticMergeNotification === true;
+    if (
+      !automaticRepair &&
+      !automaticMergeNotification &&
+      this.draining
+    ) {
       throw new AgentDrainingError(
         "백엔드가 안전한 전환을 준비 중이라 새 업무를 받지 않습니다.",
       );
@@ -568,6 +577,7 @@ export class AgentRuntime {
     conversationID,
     attachmentPaths = [],
     automaticRepair = null,
+    automaticMergeNotification = false,
   }) {
     const cleanPrompt = String(prompt ?? "").trim();
     if (!cleanPrompt && attachmentPaths.length === 0) {
@@ -575,6 +585,7 @@ export class AgentRuntime {
     }
     if (
       !automaticRepair &&
+      !automaticMergeNotification &&
       (
         this.running.has(characterID) ||
         this.automaticApprovalCharacters.has(characterID)
@@ -677,6 +688,7 @@ export class AgentRuntime {
       warning: null,
       failure: null,
       automaticRepair,
+      automaticMergeNotification,
     };
     this.running.set(characterID, state);
     this.broadcast({ type: "feed.changed", turnId: state.turnID });
@@ -1386,7 +1398,7 @@ export class AgentRuntime {
 
     const candidate = this.finalResponseCandidate(state);
     const decoded = decodeAgentResponse(candidate);
-    if (!decoded.text) {
+    if (!decoded.text && !state.automaticMergeNotification) {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
     await this.complete(state, decoded);
@@ -2181,27 +2193,40 @@ export class AgentRuntime {
     if (state.cancelRequested) {
       return;
     }
+    const completed = state.automaticMergeNotification
+      ? {
+          ...decoded,
+          text: AUTOMATIC_MERGE_SUCCESS_RESPONSE,
+          needsInput: false,
+          sources: [],
+          sourceError: null,
+        }
+      : decoded;
     await this.completePendingInitialCodexReasoning(state);
     await this.finalizeRunningActivities(state, "completed");
-    await this.normalizeCompletedCodexMessageActivity(state, decoded);
-    const generatedImages = listGeneratedImages(
-      state.externalSessionID,
-    ).filter((path) => !state.initialGeneratedImages.has(path));
-    const responseText = appendLocalImagePreviews(
-      this.completedResponseText(state, decoded),
-      generatedImages,
-    );
+    await this.normalizeCompletedCodexMessageActivity(state, completed);
+    const generatedImages = state.automaticMergeNotification
+      ? []
+      : listGeneratedImages(
+        state.externalSessionID,
+      ).filter((path) => !state.initialGeneratedImages.has(path));
+    const responseText = state.automaticMergeNotification
+      ? AUTOMATIC_MERGE_SUCCESS_RESPONSE
+      : appendLocalImagePreviews(
+        this.completedResponseText(state, completed),
+        generatedImages,
+      );
     const responseSources = portableResponseSources(
-      decoded.sources ?? [],
+      completed.sources ?? [],
       state.workdir,
     );
     const workspaceReview =
       state.workspace &&
         this.workspaceManager &&
-        !decoded.needsInput
+        !completed.needsInput
         ? await this.workspaceManager.prepareReview(state.workspace)
         : null;
-    const reviewStatus = decoded.needsInput
+    const reviewStatus = completed.needsInput
       ? "needs_input"
       : workspaceReview?.hasChanges
       ? "awaiting_approval"
@@ -2211,7 +2236,7 @@ export class AgentRuntime {
 
     let completedWorkRecordID = null;
     await this.withTransaction(async (client) => {
-      let sourceWarning = decoded.sourceError ?? null;
+      let sourceWarning = completed.sourceError ?? null;
       let storedResponseSourceCount = 0;
       try {
         const storedSources = await replaceTurnResponseSources(
@@ -2248,7 +2273,7 @@ export class AgentRuntime {
             updated_at = now()
           WHERE id = $1
         `,
-        [state.turnID, decoded.needsInput, sourceWarning],
+        [state.turnID, completed.needsInput, sourceWarning],
       );
       await this.persistUsageRecord(client, state);
       const storedRecord = await persistCompletedTurnWorkRecord(client, {
@@ -2257,10 +2282,10 @@ export class AgentRuntime {
         workspaceID: state.workspace?.id ?? null,
         characterID: state.character.id,
         prompt: state.recordPrompt ?? state.prompt,
-        response: decoded.text,
+        response: completed.text,
         backend: state.character.backend,
         model: state.character.model,
-        needsInput: decoded.needsInput,
+        needsInput: completed.needsInput,
         responseSourceCount: storedResponseSourceCount,
         responseSourceWarning: sourceWarning,
         reviewStatus,
@@ -2303,7 +2328,7 @@ export class AgentRuntime {
       }
     });
     await this.syncWorkRecordRAGBestEffort(completedWorkRecordID);
-    if (state.automaticRepair && decoded.needsInput) {
+    if (state.automaticRepair && completed.needsInput) {
       await this.restoreAutomaticRepairReview(
         state.automaticRepair,
         new Error(
@@ -2458,6 +2483,23 @@ export class AgentRuntime {
             changedFiles: workspaceReview.changedFiles ?? [],
             actorType: "system",
           });
+        }
+        if (!state.automaticMergeNotification) {
+          try {
+            await this.start({
+              characterID,
+              prompt: automaticMergeSuccessPrompt(),
+              conversationID: state.conversationID,
+              automaticMergeNotification: true,
+            });
+          } catch (notificationError) {
+            console.warn(
+              "자동 병합 성공 알림을 시작하지 못했습니다.",
+              notificationError instanceof Error
+                ? notificationError.message
+                : String(notificationError),
+            );
+          }
         }
         return;
       } catch (error) {
@@ -3937,6 +3979,14 @@ function automaticRepairPrompt(repair) {
     "후보가 open 상태면 상대 상태와 겹친 경로를 완료 보고에 명시하세요.",
     "같은 CLI 세션과 작업 폴더에서 원인을 확인하고 해결하세요.",
     "기존 업무 범위를 벗어나지 말고 필요한 검증을 마친 뒤 다시 완료 보고하세요.",
+  ].join("\n");
+}
+
+function automaticMergeSuccessPrompt() {
+  return [
+    "자동 승인·병합이 성공했습니다.",
+    "병합 상태를 다시 확인하거나 도구를 사용하지 마세요.",
+    `사용자에게 정확히 "${AUTOMATIC_MERGE_SUCCESS_RESPONSE}"라고만 답변하세요.`,
   ].join("\n");
 }
 

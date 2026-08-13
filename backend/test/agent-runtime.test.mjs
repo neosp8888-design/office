@@ -528,6 +528,24 @@ function startedRuntimeState({
   return { runtime, capture, prompt, attachmentPaths, automaticRepair };
 }
 
+test("자동 병합 성공 알림은 drain과 승인 예약 중에도 이어서 시작한다", async () => {
+  const { runtime, capture } = startedRuntimeState();
+  runtime.automaticApprovalCharacters.add("left-woman");
+  runtime.beginDrain();
+
+  await runtime.start({
+    characterID: "left-woman",
+    prompt: "자동 병합 성공 알림",
+    conversationID: "conversation-1",
+    automaticMergeNotification: true,
+  });
+
+  assert.ok(capture.state);
+  assert.equal(capture.state.automaticMergeNotification, true);
+  assert.equal(capture.state.conversationID, "conversation-1");
+  assert.equal(capture.state.executionPrompt, "자동 병합 성공 알림");
+});
+
 test("일반 업무 시작은 과거 작업 기록을 자동으로 주입하지 않는다", async () => {
   const searchableDocuments = [{
     ragDocumentId: "rag-1",
@@ -2443,6 +2461,7 @@ test("시작 시 기본 ON이면 paused를 제외한 모든 승인 대기와 충
       review_turn_id: "turn-awaiting",
       review_tree: "tree-awaiting",
       characterID: "boss",
+      conversationID: "conversation-boss",
     }),
     workspaceDatabaseRow({
       id: "workspace-awaiting-older",
@@ -2450,6 +2469,7 @@ test("시작 시 기본 ON이면 paused를 제외한 모든 승인 대기와 충
       review_turn_id: "turn-awaiting-older",
       review_tree: "tree-awaiting-older",
       characterID: "boss",
+      conversationID: "conversation-boss",
     }),
     workspaceDatabaseRow({
       id: "workspace-conflict",
@@ -2457,6 +2477,7 @@ test("시작 시 기본 ON이면 paused를 제외한 모든 승인 대기와 충
       review_turn_id: "turn-conflict",
       review_tree: "tree-conflict",
       characterID: "right-woman",
+      conversationID: "conversation-right-woman",
     }),
   ];
   let candidateQuery;
@@ -2480,28 +2501,33 @@ test("시작 시 기본 ON이면 paused를 제외한 모든 승인 대기와 충
 
   assert.equal(count, 3);
   assert.doesNotMatch(candidateQuery, /SELECT DISTINCT ON/);
+  assert.match(candidateQuery, /session\.conversation_id AS "conversationID"/);
   assert.match(candidateQuery, /workspace\.status IN \('awaiting_approval', 'conflict'\)/);
   assert.match(candidateQuery, /workspace\.auto_repair_paused = false/);
   assert.match(candidateQuery, /workspace\.auto_waiting_for_peer = false/);
   assert.deepEqual(
     handled.map(({ state, review }) => ({
       characterID: state.character.id,
+      conversationID: state.conversationID,
       turnID: state.turnID,
       workspaceID: state.workspace.id,
       reviewTree: review.reviewTree,
     })),
     [{
       characterID: "boss",
+      conversationID: "conversation-boss",
       turnID: "turn-awaiting",
       workspaceID: "workspace-awaiting",
       reviewTree: "tree-awaiting",
     }, {
       characterID: "boss",
+      conversationID: "conversation-boss",
       turnID: "turn-awaiting-older",
       workspaceID: "workspace-awaiting-older",
       reviewTree: "tree-awaiting-older",
     }, {
       characterID: "right-woman",
+      conversationID: "conversation-right-woman",
       turnID: "turn-conflict",
       workspaceID: "workspace-conflict",
       reviewTree: "tree-conflict",
@@ -3409,6 +3435,7 @@ test("자동 복구가 사용자 판단을 요청하면 기존 검토 기록을 
 test("자동 승인 설정은 검토 tree를 system actor로 바로 승인한다", async () => {
   const approvals = [];
   const originTransitions = [];
+  const starts = [];
   let repairCount = 0;
   const runtime = new AgentRuntime({
     pool: {
@@ -3433,6 +3460,10 @@ test("자동 승인 설정은 검토 tree를 system actor로 바로 승인한다
   };
   runtime.transitionWorkRecordReviewBestEffort = async (options) => {
     originTransitions.push(options);
+  };
+  runtime.start = async (options) => {
+    starts.push(options);
+    return { turnId: "merge-notification-turn", status: "running" };
   };
   runtime.resumeWorkspaceForAutomaticRepair = async () => {
     repairCount += 1;
@@ -3467,6 +3498,14 @@ test("자동 승인 설정은 검토 tree를 system actor로 바로 승인한다
     { actorType: "system" },
   ]]);
   assert.equal(repairCount, 0);
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].characterID, "boss");
+  assert.equal(starts[0].conversationID, "conversation-1");
+  assert.equal(starts[0].automaticMergeNotification, true);
+  assert.equal(starts[0].automaticRepair, undefined);
+  assert.match(starts[0].prompt, /자동 승인·병합이 성공했습니다/);
+  assert.match(starts[0].prompt, /병합 상태를 다시 확인하거나 도구를 사용하지 마세요/);
+  assert.match(starts[0].prompt, /정확히 "완료되었습니다\."라고만 답변/);
   assert.deepEqual(originTransitions, [{
     turnID: "origin-review-turn",
     status: "merged",
@@ -3477,6 +3516,92 @@ test("자동 승인 설정은 검토 tree를 system actor로 바로 승인한다
     changedFiles: [{ status: "M", path: "README.md" }],
     actorType: "system",
   }]);
+});
+
+test("자동 병합 성공 알림 턴은 다시 성공 알림을 만들지 않는다", async () => {
+  let approvalCount = 0;
+  let startCount = 0;
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => ({
+        rowCount: 1,
+        rows: [{ enabled: true }],
+      }),
+    },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.approveWorkspace = async () => {
+    approvalCount += 1;
+    return {
+      workspace: {
+        status: "merged",
+        taskCommit: "notification-task-commit",
+        mergedCommit: "notification-merge-commit",
+      },
+    };
+  };
+  runtime.start = async () => {
+    startCount += 1;
+  };
+
+  await runtime.handleAutomaticWorkspaceApproval(
+    {
+      turnID: "notification-turn",
+      conversationID: "conversation-1",
+      character: { id: "boss" },
+      automaticMergeNotification: true,
+    },
+    { hasChanges: true, reviewTree: "notification-review-tree" },
+  );
+
+  assert.equal(approvalCount, 1);
+  assert.equal(startCount, 0);
+});
+
+test("자동 병합 성공 알림 시작 실패를 병합 실패로 오인하지 않는다", async (t) => {
+  const warnings = [];
+  t.mock.method(console, "warn", (...values) => warnings.push(values));
+  let repairCount = 0;
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => ({
+        rowCount: 1,
+        rows: [{ enabled: true }],
+      }),
+    },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.approveWorkspace = async () => ({
+    workspace: {
+      status: "merged",
+      taskCommit: "task-commit",
+      mergedCommit: "merged-commit",
+    },
+  });
+  runtime.start = async () => {
+    throw new Error("알림 CLI 시작 실패");
+  };
+  runtime.resumeWorkspaceForAutomaticRepair = async () => {
+    repairCount += 1;
+  };
+
+  await runtime.handleAutomaticWorkspaceApproval(
+    {
+      turnID: "turn-1",
+      conversationID: "conversation-1",
+      character: { id: "boss" },
+    },
+    { hasChanges: true, reviewTree: "review-tree" },
+  );
+
+  assert.equal(repairCount, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][0], "자동 병합 성공 알림을 시작하지 못했습니다.");
+  assert.equal(warnings[0][1], "알림 CLI 시작 실패");
 });
 
 test("원본 main이 dirty면 직원을 호출하지 않고 다음 직접 승인을 기다린다", async () => {
@@ -3548,6 +3673,11 @@ test("자동 승인 처리 중에는 같은 직원의 일반 업무가 끼어들
     broadcast: () => {},
   });
   runtime.approveWorkspace = async () => approvalGate;
+  const start = runtime.start.bind(runtime);
+  runtime.start = async (options) =>
+    options?.automaticMergeNotification
+      ? { turnId: "merge-notification-turn", status: "running" }
+      : await start(options);
 
   const automaticApproval = runtime.handleAutomaticWorkspaceApproval(
     { turnID: "turn-1", character: { id: "boss" } },
@@ -4224,6 +4354,89 @@ test("자동 복구 CLI 실행 실패는 검토 복원 절차를 호출한다", 
   await runtime.fail(state, executionError);
 
   assert.deepEqual(restored, [[repair, executionError, { paused: true }]]);
+  assert.equal(runtime.running.has("boss"), false);
+});
+
+test("자동 병합 성공 알림은 모델 출력과 무관하게 완료 한 문장만 저장한다", async () => {
+  const queries = [];
+  const query = async (text, values) => {
+    queries.push({ text, values });
+    if (/WITH selected_project AS/.test(text)) {
+      return {
+        rowCount: 1,
+        rows: [{ workRecordId: "merge-notification-record" }],
+      };
+    }
+    return { rowCount: 1, rows: [] };
+  };
+  const runtime = new AgentRuntime({
+    pool: { query },
+    withTransaction: async (body) => body({ query }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.syncWorkRecordRAGBestEffort = async () => null;
+  const state = {
+    ...makeCodexActivityState(),
+    prompt: "자동 병합 성공 알림",
+    recordPrompt: "자동 병합 성공 알림",
+    workdir: "/repo",
+    sessionID: "session-1",
+    character: {
+      id: "boss",
+      backend: "claude",
+      model: "claude-opus-5",
+      fastMode: false,
+    },
+    workspace: null,
+    initialGeneratedImages: new Set(),
+    externalSessionID: "external-session-1",
+    responseText: "병합 상태를 다시 확인했습니다.",
+    visibleAgentMessages: [{
+      key: "message-1",
+      text: "병합 상태를 다시 확인했습니다.",
+    }],
+    usage: null,
+    cancelRequested: false,
+    automaticMergeNotification: true,
+  };
+  runtime.running.set("boss", state);
+
+  await runtime.complete(state, {
+    text: "[NEED_INPUT]\n병합 커밋을 다시 확인할까요?",
+    needsInput: true,
+    sourceError: "잘못된 출처",
+    sources: [{
+      ordinal: 0,
+      sourceKind: "tool",
+      title: "Git 확인",
+      locator: "exec_command",
+      excerpt: null,
+      ragDocumentID: null,
+      workRecordID: null,
+      metadata: {},
+    }],
+  });
+
+  const messageUpdate = queries.find(({ text }) =>
+    /UPDATE messages/.test(text)
+  );
+  const turnUpdate = queries.find(({ text }) =>
+    /UPDATE turns/.test(text) && /status = 'completed'/.test(text)
+  );
+  const workRecordInsert = queries.find(({ text }) =>
+    /WITH selected_project AS/.test(text)
+  );
+  const workRecordMetadata = JSON.parse(workRecordInsert.values[7]);
+  assert.equal(messageUpdate.values[1], "완료되었습니다.");
+  assert.deepEqual(turnUpdate.values, ["turn-1", false, null]);
+  assert.match(workRecordInsert.values[6], /결과\n완료되었습니다\.$/);
+  assert.equal(workRecordMetadata.needsInput, false);
+  assert.equal(workRecordMetadata.responseSourceCount, 0);
+  assert.equal(
+    queries.some(({ text }) => /INSERT INTO turn_response_sources/.test(text)),
+    false,
+  );
   assert.equal(runtime.running.has("boss"), false);
 });
 
