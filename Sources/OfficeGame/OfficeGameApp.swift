@@ -455,9 +455,7 @@ private struct OfficeGameView: View {
                         isFailure: failureMessage != nil,
                         isOffDuty: offDutyReason != nil
                     )
-                    if offDutyReason != nil || failureMessage != nil {
-                        director.acknowledgeWarningBubble(for: character)
-                    }
+                    director.dismissViewedBubble(for: character)
                 }
             )
             .equatable()
