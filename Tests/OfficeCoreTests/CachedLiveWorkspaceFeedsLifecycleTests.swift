@@ -421,6 +421,111 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertNotNil(container.subviews.first)
     }
 
+    func testFeedRemountTokenRebuildsSameEmployeeHostLikeReselection()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.liveFeedStore.replace(with: makeTurns())
+        director.liveFeedStore.finishInitialLoading()
+        let characterStore = director.liveFeedStore.characterStore(
+            for: OfficeCharacter.boss.rawValue
+        )
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss,
+            feedRemountToken: 0
+        )
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(120))
+
+        var mountedHost: NSView? = container.subviews.first
+        guard mountedHost != nil else {
+            XCTFail("첫 선택에서 대화 호스트가 만들어지지 않았습니다.")
+            return
+        }
+        let revisionAfterMount = characterStore.presentationRevision
+        XCTAssertEqual(revisionAfterMount, 1)
+
+        // 같은 직원·같은 토큰의 재구성은 아무것도 다시 만들지 않는다.
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss,
+            feedRemountToken: 0
+        )
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(60))
+        XCTAssertTrue(
+            container.subviews.first === mountedHost,
+            "토큰이 그대로면 기존 호스트를 유지해야 합니다."
+        )
+        XCTAssertNotNil(mountedHost)
+        XCTAssertEqual(
+            characterStore.presentationRevision,
+            revisionAfterMount,
+            "토큰이 그대로면 목록을 다시 발행하지 않아야 합니다."
+        )
+
+        // 제출이 CLI로 넘어간 뒤의 재마운트 요청. 다른 직원에 갔다
+        // 돌아온 것과 똑같이 호스트를 새로 만들고 목록을 다시 발행한다.
+        weak var releasedHost: NSView? = mountedHost
+        mountedHost = nil
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss,
+            feedRemountToken: 1
+        )
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(150))
+
+        guard let remountedHost = container.subviews.first else {
+            XCTFail("재마운트 뒤 대화 호스트가 없습니다.")
+            return
+        }
+        XCTAssertFalse(
+            remountedHost === releasedHost,
+            "재마운트 요청이 기존 호스트를 그대로 뒀습니다. 직원 전환과 "
+                + "같은 경로를 타지 않았습니다."
+        )
+        XCTAssertEqual(
+            container.subviews.count,
+            1,
+            "이전 호스트가 화면에 남아 있으면 안 됩니다."
+        )
+        XCTAssertGreaterThan(
+            characterStore.presentationRevision,
+            revisionAfterMount,
+            "재마운트 뒤 목록 재발행이 일어나지 않았습니다."
+        )
+        let remountedScrollView = try await waitForPrimaryScrollView(
+            in: container
+        )
+        XCTAssertNotNil(
+            remountedScrollView,
+            "재마운트 뒤 대화 목록이 실제로 다시 mount되어야 합니다."
+        )
+
+        try await settle(for: .milliseconds(50))
+        XCTAssertNil(
+            releasedHost,
+            "재마운트로 버려진 이전 호스트가 해제되지 않았습니다."
+        )
+    }
+
     func testPostMountRefreshWaitsUntilSelectedHostIsInWindow()
         async throws
     {
