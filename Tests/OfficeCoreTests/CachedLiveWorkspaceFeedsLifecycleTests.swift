@@ -451,7 +451,13 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             feedRemountToken: 0
         )
         container.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(120))
+        let didPublishInitialMount = try await waitUntil(in: container) {
+            characterStore.presentationRevision > 0
+        }
+        XCTAssertTrue(
+            didPublishInitialMount,
+            "첫 선택 뒤 목록 재발행이 제한 시간 안에 일어나지 않았습니다."
+        )
 
         var mountedHost: NSView? = container.subviews.first
         guard mountedHost != nil else {
@@ -468,7 +474,6 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             feedRemountToken: 0
         )
         container.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(60))
         XCTAssertTrue(
             container.subviews.first === mountedHost,
             "토큰이 그대로면 기존 호스트를 유지해야 합니다."
@@ -482,6 +487,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 
         // 제출이 CLI로 넘어간 뒤의 재마운트 요청. 다른 직원에 갔다
         // 돌아온 것과 똑같이 호스트를 새로 만들고 목록을 다시 발행한다.
+        let mountedHostID = ObjectIdentifier(mountedHost!)
         weak var releasedHost: NSView?
         releasedHost = mountedHost
         mountedHost = nil
@@ -491,14 +497,14 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             feedRemountToken: 1
         )
         container.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(150))
 
         guard let remountedHost = container.subviews.first else {
             XCTFail("재마운트 뒤 대화 호스트가 없습니다.")
             return
         }
-        XCTAssertFalse(
-            remountedHost === releasedHost,
+        XCTAssertNotEqual(
+            ObjectIdentifier(remountedHost),
+            mountedHostID,
             "재마운트 요청이 기존 호스트를 그대로 뒀습니다. 직원 전환과 "
                 + "같은 경로를 타지 않았습니다."
         )
@@ -506,6 +512,13 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             container.subviews.count,
             1,
             "이전 호스트가 화면에 남아 있으면 안 됩니다."
+        )
+        let didRepublish = try await waitUntil(in: container) {
+            characterStore.presentationRevision > revisionAfterMount
+        }
+        XCTAssertTrue(
+            didRepublish,
+            "재마운트 뒤 목록 재발행이 제한 시간 안에 일어나지 않았습니다."
         )
         XCTAssertGreaterThan(
             characterStore.presentationRevision,
@@ -520,7 +533,14 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             "재마운트 뒤 대화 목록이 실제로 다시 mount되어야 합니다."
         )
 
-        try await settle(for: .milliseconds(50))
+        let didReleasePreviousHost = try await waitUntil {
+            releasedHost == nil
+        }
+        XCTAssertTrue(
+            didReleasePreviousHost,
+            "재마운트로 버려진 이전 호스트가 제한 시간 안에 해제되지 "
+                + "않았습니다."
+        )
         XCTAssertNil(
             releasedHost,
             "재마운트로 버려진 이전 호스트가 해제되지 않았습니다."
@@ -549,7 +569,6 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             selectedCharacterID: .boss
         )
         container.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(50))
 
         XCTAssertEqual(
             characterStore.presentationRevision,
@@ -566,7 +585,13 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
         window.contentView = container
         container.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(100))
+        let didPublishAfterWindowAttach = try await waitUntil(in: container) {
+            characterStore.presentationRevision > 0
+        }
+        XCTAssertTrue(
+            didPublishAfterWindowAttach,
+            "창 연결 뒤 목록 재발행이 제한 시간 안에 일어나지 않았습니다."
+        )
 
         XCTAssertEqual(characterStore.presentationRevision, 1)
         XCTAssertTrue(container.window === window)
@@ -1166,6 +1191,25 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
     private func settle(for duration: Duration) async throws {
         try await Task.sleep(for: duration)
         await Task.yield()
+    }
+
+    private func waitUntil(
+        in root: NSView? = nil,
+        timeout: Duration = .seconds(1),
+        pollInterval: Duration = .milliseconds(4),
+        condition: () -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        repeat {
+            root?.layoutSubtreeIfNeeded()
+            if condition() {
+                return true
+            }
+            try await settle(for: pollInterval)
+        } while clock.now < deadline
+        root?.layoutSubtreeIfNeeded()
+        return condition()
     }
 
     private func primaryScrollView(in root: NSView) -> NSScrollView? {
