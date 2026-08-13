@@ -75,19 +75,12 @@ SAFE_VERSION="${VERSION//[^A-Za-z0-9._-]/-}"
 SAFE_BUILD_NUMBER="${BUILD_NUMBER//[^A-Za-z0-9._-]/-}"
 
 ARCHITECTURES="$(/usr/bin/lipo -archs "$APP_EXECUTABLE")"
-case " $ARCHITECTURES " in
-    *" arm64 "*" x86_64 "* | *" x86_64 "*" arm64 "*)
-        ARCH_LABEL="universal2"
-        ;;
-    *)
-        ARCH_LABEL="${ARCHITECTURES// /-}"
-        ;;
-esac
-
-if [[ -z "$ARCH_LABEL" ]]; then
-    print -u2 "앱 실행 파일의 아키텍처를 확인할 수 없습니다."
+if [[ "$ARCHITECTURES" != "arm64" ]]; then
+    print -u2 \
+        "OFFICESTRA v1.3.2부터 Apple Silicon arm64 앱만 패키징합니다. 현재: ${ARCHITECTURES:-알 수 없음}"
     exit 1
 fi
+ARCH_LABEL="arm64"
 
 ARTIFACT_BASENAME="OFFICESTRA-${SAFE_VERSION}-${SAFE_BUILD_NUMBER}-macOS-${ARCH_LABEL}-${RELEASE_FLAVOR}"
 ZIP_NAME="$ARTIFACT_BASENAME.zip"

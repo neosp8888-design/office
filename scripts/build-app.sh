@@ -10,6 +10,12 @@ NODE_ENTITLEMENTS="$PROJECT_DIR/scripts/node-runtime.entitlements"
 BACKEND_RELEASE_ID_TOOL="$PROJECT_DIR/scripts/backend-release-id.py"
 
 cd "$PROJECT_DIR"
+HOST_ARCHITECTURE="$(/usr/bin/uname -m)"
+if [[ "$HOST_ARCHITECTURE" != "arm64" ]]; then
+    print -u2 \
+        "OFFICESTRA v1.3.2부터 Apple Silicon arm64에서만 빌드합니다. 현재: $HOST_ARCHITECTURE"
+    exit 1
+fi
 # 병합으로 제거된 프레임워크 참조가 증분 산출물에 남지 않도록 배포 빌드를 깨끗하게 시작한다.
 swift package clean
 swift build -c release --product OfficeLLM
@@ -147,6 +153,11 @@ APP_ARCHITECTURES="$(canonical_architectures "$MACOS_DIR/OfficeLLM")"
 NODE_ARCHITECTURES="$(canonical_architectures "$NODE_RUNTIME_DIR/bin/node")"
 if [[ -z "$APP_ARCHITECTURES" || "$APP_ARCHITECTURES" != "$NODE_ARCHITECTURES" ]]; then
     print -u2 "앱과 번들 Node 아키텍처가 일치하지 않습니다. app=$APP_ARCHITECTURES node=$NODE_ARCHITECTURES"
+    exit 1
+fi
+if [[ "$APP_ARCHITECTURES" != "arm64" ]]; then
+    print -u2 \
+        "OFFICESTRA v1.3.2부터 Apple Silicon arm64만 지원합니다. 현재: $APP_ARCHITECTURES"
     exit 1
 fi
 

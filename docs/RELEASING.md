@@ -9,25 +9,29 @@ before download. Users may either allow the single app through macOS **Open
 Anyway** or build the tagged source themselves. Never recommend globally
 disabling Gatekeeper or applying broad `xattr` commands.
 
+Starting with `v1.3.2`, OFFICESTRA releases support Apple silicon (`arm64`, M1
+or later) only. Intel Macs are not supported. The historical `v1.3.0` and
+`v1.3.1` artifacts and incident report remain unchanged records of the earlier
+two-architecture release policy.
+
 ## Publish an ad-hoc preview
 
 1. Set `CFBundleShortVersionString` and `CFBundleVersion` in
    `Resources/Info.plist`.
 2. Merge a clean, passing commit into `main` and wait for the main CI workflow.
 3. Record the exact 40-character `origin/main` commit SHA. Manually run
-   `Release UI Preflight` for that SHA and require both the `arm64` and
-   `x86_64` jobs to pass. The workflow repeats the release-sensitive streaming
-   and live-feed lifecycle tests in separate XCTest processes. The tests set
-   their Reduce Motion environment explicitly instead of inheriting a runner
-   preference.
+   `Release UI Preflight` for that SHA and require the `arm64` job to pass. The
+   workflow repeats the release-sensitive streaming and live-feed lifecycle
+   tests in separate XCTest processes. The tests set their Reduce Motion
+   environment explicitly instead of inheriting a runner preference.
 4. Confirm that the semantic tag and GitHub Release do not already exist.
-5. Create and push the exact semantic tag, for example `v1.3.0` for app version
-   `1.3.0`.
+5. Create and push the exact semantic tag, for example `v1.3.2` for app version
+   `1.3.2`.
 6. Manually run `Community Preview Release` with that existing tag. The
-   workflow builds ad-hoc arm64 and x86_64 apps, creates ZIP and DMG artifacts,
-   verifies checksums, runs the packaged backend against Docker, and publishes
-   a GitHub Pre-release only after every gate passes. Do not run `Notarized
-   Release` for the same tag.
+   workflow builds the ad-hoc arm64 app, creates ZIP and DMG artifacts, verifies
+   checksums, runs the packaged backend against Docker, and publishes a GitHub
+   Pre-release only after every gate passes. Do not run `Notarized Release` for
+   the same tag.
 
 For example, after fetching the current remote state:
 
@@ -55,7 +59,7 @@ tagged source and finished app for credentials and developer-local paths. It
 also launches the app and the copy mounted from the final DMG in isolated
 first-run homes, rejecting an early exit or fatal runtime log.
 
-For both architectures, the workflow extracts the exact backend, production
+For the arm64 release, the workflow extracts the exact backend, production
 dependencies, Compose file, migrations, and default configuration from the
 packaged app. An Ubuntu Docker gate starts that packaged runtime with a host
 Node of the supported major version and requires an isolated first task to
@@ -82,8 +86,8 @@ settings are not stable inputs. Tests that gate a release must therefore:
   part of the assertion;
 - wait for an observable condition with a bounded deadline instead of assuming
   a view exists after a fixed sleep;
-- run the streaming and live-feed lifecycle suites repeatedly on both release
-  architectures before a release tag is created; and
+- run the streaming and live-feed lifecycle suites repeatedly on the arm64
+  release runner before a release tag is created; and
 - retain the full release test, package, Docker first-task, checksum, and smoke
   gates after the preflight. The preflight is an early warning, not a
   replacement for release verification.

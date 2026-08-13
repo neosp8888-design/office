@@ -26,8 +26,6 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
 
     steps:
       - name: Check out repository
@@ -244,7 +242,6 @@ jobs:
       matrix:
         arch:
           - arm64
-          - x86_64
 
     steps:
       - name: Check out repository
@@ -284,25 +281,20 @@ jobs:
       contents: write
 
     steps:
-      - name: Download all notarized architectures
+      - name: Download Apple Silicon notarized artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: officestra-release-*
+          name: officestra-release-arm64
           path: dist/release
-          merge-multiple: true
 
       - name: Verify release set and create checksums
         run: |
           set -euo pipefail
           shopt -s nullglob
           arm_zip=(dist/release/*-arm64-notarized.zip)
-          intel_zip=(dist/release/*-x86_64-notarized.zip)
           arm_dmg=(dist/release/*-arm64-notarized.dmg)
-          intel_dmg=(dist/release/*-x86_64-notarized.dmg)
           test "${#arm_zip[@]}" -eq 1
-          test "${#intel_zip[@]}" -eq 1
           test "${#arm_dmg[@]}" -eq 1
-          test "${#intel_dmg[@]}" -eq 1
           (
             cd dist/release
             sha256sum ./*.zip ./*.dmg > SHA256SUMS
@@ -322,4 +314,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
-            --title "OFFICESTRA ${RELEASE_TAG}"
+            --title "OFFICESTRA ${RELEASE_TAG} (Apple Silicon)"

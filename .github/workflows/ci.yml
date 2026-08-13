@@ -190,17 +190,32 @@ jobs:
             cd dist/release
             shasum -a 256 -c SHA256SUMS
           )
+          test "$(find dist/release -maxdepth 1 -name '*-arm64-adhoc.zip' | wc -l | tr -d ' ')" = 1
+          test "$(find dist/release -maxdepth 1 -name '*-arm64-adhoc.dmg' | wc -l | tr -d ' ')" = 1
           test "$(find dist/release -maxdepth 1 -name '*.zip' | wc -l | tr -d ' ')" = 1
           test "$(find dist/release -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')" = 1
+          test "$(wc -l < dist/release/SHA256SUMS | tr -d ' ')" = 2
+          test "$(awk '{print $2}' dist/release/SHA256SUMS | grep -Ec -- '-arm64-adhoc\.(zip|dmg)$')" = 2
 
       - name: Check repository and YAML syntax
         run: |
           set -euo pipefail
           git diff --check
           bash -n scripts/test-packaged-community-preview-e2e.sh
+          zsh -n scripts/build-app.sh
           zsh -n scripts/smoke-test-macos-release.sh
           zsh -n scripts/package-release.sh
           zsh -n scripts/notarize-app.sh
+          if rg -n \
+            'x86_64|macos-15-intel|universal2' \
+            .github/workflows/release-ui-preflight.yml \
+            .github/workflows/community-preview-release.yml \
+            .github/workflows/release.yml \
+            scripts/build-app.sh \
+            scripts/package-release.sh; then
+            echo "Apple Silicon 전용 릴리스 경로에 Intel 지원이 다시 들어왔습니다." >&2
+            exit 1
+          fi
           ruby -e \
             'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
             .github/workflows/ci.yml
