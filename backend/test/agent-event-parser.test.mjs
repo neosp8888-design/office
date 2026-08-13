@@ -909,6 +909,8 @@ test("사용자 확인 표식을 질문 상태로 분리한다", () => {
       text: "어느 색으로 할까요?",
       needsInput: true,
       sources: [],
+      proposals: [],
+      wikiProposalError: null,
     },
   );
 });
@@ -922,6 +924,8 @@ test("응답 끝의 출처 블록을 본문과 분리한다", () => {
     {
       text: "완료했습니다.",
       needsInput: false,
+      proposals: [],
+      wikiProposalError: null,
       sources: [
         {
           ordinal: 0,
@@ -957,6 +961,8 @@ test("웹과 도구와 스킬 출처를 본문과 분리한다", () => {
     {
       text: "확인했습니다.",
       needsInput: false,
+      proposals: [],
+      wikiProposalError: null,
       sources: [
         {
           ordinal: 0,
@@ -999,6 +1005,220 @@ test("잘못된 출처 블록도 기계 판독용 내용을 화면에서 숨긴�
     text: "완료했습니다.",
     needsInput: false,
     sources: [],
+    proposals: [],
+    wikiProposalError: null,
     sourceError: "응답 근거 형식을 읽지 못했습니다.",
   });
+});
+
+test("일반 응답은 빈 위키 수정안 계약 외에는 그대로 유지한다", () => {
+  assert.deepEqual(decodeAgentResponse("일반 답변입니다."), {
+    text: "일반 답변입니다.",
+    needsInput: false,
+    sources: [],
+    proposals: [],
+    wikiProposalError: null,
+  });
+});
+
+test("응답 끝의 위키 수정안을 검증해 본문과 분리한다", () => {
+  assert.deepEqual(
+    decodeAgentResponse(`정책을 정리했습니다.
+
+[OFFICE_WIKI_PROPOSALS]
+[{"pageKey":"release-policy","kind":"decision","title":"릴리스 승인 원칙","body":"배포 전 사용자 승인을 받습니다.","approvalTier":"user"},{"pageKey":"secret-handling","kind":"constraint","title":"비밀값 저장 금지","body":"토큰은 저장소 밖에 둡니다.","approvalTier":"peer"}]`),
+    {
+      text: "정책을 정리했습니다.",
+      needsInput: false,
+      sources: [],
+      proposals: [
+        {
+          pageKey: "release-policy",
+          kind: "decision",
+          title: "릴리스 승인 원칙",
+          body: "배포 전 사용자 승인을 받습니다.",
+          approvalTier: "user",
+        },
+        {
+          pageKey: "secret-handling",
+          kind: "constraint",
+          title: "비밀값 저장 금지",
+          body: "토큰은 저장소 밖에 둡니다.",
+          approvalTier: "peer",
+        },
+      ],
+      wikiProposalError: null,
+    },
+  );
+});
+
+test("권장 기계 블록 순서는 NEED_INPUT 본문, 위키 수정안, 응답 근거다", () => {
+  const decoded = decodeAgentResponse(`[NEED_INPUT]
+이 원칙을 위키에 반영할까요?
+
+[OFFICE_WIKI_PROPOSALS]
+[{"pageKey":"deploy-approval","kind":"decision","title":"배포 승인","body":"사용자 승인 뒤 배포합니다.","approvalTier":"user"}]
+
+[OFFICE_SOURCES]
+[{"kind":"file","title":"배포 규칙","locator":"README.md:10"}]`);
+
+  assert.equal(decoded.text, "이 원칙을 위키에 반영할까요?");
+  assert.equal(decoded.needsInput, true);
+  assert.deepEqual(decoded.proposals, [{
+    pageKey: "deploy-approval",
+    kind: "decision",
+    title: "배포 승인",
+    body: "사용자 승인 뒤 배포합니다.",
+    approvalTier: "user",
+  }]);
+  assert.equal(decoded.wikiProposalError, null);
+  assert.equal(decoded.sources.length, 1);
+  assert.equal(decoded.sources[0].locator, "README.md:10");
+});
+
+test("위키 수정안과 응답 근거의 역순도 각각 안전하게 분리한다", () => {
+  const decoded = decodeAgentResponse(`확인했습니다.
+
+[OFFICE_SOURCES]
+[{"kind":"file","title":"장애 기록","locator":"incidents.md:4"}]
+
+[OFFICE_WIKI_PROPOSALS]
+[{"pageKey":"incident-queue","kind":"incident","title":"작업 대기열 장애","body":"대기열 복구 절차를 기록합니다.","approvalTier":"peer"}]`);
+
+  assert.equal(decoded.text, "확인했습니다.");
+  assert.equal(decoded.sources[0].locator, "incidents.md:4");
+  assert.deepEqual(decoded.proposals, [{
+    pageKey: "incident-queue",
+    kind: "incident",
+    title: "작업 대기열 장애",
+    body: "대기열 복구 절차를 기록합니다.",
+    approvalTier: "peer",
+  }]);
+  assert.equal(decoded.wikiProposalError, null);
+});
+
+test("끝이 아닌 위키 수정안 표식은 일반 본문으로 보존한다", () => {
+  const response = `형식 예시입니다.
+[OFFICE_WIKI_PROPOSALS]
+[]
+이 문장은 블록 뒤의 일반 설명입니다.`;
+
+  assert.deepEqual(decodeAgentResponse(response), {
+    text: response,
+    needsInput: false,
+    sources: [],
+    proposals: [],
+    wikiProposalError: null,
+  });
+});
+
+test("잘못된 위키 수정안은 본문을 보존하고 임의 제안을 만들지 않는다", () => {
+  assert.deepEqual(
+    decodeAgentResponse(`정상 답변입니다.
+
+[OFFICE_WIKI_PROPOSALS]
+not-json`),
+    {
+      text: "정상 답변입니다.",
+      needsInput: false,
+      sources: [],
+      proposals: [],
+      wikiProposalError: "위키 수정안 형식을 읽지 못했습니다.",
+    },
+  );
+});
+
+test("잘못된 위키 수정안과 정상 응답 근거는 서로의 결과를 오염시키지 않는다", () => {
+  for (const suffix of [
+    `[OFFICE_WIKI_PROPOSALS]\nnot-json\n[OFFICE_SOURCES]\n[{"kind":"file","title":"정상 근거","locator":"README.md:3"}]`,
+    `[OFFICE_SOURCES]\n[{"kind":"file","title":"정상 근거","locator":"README.md:3"}]\n[OFFICE_WIKI_PROPOSALS]\nnot-json`,
+  ]) {
+    const decoded = decodeAgentResponse(`[NEED_INPUT]\n승인할까요?\n${suffix}`);
+    assert.equal(decoded.text, "승인할까요?");
+    assert.equal(decoded.needsInput, true);
+    assert.equal(decoded.sources.length, 1);
+    assert.equal(decoded.sources[0].locator, "README.md:3");
+    assert.deepEqual(decoded.proposals, []);
+    assert.equal(
+      decoded.wikiProposalError,
+      "위키 수정안 형식을 읽지 못했습니다.",
+    );
+  }
+});
+
+test("위키 수정안은 최대 3건과 각 필드 경계를 허용한다", () => {
+  const proposals = Array.from({ length: 3 }, (_, index) => ({
+    pageKey: `${index}${"a".repeat(79)}`,
+    kind: ["decision", "constraint", "incident"][index],
+    title: "가".repeat(120),
+    body: "나".repeat(12_000),
+    approvalTier: index === 1 ? "peer" : "user",
+  }));
+  const decoded = decodeAgentResponse(`완료
+[OFFICE_WIKI_PROPOSALS]
+${JSON.stringify(proposals)}`);
+
+  assert.deepEqual(decoded.proposals, proposals);
+  assert.equal(decoded.wikiProposalError, null);
+  assert.equal(decoded.text, "완료");
+});
+
+test("위키 수정안 제한 위반은 배열 전체를 거절한다", () => {
+  const valid = {
+    pageKey: "safe-page",
+    kind: "decision",
+    title: "안전한 제목",
+    body: "안전한 본문",
+    approvalTier: "peer",
+  };
+  const invalidCases = [
+    [valid, valid, valid, valid],
+    [{ ...valid, pageKey: "Uppercase" }],
+    [{ ...valid, pageKey: `a${"b".repeat(80)}` }],
+    [{ ...valid, kind: "note" }],
+    [{ ...valid, title: "가".repeat(121) }],
+    [{ ...valid, body: "나".repeat(12_001) }],
+    [{ ...valid, approvalTier: "system" }],
+    [{ ...valid, sourceTurnId: "직원이-만든-ID" }],
+    [{
+      pageKey: valid.pageKey,
+      kind: valid.kind,
+      title: valid.title,
+      approvalTier: valid.approvalTier,
+    }],
+  ];
+
+  for (const proposals of invalidCases) {
+    const decoded = decodeAgentResponse(`답변 보존
+[OFFICE_WIKI_PROPOSALS]
+${JSON.stringify(proposals)}`);
+    assert.equal(decoded.text, "답변 보존");
+    assert.deepEqual(decoded.proposals, []);
+    assert.equal(
+      decoded.wikiProposalError,
+      "위키 수정안 형식을 읽지 못했습니다.",
+    );
+  }
+});
+
+test("중복 위키 수정안 블록은 부분 채택 없이 거절한다", () => {
+  const proposal = JSON.stringify([{
+    pageKey: "one-page",
+    kind: "decision",
+    title: "한 건",
+    body: "한 건만 허용합니다.",
+    approvalTier: "peer",
+  }]);
+  const decoded = decodeAgentResponse(`답변
+[OFFICE_WIKI_PROPOSALS]
+${proposal}
+[OFFICE_WIKI_PROPOSALS]
+${proposal}`);
+
+  assert.equal(decoded.text, "답변");
+  assert.deepEqual(decoded.proposals, []);
+  assert.equal(
+    decoded.wikiProposalError,
+    "위키 수정안 블록은 하나만 사용할 수 있습니다.",
+  );
 });

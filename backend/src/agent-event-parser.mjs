@@ -8,6 +8,24 @@ const MAX_REASONING_LENGTH = 6_000;
 const MAX_COLLABORATION_PROMPT_LENGTH = 4_000;
 const MAX_COLLABORATION_RESULT_LENGTH = 12_000;
 const RESPONSE_SOURCES_MARKER = "[OFFICE_SOURCES]";
+const WIKI_PROPOSALS_MARKER = "[OFFICE_WIKI_PROPOSALS]";
+const MAX_WIKI_PROPOSALS = 3;
+const MAX_WIKI_PROPOSAL_TITLE_LENGTH = 120;
+const MAX_WIKI_PROPOSAL_BODY_LENGTH = 12_000;
+const WIKI_PROPOSAL_FIELDS = new Set([
+  "pageKey",
+  "kind",
+  "title",
+  "body",
+  "approvalTier",
+]);
+const WIKI_PROPOSAL_KINDS = new Set([
+  "decision",
+  "constraint",
+  "incident",
+]);
+const WIKI_PROPOSAL_APPROVAL_TIERS = new Set(["peer", "user"]);
+const WIKI_PROPOSAL_PAGE_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 export function parseAgentEvent(line, backend, workdir = null) {
   let object;
@@ -26,62 +44,193 @@ export function parseAgentEvent(line, backend, workdir = null) {
 }
 
 export function decodeAgentResponse(value) {
-  const decodedSources = responseSources(String(value ?? "").trim());
-  const text = decodedSources.text;
+  const decodedBlocks = responseMachineBlocks(String(value ?? "").trim());
+  const text = decodedBlocks.text;
   const marker = "[NEED_INPUT]";
-  if (!text.startsWith(marker)) {
-    const response = {
-      text,
-      needsInput: false,
-      sources: decodedSources.sources,
-    };
-    if (decodedSources.sourceError) {
-      response.sourceError = decodedSources.sourceError;
-    }
-    return response;
-  }
-
   const response = {
-    text: text.slice(marker.length).replace(/^\s+/, ""),
-    needsInput: true,
-    sources: decodedSources.sources,
+    text: text.startsWith(marker)
+      ? text.slice(marker.length).replace(/^\s+/, "")
+      : text,
+    needsInput: text.startsWith(marker),
+    sources: decodedBlocks.sources,
+    proposals: decodedBlocks.proposals,
+    wikiProposalError: decodedBlocks.wikiProposalError,
   };
-  if (decodedSources.sourceError) {
-    response.sourceError = decodedSources.sourceError;
+  if (decodedBlocks.sourceError) {
+    response.sourceError = decodedBlocks.sourceError;
   }
   return response;
 }
 
-function responseSources(text) {
-  const markerIndex = text.lastIndexOf(RESPONSE_SOURCES_MARKER);
-  if (
-    markerIndex < 0 ||
-    (markerIndex > 0 && text[markerIndex - 1] !== "\n")
-  ) {
-    return { text, sources: [] };
+function responseMachineBlocks(text) {
+  let visibleText = text;
+  const blocks = [];
+  while (true) {
+    const block = trailingResponseMachineBlock(visibleText);
+    if (!block) {
+      break;
+    }
+    blocks.unshift(block);
+    visibleText = block.text;
   }
-  let encoded = text
-    .slice(markerIndex + RESPONSE_SOURCES_MARKER.length)
-    .trim();
+
+  let sources = [];
+  let sourceError;
+  const sourceBlocks = blocks.filter(
+    (block) => block.marker === RESPONSE_SOURCES_MARKER,
+  );
+  if (sourceBlocks.length === 1) {
+    try {
+      sources = normalizeResponseSources(
+        JSON.parse(unfencedMachineBlock(sourceBlocks[0].encoded)),
+        { maximum: 20 },
+      );
+    } catch {
+      sourceError = "응답 근거 형식을 읽지 못했습니다.";
+    }
+  } else if (sourceBlocks.length > 1) {
+    sourceError = "응답 근거 블록은 하나만 사용할 수 있습니다.";
+  }
+
+  let proposals = [];
+  let wikiProposalError = null;
+  const proposalBlocks = blocks.filter(
+    (block) => block.marker === WIKI_PROPOSALS_MARKER,
+  );
+  if (proposalBlocks.length === 1) {
+    try {
+      proposals = normalizedWikiProposals(
+        JSON.parse(unfencedMachineBlock(proposalBlocks[0].encoded)),
+      );
+    } catch {
+      wikiProposalError = "위키 수정안 형식을 읽지 못했습니다.";
+    }
+  } else if (proposalBlocks.length > 1) {
+    wikiProposalError = "위키 수정안 블록은 하나만 사용할 수 있습니다.";
+  }
+
+  return {
+    text: visibleText.trim(),
+    sources,
+    proposals,
+    wikiProposalError,
+    ...(sourceError ? { sourceError } : {}),
+  };
+}
+
+function trailingResponseMachineBlock(text) {
+  const markerPattern = /(?:^|\n)(\[OFFICE_(?:SOURCES|WIKI_PROPOSALS)\])[ \t]*(?:\r?\n|$)/g;
+  let match;
+  let lastMatch = null;
+  while ((match = markerPattern.exec(text)) !== null) {
+    lastMatch = {
+      marker: match[1],
+      markerIndex: match.index + (match[0].startsWith("\n") ? 1 : 0),
+      encodedIndex: markerPattern.lastIndex,
+    };
+  }
+  if (!lastMatch) {
+    return null;
+  }
+  const encoded = text.slice(lastMatch.encodedIndex).trim();
+  if (hasContentAfterMachinePayload(encoded)) {
+    return null;
+  }
+  return {
+    marker: lastMatch.marker,
+    encoded,
+    text: text.slice(0, lastMatch.markerIndex).trim(),
+  };
+}
+
+function hasContentAfterMachinePayload(encoded) {
   if (encoded.startsWith("```")) {
-    encoded = encoded
+    const openingEnd = encoded.indexOf("\n");
+    const closingStart = encoded.indexOf("```", openingEnd + 1);
+    return closingStart >= 0 && encoded.slice(closingStart + 3).trim() !== "";
+  }
+  if (!encoded.startsWith("[") && !encoded.startsWith("{")) {
+    return false;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < encoded.length; index += 1) {
+    const character = encoded[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+    } else if (character === "[" || character === "{") {
+      depth += 1;
+    } else if (character === "]" || character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return encoded.slice(index + 1).trim() !== "";
+      }
+    }
+  }
+  return false;
+}
+
+function unfencedMachineBlock(encoded) {
+  if (encoded.startsWith("```")) {
+    return encoded
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "");
   }
-  try {
-    const parsed = JSON.parse(encoded);
-    const sources = normalizeResponseSources(parsed, { maximum: 20 });
-    return {
-      text: text.slice(0, markerIndex).trim(),
-      sources,
-    };
-  } catch {
-    return {
-      text: text.slice(0, markerIndex).trim(),
-      sources: [],
-      sourceError: "응답 근거 형식을 읽지 못했습니다.",
-    };
+  return encoded;
+}
+
+function normalizedWikiProposals(value) {
+  // 이 파서는 직원이 제안한 공개 필드의 형식만 검증한다. pageKey가 실제
+  // 프로젝트에 속하는지와 원본 근거가 유효한지는 이후 백엔드 저장 단계 책임이다.
+  if (!Array.isArray(value) || value.length > MAX_WIKI_PROPOSALS) {
+    throw new TypeError("Invalid wiki proposals array.");
   }
+  return value.map((proposal) => normalizedWikiProposal(proposal));
+}
+
+function normalizedWikiProposal(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Invalid wiki proposal.");
+  }
+  const fields = Object.keys(value);
+  if (
+    fields.length !== WIKI_PROPOSAL_FIELDS.size ||
+    fields.some((field) => !WIKI_PROPOSAL_FIELDS.has(field))
+  ) {
+    throw new TypeError("Invalid wiki proposal fields.");
+  }
+  if (
+    typeof value.pageKey !== "string" ||
+    !WIKI_PROPOSAL_PAGE_KEY_PATTERN.test(value.pageKey) ||
+    typeof value.kind !== "string" ||
+    !WIKI_PROPOSAL_KINDS.has(value.kind) ||
+    typeof value.title !== "string" ||
+    Array.from(value.title).length > MAX_WIKI_PROPOSAL_TITLE_LENGTH ||
+    typeof value.body !== "string" ||
+    Array.from(value.body).length > MAX_WIKI_PROPOSAL_BODY_LENGTH ||
+    typeof value.approvalTier !== "string" ||
+    !WIKI_PROPOSAL_APPROVAL_TIERS.has(value.approvalTier)
+  ) {
+    throw new TypeError("Invalid wiki proposal values.");
+  }
+  return {
+    pageKey: value.pageKey,
+    kind: value.kind,
+    title: value.title,
+    body: value.body,
+    approvalTier: value.approvalTier,
+  };
 }
 
 function parseCodexEvent(object, workdir) {
