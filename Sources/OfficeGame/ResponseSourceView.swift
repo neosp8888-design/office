@@ -4,6 +4,15 @@ import SwiftUI
 
 struct ResponseSourceWarningView: View {
     let message: String
+    let accessibilityIdentifier: String
+
+    init(
+        message: String,
+        accessibilityIdentifier: String = "responseSourceWarning"
+    ) {
+        self.message = message
+        self.accessibilityIdentifier = accessibilityIdentifier
+    }
 
     var body: some View {
         Label {
@@ -19,7 +28,7 @@ struct ResponseSourceWarningView: View {
             Color.orange.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
         )
-        .accessibilityIdentifier("responseSourceWarning")
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 

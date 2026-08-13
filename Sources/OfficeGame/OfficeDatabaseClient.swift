@@ -130,6 +130,10 @@ struct OfficeDatabaseClient: Sendable {
             "application/json",
             forHTTPHeaderField: "content-type"
         )
+        request.setValue(
+            "approve:\(id)",
+            forHTTPHeaderField: "X-OFFICESTRA-User-Decision"
+        )
         request.httpBody = Data("{}".utf8)
         return request
     }
@@ -145,6 +149,10 @@ struct OfficeDatabaseClient: Sendable {
         request.setValue(
             "application/json",
             forHTTPHeaderField: "content-type"
+        )
+        request.setValue(
+            "reject:\(id)",
+            forHTTPHeaderField: "X-OFFICESTRA-User-Decision"
         )
         request.httpBody = try JSONEncoder().encode(
             WikiProposalRejectionRequest(reason: reason)
@@ -875,6 +883,7 @@ struct HistoryTurn: Decodable, Identifiable, Sendable {
     let executionFastMode: Bool?
     let conversationWorkdir: String?
     let responseSourceWarning: String?
+    let wikiProposalWarning: String?
     let startedAt: Date
     let endedAt: Date?
 
@@ -898,6 +907,7 @@ struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
     let response: String
     let sources: [LiveFeedSource]?
     let responseSourceWarning: String?
+    let wikiProposalWarning: String?
     let startedAt: Date
     let endedAt: Date?
 
@@ -1239,6 +1249,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let needsInput: Bool
     let errorMessage: String?
     let responseSourceWarning: String?
+    let wikiProposalWarning: String?
     let startedAt: Date
     let endedAt: Date?
     let updatedAt: Date
@@ -1271,6 +1282,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             needsInput: needsInput,
             errorMessage: errorMessage,
             responseSourceWarning: responseSourceWarning,
+            wikiProposalWarning: wikiProposalWarning,
             startedAt: startedAt,
             endedAt: endedAt,
             updatedAt: updatedAt,
@@ -1303,6 +1315,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             needsInput: needsInput,
             errorMessage: errorMessage,
             responseSourceWarning: responseSourceWarning,
+            wikiProposalWarning: wikiProposalWarning,
             startedAt: startedAt,
             endedAt: endedAt,
             updatedAt: updatedAt,

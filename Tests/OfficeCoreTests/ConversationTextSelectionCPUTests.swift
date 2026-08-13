@@ -253,6 +253,7 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
                     needsInput: false,
                     errorMessage: nil,
                     responseSourceWarning: nil,
+                    wikiProposalWarning: nil,
                     startedAt: timestamp,
                     endedAt: isStreaming ? nil : timestamp,
                     updatedAt: timestamp.addingTimeInterval(

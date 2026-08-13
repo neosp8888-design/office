@@ -51,6 +51,12 @@ final class WikiKnowledgeTests: XCTestCase {
             request.value(forHTTPHeaderField: "content-type"),
             "application/json"
         )
+        XCTAssertEqual(
+            request.value(
+                forHTTPHeaderField: "X-OFFICESTRA-User-Decision"
+            ),
+            "approve:proposal-1"
+        )
         XCTAssertEqual(request.httpBody, Data("{}".utf8))
     }
 
@@ -69,6 +75,12 @@ final class WikiKnowledgeTests: XCTestCase {
         XCTAssertEqual(
             request.url?.path,
             "/api/wiki/proposals/proposal-2/reject"
+        )
+        XCTAssertEqual(
+            request.value(
+                forHTTPHeaderField: "X-OFFICESTRA-User-Decision"
+            ),
+            "reject:proposal-2"
         )
         XCTAssertEqual(payload, ["reason": "근거가 부족합니다."])
     }

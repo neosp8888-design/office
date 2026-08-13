@@ -33,6 +33,7 @@ import {
   executionEnvironment,
   latestClaudeUsageFromSession,
   latestCodexUsageFromRollout,
+  persistTurnWikiProposals,
   recoverInterruptedUsage,
   promptWithAttachments,
   stageAttachments,
@@ -48,6 +49,147 @@ const codexCharacter = {
   seat: "우측 아래",
   identityPrompt: "업무를 정확히 처리한다.",
 };
+
+function wikiProposalTestClient(queries) {
+  const projectID = "11111111-1111-4111-8111-111111111111";
+  const sourceID = "22222222-2222-4222-8222-222222222222";
+  return {
+    sourceID,
+    client: {
+      query: async (text, values = []) => {
+        queries.push({ text, values });
+        if (/SELECT id FROM projects WHERE repository_root/.test(text)) {
+          return { rowCount: 1, rows: [{ id: projectID }] };
+        }
+        if (/FROM work_records AS record\s+WHERE record.id = ANY/.test(text)) {
+          return {
+            rowCount: 1,
+            rows: [{
+              id: sourceID,
+              project_id: projectID,
+              record_type: "result",
+              searchable: true,
+            }],
+          };
+        }
+        if (/record.metadata->>'pageKey' = \$2/.test(text)) {
+          return { rowCount: 0, rows: [] };
+        }
+        if (/INSERT INTO wiki_proposals/.test(text)) {
+          return {
+            rowCount: 1,
+            rows: [{
+              id: "33333333-3333-4333-8333-333333333333",
+              project_id: projectID,
+              page_key: values[1],
+              target_record_id: null,
+              base_version: values[3],
+              state: values[4],
+              approval_grade: values[5],
+              proposal_kind: values[6],
+              ordinal: values[7],
+              draft_title: values[8],
+              draft_body: values[9],
+              source_work_record_ids: JSON.parse(values[10]),
+              author_character_id: values[11],
+              author_turn_id: values[12],
+            }],
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+    },
+  };
+}
+
+test("완료 응답의 user 위키 수정안은 같은 트랜잭션의 승인 대기로 저장한다", async () => {
+  const queries = [];
+  const { client, sourceID } = wikiProposalTestClient(queries);
+  const warning = await persistTurnWikiProposals(client, {
+    repositoryRoot: "/repo",
+    workRecordID: sourceID,
+    turnID: "44444444-4444-4444-8444-444444444444",
+    characterID: "boss",
+    proposals: [{
+      pageKey: "durable-preferences",
+      kind: "constraint",
+      title: "지속 선호",
+      body: "자동 과거 대화 주입을 사용하지 않는다.",
+      approvalTier: "user",
+    }],
+  });
+
+  assert.equal(warning, null);
+  const inserted = queries.find(({ text }) =>
+    /INSERT INTO wiki_proposals/.test(text)
+  );
+  assert.equal(inserted.values[4], "pending_user");
+  assert.equal(inserted.values[5], "user");
+  assert.equal(inserted.values[6], "constraint");
+  assert.deepEqual(JSON.parse(inserted.values[10]), [sourceID]);
+  assert.equal(
+    queries.filter(({ text }) => /SAVEPOINT wiki_proposal_0/.test(text)).length,
+    2,
+  );
+});
+
+test("질문 응답은 위키 수정안을 저장하지 않고 파서 경고만 보존한다", async () => {
+  const queries = [];
+  const warning = await persistTurnWikiProposals({
+    query: async (...values) => queries.push(values),
+  }, {
+    repositoryRoot: "/repo",
+    workRecordID: "22222222-2222-4222-8222-222222222222",
+    turnID: "44444444-4444-4444-8444-444444444444",
+    characterID: "boss",
+    proposals: [{
+      pageKey: "ignored-question",
+      kind: "decision",
+      title: "저장 금지",
+      body: "질문 응답",
+      approvalTier: "user",
+    }],
+    parserWarning: "위키 수정안 형식 경고",
+    needsInput: true,
+  });
+
+  assert.equal(warning, "위키 수정안 형식 경고");
+  assert.deepEqual(queries, []);
+});
+
+test("잘못된 수정안 하나는 savepoint로 격리하고 다음 수정안을 저장한다", async () => {
+  const queries = [];
+  const { client, sourceID } = wikiProposalTestClient(queries);
+  const warning = await persistTurnWikiProposals(client, {
+    repositoryRoot: "/repo",
+    workRecordID: sourceID,
+    turnID: "44444444-4444-4444-8444-444444444444",
+    characterID: "boss",
+    proposals: [{
+      pageKey: "invalid-proposal",
+      kind: "decision",
+      title: "",
+      body: "본문",
+      approvalTier: "user",
+    }, {
+      pageKey: "valid-proposal",
+      kind: "decision",
+      title: "정상 제안",
+      body: "본문",
+      approvalTier: "user",
+    }],
+  });
+
+  assert.match(warning, /1번을 저장하지 못했습니다/);
+  assert.equal(
+    queries.filter(({ text }) => /INSERT INTO wiki_proposals/.test(text)).length,
+    1,
+  );
+  assert.equal(
+    queries.some(({ text }) => /ROLLBACK TO SAVEPOINT wiki_proposal_0/.test(text)),
+    true,
+  );
+});
 
 test("drain은 준비 중인 업무를 계수하고 이후 일반 업무를 원자적으로 막는다", async () => {
   let releasePreparation;

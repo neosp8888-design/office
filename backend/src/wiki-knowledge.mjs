@@ -14,10 +14,18 @@ export const WIKI_PROPOSAL_STATES = Object.freeze([
 ]);
 
 export const WIKI_APPROVAL_GRADES = Object.freeze(["auto", "peer", "user"]);
+export const WIKI_PROPOSAL_KINDS = Object.freeze([
+  "decision",
+  "constraint",
+  "incident",
+]);
 
 const TERMINAL_STATES = new Set(["published", "rejected", "conflict"]);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PAGE_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const MAX_TITLE_LENGTH = 120;
+const MAX_BODY_LENGTH = 12_000;
 
 export class WikiKnowledgeError extends Error {
   constructor(message, { statusCode = 400 } = {}) {
@@ -32,19 +40,35 @@ function invalid(message, statusCode = 400) {
 }
 
 // 페이지 키는 프로젝트 안에서 주제를 가리키는 안정 식별자다.
-// 대소문자·공백 변형이 서로 다른 페이지를 만들지 않게 정규화한다.
+// 파서와 DB가 공유하는 소문자 ASCII 슬러그 규칙을 그대로 강제한다.
 export function normalizedWikiPageKey(value) {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, "-")
-    .replace(/[^\p{L}\p{N}-]+/gu, "")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (!normalized || normalized.length > 120) {
-    throw invalid("pageKey는 1~120자의 문자·숫자·하이픈이어야 합니다.");
+  const normalized = String(value ?? "").trim();
+  if (!PAGE_KEY_PATTERN.test(normalized)) {
+    throw invalid(
+      "pageKey는 영문 소문자·숫자로 시작하는 1~80자의 슬러그여야 합니다.",
+    );
   }
   return normalized;
+}
+
+function normalizedProposalKind(value) {
+  const kind = String(value ?? "").trim();
+  if (!WIKI_PROPOSAL_KINDS.includes(kind)) {
+    throw invalid(`알 수 없는 제안 종류입니다. ${kind}`);
+  }
+  return kind;
+}
+
+function normalizedDraftText({ title, body }) {
+  const normalizedTitle = String(title ?? "").trim();
+  const normalizedBody = String(body ?? "").trim();
+  if (!normalizedTitle || Array.from(normalizedTitle).length > MAX_TITLE_LENGTH) {
+    throw invalid("제안 제목은 1~120자여야 합니다.");
+  }
+  if (Array.from(normalizedBody).length > MAX_BODY_LENGTH) {
+    throw invalid("제안 본문은 12,000자 이하여야 합니다.");
+  }
+  return { title: normalizedTitle, body: normalizedBody };
 }
 
 export function normalizedSourceWorkRecordIDs(value, { required }) {
@@ -146,16 +170,18 @@ function proposalDTO(row) {
     targetRecordId: row.target_record_id,
     baseVersion: row.base_version,
     state: row.state,
-    approvalGrade: row.approval_grade,
-    draftTitle: row.draft_title,
-    draftBody: row.draft_body,
-    sourceWorkRecordIds: Array.isArray(row.source_work_record_ids)
+    kind: row.proposal_kind,
+    approvalTier: row.approval_grade,
+    title: row.draft_title,
+    body: row.draft_body,
+    sourceRecordIds: Array.isArray(row.source_work_record_ids)
       ? row.source_work_record_ids
       : [],
     authorCharacterId: row.author_character_id,
     authorTurnId: row.author_turn_id,
     verifierCharacterId: row.verifier_character_id,
     reason: row.reason,
+    ordinal: row.ordinal,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     verifiedAt: row.verified_at,
@@ -169,6 +195,7 @@ const PAGE_SELECT = `
     record.project_id AS "projectId",
     project.name AS "projectName",
     record.metadata->>'pageKey' AS "pageKey",
+    record.metadata->>'kind' AS kind,
     record.title,
     record.body,
     record.character_id AS "characterId",
@@ -182,20 +209,32 @@ const PAGE_SELECT = `
       ),
       0
     ) AS version,
-    COALESCE(
-      (
-        SELECT json_agg(link.target_record_id ORDER BY link.created_at, link.target_record_id)
-        FROM work_record_links AS link
-        WHERE link.source_record_id = record.id
-          AND link.relation = 'derived_from'
-      ),
-      '[]'::json
-    ) AS "sourceWorkRecordIds"
+    COALESCE((
+      SELECT json_agg(
+        json_build_object(
+          'workRecordId', source.id,
+          'title', source.title,
+          'excerpt', left(
+            regexp_replace(COALESCE(source.body, ''), '\\s+', ' ', 'g'),
+            240
+          )
+        )
+        ORDER BY link.created_at, source.id
+      )
+      FROM work_record_links AS link
+      JOIN work_records AS source ON source.id = link.target_record_id
+      WHERE link.source_record_id = record.id
+        AND link.relation = 'derived_from'
+    ), '[]'::json) AS sources
   FROM work_records AS record
   JOIN projects AS project ON project.id = record.project_id
 `;
 
-export async function listWikiPages(client, { query = null, limit = 20 } = {}) {
+export async function listWikiPages(client, {
+  query = null,
+  limit = 20,
+  repositoryRoot = null,
+} = {}) {
   const boundedLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   if (query) {
     const tsQuery = workRecordSearchTSQuery(query);
@@ -208,11 +247,12 @@ export async function listWikiPages(client, { query = null, limit = 20 } = {}) {
         JOIN searchable_wiki_page_documents AS document
           ON document.work_record_id = record.id
         WHERE document.search_document @@ to_tsquery('simple', $1)
+          AND ($2::text IS NULL OR project.repository_root = $2)
         ORDER BY ts_rank(document.search_document, to_tsquery('simple', $1)) DESC,
           record.updated_at DESC
-        LIMIT $2
+        LIMIT $3
       `,
-      [tsQuery, boundedLimit],
+      [tsQuery, repositoryRoot, boundedLimit],
     );
     return result.rows;
   }
@@ -221,39 +261,46 @@ export async function listWikiPages(client, { query = null, limit = 20 } = {}) {
       ${PAGE_SELECT}
       WHERE record.record_type = 'synthesis'
         AND record.lifecycle_state = 'active'
+        AND ($1::text IS NULL OR project.repository_root = $1)
       ORDER BY record.updated_at DESC
-      LIMIT $1
+      LIMIT $2
     `,
-    [boundedLimit],
+    [repositoryRoot, boundedLimit],
   );
   return result.rows;
 }
 
-export async function getWikiPage(client, pageID) {
+export async function getWikiPage(client, pageID, { repositoryRoot = null } = {}) {
   const result = await client.query(
     `
       ${PAGE_SELECT}
       WHERE record.id = $1
         AND record.record_type = 'synthesis'
+        AND ($2::text IS NULL OR project.repository_root = $2)
     `,
-    [pageID],
+    [pageID, repositoryRoot],
   );
   return result.rows[0] ?? null;
 }
 
-export async function listWikiProposals(client, { state = null } = {}) {
+export async function listWikiProposals(client, {
+  state = null,
+  repositoryRoot = null,
+} = {}) {
   if (state != null && !WIKI_PROPOSAL_STATES.includes(state)) {
     throw invalid(`알 수 없는 제안 상태입니다. ${state}`);
   }
   const result = await client.query(
     `
-      SELECT *
-      FROM wiki_proposals
-      WHERE $1::text IS NULL OR state = $1
-      ORDER BY updated_at DESC
+      SELECT proposal.*
+      FROM wiki_proposals AS proposal
+      JOIN projects AS project ON project.id = proposal.project_id
+      WHERE ($1::text IS NULL OR proposal.state = $1)
+        AND ($2::text IS NULL OR project.repository_root = $2)
+      ORDER BY proposal.updated_at DESC
       LIMIT 200
     `,
-    [state],
+    [state, repositoryRoot],
   );
   return result.rows.map(proposalDTO);
 }
@@ -311,15 +358,28 @@ async function lockWikiPage(client, projectID, pageKey) {
 // 근거 검증은 publish의 유일한 사실 관문이다. 근거가 없거나, 다른
 // 프로젝트이거나, 위키 페이지(synthesis)를 근거로 삼는 자기참조는
 // 전부 거부한다.
-async function assertPublishableSources(client, projectID, sourceIDs) {
+async function assertPublishableSources(
+  client,
+  projectID,
+  sourceIDs,
+  { requireSearchable = false } = {},
+) {
   if (sourceIDs.length === 0) {
     throw invalid("근거 workRecord 없이 게시할 수 없습니다.", 422);
   }
   const result = await client.query(
     `
-      SELECT id, project_id, record_type
-      FROM work_records
-      WHERE id = ANY($1::uuid[])
+      SELECT
+        record.id,
+        record.project_id,
+        record.record_type,
+        EXISTS (
+          SELECT 1
+          FROM searchable_work_record_ids AS searchable
+          WHERE searchable.id = record.id
+        ) AS searchable
+      FROM work_records AS record
+      WHERE record.id = ANY($1::uuid[])
     `,
     [sourceIDs],
   );
@@ -335,6 +395,12 @@ async function assertPublishableSources(client, projectID, sourceIDs) {
     if (row.record_type === "synthesis") {
       throw invalid(`위키 페이지는 위키의 근거가 될 수 없습니다. ${sourceID}`, 422);
     }
+    if (requireSearchable && row.searchable !== true) {
+      throw invalid(
+        `승인·병합되지 않은 작업 기록은 게시 근거가 될 수 없습니다. ${sourceID}`,
+        422,
+      );
+    }
   }
 }
 
@@ -344,6 +410,8 @@ export async function createWikiProposal(client, {
   pageKey,
   approvalGrade,
   state = "drafted",
+  kind,
+  ordinal = null,
   draftTitle,
   draftBody = "",
   sourceWorkRecordIds = null,
@@ -351,22 +419,32 @@ export async function createWikiProposal(client, {
   authorTurnId = null,
   baseVersion = null,
 } = {}) {
-  if (!["candidate", "drafted"].includes(state)) {
-    throw invalid("생성 상태는 candidate 또는 drafted만 허용합니다.");
+  if (!["candidate", "drafted", "pending_user"].includes(state)) {
+    throw invalid(
+      "생성 상태는 candidate, drafted 또는 pending_user만 허용합니다.",
+    );
   }
   if (!WIKI_APPROVAL_GRADES.includes(approvalGrade)) {
     throw invalid(`알 수 없는 승인 등급입니다. ${approvalGrade}`);
   }
-  const title = String(draftTitle ?? "").trim();
-  if (!title) {
-    throw invalid("draftTitle이 필요합니다.");
+  if (state === "pending_user" && approvalGrade !== "user") {
+    throw invalid("pending_user 상태는 user 승인 등급만 허용합니다.");
   }
   if (approvalGrade === "peer" && !authorCharacterId) {
     throw invalid("peer 등급 제안에는 authorCharacterId가 필요합니다.");
   }
   const normalizedKey = normalizedWikiPageKey(pageKey);
+  const normalizedKind = normalizedProposalKind(kind);
+  const draft = normalizedDraftText({ title: draftTitle, body: draftBody });
+  const normalizedOrdinal = ordinal == null ? null : Number(ordinal);
+  if (
+    normalizedOrdinal != null &&
+    (!Number.isInteger(normalizedOrdinal) || normalizedOrdinal < 0)
+  ) {
+    throw invalid("ordinal은 0 이상의 정수여야 합니다.");
+  }
   const sources = normalizedSourceWorkRecordIDs(sourceWorkRecordIds, {
-    required: state === "drafted",
+    required: state !== "candidate",
   });
   const projectID = await resolveProjectID(client, {
     projectId,
@@ -411,13 +489,21 @@ export async function createWikiProposal(client, {
         base_version,
         state,
         approval_grade,
+        proposal_kind,
+        ordinal,
         draft_title,
         draft_body,
         source_work_record_ids,
         author_character_id,
         author_turn_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11::jsonb, $12, $13
+      )
+      ON CONFLICT (author_turn_id, ordinal)
+        WHERE author_turn_id IS NOT NULL AND ordinal IS NOT NULL
+      DO UPDATE SET id = wiki_proposals.id
       RETURNING *
     `,
     [
@@ -427,8 +513,10 @@ export async function createWikiProposal(client, {
       requestedBase,
       state,
       approvalGrade,
-      title,
-      String(draftBody ?? ""),
+      normalizedKind,
+      normalizedOrdinal,
+      draft.title,
+      draft.body,
       JSON.stringify(sources),
       authorCharacterId,
       authorTurnId,
@@ -437,10 +525,21 @@ export async function createWikiProposal(client, {
   return proposalDTO(result.rows[0]);
 }
 
-async function lockWikiProposal(client, proposalID) {
+async function lockWikiProposal(
+  client,
+  proposalID,
+  { repositoryRoot = null } = {},
+) {
   const result = await client.query(
-    "SELECT * FROM wiki_proposals WHERE id = $1 FOR UPDATE",
-    [proposalID],
+    `
+      SELECT proposal.*
+      FROM wiki_proposals AS proposal
+      JOIN projects AS project ON project.id = proposal.project_id
+      WHERE proposal.id = $1
+        AND ($2::text IS NULL OR project.repository_root = $2)
+      FOR UPDATE OF proposal
+    `,
+    [proposalID, repositoryRoot],
   );
   if (result.rows.length === 0) {
     throw invalid("제안을 찾을 수 없습니다.", 404);
@@ -451,8 +550,11 @@ async function lockWikiProposal(client, proposalID) {
 export async function verifyWikiProposal(client, {
   proposalID,
   verifierCharacterID = null,
+  repositoryRoot = null,
 }) {
-  const proposal = await lockWikiProposal(client, proposalID);
+  const proposal = await lockWikiProposal(client, proposalID, {
+    repositoryRoot,
+  });
   const nextState = wikiProposalActionOutcome({
     state: proposal.state,
     approvalGrade: proposal.approval_grade,
@@ -478,8 +580,11 @@ export async function verifyWikiProposal(client, {
 export async function rejectWikiProposal(client, {
   proposalID,
   reason = null,
+  repositoryRoot = null,
 }) {
-  const proposal = await lockWikiProposal(client, proposalID);
+  const proposal = await lockWikiProposal(client, proposalID, {
+    repositoryRoot,
+  });
   wikiProposalActionOutcome({
     state: proposal.state,
     approvalGrade: proposal.approval_grade,
@@ -522,8 +627,11 @@ export async function approveWikiProposal(client, {
   proposalID,
   actorType = "character",
   actorCharacterID = null,
+  repositoryRoot = null,
 }) {
-  const proposal = await lockWikiProposal(client, proposalID);
+  const proposal = await lockWikiProposal(client, proposalID, {
+    repositoryRoot,
+  });
   wikiProposalActionOutcome({
     state: proposal.state,
     approvalGrade: proposal.approval_grade,
@@ -537,7 +645,9 @@ export async function approveWikiProposal(client, {
     proposal.source_work_record_ids,
     { required: true },
   );
-  await assertPublishableSources(client, proposal.project_id, sources);
+  await assertPublishableSources(client, proposal.project_id, sources, {
+    requireSearchable: true,
+  });
 
   const page = await lockWikiPage(
     client,
@@ -569,7 +679,10 @@ export async function approveWikiProposal(client, {
           metadata
         )
         VALUES ($1, 'synthesis', 'active', $2, $3, $4, 'character',
-          jsonb_build_object('pageKey', $5::text))
+          jsonb_build_object(
+            'pageKey', $5::text,
+            'kind', $6::text
+          ))
         RETURNING id
       `,
       [
@@ -578,6 +691,7 @@ export async function approveWikiProposal(client, {
         proposal.draft_body,
         proposal.author_character_id,
         proposal.page_key,
+        proposal.proposal_kind,
       ],
     );
     pageID = inserted.rows[0].id;
@@ -587,10 +701,20 @@ export async function approveWikiProposal(client, {
         UPDATE work_records
         SET title = $2,
           body = $3,
+          metadata = metadata || jsonb_build_object(
+            'pageKey', $4::text,
+            'kind', $5::text
+          ),
           updated_at = now()
         WHERE id = $1
       `,
-      [pageID, proposal.draft_title, proposal.draft_body],
+      [
+        pageID,
+        proposal.draft_title,
+        proposal.draft_body,
+        proposal.page_key,
+        proposal.proposal_kind,
+      ],
     );
   }
 
@@ -676,7 +800,12 @@ export function isWikiPageKeyRaceError(error) {
   );
 }
 
-export async function resolveWikiPageKeyRace(client, proposalID) {
+export async function resolveWikiPageKeyRace(
+  client,
+  proposalID,
+  { repositoryRoot = null } = {},
+) {
+  await lockWikiProposal(client, proposalID, { repositoryRoot });
   return await markProposalConflict(
     client,
     proposalID,

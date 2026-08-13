@@ -623,6 +623,7 @@ async function characterHistory(response, characterID) {
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
         t.response_source_warning AS "responseSourceWarning",
+        t.wiki_proposal_warning AS "wikiProposalWarning",
         COALESCE(
           (
             SELECT text
@@ -733,7 +734,8 @@ async function globalHistory(response, url) {
         ) AS sources,
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
-        t.response_source_warning AS "responseSourceWarning"
+        t.response_source_warning AS "responseSourceWarning",
+        t.wiki_proposal_warning AS "wikiProposalWarning"
       FROM turns t
       JOIN cli_sessions s ON s.id = t.cli_session_id
       JOIN conversations AS conversation
@@ -1059,6 +1061,7 @@ async function queryTurnFeed({
         t.needs_input AS "needsInput",
         t.error_message AS "errorMessage",
         t.response_source_warning AS "responseSourceWarning",
+        t.wiki_proposal_warning AS "wikiProposalWarning",
         turn_feedback.feedback,
         t.started_at AS "startedAt",
         t.ended_at AS "endedAt",
@@ -1798,12 +1801,15 @@ async function wikiPagesEndpoint(response, url) {
   const pages = await listWikiPages(pool, {
     query: url.searchParams.get("query"),
     limit: url.searchParams.get("limit") ?? undefined,
+    repositoryRoot: runtime.repositoryRoot,
   });
   send(response, 200, { pages });
 }
 
 async function wikiPageEndpoint(response, pageID) {
-  const page = await getWikiPage(pool, pageID);
+  const page = await getWikiPage(pool, pageID, {
+    repositoryRoot: runtime.repositoryRoot,
+  });
   if (!page) {
     send(response, 404, { error: "위키 페이지를 찾을 수 없습니다." });
     return;
@@ -1814,6 +1820,7 @@ async function wikiPageEndpoint(response, pageID) {
 async function wikiProposalsEndpoint(response, url) {
   const proposals = await listWikiProposals(pool, {
     state: url.searchParams.get("state"),
+    repositoryRoot: runtime.repositoryRoot,
   });
   send(response, 200, { proposals });
 }
@@ -1823,8 +1830,24 @@ async function createWikiProposalEndpoint(response, request) {
     return;
   }
   const body = await readJSON(request);
+  if (body.approvalTier != null && body.approvalTier !== "user") {
+    send(response, 400, {
+      error: "공개 제안 API는 사용자 승인 등급만 만들 수 있습니다.",
+    });
+    return;
+  }
   const proposal = await withTransaction(
-    (client) => createWikiProposal(client, body),
+    (client) => createWikiProposal(client, {
+      repositoryRoot: runtime.repositoryRoot,
+      pageKey: body.pageKey,
+      kind: body.kind,
+      approvalGrade: "user",
+      state: "pending_user",
+      draftTitle: body.title,
+      draftBody: body.body,
+      sourceWorkRecordIds: body.sourceRecordIds,
+      baseVersion: body.baseVersion,
+    }),
   );
   send(response, 201, { proposal });
 }
@@ -1833,12 +1856,25 @@ async function wikiProposalActionEndpoint(response, request, route) {
   if (!trustedJSONMutation(request, response)) {
     return;
   }
+  // 로컬 단일 사용자 앱의 명시적인 버튼 동작과 일반 API 호출을
+  // 구분하는 intent guard다. 같은 OS 사용자에 대한 보안 경계는 아니다.
+  const userDecision = request.headers["x-officestra-user-decision"];
+  if (
+    ["approve", "reject"].includes(route.action) &&
+    userDecision !== `${route.action}:${route.proposalID}`
+  ) {
+    send(response, 403, {
+      error: "사내 위키 화면에서 사용자가 직접 결정해야 합니다.",
+    });
+    return;
+  }
   const body = await readJSON(request);
   if (route.action === "verify") {
     const proposal = await withTransaction((client) =>
       verifyWikiProposal(client, {
         proposalID: route.proposalID,
         verifierCharacterID: body.characterId ?? null,
+        repositoryRoot: runtime.repositoryRoot,
       }));
     send(response, 200, { proposal });
     return;
@@ -1848,21 +1884,17 @@ async function wikiProposalActionEndpoint(response, request, route) {
       rejectWikiProposal(client, {
         proposalID: route.proposalID,
         reason: body.reason ?? null,
+        repositoryRoot: runtime.repositoryRoot,
       }));
     send(response, 200, { proposal });
-    return;
-  }
-  const actorType = body.actor ?? "character";
-  if (!["user", "character", "system"].includes(actorType)) {
-    send(response, 400, { error: "actor는 user, character, system만 허용합니다." });
     return;
   }
   try {
     const outcome = await withTransaction((client) =>
       approveWikiProposal(client, {
         proposalID: route.proposalID,
-        actorType,
-        actorCharacterID: body.characterId ?? null,
+        actorType: "user",
+        repositoryRoot: runtime.repositoryRoot,
       }));
     send(response, outcome.conflicted ? 409 : 200, {
       proposal: outcome.proposal,
@@ -1874,7 +1906,9 @@ async function wikiProposalActionEndpoint(response, request, route) {
       throw error;
     }
     const proposal = await withTransaction((client) =>
-      resolveWikiPageKeyRace(client, route.proposalID));
+      resolveWikiPageKeyRace(client, route.proposalID, {
+        repositoryRoot: runtime.repositoryRoot,
+      }));
     send(response, 409, { proposal });
   }
 }
