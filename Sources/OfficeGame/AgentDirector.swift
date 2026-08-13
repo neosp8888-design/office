@@ -572,6 +572,9 @@ final class AgentDirector: ObservableObject {
         Set<OfficeCharacter> = []
     @Published private(set) var cancellingCharacters:
         Set<OfficeCharacter> = []
+    /// 응답 생성 중에 미리 걸어 둔 다음 업무다. 직원마다 최대 3개.
+    @Published private(set) var queuedCommands:
+        [OfficeCharacter: QueuedCommandQueue] = [:]
     @Published private(set) var pendingWorkspaceReviewCharacters:
         Set<OfficeCharacter> = []
     @Published private(set) var failedCharacters:
@@ -633,6 +636,9 @@ final class AgentDirector: ObservableObject {
     private var nextLiveFeedRequestSequence = 0
     private var lastAppliedLiveFeedRequestSequence = 0
     private var observedTurnStatuses: [String: LiveTurnStatus] = [:]
+    /// 바로 적용으로 중단시킨 직원이다. 이 중단만은 실패·중단 상태에서도
+    /// 다음 예약을 이어서 보낸다.
+    private var immediateQueueDrainCharacters: Set<OfficeCharacter> = []
     private var acknowledgedWarningMessages: [OfficeCharacter: String] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
@@ -891,6 +897,40 @@ final class AgentDirector: ObservableObject {
             return false
         }
         return cancellingCharacters.contains(selectedCharacterID)
+    }
+
+    func queuedCommands(
+        for character: OfficeCharacter
+    ) -> [QueuedCommand] {
+        queuedCommands[character]?.commands ?? []
+    }
+
+    /// 예약에 실려 아직 제출되지 않은 첨부다. 임시 보관 정리에서 제외한다.
+    var queuedAttachments: [PendingAttachment] {
+        queuedCommands.values.flatMap { queue in
+            queue.commands.flatMap(\.attachments)
+        }
+    }
+
+    var selectedCharacterQueuedCommands: [QueuedCommand] {
+        guard let selectedCharacterID else {
+            return []
+        }
+        return queuedCommands(for: selectedCharacterID)
+    }
+
+    /// 실행 중인 직원에게만 예약을 받는다. 놀고 있으면 바로 제출하면 된다.
+    var canQueueForSelectedCharacter: Bool {
+        guard
+            let selectedCharacterID,
+            isReadyForSubmissions,
+            !isUpdatingConfiguration,
+            !pendingWorkspaceReviewCharacters.contains(selectedCharacterID),
+            runningCharacters.contains(selectedCharacterID)
+        else {
+            return false
+        }
+        return queuedCommands[selectedCharacterID]?.isFull != true
     }
 
     var selectedCharacterNeedsWorkspaceReview: Bool {
@@ -1171,8 +1211,14 @@ final class AgentDirector: ObservableObject {
     }
 
     func cancelSelectedJob() {
+        guard let character = selectedCharacterID else {
+            return
+        }
+        cancelJob(for: character)
+    }
+
+    private func cancelJob(for character: OfficeCharacter) {
         guard
-            let character = selectedCharacterID,
             runningCharacters.contains(character),
             !cancellingCharacters.contains(character)
         else {
@@ -1198,8 +1244,114 @@ final class AgentDirector: ObservableObject {
             } catch {
                 turnPersistenceErrors[character] =
                     "중단 요청이 삐끗했어요 · \(error.localizedDescription)"
+                immediateQueueDrainCharacters.remove(character)
                 scheduleRealtimeFeedRefresh(turnID: nil)
             }
+        }
+    }
+
+    /// 응답 생성 중인 직원에게 다음 업무를 미리 걸어 둔다.
+    @discardableResult
+    func enqueueCommand(
+        _ prompt: String,
+        attachments: [PendingAttachment] = [],
+        for character: OfficeCharacter
+    ) -> Bool {
+        let trimmed = prompt.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard
+            !trimmed.isEmpty,
+            isReadyForSubmissions,
+            !isUpdatingConfiguration,
+            !pendingWorkspaceReviewCharacters.contains(character),
+            runningCharacters.contains(character)
+        else {
+            return false
+        }
+
+        var queue = queuedCommands[character] ?? QueuedCommandQueue()
+        guard
+            queue.enqueue(
+                QueuedCommand(prompt: trimmed, attachments: attachments)
+            )
+        else {
+            return false
+        }
+        queuedCommands[character] = queue
+        return true
+    }
+
+    func cancelQueuedCommand(
+        id: UUID,
+        for character: OfficeCharacter
+    ) {
+        guard var queue = queuedCommands[character] else {
+            return
+        }
+        guard let removed = queue.remove(id: id) else {
+            return
+        }
+        queuedCommands[character] = queue
+        releaseStagedAttachments(removed.attachments)
+    }
+
+    /// 진행 중인 작업을 중단하고 고른 예약으로 곧바로 다시 물어본다.
+    func applyQueuedCommandNow(
+        id: UUID,
+        for character: OfficeCharacter
+    ) {
+        guard
+            var queue = queuedCommands[character],
+            queue.moveToFront(id: id)
+        else {
+            return
+        }
+        queuedCommands[character] = queue
+
+        guard runningCharacters.contains(character) else {
+            // 이미 응답이 끝났으면 중단할 것이 없으므로 바로 보낸다.
+            drainQueuedCommand(for: character)
+            return
+        }
+        immediateQueueDrainCharacters.insert(character)
+        cancelJob(for: character)
+    }
+
+    private func drainQueuedCommand(for character: OfficeCharacter) {
+        immediateQueueDrainCharacters.remove(character)
+        guard
+            var queue = queuedCommands[character],
+            !queue.isEmpty,
+            !runningCharacters.contains(character)
+        else {
+            return
+        }
+        guard let next = queue.removeFirst() else {
+            return
+        }
+        queuedCommands[character] = queue
+        submit(
+            next.prompt,
+            attachmentPaths: next.attachments.map(\.stagedURL.path),
+            to: character,
+            onRequestFinished: { [weak self] in
+                self?.releaseStagedAttachments(next.attachments)
+            }
+        )
+    }
+
+    private func releaseStagedAttachments(
+        _ attachments: [PendingAttachment]
+    ) {
+        guard
+            !attachments.isEmpty,
+            let inbox = try? AttachmentInbox.live()
+        else {
+            return
+        }
+        for attachment in attachments {
+            inbox.remove(attachment)
         }
     }
 
@@ -2010,6 +2162,17 @@ final class AgentDirector: ObservableObject {
                 latestCompletedTurnID = turn.id
             }
             applyTerminalTurn(turn, for: character)
+
+            let isImmediateRequest = immediateQueueDrainCharacters
+                .contains(character)
+            if QueuedCommandDrainPolicy.shouldDrain(
+                status: turn.status,
+                isImmediateRequest: isImmediateRequest
+            ) {
+                drainQueuedCommand(for: character)
+            } else if isImmediateRequest {
+                immediateQueueDrainCharacters.remove(character)
+            }
         }
     }
 

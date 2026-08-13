@@ -12,7 +12,8 @@ final class CommandEntryDraftTests: XCTestCase {
             isReady: true,
             isUpdatingConfiguration: false,
             hasSelectedCharacter: true,
-            isSelectedCharacterRunning: false
+            isSelectedCharacterRunning: false,
+            canQueueForSelectedCharacter: false
         )
 
         XCTAssertTrue(availability.canSubmit)
@@ -26,34 +27,76 @@ final class CommandEntryDraftTests: XCTestCase {
                 isReady: false,
                 isUpdatingConfiguration: false,
                 hasSelectedCharacter: true,
-                isSelectedCharacterRunning: false
+                isSelectedCharacterRunning: false,
+                canQueueForSelectedCharacter: false
             ),
             CommandEntryAvailability(
                 isReady: true,
                 isUpdatingConfiguration: true,
                 hasSelectedCharacter: true,
-                isSelectedCharacterRunning: false
+                isSelectedCharacterRunning: false,
+                canQueueForSelectedCharacter: false
             ),
             CommandEntryAvailability(
                 isReady: true,
                 isUpdatingConfiguration: false,
                 hasSelectedCharacter: false,
-                isSelectedCharacterRunning: false
+                isSelectedCharacterRunning: false,
+                canQueueForSelectedCharacter: false
             ),
             CommandEntryAvailability(
                 isReady: true,
                 isUpdatingConfiguration: false,
                 hasSelectedCharacter: true,
-                isSelectedCharacterRunning: true
+                isSelectedCharacterRunning: true,
+                canQueueForSelectedCharacter: false
             ),
         ]
 
         for availability in blockedStates {
             XCTAssertFalse(availability.canSubmit)
+            XCTAssertFalse(availability.canQueue)
             XCTAssertFalse(
                 availability.canChooseAttachments(currentCount: 0)
             )
         }
+    }
+
+    func testRunningCharacterAcceptsInputAsQueuedReservation() {
+        let availability = CommandEntryAvailability(
+            isReady: true,
+            isUpdatingConfiguration: false,
+            hasSelectedCharacter: true,
+            isSelectedCharacterRunning: true,
+            canQueueForSelectedCharacter: true
+        )
+
+        XCTAssertFalse(
+            availability.canSubmit,
+            "응답 생성 중에는 즉시 제출이 아니라 예약이어야 합니다."
+        )
+        XCTAssertTrue(availability.canQueue)
+        XCTAssertTrue(availability.acceptsInput)
+        XCTAssertTrue(
+            availability.canChooseAttachments(currentCount: 0),
+            "예약에도 첨부를 실을 수 있어야 합니다."
+        )
+    }
+
+    func testFullQueueStopsAcceptingMoreInputWhileRunning() {
+        let availability = CommandEntryAvailability(
+            isReady: true,
+            isUpdatingConfiguration: false,
+            hasSelectedCharacter: true,
+            isSelectedCharacterRunning: true,
+            canQueueForSelectedCharacter: false
+        )
+
+        XCTAssertFalse(availability.canQueue)
+        XCTAssertFalse(availability.acceptsInput)
+        XCTAssertFalse(
+            availability.canChooseAttachments(currentCount: 0)
+        )
     }
 
     func testEmptyDraftWithoutAttachmentsCannotSubmit() {

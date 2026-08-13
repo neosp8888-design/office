@@ -1,6 +1,7 @@
 // 이 파일은 흔들림 없는 다중 행 명령 입력과 전송 키 동작을 제공한다.
 
 import AppKit
+import OfficeCore
 import SwiftUI
 
 struct CommandEntryDraft: Equatable {
@@ -36,6 +37,7 @@ struct CommandEntryAvailability: Equatable {
     let isUpdatingConfiguration: Bool
     let hasSelectedCharacter: Bool
     let isSelectedCharacterRunning: Bool
+    let canQueueForSelectedCharacter: Bool
 
     var canSubmit: Bool {
         isReady
@@ -44,8 +46,21 @@ struct CommandEntryAvailability: Equatable {
             && !isSelectedCharacterRunning
     }
 
+    /// 응답 생성 중에는 같은 입력이 다음 턴 예약으로 넘어간다.
+    var canQueue: Bool {
+        isReady
+            && !isUpdatingConfiguration
+            && hasSelectedCharacter
+            && isSelectedCharacterRunning
+            && canQueueForSelectedCharacter
+    }
+
+    var acceptsInput: Bool {
+        canSubmit || canQueue
+    }
+
     func canChooseAttachments(currentCount: Int) -> Bool {
-        canSubmit && currentCount < 20
+        acceptsInput && currentCount < 20
     }
 }
 
@@ -104,7 +119,9 @@ struct CommandEntryRow: View {
             isReady: director.isReadyForSubmissions,
             isUpdatingConfiguration: director.isUpdatingConfiguration,
             hasSelectedCharacter: director.selectedCharacter != nil,
-            isSelectedCharacterRunning: director.isSelectedCharacterRunning
+            isSelectedCharacterRunning: director.isSelectedCharacterRunning,
+            canQueueForSelectedCharacter:
+                director.canQueueForSelectedCharacter
         )
     }
 
@@ -112,7 +129,7 @@ struct CommandEntryRow: View {
         draft.submissionPrompt(
             hasAttachments: attachmentCount > 0,
             isSubmissionAllowed:
-                availability.canSubmit && !isPreparingAttachments
+                availability.acceptsInput && !isPreparingAttachments
         )
     }
 
@@ -180,6 +197,31 @@ struct CommandEntryRow: View {
                 .opacity(
                     director.isCancellingSelectedCharacter ? 0.42 : 1
                 )
+
+                Button(action: submitDraft) {
+                    Image(systemName: "clock.badge.checkmark.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            DashboardPalette.accent.opacity(0.82),
+                            in: RoundedRectangle(
+                                cornerRadius: 11,
+                                style: .continuous
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("다음 턴에 예약")
+                .help(
+                    availability.canQueue
+                        ? "지금 응답이 끝나면 이어서 보냅니다 · 최대 "
+                            + "\(QueuedCommandQueue.maximumCount)개"
+                        : "예약이 가득 찼습니다 · 최대 "
+                            + "\(QueuedCommandQueue.maximumCount)개"
+                )
+                .disabled(!canSubmit)
+                .opacity(canSubmit ? 1 : 0.42)
             } else {
                 Button(action: submitDraft) {
                     Image(systemName: "paperplane.fill")
@@ -220,6 +262,101 @@ struct CommandEntryRow: View {
         }
         let accepted = onSubmit(submissionPrompt)
         draft.clearAfterSubmission(accepted: accepted)
+    }
+}
+
+/// 예약된 다음 업무를 보여주고 취소·즉시 적용을 받는다.
+struct QueuedCommandStrip: View {
+    @ObservedObject var director: AgentDirector
+    let character: OfficeCharacter
+
+    private var commands: [QueuedCommand] {
+        director.queuedCommands(for: character)
+    }
+
+    var body: some View {
+        if !commands.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(
+                    "다음 턴 예약 \(commands.count)/"
+                        + "\(QueuedCommandQueue.maximumCount)"
+                )
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+
+                ForEach(Array(commands.enumerated()), id: \.element.id) {
+                    index, command in
+                    chip(index: index, command: command)
+                }
+            }
+        }
+    }
+
+    private func chip(
+        index: Int,
+        command: QueuedCommand
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text("\(index + 1)")
+                .font(
+                    .system(size: 9.5, weight: .black, design: .rounded)
+                )
+                .foregroundStyle(DashboardPalette.accent)
+                .frame(width: 15, height: 15)
+                .background(
+                    DashboardPalette.accent.opacity(0.16),
+                    in: Circle()
+                )
+
+            Text(command.summary)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+
+            if !command.attachments.isEmpty {
+                Label(
+                    "\(command.attachments.count)",
+                    systemImage: "paperclip"
+                )
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                director.applyQueuedCommandNow(
+                    id: command.id,
+                    for: character
+                )
+            } label: {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(DashboardPalette.accent)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(command.summary) 바로 적용")
+            .help("지금 작업을 중단하고 이 예약으로 다시 질문")
+
+            Button {
+                director.cancelQueuedCommand(
+                    id: command.id,
+                    for: character
+                )
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(command.summary) 예약 취소")
+            .help("예약 취소")
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 27)
+        .background(
+            DashboardPalette.accent.opacity(0.075),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
     }
 }
 
