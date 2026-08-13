@@ -13,6 +13,10 @@ enum OfficeBackendStatus: Equatable {
         self == .running
     }
 
+    var showsStoppedWarning: Bool {
+        self == .stopped
+    }
+
     var systemImage: String {
         switch self {
         case .running:

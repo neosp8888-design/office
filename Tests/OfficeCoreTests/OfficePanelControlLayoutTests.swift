@@ -26,6 +26,12 @@ final class OfficePanelControlLayoutTests: XCTestCase {
         )
     }
 
+    func testBackendControlWarnsOnlyWhenStopped() {
+        XCTAssertFalse(OfficeBackendStatus.running.showsStoppedWarning)
+        XCTAssertFalse(OfficeBackendStatus.changing.showsStoppedWarning)
+        XCTAssertTrue(OfficeBackendStatus.stopped.showsStoppedWarning)
+    }
+
     func testArtStyleAndBackendControlsUseCompactCircularTouchArea() {
         XCTAssertEqual(
             OfficePanelControlLayout.artStyleControlDiameter,
