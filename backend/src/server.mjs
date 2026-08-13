@@ -62,6 +62,18 @@ import {
   replaceTurnFeedback,
 } from "./turn-feedback.mjs";
 import { startSlackBridge } from "./slack-bridge.mjs";
+import {
+  WikiKnowledgeError,
+  approveWikiProposal,
+  createWikiProposal,
+  getWikiPage,
+  isWikiPageKeyRaceError,
+  listWikiPages,
+  listWikiProposals,
+  rejectWikiProposal,
+  resolveWikiPageKeyRace,
+  verifyWikiProposal,
+} from "./wiki-knowledge.mjs";
 import { createUsageSummaryReader } from "./usage-summary.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
@@ -1770,6 +1782,103 @@ async function addRAGDocument(response, body) {
   send(response, 201, result.rows[0]);
 }
 
+function routeWikiPage(pathname) {
+  const match = pathname.match(/^\/api\/wiki\/pages\/([0-9a-f-]{36})$/i);
+  return match ? match[1] : null;
+}
+
+function routeWikiProposalAction(pathname) {
+  const match = pathname.match(
+    /^\/api\/wiki\/proposals\/([0-9a-f-]{36})\/(verify|approve|reject)$/i,
+  );
+  return match ? { proposalID: match[1], action: match[2] } : null;
+}
+
+async function wikiPagesEndpoint(response, url) {
+  const pages = await listWikiPages(pool, {
+    query: url.searchParams.get("query"),
+    limit: url.searchParams.get("limit") ?? undefined,
+  });
+  send(response, 200, { pages });
+}
+
+async function wikiPageEndpoint(response, pageID) {
+  const page = await getWikiPage(pool, pageID);
+  if (!page) {
+    send(response, 404, { error: "위키 페이지를 찾을 수 없습니다." });
+    return;
+  }
+  send(response, 200, { page });
+}
+
+async function wikiProposalsEndpoint(response, url) {
+  const proposals = await listWikiProposals(pool, {
+    state: url.searchParams.get("state"),
+  });
+  send(response, 200, { proposals });
+}
+
+async function createWikiProposalEndpoint(response, request) {
+  if (!trustedJSONMutation(request, response)) {
+    return;
+  }
+  const body = await readJSON(request);
+  const proposal = await withTransaction(
+    (client) => createWikiProposal(client, body),
+  );
+  send(response, 201, { proposal });
+}
+
+async function wikiProposalActionEndpoint(response, request, route) {
+  if (!trustedJSONMutation(request, response)) {
+    return;
+  }
+  const body = await readJSON(request);
+  if (route.action === "verify") {
+    const proposal = await withTransaction((client) =>
+      verifyWikiProposal(client, {
+        proposalID: route.proposalID,
+        verifierCharacterID: body.characterId ?? null,
+      }));
+    send(response, 200, { proposal });
+    return;
+  }
+  if (route.action === "reject") {
+    const proposal = await withTransaction((client) =>
+      rejectWikiProposal(client, {
+        proposalID: route.proposalID,
+        reason: body.reason ?? null,
+      }));
+    send(response, 200, { proposal });
+    return;
+  }
+  const actorType = body.actor ?? "character";
+  if (!["user", "character", "system"].includes(actorType)) {
+    send(response, 400, { error: "actor는 user, character, system만 허용합니다." });
+    return;
+  }
+  try {
+    const outcome = await withTransaction((client) =>
+      approveWikiProposal(client, {
+        proposalID: route.proposalID,
+        actorType,
+        actorCharacterID: body.characterId ?? null,
+      }));
+    send(response, outcome.conflicted ? 409 : 200, {
+      proposal: outcome.proposal,
+    });
+  } catch (error) {
+    // 같은 pageKey 동시 게시는 유니크 제약으로 트랜잭션이 중단되므로
+    // 새 트랜잭션에서 제안을 conflict로 종결한다.
+    if (!isWikiPageKeyRaceError(error)) {
+      throw error;
+    }
+    const proposal = await withTransaction((client) =>
+      resolveWikiPageKeyRace(client, route.proposalID));
+    send(response, 409, { proposal });
+  }
+}
+
 async function searchRAG(response, body) {
   const limit = Math.max(1, Math.min(Number(body.limit ?? 5), 20));
   let result;
@@ -1993,10 +2102,43 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/rag/search"
     ) {
       await searchRAG(response, await readJSON(request));
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/wiki/pages"
+    ) {
+      await wikiPagesEndpoint(response, url);
+    } else if (
+      request.method === "GET" &&
+      routeWikiPage(url.pathname)
+    ) {
+      await wikiPageEndpoint(response, routeWikiPage(url.pathname));
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/wiki/proposals"
+    ) {
+      await wikiProposalsEndpoint(response, url);
+    } else if (
+      request.method === "POST" &&
+      url.pathname === "/api/wiki/proposals"
+    ) {
+      await createWikiProposalEndpoint(response, request);
+    } else if (
+      request.method === "POST" &&
+      routeWikiProposalAction(url.pathname)
+    ) {
+      await wikiProposalActionEndpoint(
+        response,
+        request,
+        routeWikiProposalAction(url.pathname),
+      );
     } else {
       send(response, 404, { error: "경로를 찾을 수 없습니다." });
     }
   } catch (error) {
+    if (error instanceof WikiKnowledgeError) {
+      send(response, error.statusCode, { error: error.message });
+      return;
+    }
     if (
       error instanceof ProvenanceValidationError ||
       error instanceof TurnFeedbackValidationError
