@@ -848,17 +848,6 @@ struct LiveWorkspaceFeedDisplayAnchor: Equatable {
         )
     }
 
-    // 앵커는 반드시 목록이 늘어나기 "전"의 배열로 세워야 한다. 초기
-    // 정착이 사용자 스크롤에 선점돼 앵커가 비어 있는 채로 제출되면,
-    // 이미 새 턴이 앞에 삽입된 배열로 처음 고정하게 되고 그 순간
-    // 기존 표시 카드가 창 밖으로 잘려 문서가 붕괴한다.
-    func establishing(previousTurnIDsNewestFirst: [String]) -> Self {
-        guard oldestVisibleTurnID == nil else {
-            return self
-        }
-        return pinning(turnIDsNewestFirst: previousTurnIDsNewestFirst)
-    }
-
     func pinning(
         limit: Int,
         turnIDsNewestFirst: [String]
@@ -1246,12 +1235,6 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             selectedEntry = activeEntry
         } else {
             releaseActiveEntry()
-            LiveFeedDiagnostics.log(
-                "host.create",
-                "char=\(selectedCharacterID.rawValue)"
-                    + " prev=\(activeEntry?.characterID.rawValue ?? "-")"
-                    + " changedSelection=\(didChangeSelection)"
-            )
             let entry = Entry(
                 director: director,
                 characterID: selectedCharacterID,
@@ -1384,7 +1367,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
     @State private var displayAnchor = LiveWorkspaceFeedDisplayAnchor()
-    @State private var observedTurnIDs: [String] = []
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
     @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
@@ -1449,13 +1431,9 @@ struct LiveWorkspaceFeed: View, Equatable {
         characterFeedStore.turns
     }
 
-    private var selectedTurnIDs: [String] {
-        selectedTurns.map(\.id)
-    }
-
     private var visibleTurnLimit: Int {
         displayAnchor.effectiveLimit(
-            turnIDsNewestFirst: selectedTurnIDs
+            turnIDsNewestFirst: selectedTurns.map(\.id)
         )
     }
 
@@ -1477,21 +1455,12 @@ struct LiveWorkspaceFeed: View, Equatable {
         )
     }
 
-    // 직전에 관측한 목록으로 앵커를 먼저 세운 뒤 현재 목록으로 창을
-    // 넓힌다. 어느 콜백에서 호출되든 결과가 같으므로 SwiftUI가
-    // onChange 순서를 어떻게 잡든 이미 보이던 카드가 제출 순간
-    // 잘려나가지 않는다.
     private func repinDisplayAnchor() {
-        let currentTurnIDs = selectedTurnIDs
-        var updated = displayAnchor.establishing(
-            previousTurnIDsNewestFirst: observedTurnIDs
+        let pinned = displayAnchor.pinning(
+            turnIDsNewestFirst: selectedTurns.map(\.id)
         )
-        updated = updated.pinning(turnIDsNewestFirst: currentTurnIDs)
-        if displayAnchor != updated {
-            displayAnchor = updated
-        }
-        if observedTurnIDs != currentTurnIDs {
-            observedTurnIDs = currentTurnIDs
+        if displayAnchor != pinned {
+            displayAnchor = pinned
         }
     }
 
@@ -1544,17 +1513,6 @@ struct LiveWorkspaceFeed: View, Equatable {
         ScrollViewReader { proxy in
             Group {
                 if displayTurns.isEmpty {
-                    // 여기로 들어오면 ScrollView 자체가 사라지고 안내 화면으로
-                    // 교체된다. 흰 화면의 가장 유력한 후보이므로 진입 자체를
-                    // 남긴다.
-                    let _ = LiveFeedDiagnostics.log(
-                        "view.empty",
-                        "char=\(characterID.rawValue)"
-                            + " selected=\(selectedTurns.count)"
-                            + " limit=\(visibleTurnLimit)"
-                            + " loading=\(characterFeedStore.isLoadingInitialFeed)"
-                            + " latestTerminal=\(latestTerminalTurnID ?? "-")"
-                    )
                     if characterFeedStore.isLoadingInitialFeed {
                         VStack(spacing: 10) {
                             ProgressView()
@@ -1583,15 +1541,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                         )
                     }
                 } else {
-                    let _ = LiveFeedDiagnostics.log(
-                        "view.display",
-                        "char=\(characterID.rawValue)"
-                            + " selected=\(selectedTurns.count)"
-                            + " shown=\(displayTurns.count)"
-                            + " limit=\(visibleTurnLimit)"
-                            + " anchor=\(displayAnchor.oldestVisibleTurnID ?? "-")"
-                            + " ids=\(LiveFeedDiagnostics.brief(displayItems.map(\.id)))"
-                    )
                     ScrollView {
                         VStack(spacing: 0) {
                             LiveWorkspaceFeedScrollObserver(
@@ -1655,18 +1604,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                                     }
                                         .equatable()
                                         .id(item.id)
-                                        .onAppear {
-                                            LiveFeedDiagnostics.log(
-                                                "card.appear",
-                                                "id=\(LiveFeedDiagnostics.brief([item.id]))"
-                                            )
-                                        }
-                                        .onDisappear {
-                                            LiveFeedDiagnostics.log(
-                                                "card.disappear",
-                                                "id=\(LiveFeedDiagnostics.brief([item.id]))"
-                                            )
-                                        }
                                 }
                             }
 
@@ -1679,32 +1616,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                     }
                     .defaultScrollAnchor(.bottom)
                     .onAppear {
-                        // ScrollView가 파괴됐다 다시 생기면 스크롤 위치와
-                        // 실체화된 카드가 모두 초기화된다. 흰 화면 뒤
-                        // "한꺼번에 나옴"이 이 경로인지 판정하기 위해
-                        // 수명주기를 남긴다.
-                        LiveFeedDiagnostics.log(
-                            "scrollview.appear",
-                            "char=\(characterID.rawValue)"
-                                + " shown=\(displayTurns.count)"
-                        )
-                        // 이미 불러온 대화로 바로 mount되면 목록 변경
-                        // 알림이 오지 않으므로 여기서 앵커를 세운다.
-                        repinDisplayAnchor()
                         settleInitialAnchorIfNeeded()
-                    }
-                    .onDisappear {
-                        LiveFeedDiagnostics.log(
-                            "scrollview.disappear",
-                            "char=\(characterID.rawValue)"
-                                + " shown=\(displayTurns.count)"
-                        )
-                    }
-                    // 턴 목록 변경은 표시 갱신보다 먼저 관측해야 한다.
-                    // 새 턴이 앞에 삽입되기 전 배열로 앵커를 확정해야
-                    // 기존 표시 카드가 잘려나가지 않는다.
-                    .onChange(of: selectedTurnIDs) { _, _ in
-                        repinDisplayAnchor()
                     }
                     .onChange(
                         of: characterFeedStore.isLoadingInitialFeed
@@ -1776,15 +1688,6 @@ struct LiveWorkspaceFeed: View, Equatable {
         guard presentationStore.isPresentationRequested else {
             return
         }
-        LiveFeedDiagnostics.log(
-            "scroll.metrics",
-            "content=\(Int(metrics.contentHeight))"
-                + " viewport=\(Int(metrics.viewportHeight))"
-                + " top=\(Int(metrics.distanceFromTop))"
-                + " bottom=\(Int(metrics.distanceFromBottom))"
-                + " prevContent=\(Int(scrollMetrics.contentHeight))"
-                + " program=\(scrollMetrics.isProgrammaticScrollInFlight)"
-        )
         scrollMetrics.hasSnapshot = true
         scrollMetrics.distanceFromBottom = metrics.distanceFromBottom
         scrollMetrics.viewportHeight = metrics.viewportHeight
@@ -1930,10 +1833,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     }
 
     private func revealSubmittedTurn(proxy: ScrollViewProxy) {
-        LiveFeedDiagnostics.log(
-            "scroll.submitted",
-            "shown=\(displayTurns.count) content=\(Int(scrollMetrics.contentHeight))"
-        )
         cancelScheduledScrolls()
         markAtBottom()
         let generation = beginProgrammaticScroll()
