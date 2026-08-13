@@ -1,6 +1,8 @@
 // 이 파일은 말풍선 열람과 유휴 직원 자동 대화 정책을 검증한다.
 
+import AppKit
 import OfficeCore
+import SwiftUI
 import XCTest
 @testable import OfficeGame
 
@@ -13,6 +15,40 @@ final class SpeechBubbleBehaviorTests: XCTestCase {
         director.dismissViewedBubble(for: .rightWoman)
 
         XCTAssertNil(director.bubbles[.rightWoman])
+    }
+
+    func testMountedEquatableLayerRemovesBubbleWithoutResize() throws {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.speechBubbleStore.set("완료했습니다.", for: .rightWoman)
+        let size = NSSize(width: 384, height: 256)
+        let hostingView = NSHostingView(
+            rootView: CharacterInteractionLayer(
+                director: director,
+                artStyle: .twoD,
+                onMonitorTapped: { _ in },
+                onArchiveCabinetTapped: {},
+                onWhiteboardTapped: {},
+                onBubbleTapped: { _, _ in }
+            )
+            .equatable()
+            .frame(width: size.width, height: size.height)
+            .background(Color.black)
+        )
+        hostingView.frame = NSRect(origin: .zero, size: size)
+        settle(hostingView, for: 0.1)
+
+        let originalFrame = hostingView.frame
+        let before = try renderedBitmap(of: hostingView)
+        let beforeBrightPixels = sampledBrightPixelCount(in: before)
+        XCTAssertGreaterThan(beforeBrightPixels, 25)
+
+        director.dismissViewedBubble(for: .rightWoman)
+        settle(hostingView, for: 0.6)
+
+        let after = try renderedBitmap(of: hostingView)
+        let afterBrightPixels = sampledBrightPixelCount(in: after)
+        XCTAssertEqual(hostingView.frame, originalFrame)
+        XCTAssertLessThan(afterBrightPixels, beforeBrightPixels / 4)
     }
 
     func testIdleEmployeeCanSpeakWhileAnotherEmployeeIsWorking() throws {
@@ -75,5 +111,43 @@ final class SpeechBubbleBehaviorTests: XCTestCase {
             ),
             ["첫 문구", "셋째 문구"]
         )
+    }
+
+    private func settle(_ view: NSView, for interval: TimeInterval) {
+        view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(interval))
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+    }
+
+    private func renderedBitmap(of view: NSView) throws -> NSBitmapImageRep {
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(
+            in: view.bounds
+        ) else {
+            throw XCTSkip("말풍선 레이어 비트맵을 만들 수 없습니다.")
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        return bitmap
+    }
+
+    private func sampledBrightPixelCount(in bitmap: NSBitmapImageRep) -> Int {
+        stride(from: 0, to: bitmap.pixelsHigh, by: 4).reduce(into: 0) {
+            count,
+            y in
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 4) {
+                guard let color = bitmap.colorAt(x: x, y: y)?
+                    .usingColorSpace(.deviceRGB)
+                else {
+                    continue
+                }
+                if color.redComponent > 0.65,
+                   color.greenComponent > 0.65,
+                   color.blueComponent > 0.65,
+                   color.alphaComponent > 0.2
+                {
+                    count += 1
+                }
+            }
+        }
     }
 }
