@@ -848,6 +848,17 @@ struct LiveWorkspaceFeedDisplayAnchor: Equatable {
         )
     }
 
+    // 앵커는 반드시 목록이 늘어나기 "전"의 배열로 세워야 한다. 초기
+    // 정착이 사용자 스크롤에 선점돼 앵커가 비어 있는 채로 제출되면,
+    // 이미 새 턴이 앞에 삽입된 배열로 처음 고정하게 되고 그 순간
+    // 기존 표시 카드가 창 밖으로 잘려 문서가 붕괴한다.
+    func establishing(previousTurnIDsNewestFirst: [String]) -> Self {
+        guard oldestVisibleTurnID == nil else {
+            return self
+        }
+        return pinning(turnIDsNewestFirst: previousTurnIDsNewestFirst)
+    }
+
     func pinning(
         limit: Int,
         turnIDsNewestFirst: [String]
@@ -1353,6 +1364,7 @@ struct LiveWorkspaceFeed: View, Equatable {
     @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
     @State private var displayAnchor = LiveWorkspaceFeedDisplayAnchor()
+    @State private var observedTurnIDs: [String] = []
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
     @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
@@ -1417,9 +1429,13 @@ struct LiveWorkspaceFeed: View, Equatable {
         characterFeedStore.turns
     }
 
+    private var selectedTurnIDs: [String] {
+        selectedTurns.map(\.id)
+    }
+
     private var visibleTurnLimit: Int {
         displayAnchor.effectiveLimit(
-            turnIDsNewestFirst: selectedTurns.map(\.id)
+            turnIDsNewestFirst: selectedTurnIDs
         )
     }
 
@@ -1441,12 +1457,21 @@ struct LiveWorkspaceFeed: View, Equatable {
         )
     }
 
+    // 직전에 관측한 목록으로 앵커를 먼저 세운 뒤 현재 목록으로 창을
+    // 넓힌다. 어느 콜백에서 호출되든 결과가 같으므로 SwiftUI가
+    // onChange 순서를 어떻게 잡든 이미 보이던 카드가 제출 순간
+    // 잘려나가지 않는다.
     private func repinDisplayAnchor() {
-        let pinned = displayAnchor.pinning(
-            turnIDsNewestFirst: selectedTurns.map(\.id)
+        let currentTurnIDs = selectedTurnIDs
+        var updated = displayAnchor.establishing(
+            previousTurnIDsNewestFirst: observedTurnIDs
         )
-        if displayAnchor != pinned {
-            displayAnchor = pinned
+        updated = updated.pinning(turnIDsNewestFirst: currentTurnIDs)
+        if displayAnchor != updated {
+            displayAnchor = updated
+        }
+        if observedTurnIDs != currentTurnIDs {
+            observedTurnIDs = currentTurnIDs
         }
     }
 
@@ -1602,7 +1627,16 @@ struct LiveWorkspaceFeed: View, Equatable {
                     }
                     .defaultScrollAnchor(.bottom)
                     .onAppear {
+                        // 이미 불러온 대화로 바로 mount되면 목록 변경
+                        // 알림이 오지 않으므로 여기서 앵커를 세운다.
+                        repinDisplayAnchor()
                         settleInitialAnchorIfNeeded()
+                    }
+                    // 턴 목록 변경은 표시 갱신보다 먼저 관측해야 한다.
+                    // 새 턴이 앞에 삽입되기 전 배열로 앵커를 확정해야
+                    // 기존 표시 카드가 잘려나가지 않는다.
+                    .onChange(of: selectedTurnIDs) { _, _ in
+                        repinDisplayAnchor()
                     }
                     .onChange(
                         of: characterFeedStore.isLoadingInitialFeed
