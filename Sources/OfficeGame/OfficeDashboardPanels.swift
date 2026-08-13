@@ -941,7 +941,8 @@ struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
         view.configure(
             director: director,
             selectedCharacterID:
-                characterSelectionStore.selectedCharacterID
+                characterSelectionStore.selectedCharacterID,
+            feedRemountToken: characterSelectionStore.feedRemountToken
         )
         return view
     }
@@ -953,7 +954,8 @@ struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
         nsView.configure(
             director: director,
             selectedCharacterID:
-                characterSelectionStore.selectedCharacterID
+                characterSelectionStore.selectedCharacterID,
+            feedRemountToken: characterSelectionStore.feedRemountToken
         )
     }
 
@@ -1164,6 +1166,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private weak var director: AgentDirector?
     private var activeEntry: Entry?
     private var selectedCharacterID: OfficeCharacter?
+    private var feedRemountToken = 0
     private var postMountRefreshTask: Task<Void, Never>?
     private var selectionGeneration = 0
     private var pendingPostMountRefreshGeneration: Int?
@@ -1195,7 +1198,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     func configure(
         director: AgentDirector,
-        selectedCharacterID: OfficeCharacter?
+        selectedCharacterID: OfficeCharacter?,
+        feedRemountToken: Int = 0
     ) {
         if self.director !== director {
             tearDown()
@@ -1203,7 +1207,14 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         }
 
         let previousCharacterID = self.selectedCharacterID
-        let didChangeSelection = previousCharacterID != selectedCharacterID
+        // 재마운트 요청은 직원 전환과 완전히 같은 경로를 탄다. 호스트를
+        // 버리고 새로 만든 뒤 마운트 후 목록을 다시 발행하므로, 다른
+        // 직원에 갔다 돌아왔을 때와 결과가 동일하다.
+        let didRequestRemount =
+            self.feedRemountToken != feedRemountToken
+        self.feedRemountToken = feedRemountToken
+        let didChangeSelection =
+            previousCharacterID != selectedCharacterID || didRequestRemount
         self.selectedCharacterID = selectedCharacterID
         if didChangeSelection {
             postMountRefreshTask?.cancel()
