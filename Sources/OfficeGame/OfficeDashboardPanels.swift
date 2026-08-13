@@ -1231,6 +1231,12 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             selectedEntry = activeEntry
         } else {
             releaseActiveEntry()
+            LiveFeedDiagnostics.log(
+                "host.create",
+                "char=\(selectedCharacterID.rawValue)"
+                    + " prev=\(activeEntry?.characterID.rawValue ?? "-")"
+                    + " changedSelection=\(didChangeSelection)"
+            )
             let entry = Entry(
                 director: director,
                 characterID: selectedCharacterID,
@@ -1524,6 +1530,17 @@ struct LiveWorkspaceFeed: View, Equatable {
         ScrollViewReader { proxy in
             Group {
                 if displayTurns.isEmpty {
+                    // 여기로 들어오면 ScrollView 자체가 사라지고 안내 화면으로
+                    // 교체된다. 흰 화면의 가장 유력한 후보이므로 진입 자체를
+                    // 남긴다.
+                    let _ = LiveFeedDiagnostics.log(
+                        "view.empty",
+                        "char=\(characterID.rawValue)"
+                            + " selected=\(selectedTurns.count)"
+                            + " limit=\(visibleTurnLimit)"
+                            + " loading=\(characterFeedStore.isLoadingInitialFeed)"
+                            + " latestTerminal=\(latestTerminalTurnID ?? "-")"
+                    )
                     if characterFeedStore.isLoadingInitialFeed {
                         VStack(spacing: 10) {
                             ProgressView()
@@ -1552,6 +1569,15 @@ struct LiveWorkspaceFeed: View, Equatable {
                         )
                     }
                 } else {
+                    let _ = LiveFeedDiagnostics.log(
+                        "view.display",
+                        "char=\(characterID.rawValue)"
+                            + " selected=\(selectedTurns.count)"
+                            + " shown=\(displayTurns.count)"
+                            + " limit=\(visibleTurnLimit)"
+                            + " anchor=\(displayAnchor.oldestVisibleTurnID ?? "-")"
+                            + " ids=\(LiveFeedDiagnostics.brief(displayItems.map(\.id)))"
+                    )
                     ScrollView {
                         VStack(spacing: 0) {
                             LiveWorkspaceFeedScrollObserver(
@@ -1615,6 +1641,18 @@ struct LiveWorkspaceFeed: View, Equatable {
                                     }
                                         .equatable()
                                         .id(item.id)
+                                        .onAppear {
+                                            LiveFeedDiagnostics.log(
+                                                "card.appear",
+                                                "id=\(LiveFeedDiagnostics.brief([item.id]))"
+                                            )
+                                        }
+                                        .onDisappear {
+                                            LiveFeedDiagnostics.log(
+                                                "card.disappear",
+                                                "id=\(LiveFeedDiagnostics.brief([item.id]))"
+                                            )
+                                        }
                                 }
                             }
 
@@ -1627,10 +1665,26 @@ struct LiveWorkspaceFeed: View, Equatable {
                     }
                     .defaultScrollAnchor(.bottom)
                     .onAppear {
+                        // ScrollView가 파괴됐다 다시 생기면 스크롤 위치와
+                        // 실체화된 카드가 모두 초기화된다. 흰 화면 뒤
+                        // "한꺼번에 나옴"이 이 경로인지 판정하기 위해
+                        // 수명주기를 남긴다.
+                        LiveFeedDiagnostics.log(
+                            "scrollview.appear",
+                            "char=\(characterID.rawValue)"
+                                + " shown=\(displayTurns.count)"
+                        )
                         // 이미 불러온 대화로 바로 mount되면 목록 변경
                         // 알림이 오지 않으므로 여기서 앵커를 세운다.
                         repinDisplayAnchor()
                         settleInitialAnchorIfNeeded()
+                    }
+                    .onDisappear {
+                        LiveFeedDiagnostics.log(
+                            "scrollview.disappear",
+                            "char=\(characterID.rawValue)"
+                                + " shown=\(displayTurns.count)"
+                        )
                     }
                     // 턴 목록 변경은 표시 갱신보다 먼저 관측해야 한다.
                     // 새 턴이 앞에 삽입되기 전 배열로 앵커를 확정해야
@@ -1710,6 +1764,15 @@ struct LiveWorkspaceFeed: View, Equatable {
         guard presentationStore.isPresentationRequested else {
             return
         }
+        LiveFeedDiagnostics.log(
+            "scroll.metrics",
+            "content=\(Int(metrics.contentHeight))"
+                + " viewport=\(Int(metrics.viewportHeight))"
+                + " top=\(Int(metrics.distanceFromTop))"
+                + " bottom=\(Int(metrics.distanceFromBottom))"
+                + " prevContent=\(Int(scrollMetrics.contentHeight))"
+                + " program=\(scrollMetrics.isProgrammaticScrollInFlight)"
+        )
         scrollMetrics.hasSnapshot = true
         scrollMetrics.distanceFromBottom = metrics.distanceFromBottom
         scrollMetrics.viewportHeight = metrics.viewportHeight
@@ -1860,6 +1923,10 @@ struct LiveWorkspaceFeed: View, Equatable {
     }
 
     private func revealSubmittedTurn(proxy: ScrollViewProxy) {
+        LiveFeedDiagnostics.log(
+            "scroll.submitted",
+            "shown=\(displayTurns.count) content=\(Int(scrollMetrics.contentHeight))"
+        )
         cancelScheduledScrolls()
         markAtBottom()
         let generation = beginProgrammaticScroll()

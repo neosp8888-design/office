@@ -55,6 +55,13 @@ final class CharacterLiveFeedStore: ObservableObject {
         turns: [LiveFeedTurn],
         isLoadingInitialFeed: Bool
     ) {
+        LiveFeedDiagnostics.log(
+            "store.stage",
+            "count=\(turns.count) prev=\(latestTurns.count)"
+                + " presented=\(isPresented)"
+                + " loading=\(isLoadingInitialFeed)"
+                + " ids=\(LiveFeedDiagnostics.brief(turns.map(\.id)))"
+        )
         latestTurns = turns
         latestIsLoadingInitialFeed = isLoadingInitialFeed
         guard isPresented else {
@@ -83,9 +90,17 @@ final class CharacterLiveFeedStore: ObservableObject {
 
     private func publishLatestIfNeeded() {
         if turns != latestTurns {
+            LiveFeedDiagnostics.log(
+                "store.publish",
+                "from=\(turns.count) to=\(latestTurns.count)"
+            )
             turns = latestTurns
         }
         if isLoadingInitialFeed != latestIsLoadingInitialFeed {
+            LiveFeedDiagnostics.log(
+                "store.loading",
+                "from=\(isLoadingInitialFeed) to=\(latestIsLoadingInitialFeed)"
+            )
             isLoadingInitialFeed = latestIsLoadingInitialFeed
         }
     }
@@ -320,6 +335,14 @@ final class LiveFeedStore: ObservableObject {
             by: \.characterId
         )
         turnsByCharacterID = updatedTurnsByCharacterID
+        LiveFeedDiagnostics.log(
+            "feed.merge",
+            "merged=\(mergedTurns.count) persisted=\(persistedTurns.count)"
+                + " optimistic=\(optimisticTurns.count)"
+                + " selected=\(selectedCharacterFeedID ?? "-")"
+                + " selectedCount="
+                + "\(updatedTurnsByCharacterID[selectedCharacterFeedID ?? ""]?.count ?? 0)"
+        )
         for (characterID, store) in characterStores {
             store.stage(
                 turns: updatedTurnsByCharacterID[characterID] ?? [],
