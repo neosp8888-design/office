@@ -3,8 +3,8 @@
 ## Current channel: Community Preview
 
 The current public release is deliberately ad-hoc signed and is not notarized
-by Apple. GitHub must publish it as a **Pre-release**, every DMG and ZIP filename
-must contain `adhoc`, and the Release page and both READMEs must warn users
+by Apple. GitHub must publish it as a **Pre-release**, the ZIP filename must
+contain `adhoc`, and the Release page and both READMEs must warn users
 before download. Users may either allow the single app through macOS **Open
 Anyway** or build the tagged source themselves. Never recommend globally
 disabling Gatekeeper or applying broad `xattr` commands.
@@ -28,7 +28,7 @@ two-architecture release policy.
 5. Create and push the exact semantic tag, for example `v1.3.2` for app version
    `1.3.2`.
 6. Manually run `Community Preview Release` with that existing tag. The
-   workflow builds the ad-hoc arm64 app, creates ZIP and DMG artifacts, verifies
+   workflow builds the ad-hoc arm64 app, creates one ZIP artifact, verifies
    checksums, runs the packaged backend against Docker, and publishes a GitHub
    Pre-release only after every gate passes. Do not run `Notarized Release` for
    the same tag.
@@ -56,7 +56,7 @@ remote tag, even when no GitHub Release was published.
 The workflow fetches `origin/main` and refuses a tag whose commit is not part
 of that branch or whose name differs from the app version. It scans both the
 tagged source and finished app for credentials and developer-local paths. It
-also launches the app and the copy mounted from the final DMG in isolated
+also launches the app and the copy extracted from the final ZIP in isolated
 first-run homes, rejecting an early exit or fatal runtime log.
 
 For the arm64 release, the workflow extracts the exact backend, production
@@ -113,8 +113,9 @@ certificate and its private key. The notarization password must be an
 app-specific password for the configured Apple ID. Create a new version tag,
 then manually run `Notarized Release` with that existing tag. The workflow
 imports the certificate, signs the nested Node runtime and app with hardened
-runtime, submits both the app and DMG to Apple, staples and validates the
-ticket, runs the same package and Docker gates, and publishes the Release.
+runtime, submits the app to Apple, staples and validates the ticket, packages
+that app as a ZIP, runs the same package and Docker gates, and publishes the
+Release.
 
 ## Local packaging check
 
@@ -130,11 +131,11 @@ python3 scripts/backend-release-id.py \
 ./scripts/smoke-test-macos-release.sh dist/OFFICESTRA.app
 ./scripts/package-release.sh
 ./scripts/test-packaged-community-preview-e2e.sh \
-  "$(find dist/release -maxdepth 1 -name '*-adhoc.dmg' -print -quit)"
+  "$(find dist/release -maxdepth 1 -name '*-adhoc.zip' -print -quit)"
 ```
 
-The final command requires Docker Desktop to be running. It mounts the actual
-DMG and uses only its bundled Node runtime, backend, Compose file, and database
+The final command requires Docker Desktop to be running. It extracts the actual
+ZIP and uses only its bundled Node runtime, backend, Compose file, and database
 migrations to initialize an isolated PostgreSQL volume and complete a fake
 first agent task. It uses dedicated ports and removes the temporary container,
 volume, process, and mount when the check finishes.

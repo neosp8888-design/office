@@ -163,26 +163,17 @@ jobs:
           OFFICESTRA_NOTARY_PROFILE=OFFICESTRA-CI \
             ./scripts/notarize-app.sh
           ./scripts/smoke-test-macos-release.sh dist/OFFICESTRA.app
-          OFFICESTRA_CODESIGN_IDENTITY="$identity" \
-          OFFICESTRA_NOTARY_PROFILE=OFFICESTRA-CI \
-            ./scripts/package-release.sh
-          dmg_path="$(
+          ./scripts/package-release.sh
+          zip_path="$(
             find dist/release \
               -maxdepth 1 \
               -type f \
-              -name '*-notarized.dmg' \
+              -name '*-notarized.zip' \
               -print \
               -quit
           )"
-          test -n "$dmg_path"
-          /usr/bin/xcrun stapler validate "$dmg_path"
-          /usr/sbin/spctl \
-            --assess \
-            --type open \
-            --context context:primary-signature \
-            --verbose=4 \
-            "$dmg_path"
-          ./scripts/smoke-test-macos-release.sh "$dmg_path"
+          test -n "$zip_path"
+          ./scripts/smoke-test-macos-release.sh "$zip_path"
           (
             cd dist/release
             shasum -a 256 -c SHA256SUMS
@@ -211,9 +202,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: officestra-release-${{ matrix.arch }}
-          path: |
-            dist/release/*-notarized.zip
-            dist/release/*-notarized.dmg
+          path: dist/release/*-notarized.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -292,12 +281,11 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           arm_zip=(dist/release/*-arm64-notarized.zip)
-          arm_dmg=(dist/release/*-arm64-notarized.dmg)
           test "${#arm_zip[@]}" -eq 1
-          test "${#arm_dmg[@]}" -eq 1
+          test "$(find dist/release -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')" = 0
           (
             cd dist/release
-            sha256sum ./*.zip ./*.dmg > SHA256SUMS
+            sha256sum ./*.zip > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
 
@@ -309,7 +297,6 @@ jobs:
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
             dist/release/*-notarized.zip \
-            dist/release/*-notarized.dmg \
             dist/release/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \

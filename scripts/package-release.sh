@@ -1,5 +1,5 @@
 #!/bin/zsh
-# 이 스크립트는 이미 빌드된 앱을 ZIP과 DMG 배포 산출물로 묶는다.
+# 이 스크립트는 이미 빌드된 앱을 ZIP 배포 산출물로 묶는다.
 
 set -euo pipefail
 
@@ -32,7 +32,7 @@ SIGNATURE_DETAILS="$(
     /usr/bin/codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1
 )"
 
-print "이 스크립트는 앱 자체를 새로 서명하거나 공증하지 않습니다. 공증된 앱의 최종 DMG만 별도로 서명·공증합니다."
+print "이 스크립트는 앱 자체를 새로 서명하거나 공증하지 않습니다."
 RELEASE_FLAVOR="unnotarized"
 if print -r -- "$SIGNATURE_DETAILS" | /usr/bin/grep -q '^Signature=adhoc$'; then
     RELEASE_FLAVOR="adhoc"
@@ -84,15 +84,12 @@ ARCH_LABEL="arm64"
 
 ARTIFACT_BASENAME="OFFICESTRA-${SAFE_VERSION}-${SAFE_BUILD_NUMBER}-macOS-${ARCH_LABEL}-${RELEASE_FLAVOR}"
 ZIP_NAME="$ARTIFACT_BASENAME.zip"
-DMG_NAME="$ARTIFACT_BASENAME.dmg"
 ZIP_PATH="$RELEASE_DIR/$ZIP_NAME"
-DMG_PATH="$RELEASE_DIR/$DMG_NAME"
 CHECKSUM_PATH="$RELEASE_DIR/SHA256SUMS"
 
 mkdir -p "$RELEASE_DIR"
 STAGING_ROOT="$(mktemp -d "$RELEASE_DIR/.officestra-release.XXXXXX")"
 ZIP_TEMP="$STAGING_ROOT/$ZIP_NAME"
-DMG_TEMP="$STAGING_ROOT/$DMG_NAME"
 
 print "ZIP 산출물을 만듭니다."
 /usr/bin/ditto \
@@ -113,48 +110,17 @@ mkdir -p "$ZIP_VERIFY_ROOT"
     --verbose=2 \
     "$ZIP_VERIFY_ROOT/OFFICESTRA.app"
 
-DMG_ROOT="$STAGING_ROOT/OFFICESTRA"
-mkdir -p "$DMG_ROOT"
-/usr/bin/ditto "$APP_BUNDLE" "$DMG_ROOT/OFFICESTRA.app"
-/bin/ln -s /Applications "$DMG_ROOT/Applications"
-
-# 복사 과정에서 중첩 실행 파일이나 봉인된 리소스가 달라지지 않았는지 확인한다.
-/usr/bin/codesign \
-    --verify \
-    --deep \
-    --strict \
-    --verbose=2 \
-    "$DMG_ROOT/OFFICESTRA.app"
-
-print "Applications 바로가기가 포함된 DMG 산출물을 만듭니다."
-/usr/bin/hdiutil create \
-    -ov \
-    -format UDZO \
-    -volname OFFICESTRA \
-    -srcfolder "$DMG_ROOT" \
-    "$DMG_TEMP"
-
-if [[ "$RELEASE_FLAVOR" == "notarized" ]]; then
-    print "최종 배포 컨테이너인 DMG를 서명하고 공증합니다."
-    "$PROJECT_DIR/scripts/notarize-app.sh" "$DMG_TEMP"
-fi
-
-print "최종 DMG 무결성을 검증합니다."
-/usr/bin/hdiutil verify "$DMG_TEMP"
-
 # 검증을 통과한 완성본만 release 디렉터리에 노출한다.
 /bin/mv -f "$ZIP_TEMP" "$ZIP_PATH"
-/bin/mv -f "$DMG_TEMP" "$DMG_PATH"
 
 CHECKSUM_TEMP="$STAGING_ROOT/SHA256SUMS"
 (
     cd "$RELEASE_DIR"
-    /usr/bin/shasum -a 256 "$ZIP_NAME" "$DMG_NAME"
+    /usr/bin/shasum -a 256 "$ZIP_NAME"
 ) > "$CHECKSUM_TEMP"
 /bin/mv "$CHECKSUM_TEMP" "$CHECKSUM_PATH"
 
 print "배포 산출물 생성 완료"
 print "서명 상태: $RELEASE_FLAVOR"
 print "$ZIP_PATH"
-print "$DMG_PATH"
 print "$CHECKSUM_PATH"
