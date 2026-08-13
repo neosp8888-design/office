@@ -912,6 +912,13 @@ private struct LiveWorkspaceCommandBar: View {
                 )
             }
 
+            if let selectedCharacterID {
+                QueuedCommandStrip(
+                    director: director,
+                    character: selectedCharacterID
+                )
+            }
+
             CommandEntryRow(
                 director: director,
                 placeholder: commandPlaceholder,
@@ -1157,6 +1164,18 @@ private struct LiveWorkspaceCommandBar: View {
                     selectedName
                 )
             }
+            if director.runningCharacters.contains(selectedCharacterID) {
+                if director.canQueueForSelectedCharacter {
+                    return OfficeLocalization.format(
+                        "%@의 다음 턴에 예약할 업무를 입력하세요",
+                        selectedName
+                    )
+                }
+                return OfficeLocalization.format(
+                    "%@의 예약이 가득 찼습니다",
+                    selectedName
+                )
+            }
             return OfficeLocalization.format(
                 "%@에게 업무를 입력하세요",
                 selectedName
@@ -1242,10 +1261,24 @@ private extension LiveWorkspaceCommandBar {
         guard
             director.isReadyForSubmissions,
             !director.isUpdatingConfiguration,
-            let selectedCharacterID,
-            !director.runningCharacters.contains(selectedCharacterID)
+            let selectedCharacterID
         else {
             return false
+        }
+
+        // 응답 생성 중이면 같은 입력을 다음 턴 예약으로 넘긴다.
+        // 첨부는 예약이 실제로 제출될 때까지 director가 들고 있다가
+        // 정리하므로 여기서 목록만 비운다.
+        if director.runningCharacters.contains(selectedCharacterID) {
+            let queued = director.enqueueCommand(
+                prompt,
+                attachments: attachments,
+                for: selectedCharacterID
+            )
+            if queued {
+                attachments = []
+            }
+            return queued
         }
 
         let submittedAttachments = attachments
@@ -1290,7 +1323,9 @@ private extension LiveWorkspaceCommandBar {
         guard !selectedURLs.isEmpty else {
             return
         }
-        let activeAttachments = attachments
+        // 예약에 실려 아직 제출되지 않은 첨부도 살아 있어야 한다.
+        let activeAttachments =
+            attachments + director.queuedAttachments
         isPreparingAttachments = true
         Task {
             let batch = await Task.detached(priority: .userInitiated) {
