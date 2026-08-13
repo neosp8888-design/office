@@ -1050,7 +1050,7 @@ final class LiveFeedStoreTests: XCTestCase {
                 turnIDsNewestFirst: ["t9", "t8", "t7", "t6"]
             ),
             LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
-            "앵커 고정 전 첫 마운트는 최신 2건만 표시해 CPU를 방어합니다."
+            "앵커 고정 전 첫 마운트는 스냅샷 보유량만큼만 표시합니다."
         )
     }
 
@@ -1130,26 +1130,34 @@ final class LiveFeedStoreTests: XCTestCase {
         var anchor = LiveWorkspaceFeedDisplayAnchor()
         let ids = (0..<30).map { "t\(29 - $0)" }
         anchor = anchor.pinning(turnIDsNewestFirst: ids)
-        XCTAssertEqual(anchor.effectiveLimit(turnIDsNewestFirst: ids), 2)
+        XCTAssertEqual(anchor.effectiveLimit(turnIDsNewestFirst: ids), 10)
 
         let nextLimit = LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
             current: anchor.effectiveLimit(turnIDsNewestFirst: ids),
             total: ids.count
         )
-        XCTAssertEqual(nextLimit, 12)
+        XCTAssertEqual(nextLimit, 20)
         anchor = anchor.pinning(
             limit: nextLimit,
             turnIDsNewestFirst: ids
         )
         XCTAssertEqual(
             anchor.effectiveLimit(turnIDsNewestFirst: ids),
-            12
+            20
         )
-        XCTAssertEqual(anchor.oldestVisibleTurnID, ids[11])
+        XCTAssertEqual(anchor.oldestVisibleTurnID, ids[19])
     }
 
-    func testFreshEmployeeMountLimitsInitialConversationWindow() {
-        let includedIndices = (0..<10).filter { index in
+    func testFreshEmployeeMountShowsSnapshotWindowWithoutArchivedNotice() {
+        // 스냅샷이 직원당 최근 10턴을 보유하므로 첫 화면도 10건을
+        // 그대로 보여준다. 이보다 좁히면 평소 대화가 두 건만 보이고
+        // 나머지가 숨김 안내로 밀린다.
+        XCTAssertEqual(
+            LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
+            LiveFeedStore.minimumTurnsPerCharacter
+        )
+
+        let includedIndices = (0..<12).filter { index in
             LiveWorkspaceFeedPagingPolicy.includesTurn(
                 at: index,
                 visibleTurnLimit:
@@ -1159,10 +1167,10 @@ final class LiveFeedStoreTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(includedIndices, [0, 1])
+        XCTAssertEqual(includedIndices, Array(0..<10))
         XCTAssertTrue(
             LiveWorkspaceFeedPagingPolicy.includesTurn(
-                at: 9,
+                at: 15,
                 visibleTurnLimit:
                     LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
                 isRunning: true,
@@ -1172,7 +1180,7 @@ final class LiveFeedStoreTests: XCTestCase {
         )
         XCTAssertTrue(
             LiveWorkspaceFeedPagingPolicy.includesTurn(
-                at: 8,
+                at: 14,
                 visibleTurnLimit:
                     LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount,
                 isRunning: false,

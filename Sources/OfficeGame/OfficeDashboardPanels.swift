@@ -786,11 +786,12 @@ struct LiveWorkspaceFeedContentRevisionPolicy: Equatable {
 }
 
 struct LiveWorkspaceFeedPagingPolicy: Equatable {
-    // 직원 전환 때 NSHostingView를 새로 만드는 CPU 방어는 유지하되,
-    // 첫 mount에서 과거 10턴의 Markdown과 활동 트리를 한꺼번에 만들지
-    // 않는다. 최신 대화 두 건을 먼저 안정적으로 표시하고 사용자가
-    // 위로 올릴 때 기존 단위대로 과거 기록을 추가한다.
-    static let initialVisibleTurnCount = 2
+    // 직원 전환 때 NSHostingView를 새로 만드는 CPU 방어는 유지한다.
+    // 다만 첫 화면을 두 건으로 좁히면 스냅샷이 보유한 최근 10턴이
+    // 대부분 "위로 더 올리면 이전 N건 추가"로 숨겨져, 평소 대화가
+    // 두 건만 보인다. 첫 mount 표시를 스냅샷 보유량과 같은 10건으로
+    // 맞춰 정상 상황에서는 숨김 안내가 뜨지 않게 한다.
+    static let initialVisibleTurnCount = 10
     static let pageSize = 10
     static let maximumVisibleTurnCount = 30
 
