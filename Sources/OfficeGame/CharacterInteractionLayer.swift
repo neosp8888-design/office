@@ -52,7 +52,7 @@ struct CharacterInteractionPresentationState: Equatable {
 }
 
 struct CharacterInteractionLayer: View, Equatable {
-    @ObservedObject private var speechBubbleStore: SpeechBubbleStore
+    private let speechBubbleStore: SpeechBubbleStore
     private let presentation: CharacterInteractionPresentationState
     private let selectCharacter: (CharacterConfiguration) -> Void
     let artStyle: OfficeArtStyle
@@ -69,9 +69,7 @@ struct CharacterInteractionLayer: View, Equatable {
         onWhiteboardTapped: @escaping () -> Void,
         onBubbleTapped: @escaping (OfficeCharacter, String) -> Void
     ) {
-        _speechBubbleStore = ObservedObject(
-            wrappedValue: director.speechBubbleStore
-        )
+        speechBubbleStore = director.speechBubbleStore
         presentation = CharacterInteractionPresentationState(
             director: director
         )
@@ -213,99 +211,113 @@ struct CharacterInteractionLayer: View, Equatable {
                     )
                 }
 
-                ForEach(presentation.characters) { character in
-                    if let message =
-                        speechBubbleStore.bubbles[character.id]
-                    {
-                        let isThinking =
-                            presentation.runningCharacters.contains(
-                                character.id
-                            )
-                        let isQuestion =
-                            presentation.questionCharacters.contains(
-                                character.id
-                            )
-                        let isFailure =
-                            presentation.failedCharacters.contains(
-                                character.id
-                            )
-                        let isOffDuty =
-                            presentation.offDutyCharacters.contains(
-                                character.id
-                            )
-                        let bubbleAnchor =
-                            OfficeInteractionGeometry.bubbleAnchor(
-                                for: character.id,
-                                artStyle: artStyle,
-                                fallback: character.bubble.point
-                            )
-
-                        Button {
-                            onBubbleTapped(character.id, message)
-                        } label: {
-                            CharacterSpeechBubble(
-                                name: presentation.displayNames[character.id]
-                                    ?? character.name,
-                                message: message,
-                                isThinking: isThinking,
-                                isQuestion: isQuestion,
-                                isFailure: isFailure,
-                                isOffDuty: isOffDuty,
-                                tailEdge:
-                                    character.id == .boss
-                                    ? .leading
-                                    : .bottom
-                            )
-                            .id(message)
-                            .transition(
-                                .asymmetric(
-                                    insertion: .scale(scale: 0.88)
-                                        .combined(with: .opacity),
-                                    removal: .opacity
-                                )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .position(
-                            OfficeBubbleLayout.position(
-                                for: character.id,
-                                bubbleAnchor: bubbleAnchor,
-                                fittedFrame: fittedFrame,
-                                scale: scale,
-                                artStyle: artStyle,
-                                fallbackHitbox: character.hitbox.rect
-                            )
-                        )
-                        .allowsHitTesting(!isThinking)
-                        .transition(
-                            .scale(scale: 0.88).combined(with: .opacity)
-                        )
-                        .accessibilityLabel(
-                            isQuestion
-                                ? "\(presentation.displayNames[character.id] ?? character.name) 질문에 답변하기"
-                                : isOffDuty
-                                ? "\(presentation.displayNames[character.id] ?? character.name) 퇴근 사유 보기"
-                                : isFailure
-                                ? "\(presentation.displayNames[character.id] ?? character.name) 중단 원인 보기"
-                                : "\(presentation.displayNames[character.id] ?? character.name) 응답 전문 보기"
-                        )
-                        .help(
-                            isQuestion
-                                ? "질문에 답변하기"
-                                : isOffDuty
-                                ? "퇴근 사유 보기"
-                                : isFailure
-                                ? "중단 원인 보기"
-                                : "응답 전문 보기"
-                        )
-                    }
-                }
+                CharacterSpeechBubbleLayer(
+                    speechBubbleStore: speechBubbleStore,
+                    presentation: presentation,
+                    artStyle: artStyle,
+                    fittedFrame: fittedFrame,
+                    scale: scale,
+                    onBubbleTapped: onBubbleTapped
+                )
             }
-            .animation(
-                .spring(response: 0.30, dampingFraction: 0.72),
-                value: speechBubbleStore.bubbles
-            )
         }
+    }
+}
+
+struct CharacterSpeechBubbleLayer: View {
+    @ObservedObject var speechBubbleStore: SpeechBubbleStore
+    let presentation: CharacterInteractionPresentationState
+    let artStyle: OfficeArtStyle
+    let fittedFrame: CGRect
+    let scale: CGFloat
+    let onBubbleTapped: (OfficeCharacter, String) -> Void
+
+    var body: some View {
+        ForEach(presentation.characters) { character in
+            if let message = speechBubbleStore.bubbles[character.id] {
+                let isThinking = presentation.runningCharacters.contains(
+                    character.id
+                )
+                let isQuestion = presentation.questionCharacters.contains(
+                    character.id
+                )
+                let isFailure = presentation.failedCharacters.contains(
+                    character.id
+                )
+                let isOffDuty = presentation.offDutyCharacters.contains(
+                    character.id
+                )
+                let bubbleAnchor = OfficeInteractionGeometry.bubbleAnchor(
+                    for: character.id,
+                    artStyle: artStyle,
+                    fallback: character.bubble.point
+                )
+
+                Button {
+                    onBubbleTapped(character.id, message)
+                } label: {
+                    CharacterSpeechBubble(
+                        name: presentation.displayNames[character.id]
+                            ?? character.name,
+                        message: message,
+                        isThinking: isThinking,
+                        isQuestion: isQuestion,
+                        isFailure: isFailure,
+                        isOffDuty: isOffDuty,
+                        tailEdge: character.id == .boss
+                            ? .leading
+                            : .bottom
+                    )
+                    .id(message)
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.88)
+                                .combined(with: .opacity),
+                            removal: .opacity
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
+                .position(
+                    OfficeBubbleLayout.position(
+                        for: character.id,
+                        bubbleAnchor: bubbleAnchor,
+                        fittedFrame: fittedFrame,
+                        scale: scale,
+                        artStyle: artStyle,
+                        fallbackHitbox: character.hitbox.rect
+                    )
+                )
+                .allowsHitTesting(!isThinking)
+                .transition(.scale(scale: 0.88).combined(with: .opacity))
+                .accessibilityLabel(
+                    isQuestion
+                        ? "\(displayName(for: character)) 질문에 답변하기"
+                        : isOffDuty
+                        ? "\(displayName(for: character)) 퇴근 사유 보기"
+                        : isFailure
+                        ? "\(displayName(for: character)) 중단 원인 보기"
+                        : "\(displayName(for: character)) 응답 전문 보기"
+                )
+                .help(
+                    isQuestion
+                        ? "질문에 답변하기"
+                        : isOffDuty
+                        ? "퇴근 사유 보기"
+                        : isFailure
+                        ? "중단 원인 보기"
+                        : "응답 전문 보기"
+                )
+            }
+        }
+        .animation(
+            .spring(response: 0.30, dampingFraction: 0.72),
+            value: speechBubbleStore.bubbles
+        )
+    }
+
+    private func displayName(for character: CharacterConfiguration) -> String {
+        presentation.displayNames[character.id] ?? character.name
     }
 }
 
