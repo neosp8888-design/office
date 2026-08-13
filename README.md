@@ -5,7 +5,7 @@
 > 로컬 Codex CLI와 Claude Code를 다섯 명의 AI 직원처럼 운영하는 macOS 업무실.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/macOS-14%2B%20Apple%20Silicon-111111?logo=apple" alt="macOS 14+ Apple Silicon">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -181,10 +181,11 @@ Git 저장소가 아닌 `workdir`는 기존 공유 폴더 방식으로 실행된
 
 ## 설치
 
-OFFICESTRA Community Preview는 macOS 14 이상에서 동작한다. 일반 비-Git
-폴더를 사용하는 사람은 Swift, Xcode, Node.js, npm, Git이나 저장소 clone이
-필요 없다. 앱에 Node와 백엔드가 포함되어 있고, 첫 실행 도우미가 기존 데이터를
-보존하면서 PostgreSQL 준비·마이그레이션·백엔드 연결을 자동 처리한다.
+OFFICESTRA Community Preview는 Apple Silicon(M1 이상)과 macOS 14 이상에서
+동작한다. Intel Mac은 지원하지 않는다. 일반 비-Git 폴더를 사용하는 사람은
+Swift, Xcode, Node.js, npm, Git이나 저장소 clone이 필요 없다. 앱에 Node와
+백엔드가 포함되어 있고, 첫 실행 도우미가 기존 데이터를 보존하면서 PostgreSQL
+준비·마이그레이션·백엔드 연결을 자동 처리한다.
 
 현재 미리보기에서 사용자가 먼저 준비할 것은 두 가지뿐이다.
 
@@ -198,12 +199,11 @@ Git 저장소를 선택해 worktree 격리·검토·병합 기능을 쓰려는 �
 
 ### 가장 쉬운 방법
 
-1. [Releases](https://github.com/neosp8888-design/office/releases)에서 Mac
-   아키텍처에 맞는 `adhoc` DMG를 받는다. Apple Silicon(M1 이상)은 `arm64`,
-   Intel Mac은 `x86_64` 파일을 선택한다. Community Preview는 Apple Developer
-   ID 서명이나 Apple 공증을 받지 않았으므로 macOS가 첫 실행을 차단할 수 있다.
-   공식 저장소의 Release 파일인지 확인하고 함께 제공되는 `SHA256SUMS`와
-   일치할 때만 설치한다.
+1. [Releases](https://github.com/neosp8888-design/office/releases)에서
+   Apple Silicon용 `arm64` `adhoc` DMG를 받는다. Community Preview는 Apple
+   Developer ID 서명이나 Apple 공증을 받지 않았으므로 macOS가 첫 실행을
+   차단할 수 있다. 공식 저장소의 Release 파일인지 확인하고 함께 제공되는
+   `SHA256SUMS`와 일치할 때만 설치한다.
 2. DMG를 열어 `OFFICESTRA.app`을 `Applications`로 끌어 놓고 실행한다.
 3. macOS가 차단하면 임의의 터미널 명령을 실행하지 않는다. 앱을 한 번 실행한 뒤
    `Apple 메뉴 → 시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`를
@@ -224,8 +224,7 @@ Apple 공증을 대신하지 않는다. 회사에서 관리하는 Mac은 조직 
 **그래도 열기**가 제한될 수 있다.
 
 Apple Silicon DMG와 `SHA256SUMS`를 다운로드한 경우 터미널에서 아래 한 줄을
-실행해 `OK`가 나오는지 확인한다. Intel Mac은 파일명의 `arm64`를 `x86_64`로
-바꾼다.
+실행해 `OK`가 나오는지 확인한다.
 
 ```sh
 cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
@@ -296,7 +295,7 @@ docker info
 ```
 
 설치 화면으로 진행하고 싶다면 [Docker의 Mac 설치 안내](https://docs.docker.com/desktop/setup/install/mac-install/)에서
-Apple 칩 또는 Intel 칩에 맞는 설치 파일을 받아도 된다.
+Apple 칩용 설치 파일을 받아도 된다.
 
 #### 4. 사용할 AI CLI 확인
 

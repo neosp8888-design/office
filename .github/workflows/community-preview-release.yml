@@ -27,8 +27,6 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
 
     steps:
       - name: Check out repository
@@ -208,7 +206,6 @@ jobs:
       matrix:
         arch:
           - arm64
-          - x86_64
 
     steps:
       - name: Check out repository
@@ -248,25 +245,20 @@ jobs:
       contents: write
 
     steps:
-      - name: Download both preview architectures
+      - name: Download Apple Silicon preview artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: officestra-preview-release-*
+          name: officestra-preview-release-arm64
           path: dist/release
-          merge-multiple: true
 
       - name: Verify release set and create checksums
         run: |
           set -euo pipefail
           shopt -s nullglob
           arm_zip=(dist/release/*-arm64-adhoc.zip)
-          intel_zip=(dist/release/*-x86_64-adhoc.zip)
           arm_dmg=(dist/release/*-arm64-adhoc.dmg)
-          intel_dmg=(dist/release/*-x86_64-adhoc.dmg)
           test "${#arm_zip[@]}" -eq 1
-          test "${#intel_zip[@]}" -eq 1
           test "${#arm_dmg[@]}" -eq 1
-          test "${#intel_dmg[@]}" -eq 1
           (
             cd dist/release
             sha256sum ./*.zip ./*.dmg > SHA256SUMS
@@ -285,11 +277,13 @@ jobs:
 
           이 DMG와 ZIP은 ad-hoc 서명되었으며 Apple Developer ID 서명이나 Apple 공증을 받지 않았습니다. macOS가 첫 실행을 차단할 수 있습니다. 이 공식 저장소에서 받은 파일인지 확인하고 `SHA256SUMS`와 일치할 때만 앱 하나에 대한 예외를 허용하세요.
 
-          1. Mac에 맞는 `arm64`(Apple Silicon) 또는 `x86_64`(Intel) DMG를 받습니다.
+          이 릴리스는 Apple Silicon(M1 이상) 전용입니다. Intel Mac은 지원하지 않습니다.
+
+          1. `arm64` DMG를 받습니다.
           2. 앱을 Applications로 옮긴 뒤 한 번 실행합니다.
           3. 차단되면 `시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`에서 이 앱만 허용합니다.
 
-          Apple Silicon 사용자는 DMG와 `SHA256SUMS`를 같은 폴더에 받은 뒤 `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`를 실행해 `OK`를 확인합니다. Intel 사용자는 `arm64`를 `x86_64`로 바꿉니다.
+          DMG와 `SHA256SUMS`를 같은 폴더에 받은 뒤 `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`를 실행해 `OK`를 확인합니다.
 
           Gatekeeper 전체 비활성화나 광범위한 `xattr` 명령은 필요하지 않으며 권장하지 않습니다. 보안 예외를 원치 않으면 이 태그의 소스를 직접 빌드하세요. 체크섬은 파일 무결성만 확인하며 Apple 공증을 대신하지 않습니다.
 
@@ -297,9 +291,11 @@ jobs:
 
           These DMG and ZIP files are ad-hoc signed. They are not Developer ID signed or notarized by Apple, so macOS may block the first launch. Download only from this official repository and verify the matching `SHA256SUMS` before allowing a per-app exception.
 
+          This release supports Apple silicon (M1 or later) only. Intel Macs are not supported.
+
           Move the app to Applications, attempt one launch, then use `System Settings → Privacy & Security → Security → Open Anyway` if macOS blocks it. Do not disable Gatekeeper globally or run broad `xattr` commands. Build this tag from source instead if you do not want to allow the exception. Checksums verify file integrity; they do not replace Apple notarization.
 
-          Apple silicon users can place the DMG and `SHA256SUMS` in one folder and run `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`; require an `OK` result. Intel users replace `arm64` with `x86_64`.
+          Place the DMG and `SHA256SUMS` in one folder and run `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`; require an `OK` result.
           EOF
           gh release create "$RELEASE_TAG" \
             dist/release/*-adhoc.zip \
@@ -309,4 +305,4 @@ jobs:
             --verify-tag \
             --prerelease \
             --notes-file "$notes" \
-            --title "OFFICESTRA ${RELEASE_TAG} Community Preview (Apple Unnotarized)"
+            --title "OFFICESTRA ${RELEASE_TAG} Community Preview (Apple Silicon, Apple Unnotarized)"

@@ -5,7 +5,7 @@
 > A local-first macOS workspace that turns Codex CLI and Claude Code into a five-person AI team.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/macOS-14%2B%20Apple%20Silicon-111111?logo=apple" alt="macOS 14+ Apple silicon">
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
@@ -152,11 +152,11 @@ Non-Git workdirs continue to use the existing shared-folder behavior. A Git work
 
 ## Installation
 
-OFFICESTRA Community Preview requires macOS 14 or later. People using an
-ordinary non-Git folder do not need Swift, Xcode, Node.js, npm, Git, or a source
-checkout. Node and the backend are bundled with the app. The first-run assistant
-preserves existing data while it prepares PostgreSQL, applies migrations, and
-connects the backend.
+OFFICESTRA Community Preview requires Apple silicon (M1 or later) and macOS 14
+or later. Intel Macs are not supported. People using an ordinary non-Git folder
+do not need Swift, Xcode, Node.js, npm, Git, or a source checkout. Node and the
+backend are bundled with the app. The first-run assistant preserves existing
+data while it prepares PostgreSQL, applies migrations, and connects the backend.
 
 The current preview has only two prerequisites:
 
@@ -172,9 +172,8 @@ entitlements.
 
 ### Easiest path
 
-1. Download the `adhoc` DMG for your Mac architecture from
-   [Releases](https://github.com/neosp8888-design/office/releases). Choose
-   `arm64` for Apple silicon (M1 or later) or `x86_64` for an Intel Mac. The
+1. Download the `arm64` `adhoc` DMG for Apple silicon from
+   [Releases](https://github.com/neosp8888-design/office/releases). The
    Community Preview is not Developer ID signed or notarized by Apple, so
    macOS may block its first launch. Install only files from this official
    repository after matching them against the supplied `SHA256SUMS`.
@@ -201,8 +200,7 @@ integrity; they do not replace Apple notarization. Organization-managed Macs
 may block **Open Anyway** through policy.
 
 After downloading the Apple silicon DMG and `SHA256SUMS`, run the following
-single line in Terminal and require an `OK` result. On an Intel Mac, replace
-`arm64` in the filename with `x86_64`.
+single line in Terminal and require an `OK` result.
 
 ```sh
 cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
@@ -273,7 +271,7 @@ docker info
 ```
 
 You can instead follow [Docker's official Mac installer](https://docs.docker.com/desktop/setup/install/mac-install/)
-and choose the download for Apple silicon or Intel.
+and choose the Apple silicon download.
 
 #### 4. Verify an AI CLI
 
