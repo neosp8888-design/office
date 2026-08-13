@@ -27,6 +27,7 @@ OFFICESTRA replaces a collection of separate terminal sessions with one interact
 - Restore persisted PostgreSQL state and provider-native CLI sessions after relaunching the app.
 - Attach up to 20 files and view image thumbnails, generated images, and Markdown output.
 - Search per-coworker history and the complete archive by task, response, model, session ID, reasoning effort, and speed tier.
+- Do not append past work records through automatic RAG retrieval; query them only when needed, and promote durable decisions, constraints, and incident lessons to the Internal Wiki only after user approval.
 - Switch between 2D and 3D offices and day or night themes while characters and speech bubbles reflect live work state.
 
 ## Workspace map
@@ -37,6 +38,7 @@ OFFICESTRA replaces a collection of separate terminal sessions with one interact
 | Coworker monitors | Open the selected coworker's conversations and provider session history |
 | Archive cabinet | Search and inspect work from every coworker |
 | Whiteboard | View Codex and Claude account quotas plus PostgreSQL usage statistics |
+| Internal Wiki (`사내 위키`) | Search approved durable knowledge and approve or reject coworker proposals |
 | Live workspace | Follow progress events and final responses in chronological order |
 | Command bar | Select coworkers, provider, model, speed, reasoning, permissions, attachments, and run or stop tasks |
 
@@ -76,7 +78,7 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Code blocks, tables, headings, lists, links, and local generated-image previews are supported.
 - Each task accepts up to 20 attachments with thumbnails and Finder integration.
 
-### History and usage
+### History, Internal Wiki, and usage
 
 - Search across coworker name, task, response, session ID, model, reasoning effort, and Fast or Standard mode.
 - Preserve the provider, model, effort, speed tier, and external session ID used by every turn.
@@ -84,7 +86,9 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Display Codex and Claude 5-hour and 7-day quotas fetched directly from provider accounts, with account-plan labels.
 - Display today's and trailing 30-day cost and token statistics recorded by this OFFICESTRA instance in PostgreSQL.
 - Store completed work as source-of-truth records in PostgreSQL `work_records` and synchronize searchable records into derived `rag_documents`.
-- Automatically inject up to three relevant records from the same repository as untrusted reference data for each new task.
+- Do not inject separately retrieved past work records into new prompts automatically. When prior context is needed, coworkers explicitly query `GET /api/work-records` or `POST /api/rag/search`; continuity within the same provider-native CLI session is preserved.
+- Let coworkers propose durable decisions, constraints, and significant incident lessons, while the user approves or rejects them under **Pending Review (`확인 대기`)** in the Internal Wiki.
+- Publish and search only approved proposals under **Current Knowledge (`현재 지식`)**, with links to the source work records that support them.
 - Show RAG, database, file, web, tool, and skill evidence actually used by a response, with clickable web links and Finder actions for files.
 
 ## Architecture
@@ -423,11 +427,21 @@ The default base URL is `http://127.0.0.1:4317`. This is a local control plane f
 | Search source work records | `GET /api/work-records` |
 | Turn response sources | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
 | RAG storage and search | `POST /api/rag/documents`, `POST /api/rag/search` |
+| Approved Internal Wiki pages | `GET /api/wiki/pages`, `GET /api/wiki/pages/:pageId` |
+| Internal Wiki proposals | `GET /api/wiki/proposals`, `POST /api/wiki/proposals` |
+| Approve or reject a wiki proposal | `POST /api/wiki/proposals/:proposalId/approve`, `POST /api/wiki/proposals/:proposalId/reject` |
 
 Approval and rejection requests use `application/json`. Approval must send the
 `reviewTree` from the reviewed response as `{"reviewTree":"..."}`; rejection
 sends `{}`. A changed tree or stale review value stops with `409`, and the
 latest diff must be reviewed again.
+
+Internal Wiki approval and rejection are explicit user decisions made under
+**Internal Wiki (`사내 위키`) → Pending Review (`확인 대기`)** in the app. The app sends an intent header
+that distinguishes those button actions from an ordinary local API call;
+approve or reject requests without it return `403`. This is an intent guard for
+the local single-user app, not an authentication boundary, so port 4317 must not
+be exposed externally.
 
 Example task request:
 
@@ -447,6 +461,7 @@ Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. 
 
 - Tasks, responses, sessions, activities, source-of-truth `work_records`, and response sources are stored in a local PostgreSQL Docker volume.
 - `checklist.md` and `context-notes.md` are frozen snapshots from the work-record database transition. They are neither regenerated nor edited; current work records are available through the read-only `GET /api/work-records` endpoint.
+- Internal Wiki proposals and approved pages stay in local PostgreSQL. Pending, rejected, and conflicted proposals remain outside ordinary RAG search and published-wiki search; only approved pages enter the separate wiki search index with links to their source work records.
 - Attachments are copied into `.office-attachments/` under the configured workspace. When `workdir` points to another Git repository, add this directory to that repository's `.gitignore` as well.
 - Approved worktrees are cleaned up after merging, while rejected worktrees and branches are retained for recovery and must be removed manually when no longer needed.
 - OFFICESTRA does not store API keys. It uses each CLI's existing local authentication.
@@ -459,17 +474,23 @@ Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. 
 
 The default PostgreSQL mapping is host port `54329` to container port `5432`. See `backend/.env.example` for supported environment variables. The current start script does not automatically load `backend/.env`.
 
-## Work records and RAG search
+## Work records, RAG search, and the Internal Wiki
 
-PostgreSQL `work_records` is the source of truth for completed work. The backend automatically persists completed turns and synchronizes only searchable records into `rag_documents` as derived search data. Before a new task starts, it uses PostgreSQL full-text search to retrieve up to three relevant records from the same repository and injects them into the prompt as untrusted reference data.
+PostgreSQL `work_records` is the source of truth for completed work. The backend automatically persists completed turns and synchronizes only searchable records into `rag_documents` as derived search data. The backend does not append RAG-retrieved past work records to new prompts automatically. It still resumes the same coworker's provider-native CLI session; when separate records are needed, the coworker explicitly calls the read-only `GET /api/work-records` endpoint or `POST /api/rag/search` and treats the results as untrusted reference data rather than instructions.
+
+The Internal Wiki is a separate, user-approved durable-knowledge layer. At the end of a completed response, a coworker may propose up to three newly established items: an explicit lasting preference or prohibition, a confirmed product or architecture decision, or the cause and prevention of a significant incident. Casual conversation, test text, one-off status, build counts, and guesses are not eligible.
 
 - Search source work records with `GET /api/work-records`.
 - Store general documents and optional embeddings with `POST /api/rag/documents`.
 - Run vector or full-text queries with `POST /api/rag/search`.
+- Completed-response proposals enter **Pending Review (`확인 대기`)**, where only the user can approve or reject them.
+- Approval creates or updates a `synthesis` page linked to the supporting source work record.
+- Only approved pages appear under **Current Knowledge (`현재 지식`)** and in the wiki-specific search index.
+- If a newer version of the same page was published first, a stale proposal ends in conflict instead of overwriting it.
 - Parse and validate evidence actually used from the completed response's `[OFFICE_SOURCES]` block, then store it with the turn.
 - Show RAG, database, file, web, tool, and skill evidence in the app, with clickable web URLs and Finder actions for file paths.
 
-Automatic work-record retrieval currently uses PostgreSQL full-text search. Embeddings for vector search are not generated automatically and must be supplied by workflows that need them.
+Text queries for work records and the Internal Wiki use PostgreSQL full-text search. RAG search also accepts caller-supplied embeddings for vector search, but embeddings are not generated automatically. The Internal Wiki uses the existing bundled Node backend and PostgreSQL database, so it requires no additional installation; startup migrations prepare its schema.
 
 ## Development and validation
 
@@ -517,5 +538,5 @@ See [`APP-DESIGN.md`](APP-DESIGN.md) for the product design background and [`LLM
 - A full-access agent can bypass the worktree boundary by committing or pushing through the source repository's absolute path. OFFICESTRA detects a dirty source tree but cannot distinguish a clean direct commit, so production use should pair `workspace-write` or `auto` permissions with protected remote branch rules.
 - Conflict resolution and cleanup of a dirty source worktree require user judgment.
 - There is no orchestrator that automatically decomposes one large task and assigns it across the whole team.
-- Automatic work-record retrieval uses PostgreSQL full-text search; embedding generation for vector search is not automated.
+- Text queries for work records and the Internal Wiki use PostgreSQL full-text search; RAG vector-search embeddings are not generated automatically.
 - The unauthenticated local API must not be used as an externally exposed service.
