@@ -482,7 +482,8 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 
         // 제출이 CLI로 넘어간 뒤의 재마운트 요청. 다른 직원에 갔다
         // 돌아온 것과 똑같이 호스트를 새로 만들고 목록을 다시 발행한다.
-        weak var releasedHost: NSView? = mountedHost
+        weak var releasedHost: NSView?
+        releasedHost = mountedHost
         mountedHost = nil
         container.configure(
             director: director,

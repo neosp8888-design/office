@@ -228,7 +228,7 @@ Apple Silicon DMG와 `SHA256SUMS`를 다운로드한 경우 터미널에서 아�
 바꾼다.
 
 ```sh
-cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.1-4-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
+cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
 ```
 
 설치 오류가 나면 준비 화면의 **로그 열기**로 진단 폴더를 열 수 있다. 앱은
@@ -329,10 +329,10 @@ claude
 
 아래 clone 명령은 `~/OFFICESTRA` 폴더가 없을 때만 실행한다. 이미 있다면 삭제하거나
 덮어쓰지 말고 Codex나 Claude에게 기존 설치 상태 확인을 맡긴다.
-이 명령은 공개된 `v1.3.1` 버전을 고정해 내려받는다.
+이 명령은 공개된 `v1.3.2` 버전을 고정해 내려받는다.
 
 ```sh
-git clone --branch v1.3.1 --depth 1 \
+git clone --branch v1.3.2 --depth 1 \
   https://github.com/neosp8888-design/office.git \
   "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
