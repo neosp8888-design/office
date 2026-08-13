@@ -4,9 +4,14 @@ import AppKit
 import OfficeCore
 import SwiftUI
 
-enum OfficeDetailSelection: String {
+enum OfficeDetailSelection: String, CaseIterable, Identifiable {
     case archive
     case usage
+    case wiki
+
+    var id: String {
+        rawValue
+    }
 
     var title: String {
         switch self {
@@ -14,6 +19,8 @@ enum OfficeDetailSelection: String {
             OfficeLocalization.string("대화 보관함")
         case .usage:
             OfficeLocalization.string("화이트보드")
+        case .wiki:
+            "사내 위키"
         }
     }
 
@@ -23,6 +30,8 @@ enum OfficeDetailSelection: String {
             OfficeLocalization.string("검색하고 빠르게 여는 직원 업무 기록")
         case .usage:
             OfficeLocalization.string("Codex와 Claude의 현재 사용 가능량")
+        case .wiki:
+            "승인된 지식과 확인이 필요한 제안"
         }
     }
 
@@ -32,6 +41,8 @@ enum OfficeDetailSelection: String {
             "books.vertical.fill"
         case .usage:
             "rectangle.and.pencil.and.ellipsis"
+        case .wiki:
+            "text.book.closed.fill"
         }
     }
 }
@@ -46,17 +57,9 @@ enum UsageBoardLayout {
 
 struct OfficeDetailPanel: View {
     let director: AgentDirector
-    let selection: OfficeDetailSelection
+    @Binding var selection: OfficeDetailSelection
     @State private var usageRefreshRequestID = UUID()
     @State private var usageIsRefreshing = false
-
-    init(
-        director: AgentDirector,
-        selection: OfficeDetailSelection
-    ) {
-        self.director = director
-        self.selection = selection
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,6 +106,8 @@ struct OfficeDetailPanel: View {
                     }
                 }
                 Spacer()
+
+                detailTabs
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
@@ -120,11 +125,55 @@ struct OfficeDetailPanel: View {
                         isRefreshing: $usageIsRefreshing,
                         databaseBaseURL: director.databaseBaseURL
                     )
+                case .wiki:
+                    WikiKnowledgeView(
+                        databaseBaseURL: director.databaseBaseURL
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .officePanelStyle()
+    }
+
+    private var detailTabs: some View {
+        HStack(spacing: 3) {
+            ForEach(OfficeDetailSelection.allCases) { item in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        selection = item
+                    }
+                } label: {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .frame(width: 25, height: 25)
+                        .background(
+                            selection == item
+                                ? DashboardPalette.accent.opacity(0.14)
+                                : Color.clear,
+                            in: RoundedRectangle(
+                                cornerRadius: 7,
+                                style: .continuous
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(
+                    selection == item
+                        ? DashboardPalette.accent
+                        : Color.secondary
+                )
+                .accessibilityLabel(item.title)
+                .accessibilityValue(selection == item ? "선택됨" : "")
+                .accessibilityIdentifier("officeDetailTab-\(item.rawValue)")
+                .help(item.title)
+            }
+        }
+        .padding(3)
+        .background(
+            Color.primary.opacity(0.04),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
     }
 }
 
