@@ -6,11 +6,11 @@ import test from "node:test";
 import pg from "pg";
 
 import {
-  findRelevantWorkRecordRAGContext,
   persistCompletedTurnWorkRecord,
   reconcileTerminalWorkRecordReviews,
   syncWorkRecordRAGDocuments,
   transitionTurnWorkRecordReview,
+  workRecordSearchTSQuery,
 } from "../src/work-record-memory.mjs";
 
 const { Pool } = pg;
@@ -263,13 +263,26 @@ test(
         stableRAGID,
       );
 
-      const context = await findRelevantWorkRecordRAGContext(client, {
-        repositoryRoot: "/repo",
-        query: "세션 유지 상태",
-        limit: 3,
-      });
-      assert.equal(context[0].ragDocumentId, stableRAGID);
-      assert.equal(context[0].workRecordId, first.workRecordId);
+      // 자동 주입은 없어졌지만 명시적 검색이 같은 색인을 찾을 수 있어야
+      // 한다. /api/rag/search와 동일한 조회 방식으로 확인한다.
+      const searched = await client.query(
+        `
+          SELECT
+            document.id::text AS "ragDocumentId",
+            document.work_record_id::text AS "workRecordId"
+          FROM searchable_rag_documents AS document
+          WHERE document.search_document
+            @@ to_tsquery('simple', $1)
+          ORDER BY ts_rank(
+            document.search_document,
+            to_tsquery('simple', $1)
+          ) DESC
+          LIMIT 3
+        `,
+        [workRecordSearchTSQuery("세션 유지 상태")],
+      );
+      assert.equal(searched.rows[0].ragDocumentId, stableRAGID);
+      assert.equal(searched.rows[0].workRecordId, first.workRecordId);
 
       await client.query(
         `
