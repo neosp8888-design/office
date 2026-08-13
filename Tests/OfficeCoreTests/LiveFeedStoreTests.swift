@@ -1230,6 +1230,7 @@ final class LiveFeedStoreTests: XCTestCase {
             prompt: "변경 업무",
             startedAt: Date(),
             sources: [source],
+            wikiProposalWarning: "지식 제안 저장 실패",
             workspace: workspace
         )
 
@@ -1238,6 +1239,40 @@ final class LiveFeedStoreTests: XCTestCase {
         XCTAssertEqual(replaced.id, "server-turn")
         XCTAssertEqual(replaced.workspace, workspace)
         XCTAssertEqual(replaced.responseSources, [source])
+        XCTAssertEqual(replaced.wikiProposalWarning, "지식 제안 저장 실패")
+        XCTAssertEqual(
+            turn.replacingFeedback(with: .liked).wikiProposalWarning,
+            "지식 제안 저장 실패"
+        )
+    }
+
+    func testWikiProposalWarningDecodesForHistoryAndLiveFeedTurns() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let warning = "위키 수정안을 저장하지 못했습니다."
+
+        let history = try decoder.decode(
+            HistoryTurn.self,
+            from: Data(
+                #"{"id":"history","sessionId":"session","prompt":"질문","response":"답변","wikiProposalWarning":"위키 수정안을 저장하지 못했습니다.","startedAt":"2026-08-13T00:00:00Z"}"#.utf8
+            )
+        )
+        let global = try decoder.decode(
+            GlobalHistoryTurn.self,
+            from: Data(
+                #"{"id":"global","characterId":"boss","characterName":"백부장","backend":"codex","prompt":"질문","response":"답변","wikiProposalWarning":"위키 수정안을 저장하지 못했습니다.","startedAt":"2026-08-13T00:00:00Z"}"#.utf8
+            )
+        )
+        let live = try decoder.decode(
+            LiveFeedTurn.self,
+            from: Data(
+                #"{"id":"live","characterId":"boss","characterName":"백부장","characterBackend":"codex","prompt":"질문","response":"답변","status":"completed","needsInput":false,"wikiProposalWarning":"위키 수정안을 저장하지 못했습니다.","startedAt":"2026-08-13T00:00:00Z","updatedAt":"2026-08-13T00:00:00Z","activities":[]}"#.utf8
+            )
+        )
+
+        XCTAssertEqual(history.wikiProposalWarning, warning)
+        XCTAssertEqual(global.wikiProposalWarning, warning)
+        XCTAssertEqual(live.wikiProposalWarning, warning)
     }
 
     func testLiveFeedSourcesDecodeAllKindsAndLocators() throws {
@@ -1399,6 +1434,32 @@ final class LiveFeedStoreTests: XCTestCase {
         store.replaceIfNeeded(with: [cleared])
 
         XCTAssertNil(store.turns.first?.responseSourceWarning)
+    }
+
+    func testArchiveRefreshesWhenOnlyWikiProposalWarningChanges() {
+        let store = ArchiveFeedStore()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 7_200)
+        let original = makeTurn(
+            id: "turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "지식 제안",
+            startedAt: startedAt
+        )
+        let warning = makeTurn(
+            id: "turn",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "지식 제안",
+            startedAt: startedAt,
+            wikiProposalWarning: "위키 수정안을 저장하지 못했습니다."
+        )
+
+        store.replaceIfNeeded(with: [original])
+        store.replaceIfNeeded(with: [warning])
+
+        XCTAssertEqual(
+            store.turns.first?.wikiProposalWarning,
+            "위키 수정안을 저장하지 못했습니다."
+        )
     }
 
     func testWorkspaceReviewBlocksOnlyUnresolvedMergeStates() {
@@ -1692,6 +1753,7 @@ final class LiveFeedStoreTests: XCTestCase {
         updatedAt: Date? = nil,
         sources: [LiveFeedSource]? = nil,
         responseSourceWarning: String? = nil,
+        wikiProposalWarning: String? = nil,
         workspace: TurnWorkspaceReview? = nil,
         backend: AgentBackend = .codex,
         activities: [LiveFeedActivity] = []
@@ -1714,6 +1776,7 @@ final class LiveFeedStoreTests: XCTestCase {
             needsInput: false,
             errorMessage: nil,
             responseSourceWarning: responseSourceWarning,
+            wikiProposalWarning: wikiProposalWarning,
             startedAt: startedAt,
             endedAt: nil,
             updatedAt: updatedAt ?? startedAt,

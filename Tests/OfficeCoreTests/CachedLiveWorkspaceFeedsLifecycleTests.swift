@@ -1107,6 +1107,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                     needsInput: false,
                     errorMessage: nil,
                     responseSourceWarning: nil,
+                    wikiProposalWarning: nil,
                     startedAt: timestamp,
                     endedAt: isStreaming ? nil : timestamp,
                     updatedAt: timestamp.addingTimeInterval(
@@ -1149,6 +1150,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             needsInput: needsInput,
             errorMessage: nil,
             responseSourceWarning: nil,
+            wikiProposalWarning: nil,
             startedAt: startedAt,
             endedAt: status.isRunning ? nil : startedAt,
             updatedAt: startedAt,

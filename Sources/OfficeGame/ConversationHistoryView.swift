@@ -182,6 +182,12 @@ private struct TurnDisclosure: View {
                 if let warning = turn.responseSourceWarning, !warning.isEmpty {
                     ResponseSourceWarningView(message: warning)
                 }
+                if let warning = turn.wikiProposalWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(
+                        message: warning,
+                        accessibilityIdentifier: "wikiProposalWarning"
+                    )
+                }
                 if !turn.responseSources.isEmpty {
                     ResponseSourceList(
                         sources: turn.responseSources,
@@ -445,6 +451,12 @@ private struct ArchiveTurnCard: View {
                 transcriptBlock(title: "응답", text: turn.response)
                 if let warning = turn.responseSourceWarning, !warning.isEmpty {
                     ResponseSourceWarningView(message: warning)
+                }
+                if let warning = turn.wikiProposalWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(
+                        message: warning,
+                        accessibilityIdentifier: "wikiProposalWarning"
+                    )
                 }
                 if !turn.responseSources.isEmpty {
                     ResponseSourceList(

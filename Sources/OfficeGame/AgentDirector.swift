@@ -514,6 +514,7 @@ final class ArchiveFeedStore: ObservableObject {
                 + "\($0.workspace?.status.rawValue ?? "")|"
                 + "\($0.workspace?.mergedCommit ?? "")|"
                 + "\($0.responseSourceWarning ?? "")|"
+                + "\($0.wikiProposalWarning ?? "")|"
                 + "\($0.feedback?.rawValue ?? "")|"
                 + $0.responseSources.map {
                     "\($0.id),\($0.sourceKind.rawValue),\($0.title),"
@@ -1163,6 +1164,7 @@ final class AgentDirector: ObservableObject {
                 needsInput: false,
                 errorMessage: nil,
                 responseSourceWarning: nil,
+                wikiProposalWarning: nil,
                 startedAt: submittedAt,
                 endedAt: nil,
                 updatedAt: submittedAt,

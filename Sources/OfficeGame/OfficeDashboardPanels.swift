@@ -2530,6 +2530,13 @@ private struct LiveTurnCard: View {
                     ResponseSourceWarningView(message: warning)
                 }
 
+                if let warning = turn.wikiProposalWarning, !warning.isEmpty {
+                    ResponseSourceWarningView(
+                        message: warning,
+                        accessibilityIdentifier: "wikiProposalWarning"
+                    )
+                }
+
                 if !turn.responseSources.isEmpty {
                     ResponseSourceList(
                         sources: turn.responseSources,
