@@ -284,22 +284,26 @@ struct WorkspaceReviewPanel: View {
     private var actions: some View {
         switch currentReview.status {
         case .awaitingApproval:
-            HStack(spacing: 8) {
-                Spacer()
+            // 자동 병합 예정이면 확인 버튼을 아예 만들지 않는다.
+            // 잠깐 나타났다 사라지면 카드 높이가 흔들린다.
+            if currentReview.awaitsUserDecision {
+                HStack(spacing: 8) {
+                    Spacer()
 
-                Button("거절", role: .destructive) {
-                    resolve(.reject)
-                }
-                .disabled(isResolving)
-                .accessibilityIdentifier("rejectWorkspace-\(turnID)")
+                    Button("거절", role: .destructive) {
+                        resolve(.reject)
+                    }
+                    .disabled(isResolving)
+                    .accessibilityIdentifier("rejectWorkspace-\(turnID)")
 
-                Button("승인 후 \(currentReview.baseBranch) 병합") {
-                    showsApprovalConfirmation = true
+                    Button("승인 후 \(currentReview.baseBranch) 병합") {
+                        showsApprovalConfirmation = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isResolving)
+                    .help("검토한 변경사항을 원본 브랜치에 병합합니다.")
+                    .accessibilityIdentifier("approveWorkspace-\(turnID)")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(isResolving)
-                .help("검토한 변경사항을 원본 브랜치에 병합합니다.")
-                .accessibilityIdentifier("approveWorkspace-\(turnID)")
             }
         case .conflict:
             HStack(spacing: 8) {
@@ -328,7 +332,9 @@ struct WorkspaceReviewPanel: View {
         case .active:
             "격리 작업공간 사용 중"
         case .awaitingApproval:
-            "변경사항 검토 필요"
+            currentReview.showsAutomaticMergeProgress
+                ? "\(currentReview.baseBranch) 자동 병합 중"
+                : "변경사항 검토 필요"
         case .merging:
             "승인된 변경사항 병합 중"
         case .merged:
@@ -349,7 +355,9 @@ struct WorkspaceReviewPanel: View {
         case .active:
             "hammer.fill"
         case .awaitingApproval:
-            "doc.text.magnifyingglass"
+            currentReview.showsAutomaticMergeProgress
+                ? "arrow.triangle.merge"
+                : "doc.text.magnifyingglass"
         case .merging:
             "arrow.triangle.merge"
         case .merged:
@@ -370,7 +378,9 @@ struct WorkspaceReviewPanel: View {
         case .active, .merging:
             DashboardPalette.accent
         case .awaitingApproval:
-            .orange
+            currentReview.showsAutomaticMergeProgress
+                ? DashboardPalette.accent
+                : .orange
         case .merged:
             .green
         case .rejected, .closed:

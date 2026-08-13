@@ -2439,6 +2439,20 @@ export class AgentRuntime {
     return result.rows?.[0]?.enabled ?? true;
   }
 
+  // 설정 조회가 실패해도 검토 화면 조회 자체는 막지 않는다. 읽지
+  // 못하면 수동 검토 화면(승인 버튼 노출)으로 안전하게 떨어진다.
+  async automaticWorkspaceApprovalEnabledBestEffort() {
+    try {
+      return await this.automaticWorkspaceApprovalEnabled();
+    } catch (error) {
+      console.warn(
+        "자동 승인·병합 설정을 읽지 못해 수동 검토 화면으로 표시합니다.",
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
+  }
+
   async handleAutomaticWorkspaceApproval(
     state,
     workspaceReview,
@@ -3376,7 +3390,10 @@ export class AgentRuntime {
       maxBytes: MAX_WORKSPACE_DIFF_BYTES,
     });
     return {
-      workspace: workspaceReviewPayload(record.workspace, diff),
+      workspace: workspaceReviewPayload(record.workspace, diff, {
+        automaticApprovalEnabled:
+          await this.automaticWorkspaceApprovalEnabledBestEffort(),
+      }),
     };
   }
 
@@ -3918,7 +3935,11 @@ function canonicalRuntimePath(value) {
   }
 }
 
-function workspaceReviewPayload(workspace, diff) {
+function workspaceReviewPayload(
+  workspace,
+  diff,
+  { automaticApprovalEnabled = false } = {},
+) {
   return {
     status: workspace.status,
     repositoryRoot: workspace.repositoryRoot,
@@ -3939,6 +3960,13 @@ function workspaceReviewPayload(workspace, diff) {
     autoRetryCount: workspace.autoRetryCount,
     autoRepairPaused: workspace.autoRepairPaused,
     autoWaitingForPeer: workspace.autoWaitingForPeer,
+    // 사용자 확인 없이 자동 병합될 예정인 상태. 앱은 이 값이 참이면
+    // 승인·거절 버튼 대신 병합 진행만 표시한다.
+    automaticApprovalPending: Boolean(
+      automaticApprovalEnabled
+        && workspace.status === "awaiting_approval"
+        && !workspace.autoRepairPaused,
+    ),
     reviewRequestedAt: workspace.reviewRequestedAt,
     mergedAt: workspace.mergedAt,
     rejectedAt: workspace.rejectedAt,
