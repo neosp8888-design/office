@@ -710,18 +710,31 @@ private struct OfficeGameView: View {
         }
         .buttonStyle(.plain)
         .disabled(backendController.status == .changing)
-        .foregroundStyle(.white)
+        .environment(\.colorScheme, theme.isNight ? .dark : .light)
+        .foregroundStyle(
+            backendController.status.showsStoppedWarning
+                ? Color.white
+                : theme.isNight
+                    ? Color.white
+                    : Color.black.opacity(0.72)
+        )
         .background(
-            backendController.status == .running
-                ? Color(red: 0.43, green: 0.72, blue: 0.58)
-                : backendController.status == .stopped
-                    ? Color(red: 0.87, green: 0.53, blue: 0.53)
-                    : Color.gray.opacity(0.78),
+            backendController.status.showsStoppedWarning
+                ? Color(red: 0.87, green: 0.53, blue: 0.53)
+                : theme.isNight
+                    ? Color.black.opacity(0.72)
+                    : Color.white.opacity(0.92),
             in: Circle()
         )
         .overlay {
             Circle()
-                .stroke(Color.white.opacity(0.32))
+                .stroke(
+                    backendController.status.showsStoppedWarning
+                        ? Color.white.opacity(0.32)
+                        : theme.isNight
+                            ? Color.white.opacity(0.25)
+                            : Color.black.opacity(0.08)
+                )
         }
         .shadow(color: .black.opacity(0.16), radius: 7, y: 3)
         .accessibilityLabel("백엔드 서버")
