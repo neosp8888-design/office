@@ -1054,6 +1054,52 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
+    func testUnpinnedAnchorEstablishesFromPreviousTurnListOnSubmission() {
+        // 사용자가 이전 답변을 읽으려 스크롤하면 초기 정착이 선점돼
+        // 앵커가 비어 있는 상태로 제출에 진입한다. 이때 이미 새 턴이
+        // 앞에 삽입된 배열로 처음 고정하면 보이던 카드가 잘려나간다.
+        let beforeSubmission = ["A", "B"]
+        let afterSubmission = ["NEW", "A", "B"]
+
+        var naive = LiveWorkspaceFeedDisplayAnchor()
+        naive = naive.pinning(turnIDsNewestFirst: afterSubmission)
+        XCTAssertEqual(
+            naive.effectiveLimit(turnIDsNewestFirst: afterSubmission),
+            2,
+            "제출 후 배열로 앵커를 처음 세우면 B가 창 밖으로 잘립니다. "
+                + "이 경로가 흰 화면의 남은 원인입니다."
+        )
+
+        var fixed = LiveWorkspaceFeedDisplayAnchor()
+        fixed = fixed.establishing(
+            previousTurnIDsNewestFirst: beforeSubmission
+        )
+        XCTAssertEqual(fixed.oldestVisibleTurnID, "B")
+        fixed = fixed.pinning(turnIDsNewestFirst: afterSubmission)
+        XCTAssertEqual(
+            fixed.effectiveLimit(turnIDsNewestFirst: afterSubmission),
+            3,
+            "제출 직전 배열로 앵커를 세우면 기존 카드 2개가 유지되고 "
+                + "새 턴만 아래에 추가됩니다."
+        )
+    }
+
+    func testEstablishingKeepsExistingAnchorAndTolleratesEmptyHistory() {
+        // 최초 mount처럼 직전 목록이 비어 있으면 세울 앵커가 없다.
+        var anchor = LiveWorkspaceFeedDisplayAnchor()
+        anchor = anchor.establishing(previousTurnIDsNewestFirst: [])
+        XCTAssertNil(anchor.oldestVisibleTurnID)
+
+        anchor = anchor.pinning(turnIDsNewestFirst: ["A", "B", "C"])
+        XCTAssertEqual(anchor.oldestVisibleTurnID, "B")
+
+        // 이미 세워진 앵커는 이후 관측으로 덮어쓰지 않는다.
+        anchor = anchor.establishing(
+            previousTurnIDsNewestFirst: ["A", "B", "C"]
+        )
+        XCTAssertEqual(anchor.oldestVisibleTurnID, "B")
+    }
+
     func testDisplayAnchorGrowsWindowWhenNewTurnArrivesInFront() {
         var anchor = LiveWorkspaceFeedDisplayAnchor()
         anchor = anchor.pinning(turnIDsNewestFirst: ["t2", "t1"])

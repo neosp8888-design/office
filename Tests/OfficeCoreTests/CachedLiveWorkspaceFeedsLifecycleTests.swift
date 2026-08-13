@@ -634,6 +634,120 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
+    func testScrollBeforeSubmissionStillKeepsExistingCardsMounted()
+        async throws
+    {
+        // 실제 사용 순서 재현. 사용자가 이전 답변을 읽으려 스크롤한 뒤
+        // 같은 직원에게 다음 질문을 제출한다. 이 스크롤이 초기 정착을
+        // 선점해 앵커가 비어 있는 채로 제출에 진입하던 것이 흰 화면의
+        // 남은 원인이었다.
+        let director = AgentDirector(startBackgroundTasks: false)
+        let characterID = OfficeCharacter.rightMan.rawValue
+        let tallResponse = (0..<90)
+            .map { "완료된 응답 \($0)번째 줄입니다. 카드가 화면보다 큽니다." }
+            .joined(separator: "\n")
+        let baseDate = Date(timeIntervalSinceReferenceDate: 70_000)
+        let completedTurns = [
+            makeTurn(
+                id: "read-second",
+                characterID: characterID,
+                prompt: "두 번째 질문",
+                response: tallResponse,
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(60)
+            ),
+            makeTurn(
+                id: "read-first",
+                characterID: characterID,
+                prompt: "첫 번째 질문",
+                response: tallResponse,
+                status: .completed,
+                startedAt: baseDate
+            ),
+        ]
+        director.liveFeedStore.replace(with: completedTurns)
+        director.liveFeedStore.finishInitialLoading()
+        director.selectedCharacterID = .rightMan
+
+        let rootHost = NSHostingView(
+            rootView: CachedLiveWorkspaceFeeds(director: director)
+                .frame(width: 900, height: 700)
+        )
+        rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(
+            contentRect: rootHost.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = rootHost
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(300))
+
+        guard
+            let container = allDescendants(of: rootHost)
+                .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
+                .first,
+            let scrollView = try await waitForPrimaryScrollView(in: rootHost)
+        else {
+            XCTFail("긴 완료 카드 2개의 NSScrollView 계층이 없습니다.")
+            window.contentView = nil
+            return
+        }
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        // 사용자가 이전 답변을 읽으려 위로 스크롤한다.
+        performLiveScroll(scrollView, toTop: true)
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(150))
+
+        let heightBeforeSubmission =
+            scrollView.documentView?.bounds.height ?? 0
+        XCTAssertGreaterThan(
+            heightBeforeSubmission,
+            scrollView.contentView.bounds.height,
+            "재현 조건상 두 카드가 화면보다 커야 합니다."
+        )
+
+        // 읽던 상태에서 다음 질문을 제출한다.
+        director.liveFeedStore.insertOptimisticTurn(
+            makeTurn(
+                id: "local-third",
+                characterID: characterID,
+                prompt: "세 번째 질문",
+                status: .running,
+                startedAt: baseDate.addingTimeInterval(120)
+            )
+        )
+        rootHost.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(150))
+
+        let heightAfterSubmission =
+            scrollView.documentView?.bounds.height ?? 0
+        XCTAssertGreaterThanOrEqual(
+            heightAfterSubmission,
+            heightBeforeSubmission - 1,
+            "읽던 중 제출에서 기존 카드가 표시 창 밖으로 잘려 문서가 "
+                + "\(Int(heightBeforeSubmission)) → "
+                + "\(Int(heightAfterSubmission))로 붕괴했습니다."
+        )
+
+        guard let documentView = scrollView.documentView else {
+            XCTFail("제출 뒤 대화 문서가 사라졌습니다.")
+            return
+        }
+        XCTAssertGreaterThan(
+            scrollView.documentVisibleRect.intersection(
+                documentView.bounds
+            ).height,
+            0,
+            "제출 뒤 viewport가 문서 밖 흰 영역에 남았습니다."
+        )
+    }
+
     func testSecondSubmissionKeepsTallCompletedCardsAndViewportInBounds()
         async throws
     {
