@@ -7,6 +7,9 @@ struct ClaudeToolCall: Equatable {
     let name: String
     let detail: String
     let planSteps: [ClaudePlanStep]
+    /// 백엔드가 편집 도구 입력에서 센 줄 수다. 옛 기록에는 없다.
+    let additions: Int?
+    let deletions: Int?
 
     private static let prefix = "도구 · "
     private static let separator = " · "
@@ -32,11 +35,36 @@ struct ClaudeToolCall: Equatable {
             detail = header
         }
 
+        let stats = parseEditStats(Array(lines.dropFirst()))
         return ClaudeToolCall(
             name: name,
             detail: detail,
-            planSteps: ClaudePlanStep.parse(Array(lines.dropFirst()))
+            planSteps: ClaudePlanStep.parse(Array(lines.dropFirst())),
+            additions: stats?.additions,
+            deletions: stats?.deletions
         )
+    }
+
+    /// `+12 -3` 한 줄에서 편집 줄 수를 읽는다.
+    private static func parseEditStats(
+        _ lines: [String]
+    ) -> (additions: Int, deletions: Int)? {
+        for line in lines {
+            let parts = line
+                .trimmingCharacters(in: .whitespaces)
+                .split(separator: " ")
+            guard
+                parts.count == 2,
+                parts[0].hasPrefix("+"),
+                parts[1].hasPrefix("-"),
+                let additions = Int(parts[0].dropFirst()),
+                let deletions = Int(parts[1].dropFirst())
+            else {
+                continue
+            }
+            return (additions, deletions)
+        }
+        return nil
     }
 
     /// MCP 도구는 이름이 길어 마지막 구간만 배지에 쓴다.
@@ -295,6 +323,39 @@ struct ClaudeToolRun: Identifiable, Equatable {
     }
 }
 
+/// 같은 파일의 여러 편집을 한 줄로 합친 결과다.
+struct ClaudeEditFile: Identifiable, Equatable {
+    let path: String
+    let stepID: String
+    private(set) var editCount: Int
+    private(set) var additions: Int?
+    private(set) var deletions: Int?
+    private(set) var status: LiveFeedActivityStatus
+
+    var id: String { stepID }
+
+    mutating func merge(_ step: ClaudeToolStep) {
+        editCount += 1
+        // 한 번이라도 통계가 빠지면 합계를 만들지 않는다.
+        if let stepAdditions = step.call.additions,
+            let stepDeletions = step.call.deletions,
+            let currentAdditions = additions,
+            let currentDeletions = deletions
+        {
+            additions = currentAdditions + stepAdditions
+            deletions = currentDeletions + stepDeletions
+        } else {
+            additions = nil
+            deletions = nil
+        }
+        if step.status == .failed {
+            status = .failed
+        } else if step.status == .running, status != .failed {
+            status = .running
+        }
+    }
+}
+
 struct ClaudeEditRun: Identifiable, Equatable {
     let steps: [ClaudeToolStep]
 
@@ -315,6 +376,58 @@ struct ClaudeEditRun: Identifiable, Equatable {
         Set(steps.map(\.call.detail).filter { !$0.isEmpty }).count
     }
 
+    /// 화면에 보여줄 파일 목록이다. 같은 파일의 연속 편집을 한 줄로
+    /// 합쳐 첫 등장 순서대로 돌려준다.
+    var files: [ClaudeEditFile] {
+        var order: [String] = []
+        var merged: [String: ClaudeEditFile] = [:]
+
+        for step in steps {
+            let path = step.call.detail
+            guard !path.isEmpty else {
+                continue
+            }
+            guard var existing = merged[path] else {
+                order.append(path)
+                merged[path] = ClaudeEditFile(
+                    path: path,
+                    stepID: step.id,
+                    editCount: 1,
+                    additions: step.call.additions,
+                    deletions: step.call.deletions,
+                    status: step.status
+                )
+                continue
+            }
+            existing.merge(step)
+            merged[path] = existing
+        }
+
+        return order.compactMap { merged[$0] }
+    }
+
+    /// 모든 편집에 통계가 있을 때만 합계를 보여준다. 일부만 더하면
+    /// 실제보다 작은 수치를 사실처럼 보여주게 된다.
+    var totals: (additions: Int, deletions: Int)? {
+        let files = files
+        guard !files.isEmpty else {
+            return nil
+        }
+        var additions = 0
+        var deletions = 0
+        for file in files {
+            guard
+                let fileAdditions = file.additions,
+                let fileDeletions = file.deletions
+            else {
+                return nil
+            }
+            additions += fileAdditions
+            deletions += fileDeletions
+        }
+        return (additions, deletions)
+    }
+
     var title: String {
         switch status {
         case .running:
@@ -329,12 +442,33 @@ struct ClaudeEditRun: Identifiable, Equatable {
     }
 
     var copyText: String {
-        ([title] + steps.map { step in
-            step.call.detail.isEmpty
-                ? step.call.displayName
-                : "\(step.call.displayName) \(step.call.detail)"
-        })
-            .joined(separator: "\n")
+        var lines = [title]
+        if let totals {
+            lines.append("+\(totals.additions) -\(totals.deletions)")
+        }
+        let files = files
+        if files.isEmpty {
+            lines.append(
+                contentsOf: steps.map { step in
+                    step.call.detail.isEmpty
+                        ? step.call.displayName
+                        : "\(step.call.displayName) \(step.call.detail)"
+                }
+            )
+        } else {
+            lines.append(
+                contentsOf: files.map { file in
+                    guard
+                        let additions = file.additions,
+                        let deletions = file.deletions
+                    else {
+                        return file.path
+                    }
+                    return "\(file.path) +\(additions) -\(deletions)"
+                }
+            )
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
