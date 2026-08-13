@@ -8,12 +8,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -744,6 +746,49 @@ test("Claude는 병합으로 작업 공간이 바뀌어도 이전 세션을 이�
       assert.equal(argumentsList[resumeIndex + 1], "session-1");
     } finally {
       rmSync(previousWorkdir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("Claude는 여러 작업 공간의 같은 세션 중 가장 최신 기록을 이어받는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const firstWorkdir = mkdtempSync(join(tmpdir(), "office-claude-first-"));
+    const secondWorkdir = mkdtempSync(join(tmpdir(), "office-claude-second-"));
+    try {
+      const firstPath = writeClaudeSession(firstWorkdir, "session-1");
+      const secondPath = writeClaudeSession(secondWorkdir, "session-1");
+      const projectsRoot = dirname(dirname(firstPath));
+      const candidatesByDirectory = new Map([
+        [basename(dirname(firstPath)), firstPath],
+        [basename(dirname(secondPath)), secondPath],
+      ]);
+      const listed = readdirSync(projectsRoot)
+        .map((directory) => candidatesByDirectory.get(directory))
+        .filter(Boolean);
+      assert.equal(listed.length, 2);
+
+      const stalePath = listed[0];
+      const latestPath = listed[1];
+      writeFileSync(stalePath, '{"context":"stale"}\n');
+      writeFileSync(latestPath, '{"context":"latest"}\n');
+      assert.equal(
+        readdirSync(projectsRoot).find((directory) =>
+          candidatesByDirectory.has(directory)
+        ),
+        basename(dirname(stalePath)),
+        "디렉터리 순서의 첫 후보가 실제로 과거 기록이어야 합니다.",
+      );
+      utimesSync(stalePath, new Date(1_000), new Date(1_000));
+      utimesSync(latestPath, new Date(2_000), new Date(2_000));
+
+      assert.equal(adoptClaudeSession(workdir, "session-1"), true);
+      assert.equal(
+        readFileSync(claudeSessionPath(workdir, "session-1"), "utf8"),
+        '{"context":"latest"}\n',
+      );
+    } finally {
+      rmSync(firstWorkdir, { recursive: true, force: true });
+      rmSync(secondWorkdir, { recursive: true, force: true });
     }
   });
 });
