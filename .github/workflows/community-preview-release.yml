@@ -135,14 +135,6 @@ jobs:
           test "$node_architecture" = "$app_architecture"
           ./scripts/smoke-test-macos-release.sh dist/OFFICESTRA.app
           ./scripts/package-release.sh
-          dmg_path="$(
-            find dist/release \
-              -maxdepth 1 \
-              -type f \
-              -name '*-adhoc.dmg' \
-              -print \
-              -quit
-          )"
           zip_path="$(
             find dist/release \
               -maxdepth 1 \
@@ -151,9 +143,8 @@ jobs:
               -print \
               -quit
           )"
-          test -n "$dmg_path"
           test -n "$zip_path"
-          ./scripts/smoke-test-macos-release.sh "$dmg_path"
+          ./scripts/smoke-test-macos-release.sh "$zip_path"
           (
             cd dist/release
             shasum -a 256 -c SHA256SUMS
@@ -182,9 +173,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: officestra-preview-release-${{ matrix.arch }}
-          path: |
-            dist/release/*-adhoc.zip
-            dist/release/*-adhoc.dmg
+          path: dist/release/*-adhoc.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -256,12 +245,11 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           arm_zip=(dist/release/*-arm64-adhoc.zip)
-          arm_dmg=(dist/release/*-arm64-adhoc.dmg)
           test "${#arm_zip[@]}" -eq 1
-          test "${#arm_dmg[@]}" -eq 1
+          test "$(find dist/release -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')" = 0
           (
             cd dist/release
-            sha256sum ./*.zip ./*.dmg > SHA256SUMS
+            sha256sum ./*.zip > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
 
@@ -275,31 +263,30 @@ jobs:
           cat > "$notes" <<'EOF'
           ## Community Preview — Apple 미공증
 
-          이 DMG와 ZIP은 ad-hoc 서명되었으며 Apple Developer ID 서명이나 Apple 공증을 받지 않았습니다. macOS가 첫 실행을 차단할 수 있습니다. 이 공식 저장소에서 받은 파일인지 확인하고 `SHA256SUMS`와 일치할 때만 앱 하나에 대한 예외를 허용하세요.
+          이 ZIP의 앱은 ad-hoc 서명되었으며 Apple Developer ID 서명이나 Apple 공증을 받지 않았습니다. macOS가 첫 실행을 차단할 수 있습니다. 이 공식 저장소에서 받은 파일인지 확인하고 `SHA256SUMS`와 일치할 때만 앱 하나에 대한 예외를 허용하세요.
 
           이 릴리스는 Apple Silicon(M1 이상) 전용입니다. Intel Mac은 지원하지 않습니다.
 
-          1. `arm64` DMG를 받습니다.
-          2. 앱을 Applications로 옮긴 뒤 한 번 실행합니다.
+          1. `arm64` ZIP을 받아 압축을 풉니다.
+          2. `OFFICESTRA.app`을 Applications로 옮긴 뒤 한 번 실행합니다.
           3. 차단되면 `시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`에서 이 앱만 허용합니다.
 
-          DMG와 `SHA256SUMS`를 같은 폴더에 받은 뒤 `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`를 실행해 `OK`를 확인합니다.
+          ZIP과 `SHA256SUMS`를 같은 폴더에 받은 뒤 `grep -- '-arm64-adhoc.zip$' SHA256SUMS | shasum -a 256 -c -`를 실행해 `OK`를 확인합니다.
 
           Gatekeeper 전체 비활성화나 광범위한 `xattr` 명령은 필요하지 않으며 권장하지 않습니다. 보안 예외를 원치 않으면 이 태그의 소스를 직접 빌드하세요. 체크섬은 파일 무결성만 확인하며 Apple 공증을 대신하지 않습니다.
 
           ## Community Preview — not notarized by Apple
 
-          These DMG and ZIP files are ad-hoc signed. They are not Developer ID signed or notarized by Apple, so macOS may block the first launch. Download only from this official repository and verify the matching `SHA256SUMS` before allowing a per-app exception.
+          The app in this ZIP is ad-hoc signed. It is not Developer ID signed or notarized by Apple, so macOS may block the first launch. Download only from this official repository and verify the matching `SHA256SUMS` before allowing a per-app exception.
 
           This release supports Apple silicon (M1 or later) only. Intel Macs are not supported.
 
-          Move the app to Applications, attempt one launch, then use `System Settings → Privacy & Security → Security → Open Anyway` if macOS blocks it. Do not disable Gatekeeper globally or run broad `xattr` commands. Build this tag from source instead if you do not want to allow the exception. Checksums verify file integrity; they do not replace Apple notarization.
+          Extract the ZIP, move `OFFICESTRA.app` to Applications, attempt one launch, then use `System Settings → Privacy & Security → Security → Open Anyway` if macOS blocks it. Do not disable Gatekeeper globally or run broad `xattr` commands. Build this tag from source instead if you do not want to allow the exception. Checksums verify file integrity; they do not replace Apple notarization.
 
-          Place the DMG and `SHA256SUMS` in one folder and run `grep -- '-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -`; require an `OK` result.
+          Place the ZIP and `SHA256SUMS` in one folder and run `grep -- '-arm64-adhoc.zip$' SHA256SUMS | shasum -a 256 -c -`; require an `OK` result.
           EOF
           gh release create "$RELEASE_TAG" \
             dist/release/*-adhoc.zip \
-            dist/release/*-adhoc.dmg \
             dist/release/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \

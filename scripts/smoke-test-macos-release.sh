@@ -1,5 +1,5 @@
 #!/bin/zsh
-# 공증 앱 또는 DMG 안의 앱을 격리된 첫 실행 상태로 실제 기동한다.
+# 앱 또는 ZIP 안의 앱을 격리된 첫 실행 상태로 실제 기동한다.
 
 set -euo pipefail
 
@@ -7,7 +7,6 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ARTIFACT="${1:-}"
 SMOKE_SECONDS="${OFFICESTRA_APP_SMOKE_SECONDS:-8}"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/officestra-app-smoke.XXXXXX")"
-MOUNT_DIR=""
 APP_PID=""
 
 cleanup() {
@@ -15,15 +14,12 @@ cleanup() {
         kill "$APP_PID" 2>/dev/null || true
         wait "$APP_PID" 2>/dev/null || true
     fi
-    if [[ -n "$MOUNT_DIR" ]]; then
-        /usr/bin/hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
-    fi
     rm -rf "$TEMP_ROOT"
 }
 trap cleanup EXIT
 
 if [[ -z "$ARTIFACT" || ! -e "$ARTIFACT" ]]; then
-    print -u2 "스모크 테스트할 앱 또는 DMG가 없습니다. $ARTIFACT"
+    print -u2 "스모크 테스트할 앱 또는 ZIP이 없습니다. $ARTIFACT"
     exit 1
 fi
 
@@ -31,23 +27,14 @@ case "$ARTIFACT" in
     *.app)
         APP_PATH="$ARTIFACT"
         ;;
-    *.dmg)
-        MOUNT_DIR="$TEMP_ROOT/mounted"
-        mkdir -p "$MOUNT_DIR"
-        /usr/bin/hdiutil attach \
-            -nobrowse \
-            -readonly \
-            -mountpoint "$MOUNT_DIR" \
-            "$ARTIFACT" >/dev/null
-        APP_PATH="$MOUNT_DIR/OFFICESTRA.app"
-        if [[ ! -L "$MOUNT_DIR/Applications" ]] \
-            || [[ "$(/usr/bin/readlink "$MOUNT_DIR/Applications")" != "/Applications" ]]; then
-            print -u2 "DMG의 Applications 바로가기가 올바르지 않습니다."
-            exit 1
-        fi
+    *.zip)
+        EXTRACT_DIR="$TEMP_ROOT/extracted"
+        mkdir -p "$EXTRACT_DIR"
+        /usr/bin/ditto -x -k "$ARTIFACT" "$EXTRACT_DIR"
+        APP_PATH="$EXTRACT_DIR/OFFICESTRA.app"
         ;;
     *)
-        print -u2 "스모크 테스트 형식은 .app 또는 .dmg여야 합니다. $ARTIFACT"
+        print -u2 "스모크 테스트 형식은 .app 또는 .zip이어야 합니다. $ARTIFACT"
         exit 1
         ;;
 esac

@@ -200,11 +200,11 @@ Git 저장소를 선택해 worktree 격리·검토·병합 기능을 쓰려는 �
 ### 가장 쉬운 방법
 
 1. [Releases](https://github.com/neosp8888-design/office/releases)에서
-   Apple Silicon용 `arm64` `adhoc` DMG를 받는다. Community Preview는 Apple
+   Apple Silicon용 `arm64` `adhoc` ZIP을 받는다. Community Preview는 Apple
    Developer ID 서명이나 Apple 공증을 받지 않았으므로 macOS가 첫 실행을
    차단할 수 있다. 공식 저장소의 Release 파일인지 확인하고 함께 제공되는
    `SHA256SUMS`와 일치할 때만 설치한다.
-2. DMG를 열어 `OFFICESTRA.app`을 `Applications`로 끌어 놓고 실행한다.
+2. ZIP 압축을 풀고 `OFFICESTRA.app`을 `Applications`로 옮긴 뒤 실행한다.
 3. macOS가 차단하면 임의의 터미널 명령을 실행하지 않는다. 앱을 한 번 실행한 뒤
    `Apple 메뉴 → 시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`를
    누르고 로그인 암호 또는 Touch ID로 인증한 다음 **열기**를 선택한다. 이 예외는
@@ -223,11 +223,11 @@ Git 저장소를 선택해 worktree 격리·검토·병합 기능을 쓰려는 �
 Apple 공증을 대신하지 않는다. 회사에서 관리하는 Mac은 조직 정책에 따라
 **그래도 열기**가 제한될 수 있다.
 
-Apple Silicon DMG와 `SHA256SUMS`를 다운로드한 경우 터미널에서 아래 한 줄을
+Apple Silicon ZIP과 `SHA256SUMS`를 다운로드한 경우 터미널에서 아래 한 줄을
 실행해 `OK`가 나오는지 확인한다.
 
 ```sh
-cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
+cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.zip$' SHA256SUMS | shasum -a 256 -c -
 ```
 
 설치 오류가 나면 준비 화면의 **로그 열기**로 진단 폴더를 열 수 있다. 앱은

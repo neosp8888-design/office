@@ -1,5 +1,5 @@
 #!/bin/bash
-# 완성된 앱/DMG 안의 Node, 백엔드, Compose, 마이그레이션으로 첫 업무까지 검증한다.
+# 완성된 앱/ZIP 안의 Node, 백엔드, Compose, 마이그레이션으로 첫 업무까지 검증한다.
 
 set -euo pipefail
 
@@ -10,7 +10,6 @@ BACKEND_PORT="${OFFICESTRA_PACKAGED_E2E_BACKEND_PORT:-4319}"
 POSTGRES_PORT="${OFFICESTRA_PACKAGED_E2E_POSTGRES_PORT:-55430}"
 DATABASE_URL="postgres://office:office-local@127.0.0.1:$POSTGRES_PORT/office"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/officestra-packaged-e2e.XXXXXX")"
-MOUNT_DIR=""
 BACKEND_PID=""
 
 cleanup() {
@@ -25,15 +24,12 @@ cleanup() {
                 -f "$COMPOSE_FILE" \
                 down -v --remove-orphans >/dev/null 2>&1 || true
     fi
-    if [[ -n "$MOUNT_DIR" ]]; then
-        /usr/bin/hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
-    fi
     rm -rf "$TEMP_ROOT"
 }
 trap cleanup EXIT
 
 if [[ -z "$ARTIFACT" || ! -e "$ARTIFACT" ]]; then
-    printf '%s\n' "검증할 OFFICESTRA.app 또는 DMG가 없습니다. $ARTIFACT" >&2
+    printf '%s\n' "검증할 OFFICESTRA.app 또는 ZIP이 없습니다. $ARTIFACT" >&2
     exit 1
 fi
 
@@ -44,22 +40,14 @@ case "$ARTIFACT" in
     *.app)
         APP_PATH="$ARTIFACT"
         ;;
-    *.dmg)
-        if [[ "$(uname -s)" != "Darwin" ]]; then
-            printf '%s\n' "DMG 검증은 macOS에서만 실행할 수 있습니다." >&2
-            exit 1
-        fi
-        MOUNT_DIR="$TEMP_ROOT/mounted"
-        mkdir -p "$MOUNT_DIR"
-        /usr/bin/hdiutil attach \
-            -nobrowse \
-            -readonly \
-            -mountpoint "$MOUNT_DIR" \
-            "$ARTIFACT" >/dev/null
-        APP_PATH="$MOUNT_DIR/OFFICESTRA.app"
+    *.zip)
+        EXTRACT_DIR="$TEMP_ROOT/extracted"
+        mkdir -p "$EXTRACT_DIR"
+        /usr/bin/ditto -x -k "$ARTIFACT" "$EXTRACT_DIR"
+        APP_PATH="$EXTRACT_DIR/OFFICESTRA.app"
         ;;
     *)
-        printf '%s\n' "검증 형식은 .app 또는 .dmg여야 합니다. $ARTIFACT" >&2
+        printf '%s\n' "검증 형식은 .app 또는 .zip이어야 합니다. $ARTIFACT" >&2
         exit 1
         ;;
 esac

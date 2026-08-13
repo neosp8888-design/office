@@ -172,12 +172,12 @@ entitlements.
 
 ### Easiest path
 
-1. Download the `arm64` `adhoc` DMG for Apple silicon from
+1. Download the `arm64` `adhoc` ZIP for Apple silicon from
    [Releases](https://github.com/neosp8888-design/office/releases). The
    Community Preview is not Developer ID signed or notarized by Apple, so
    macOS may block its first launch. Install only files from this official
    repository after matching them against the supplied `SHA256SUMS`.
-2. Open the DMG, drag `OFFICESTRA.app` to `Applications`, and launch it.
+2. Extract the ZIP, move `OFFICESTRA.app` to `Applications`, and launch it.
 3. If macOS blocks the app, do not run an arbitrary Terminal command. Attempt
    one launch, then open `Apple menu → System Settings → Privacy & Security →
    Security → Open Anyway`. Authenticate with your login password or Touch ID
@@ -199,11 +199,11 @@ if you do not want to allow a security exception. Checksums verify Release-file
 integrity; they do not replace Apple notarization. Organization-managed Macs
 may block **Open Anyway** through policy.
 
-After downloading the Apple silicon DMG and `SHA256SUMS`, run the following
+After downloading the Apple silicon ZIP and `SHA256SUMS`, run the following
 single line in Terminal and require an `OK` result.
 
 ```sh
-cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.dmg$' SHA256SUMS | shasum -a 256 -c -
+cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.zip$' SHA256SUMS | shasum -a 256 -c -
 ```
 
 Choose **Open Logs** on the setup screen if installation fails. OFFICESTRA does
