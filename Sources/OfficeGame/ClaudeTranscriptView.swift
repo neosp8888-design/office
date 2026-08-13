@@ -671,7 +671,8 @@ private struct ClaudeToolBadge: View {
     }
 }
 
-/// Claude는 편집 통계를 주지 않으므로 어떤 파일을 고쳤는지만 카드로 보여준다.
+/// 같은 파일을 여러 번 고쳐도 한 줄로 합쳐 보여주고, 백엔드가 도구
+/// 입력에서 센 편집 줄 수를 Codex 카드와 같은 형태로 함께 보여준다.
 private struct ClaudeEditRunView: View {
     let run: ClaudeEditRun
     let workspaceDirectory: String
@@ -691,8 +692,26 @@ private struct ClaudeEditRunView: View {
                         in: RoundedRectangle(cornerRadius: 8)
                     )
 
-                Text(run.title)
-                    .font(.system(size: 12.5, weight: .bold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(run.title)
+                        .font(.system(size: 12.5, weight: .bold))
+
+                    if let totals = run.totals {
+                        HStack(spacing: 5) {
+                            Text("+\(totals.additions)")
+                                .foregroundStyle(.green)
+                            Text("-\(totals.deletions)")
+                                .foregroundStyle(.red)
+                        }
+                        .font(
+                            .system(
+                                size: 10.5,
+                                weight: .bold,
+                                design: .monospaced
+                            )
+                        )
+                    }
+                }
 
                 if run.status == .running {
                     ProgressView()
@@ -720,24 +739,50 @@ private struct ClaudeEditRunView: View {
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(run.steps) { step in
+                ForEach(run.files) { file in
                     HStack(spacing: 7) {
-                        ClaudeToolBadge(call: step.call, isCompact: false)
-
                         WorkspaceFileRevealButton(
-                            title: step.call.detail.isEmpty
-                                ? "파일"
-                                : step.call.detail,
-                            path: step.call.detail.isEmpty
-                                ? nil
-                                : step.call.detail,
+                            title: file.path,
+                            path: file.path,
                             workspaceDirectory: workspaceDirectory,
-                            foregroundColor: step.status == .failed
+                            foregroundColor: file.status == .failed
                                 ? .red
                                 : .secondary,
                             accessibilityIdentifier:
-                                "revealEdit-\(run.id)-\(step.id)"
+                                "revealEdit-\(run.id)-\(file.id)"
                         )
+
+                        if file.editCount > 1 {
+                            Text("×\(file.editCount)")
+                                .font(
+                                    .system(
+                                        size: 10,
+                                        weight: .bold,
+                                        design: .monospaced
+                                    )
+                                )
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Spacer(minLength: 6)
+
+                        if let additions = file.additions,
+                            let deletions = file.deletions
+                        {
+                            HStack(spacing: 5) {
+                                Text("+\(additions)")
+                                    .foregroundStyle(.green)
+                                Text("-\(deletions)")
+                                    .foregroundStyle(.red)
+                            }
+                            .font(
+                                .system(
+                                    size: 10,
+                                    weight: .bold,
+                                    design: .monospaced
+                                )
+                            )
+                        }
                     }
                 }
             }

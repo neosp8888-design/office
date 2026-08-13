@@ -550,6 +550,138 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.showsWaiting)
     }
 
+    func testRepeatedEditsCollapseIntoOneRowWithSummedStats() throws {
+        let activities = try [
+            makeActivity(
+                id: "tool-1",
+                kind: "tool",
+                text: "도구 · Edit · Sources/OfficeGame/AgentDirector.swift\n+12 -4",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-2",
+                kind: "tool",
+                text: "도구 · Edit · Sources/OfficeGame/AgentDirector.swift\n+3 -1",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-3",
+                kind: "tool",
+                text: "도구 · Edit · Tests/OfficeCoreTests/FeedTests.swift\n+20 -0",
+                status: "completed"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        guard case .edits(let edits) = presentation.entries.last else {
+            return XCTFail("편집 항목이 없습니다.")
+        }
+
+        XCTAssertEqual(
+            edits.files.map(\.path),
+            [
+                "Sources/OfficeGame/AgentDirector.swift",
+                "Tests/OfficeCoreTests/FeedTests.swift",
+            ],
+            "같은 파일을 두 번 고치면 한 줄로 합쳐 첫 등장 순서를 지켜야 합니다."
+        )
+        XCTAssertEqual(edits.files.map(\.editCount), [2, 1])
+        XCTAssertEqual(edits.files.map(\.additions), [15, 20])
+        XCTAssertEqual(edits.files.map(\.deletions), [5, 0])
+        XCTAssertEqual(edits.fileCount, 2)
+        XCTAssertEqual(edits.title, "파일 2개를 편집했습니다")
+
+        let totals = try XCTUnwrap(edits.totals)
+        XCTAssertEqual(totals.additions, 35)
+        XCTAssertEqual(totals.deletions, 5)
+        XCTAssertTrue(edits.copyText.contains("+35 -5"))
+        XCTAssertTrue(
+            edits.copyText.contains(
+                "Sources/OfficeGame/AgentDirector.swift +15 -5"
+            )
+        )
+    }
+
+    func testEditRunHidesTotalsWhenAnyStatisticIsMissing() throws {
+        let activities = try [
+            makeActivity(
+                id: "tool-1",
+                kind: "tool",
+                text: "도구 · Edit · Sources/A.swift\n+12 -4",
+                status: "completed"
+            ),
+            // 옛 기록에는 통계 줄이 없다.
+            makeActivity(
+                id: "tool-2",
+                kind: "tool",
+                text: "도구 · Edit · Sources/B.swift",
+                status: "completed"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        guard case .edits(let edits) = presentation.entries.last else {
+            return XCTFail("편집 항목이 없습니다.")
+        }
+
+        XCTAssertEqual(edits.files.map(\.path), ["Sources/A.swift", "Sources/B.swift"])
+        XCTAssertEqual(edits.files[0].additions, 12)
+        XCTAssertNil(edits.files[1].additions)
+        XCTAssertNil(
+            edits.totals,
+            "통계가 하나라도 빠지면 실제보다 작은 합계를 보여주면 안 됩니다."
+        )
+        XCTAssertFalse(edits.copyText.contains("+12 -4\nSources/A"))
+    }
+
+    func testMergedEditRowKeepsFailedAndRunningStatus() throws {
+        let activities = try [
+            makeActivity(
+                id: "tool-1",
+                kind: "tool",
+                text: "도구 · Edit · Sources/A.swift\n+5 -1",
+                status: "completed"
+            ),
+            makeActivity(
+                id: "tool-2",
+                kind: "tool",
+                text: "도구 · Edit · Sources/A.swift",
+                status: "failed"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: "",
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        guard case .edits(let edits) = presentation.entries.last else {
+            return XCTFail("편집 항목이 없습니다.")
+        }
+
+        XCTAssertEqual(edits.files.count, 1)
+        XCTAssertEqual(edits.files[0].editCount, 2)
+        XCTAssertEqual(edits.files[0].status, .failed)
+        XCTAssertNil(edits.files[0].additions)
+    }
+
     private func makeActivity(
         id: String,
         kind: String,

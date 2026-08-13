@@ -736,6 +736,125 @@ test("Claude 편집 경로도 업무 폴더 상대경로로 보존한다", () =>
   );
 });
 
+test("Claude 편집 도구는 입력에서 센 줄 수를 둘째 줄로 붙인다", () => {
+  const workdir = "/Users/example/office";
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Edit",
+          input: {
+            file_path: `${workdir}/Sources/OfficeGame/AgentDirector.swift`,
+            old_string: "let a = 1\nlet b = 2",
+            new_string: "let a = 1\nlet b = 3\nlet c = 4",
+          },
+        }],
+      },
+    }),
+    "claude",
+    workdir,
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    "도구 · Edit · Sources/OfficeGame/AgentDirector.swift\n+3 -2",
+  );
+});
+
+test("Claude MultiEdit는 편집 묶음 전체 줄 수를 합산한다", () => {
+  const workdir = "/Users/example/office";
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "MultiEdit",
+          input: {
+            file_path: `${workdir}/backend/src/server.mjs`,
+            edits: [
+              { old_string: "a", new_string: "a\nb" },
+              { old_string: "c\nd", new_string: "e" },
+            ],
+          },
+        }],
+      },
+    }),
+    "claude",
+    workdir,
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    "도구 · MultiEdit · backend/src/server.mjs\n+3 -3",
+  );
+});
+
+test("Claude Write는 이전 내용을 모르므로 추가 줄만 센다", () => {
+  const workdir = "/Users/example/office";
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Write",
+          input: {
+            file_path: `${workdir}/docs/새문서.md`,
+            content: "제목\n본문\n끝",
+          },
+        }],
+      },
+    }),
+    "claude",
+    workdir,
+  );
+
+  assert.equal(
+    event.activities[0].text,
+    "도구 · Write · docs/새문서.md\n+3 -0",
+  );
+});
+
+test("Claude 비편집 도구와 통계 없는 편집은 첫 줄 형식을 그대로 둔다", () => {
+  const workdir = "/Users/example/office";
+  const read = parseAgentEvent(
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Read",
+          input: { file_path: `${workdir}/README.md` },
+        }],
+      },
+    }),
+    "claude",
+    workdir,
+  );
+  assert.equal(read.activities[0].text, "도구 · Read · README.md");
+
+  const partialEdit = parseAgentEvent(
+    JSON.stringify({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        content_block: {
+          id: "tool-stream-edit",
+          type: "tool_use",
+          name: "Edit",
+          input: { file_path: `${workdir}/README.md` },
+        },
+      },
+    }),
+    "claude",
+    workdir,
+  );
+  assert.equal(partialEdit.activity.text, "도구 · Edit · README.md");
+});
+
 test("Claude 스트리밍 편집 경로도 업무 폴더 상대경로로 보존한다", () => {
   const workdir = "/Users/example/office";
   const event = parseAgentEvent(

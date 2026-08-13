@@ -877,7 +877,9 @@ function claudeToolActivityText(tool, workdir) {
       input.directory,
   );
   if (path) {
-    return `도구 · ${name} · ${compactPath(path, workdir)}`;
+    const header = `도구 · ${name} · ${compactPath(path, workdir)}`;
+    const stats = claudeEditStats(loweredName, input);
+    return stats ? `${header}\n+${stats.additions} -${stats.deletions}` : header;
   }
   if (["grep", "glob", "websearch"].includes(loweredName)) {
     const query = cleanText(input.pattern ?? input.query);
@@ -886,6 +888,72 @@ function claudeToolActivityText(tool, workdir) {
     }
   }
   return `도구 · ${name}`;
+}
+
+// Claude CLI는 Codex와 달리 편집 통계를 따로 주지 않는다. 도구 입력에
+// 담긴 편집 전후 문자열로 줄 수를 직접 센다. 파일 전체를 새로 쓰는
+// Write는 이전 내용을 알 수 없으므로 추가 줄만 센다.
+function claudeEditStats(loweredName, input) {
+  const countLines = (value) => {
+    if (typeof value !== "string" || value.length === 0) {
+      return 0;
+    }
+    return value.split("\n").length;
+  };
+
+  if (loweredName === "edit") {
+    if (
+      typeof input.old_string !== "string" ||
+      typeof input.new_string !== "string"
+    ) {
+      return null;
+    }
+    return {
+      additions: countLines(input.new_string),
+      deletions: countLines(input.old_string),
+    };
+  }
+
+  if (loweredName === "multiedit") {
+    if (!Array.isArray(input.edits) || input.edits.length === 0) {
+      return null;
+    }
+    let additions = 0;
+    let deletions = 0;
+    for (const edit of input.edits) {
+      if (!edit || typeof edit !== "object") {
+        return null;
+      }
+      if (
+        typeof edit.old_string !== "string" ||
+        typeof edit.new_string !== "string"
+      ) {
+        return null;
+      }
+      additions += countLines(edit.new_string);
+      deletions += countLines(edit.old_string);
+    }
+    return { additions, deletions };
+  }
+
+  if (loweredName === "write") {
+    if (typeof input.content !== "string") {
+      return null;
+    }
+    return { additions: countLines(input.content), deletions: 0 };
+  }
+
+  if (loweredName === "notebookedit") {
+    if (typeof input.new_source !== "string") {
+      return null;
+    }
+    const isDelete = cleanText(input.edit_mode) === "delete";
+    return isDelete
+      ? { additions: 0, deletions: countLines(input.new_source) }
+      : { additions: countLines(input.new_source), deletions: 0 };
+  }
+
+  return null;
 }
 
 function claudePlanActivityText(name, input) {
