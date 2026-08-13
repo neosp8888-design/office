@@ -279,7 +279,7 @@ private struct OfficeGameView: View {
 
                     OfficeDetailPanel(
                         director: director,
-                        selection: detailSelection
+                        selection: $detailSelection
                     )
                     .frame(height: rows.bottom)
                 }

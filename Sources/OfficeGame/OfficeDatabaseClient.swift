@@ -59,6 +59,114 @@ struct OfficeDatabaseClient: Sendable {
         try historyDecoder().decode(AIUsageSnapshot.self, from: data)
     }
 
+    func wikiPagesURL(query: String, limit: Int) -> URL {
+        let endpoint = baseURL
+            .appending(path: "api")
+            .appending(path: "wiki")
+            .appending(path: "pages")
+        var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        return components?.url ?? endpoint
+    }
+
+    func fetchWikiPages(
+        query: String,
+        limit: Int
+    ) async throws -> [WikiPage] {
+        let (data, response) = try await URLSession.shared.data(
+            from: wikiPagesURL(query: query, limit: limit)
+        )
+        try validate(response, data: data)
+        return try decodeWikiPages(data)
+    }
+
+    func decodeWikiPages(_ data: Data) throws -> [WikiPage] {
+        try historyDecoder().decode(WikiPagesResponse.self, from: data).pages
+    }
+
+    func wikiProposalsURL(state: String) -> URL {
+        let endpoint = baseURL
+            .appending(path: "api")
+            .appending(path: "wiki")
+            .appending(path: "proposals")
+        var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "state", value: state)
+        ]
+        return components?.url ?? endpoint
+    }
+
+    func fetchWikiProposals(
+        state: String = "pending_user"
+    ) async throws -> [WikiProposal] {
+        let (data, response) = try await URLSession.shared.data(
+            from: wikiProposalsURL(state: state)
+        )
+        try validate(response, data: data)
+        return try decodeWikiProposals(data)
+    }
+
+    func decodeWikiProposals(_ data: Data) throws -> [WikiProposal] {
+        try historyDecoder()
+            .decode(WikiProposalsResponse.self, from: data)
+            .proposals
+    }
+
+    func wikiProposalApprovalRequest(id: String) -> URLRequest {
+        var request = URLRequest(
+            url: wikiProposalActionURL(id: id, action: "approve")
+        )
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = Data("{}".utf8)
+        return request
+    }
+
+    func wikiProposalRejectionRequest(
+        id: String,
+        reason: String
+    ) throws -> URLRequest {
+        var request = URLRequest(
+            url: wikiProposalActionURL(id: id, action: "reject")
+        )
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            WikiProposalRejectionRequest(reason: reason)
+        )
+        return request
+    }
+
+    func approveWikiProposal(id: String) async throws -> WikiProposal {
+        try await submitWikiProposal(
+            request: wikiProposalApprovalRequest(id: id)
+        )
+    }
+
+    func rejectWikiProposal(
+        id: String,
+        reason: String
+    ) async throws -> WikiProposal {
+        try await submitWikiProposal(
+            request: wikiProposalRejectionRequest(id: id, reason: reason)
+        )
+    }
+
     func fetchAutomationSettings() async throws -> AutomationSettings {
         let url = baseURL.appending(path: "api/automation-settings")
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -569,6 +677,28 @@ struct OfficeDatabaseClient: Sendable {
         ).workspace
     }
 
+    private func wikiProposalActionURL(
+        id: String,
+        action: String
+    ) -> URL {
+        baseURL
+            .appending(path: "api")
+            .appending(path: "wiki")
+            .appending(path: "proposals")
+            .appending(path: id)
+            .appending(path: action)
+    }
+
+    private func submitWikiProposal(
+        request: URLRequest
+    ) async throws -> WikiProposal {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try historyDecoder()
+            .decode(WikiProposalResponse.self, from: data)
+            .proposal
+    }
+
     private func historyDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         let fractional = ISO8601DateFormatter()
@@ -621,6 +751,52 @@ private struct CharacterListResponse: Decodable {
 
 private struct ActiveSessionListResponse: Decodable {
     let sessions: [StoredActiveSession]
+}
+
+private struct WikiPagesResponse: Decodable {
+    let pages: [WikiPage]
+}
+
+private struct WikiProposalsResponse: Decodable {
+    let proposals: [WikiProposal]
+}
+
+private struct WikiProposalResponse: Decodable {
+    let proposal: WikiProposal
+}
+
+private struct WikiProposalRejectionRequest: Encodable {
+    let reason: String
+}
+
+struct WikiPage: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let pageKey: String
+    let title: String
+    let body: String
+    let updatedAt: Date
+    let sources: [WikiPageSource]
+}
+
+struct WikiPageSource: Decodable, Identifiable, Equatable, Sendable {
+    let workRecordId: String
+    let title: String
+    let excerpt: String
+
+    var id: String {
+        workRecordId
+    }
+}
+
+struct WikiProposal: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let state: String
+    let pageKey: String
+    let title: String
+    let body: String
+    let approvalTier: String
+    let sourceRecordIds: [String]
+    let createdAt: Date
 }
 
 struct StoredCharacterProfile: Decodable, Sendable {
