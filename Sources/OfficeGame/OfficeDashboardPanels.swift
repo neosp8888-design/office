@@ -1378,7 +1378,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     private let updateResponseFeedback:
         (String, TurnResponseFeedback?) async -> Void
     @State private var followState = LiveWorkspaceFeedFollowState()
-    @State private var hasContentBelow = false
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
     @State private var displayAnchor = LiveWorkspaceFeedDisplayAnchor()
     @State private var observedTurnIDs: [String] = []
@@ -1722,9 +1721,9 @@ struct LiveWorkspaceFeed: View, Equatable {
                         case .followLatest:
                             scheduleScrollToLatest(proxy)
                         case .revealContentBelow:
-                            if !hasContentBelow {
-                                hasContentBelow = true
-                            }
+                            // 버튼이 항상 보이므로 별도 표시 상태를
+                            // 갱신하지 않는다.
+                            break
                         }
                     }
                     // 제출 시 revealSubmittedTurn이 하단 보정을 1회
@@ -1739,21 +1738,19 @@ struct LiveWorkspaceFeed: View, Equatable {
                         }
                         revealSubmittedTurn(proxy: proxy)
                     }
-                    .overlay(alignment: .bottom) {
-                        Group {
-                            if hasContentBelow {
-                                jumpToLatestButton(proxy: proxy)
-                                    .padding(.bottom, 12)
-                                    .transition(
-                                        .scale(scale: 0.82)
-                                            .combined(with: .opacity)
-                                    )
-                            }
-                        }
-                        .animation(
-                            .easeInOut(duration: 0.16),
-                            value: hasContentBelow
-                        )
+                    .overlay(
+                        alignment: LiveWorkspaceFeedJumpButtonLayout.alignment
+                    ) {
+                        jumpToLatestButton(proxy: proxy)
+                            .padding(
+                                .leading,
+                                LiveWorkspaceFeedJumpButtonLayout
+                                    .leadingPadding
+                            )
+                            .padding(
+                                .bottom,
+                                LiveWorkspaceFeedJumpButtonLayout.bottomPadding
+                            )
                     }
                     .onDisappear {
                         cancelScheduledScrolls()
@@ -1794,7 +1791,6 @@ struct LiveWorkspaceFeed: View, Equatable {
             return
         }
 
-        updateBottomState()
     }
 
     private func handleUserScroll(
@@ -1812,7 +1808,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                 tolerance: Self.bottomTolerance
             )
         }
-        updateBottomState()
         if topLoadGate.shouldLoad(
             distanceFromTop: metrics.distanceFromTop,
             threshold: Self.topLoadThreshold,
@@ -1906,9 +1901,6 @@ struct LiveWorkspaceFeed: View, Equatable {
 
         didPerformInitialScroll = true
         repinDisplayAnchor()
-        // 기본 하단 앵커가 적용되기 전의 첫 측정값만으로 자동 추적을
-        // 끄지 않는다. 추적 중단은 실제 사용자 스크롤 콜백만 담당한다.
-        updateBottomState()
     }
 
     private func cancelScheduledScrolls() {
@@ -2041,7 +2033,10 @@ struct LiveWorkspaceFeed: View, Equatable {
             Image(systemName: "arrow.down")
                 .font(.system(size: 13, weight: .black))
             .foregroundStyle(DashboardPalette.accent)
-            .frame(width: 32, height: 32)
+            .frame(
+                width: LiveWorkspaceFeedJumpButtonLayout.diameter,
+                height: LiveWorkspaceFeedJumpButtonLayout.diameter
+            )
             .background {
                 Circle()
                     .fill(.ultraThinMaterial)
@@ -2089,24 +2084,9 @@ struct LiveWorkspaceFeed: View, Equatable {
         )
     }
 
-    private func updateBottomState() {
-        let contentRemainsBelow =
-            distanceFromBottom > Self.bottomTolerance
-        if hasContentBelow != contentRemainsBelow {
-            hasContentBelow = contentRemainsBelow
-        }
-    }
-
-    private var distanceFromBottom: CGFloat {
-        scrollMetrics.distanceFromBottom
-    }
-
     private func markAtBottom() {
         if !followState.isFollowingLatest {
             followState.resume()
-        }
-        if hasContentBelow {
-            hasContentBelow = false
         }
     }
 
@@ -2116,6 +2096,16 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
         cancelScheduledScrolls()
     }
+}
+
+enum LiveWorkspaceFeedJumpButtonLayout {
+    static let alignment = Alignment.bottomLeading
+    static let contentHorizontalPadding = CGFloat(18)
+    static let avatarDiameter = CGFloat(38)
+    static let diameter = CGFloat(32)
+    static let bottomPadding = CGFloat(12)
+    static let leadingPadding =
+        contentHorizontalPadding + (avatarDiameter - diameter) / 2
 }
 
 private struct LiveWorkspaceFeedTurnItem: Identifiable {
