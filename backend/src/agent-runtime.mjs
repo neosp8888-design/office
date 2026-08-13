@@ -4582,13 +4582,30 @@ function findClaudeSessionFile(sessionID) {
   } catch {
     return null;
   }
+  let latest = null;
+  let latestModifiedAt = Number.NEGATIVE_INFINITY;
   for (const directory of directories) {
     const candidate = join(root, String(directory), `${id}.jsonl`);
-    if (existsSync(candidate)) {
-      return candidate;
+    try {
+      const metadata = statSync(candidate);
+      if (!metadata.isFile()) {
+        continue;
+      }
+      if (
+        metadata.mtimeMs > latestModifiedAt ||
+        (
+          metadata.mtimeMs === latestModifiedAt &&
+          (latest === null || candidate.localeCompare(latest) < 0)
+        )
+      ) {
+        latest = candidate;
+        latestModifiedAt = metadata.mtimeMs;
+      }
+    } catch {
+      // 다른 작업 공간이 동시에 정리한 후보는 건너뛴다.
     }
   }
-  return null;
+  return latest;
 }
 
 // Claude Code는 세션을 실행 디렉토리 단위로 찾으므로 병합 뒤 작업 공간이
