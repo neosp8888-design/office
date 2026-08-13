@@ -12,6 +12,10 @@ struct OfficeGameApp: App {
         WindowGroup("OFFICESTRA") {
             OfficeLaunchRootView(coordinator: launchCoordinator)
                 .environment(\.locale, OfficeLocalization.locale)
+                // 대화뿐 아니라 사용량·세션 정보·설정 안내까지 화면의
+                // 모든 글자를 드래그해 복사할 수 있게 한다. 버튼 라벨과
+                // 코드 줄번호처럼 선택이 방해가 되는 곳만 개별로 끈다.
+                .textSelection(.enabled)
         }
         .defaultSize(width: 1_440, height: 900)
         .windowResizability(.contentMinSize)
