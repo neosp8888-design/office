@@ -1,7 +1,10 @@
 // 이 파일은 공급자 직접 한도와 PostgreSQL 사용량 집계 계약을 검증한다.
 
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
@@ -9,6 +12,7 @@ import {
   parseClaudeRateLimits,
   parseCodexRateLimits,
   readClaudeRateLimits,
+  readCodexRateLimits,
   readUsageActivity,
 } from "../src/usage-summary.mjs";
 
@@ -41,6 +45,51 @@ test("Codex app-server 한도는 창 길이로 5시간과 7일을 구분한다",
       plan: "Pro",
     },
   );
+});
+
+test("Codex 직접 조회는 백엔드 작업 폴더와 무관한 홈에서 실행한다", async () => {
+  let invocation;
+  const child = new EventEmitter();
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => {};
+  child.stdin.setEncoding("utf8");
+  child.stdin.on("data", (message) => {
+    if (!message.includes('"id":2')) return;
+    child.stdout.write(`${JSON.stringify({
+      id: 2,
+      result: {
+        rateLimits: {
+          planType: "pro",
+          primary: {
+            usedPercent: 34,
+            windowDurationMins: 10_080,
+            resetsAt: 1_800_000_000,
+          },
+        },
+      },
+    })}\n`);
+  });
+  const pool = {
+    query: async () => ({
+      rows: [{ path: "/opt/test/bin/codex" }],
+    }),
+  };
+
+  const result = await readCodexRateLimits({
+    pool,
+    spawnProcess: (executable, arguments_, options) => {
+      invocation = { executable, arguments_, options };
+      return child;
+    },
+  });
+
+  assert.equal(invocation.executable, "/opt/test/bin/codex");
+  assert.deepEqual(invocation.arguments_, ["app-server", "--stdio"]);
+  assert.equal(invocation.options.cwd, homedir());
+  assert.equal(result.weekly.remaining, 66);
+  assert.equal(result.plan, "Pro");
 });
 
 test("Claude OAuth 사용률은 남은 비율로 변환한다", () => {

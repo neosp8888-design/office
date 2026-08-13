@@ -107,6 +107,7 @@ export async function readCodexRateLimits({
   const executable = await configuredCodexExecutable(pool);
   const result = await new Promise((resolveResult, rejectResult) => {
     const child = spawnProcess(executable, ["app-server", "--stdio"], {
+      cwd: homedir(),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
