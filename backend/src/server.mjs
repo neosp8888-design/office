@@ -1132,7 +1132,24 @@ async function queryTurnFeed({
           'changedFiles', task_workspace.changed_files,
           'mergedCommit', task_workspace.merged_commit,
           'errorMessage', task_workspace.error_message,
-          'autoRetryCount', task_workspace.auto_retry_count
+          'autoRetryCount', task_workspace.auto_retry_count,
+          'autoRepairPaused', task_workspace.auto_repair_paused,
+          'autoWaitingForPeer', task_workspace.auto_waiting_for_peer,
+          -- 자동 승인이 켜져 있고 재시도가 소진되지 않았으면 사용자
+          -- 확인이 필요 없는 자동 병합 대기 상태다. 앱이 승인 버튼을
+          -- 잠깐 띄웠다 지우지 않도록 서버가 판정해 내려준다.
+          'automaticApprovalPending', (
+            task_workspace.status = 'awaiting_approval'
+            AND task_workspace.auto_repair_paused = false
+            AND COALESCE(
+              (
+                SELECT auto_approve_workspaces
+                FROM automation_settings
+                WHERE singleton = true
+              ),
+              true
+            )
+          )
         ) AS review
         FROM task_workspaces AS task_workspace
         WHERE task_workspace.review_turn_id = t.id

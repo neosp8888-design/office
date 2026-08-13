@@ -136,3 +136,66 @@ test("백엔드는 대기 중 자동 승인을 주기적으로 겹치지 않게 
   assert.match(serverSource, /timer\.unref\(\)/);
   assert.match(serverSource, /startAutomaticWorkspaceApprovalRetryLoop\(\)/);
 });
+
+test("live-feed는 자동 병합 예정 여부를 서버에서 판정해 내려준다", () => {
+  // 앱이 설정과 상태를 따로 조합하면 타이밍에 따라 승인 버튼이
+  // 잠깐 그려진다. 판정은 서버 한 곳에서만 한다.
+  assert.match(serverSource, /'automaticApprovalPending', \(/);
+  assert.match(
+    serverSource,
+    /task_workspace\.status = 'awaiting_approval'/,
+  );
+  assert.match(
+    serverSource,
+    /AND task_workspace\.auto_repair_paused = false/,
+  );
+  assert.match(
+    serverSource,
+    /SELECT auto_approve_workspaces\s+FROM automation_settings\s+WHERE singleton = true/,
+  );
+  // 설정 행이 없으면 기본 활성화 계약(true)을 따른다.
+  assert.match(serverSource, /COALESCE\(\s+\(\s+SELECT auto_approve_workspaces/);
+  // 최종 대기 판별에 필요한 원본 플래그도 함께 노출한다.
+  assert.match(
+    serverSource,
+    /'autoRepairPaused', task_workspace\.auto_repair_paused/,
+  );
+});
+
+test("검토 상세 조회는 설정을 읽지 못하면 수동 검토 화면으로 떨어진다", async () => {
+  const { AgentRuntime } = await import("../src/agent-runtime.mjs");
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => {
+        throw new Error("설정 조회 실패");
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+
+  assert.equal(
+    await runtime.automaticWorkspaceApprovalEnabledBestEffort(),
+    false,
+  );
+});
+
+test("검토 상세 조회는 자동 승인 설정을 payload 판정에 넘긴다", () => {
+  const runtimeSource = readFileSync(
+    new URL("../src/agent-runtime.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    runtimeSource,
+    /workspaceReviewPayload\(record\.workspace, diff, \{\s*automaticApprovalEnabled:/,
+  );
+  assert.match(
+    runtimeSource,
+    /automaticApprovalPending: Boolean\(\s*automaticApprovalEnabled/,
+  );
+  assert.match(
+    runtimeSource,
+    /&& workspace\.status === "awaiting_approval"\s*&& !workspace\.autoRepairPaused/,
+  );
+});

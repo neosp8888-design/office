@@ -1510,6 +1510,82 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
+    func testAutomaticMergePendingHidesUserDecisionUntilFinalWait() {
+        // 자동 병합 예정 구간에서는 확인 버튼을 만들지 않는다.
+        let automaticPending = makeWorkspace(
+            status: .awaitingApproval,
+            automaticApprovalPending: true
+        )
+        XCTAssertFalse(
+            automaticPending.awaitsUserDecision,
+            "자동 병합 예정 상태에서 확인 버튼이 잠깐 나타나면 "
+                + "카드 높이가 흔들립니다."
+        )
+        XCTAssertTrue(automaticPending.showsAutomaticMergeProgress)
+
+        // 자동 재시도가 소진된 최종 대기는 사용자 확인이 필요하다.
+        let finalWait = makeWorkspace(
+            status: .awaitingApproval,
+            automaticApprovalPending: false
+        )
+        XCTAssertTrue(
+            finalWait.awaitsUserDecision,
+            "자동 병합이 끝내 실패한 상태에서는 승인·거절을 "
+                + "사용자가 할 수 있어야 합니다."
+        )
+        XCTAssertFalse(finalWait.showsAutomaticMergeProgress)
+
+        // 필드를 모르는 예전 서버 응답은 기존처럼 수동 검토로 본다.
+        let legacyPayload = makeWorkspace(status: .awaitingApproval)
+        XCTAssertTrue(legacyPayload.awaitsUserDecision)
+        XCTAssertFalse(legacyPayload.showsAutomaticMergeProgress)
+
+        // 자동 병합 예정이어도 승인 자체의 유효성은 그대로다.
+        // 사용자가 확인을 보게 되는 시점에 바로 승인할 수 있어야 한다.
+        XCTAssertTrue(automaticPending.canApprove)
+
+        // 병합이 끝난 뒤에는 어느 쪽 표시도 남지 않는다.
+        let merged = makeWorkspace(
+            status: .merged,
+            automaticApprovalPending: false
+        )
+        XCTAssertFalse(merged.awaitsUserDecision)
+        XCTAssertFalse(merged.showsAutomaticMergeProgress)
+    }
+
+    func testAutomaticMergePendingDecodesFromServerPayload() throws {
+        let payload = Data(
+            #"""
+            {
+              "status": "awaiting_approval",
+              "repositoryRoot": "/repo",
+              "worktreePath": "/tmp/worktree",
+              "executionWorkdir": "/tmp/worktree",
+              "branchName": "officestra/left-woman/task",
+              "baseBranch": "main",
+              "baseCommit": "base",
+              "reviewTree": "tree",
+              "headCommit": "head",
+              "changedFiles": [],
+              "mergedCommit": null,
+              "errorMessage": null,
+              "diff": null,
+              "diffTruncated": null,
+              "automaticApprovalPending": true
+            }
+            """#.utf8
+        )
+
+        let review = try JSONDecoder().decode(
+            TurnWorkspaceReview.self,
+            from: payload
+        )
+
+        XCTAssertEqual(review.automaticApprovalPending, true)
+        XCTAssertFalse(review.awaitsUserDecision)
+        XCTAssertTrue(review.showsAutomaticMergeProgress)
+    }
+
     func testWorkspaceApprovalRequiresOnlyCurrentReviewTree() {
         let unopenedDiff = makeWorkspace(status: .awaitingApproval)
         let loadedDiff = makeWorkspace(
@@ -1671,7 +1747,8 @@ final class LiveFeedStoreTests: XCTestCase {
         status: WorkspaceReviewStatus,
         reviewTree: String? = "review-tree",
         diff: String? = nil,
-        diffTruncated: Bool? = nil
+        diffTruncated: Bool? = nil,
+        automaticApprovalPending: Bool? = nil
     ) -> TurnWorkspaceReview {
         TurnWorkspaceReview(
             status: status,
@@ -1692,7 +1769,8 @@ final class LiveFeedStoreTests: XCTestCase {
             mergedCommit: status == .merged ? "merged" : nil,
             errorMessage: nil,
             diff: diff,
-            diffTruncated: diffTruncated
+            diffTruncated: diffTruncated,
+            automaticApprovalPending: automaticApprovalPending
         )
     }
 
