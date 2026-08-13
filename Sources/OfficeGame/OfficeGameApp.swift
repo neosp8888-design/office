@@ -856,6 +856,7 @@ private struct LiveWorkspaceCommandBar: View {
     @State private var attachmentSelectionError: String?
     @State private var isPreparingAttachments = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     let onShowProfile: (OfficeCharacter) -> Void
 
@@ -1049,8 +1050,9 @@ private struct LiveWorkspaceCommandBar: View {
                                 )
                             )
                             .foregroundStyle(
-                                Color.primary.opacity(
-                                    isSelected ? 0.88 : 0.56
+                                CharacterSelectorLabelStyle.color(
+                                    isSelected: isSelected,
+                                    colorScheme: colorScheme
                                 )
                             )
                             .lineLimit(1)
@@ -1165,6 +1167,28 @@ private struct LiveWorkspaceCommandBar: View {
         return OfficeLocalization.string("캐릭터를 선택하세요")
     }
 
+}
+
+enum CharacterSelectorLabelStyle {
+    static func usesDarkSelectedText(
+        isSelected: Bool,
+        colorScheme: ColorScheme
+    ) -> Bool {
+        isSelected && colorScheme == .dark
+    }
+
+    static func color(
+        isSelected: Bool,
+        colorScheme: ColorScheme
+    ) -> Color {
+        if usesDarkSelectedText(
+            isSelected: isSelected,
+            colorScheme: colorScheme
+        ) {
+            return Color.black
+        }
+        return Color.primary.opacity(isSelected ? 0.88 : 0.56)
+    }
 }
 
 private extension OfficeGameView {
