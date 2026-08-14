@@ -396,7 +396,9 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 
         for cycle in 1...4 {
             var previousBossHost = liveFeedHost(in: container)
-            weak let releasedPreviousBossHost = previousBossHost
+            let releasedPreviousBossHost = WeakTestReference(
+                previousBossHost
+            )
             previousBossHost = nil
             director.selectedCharacterID = .leftMan
             rootHost.layoutSubtreeIfNeeded()
@@ -426,7 +428,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 "\(cycle)회차 전환 중 live NSHostingView가 겹쳤습니다."
             )
             XCTAssertNil(
-                releasedPreviousBossHost,
+                releasedPreviousBossHost.value,
                 "\(cycle)회차 비선택 백부장 SwiftUI 그래프가 해제되지 않았습니다."
             )
 
@@ -445,7 +447,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 
             let expectedStep = cycle * 10 + 5
             var leftManHost = liveFeedHost(in: container)
-            weak let releasedLeftManHost = leftManHost
+            let releasedLeftManHost = WeakTestReference(leftManHost)
             leftManHost = nil
             director.selectedCharacterID = .boss
             rootHost.layoutSubtreeIfNeeded()
@@ -475,7 +477,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 "\(cycle)회차 복귀 중 live NSHostingView가 겹쳤습니다."
             )
             XCTAssertNil(
-                releasedLeftManHost,
+                releasedLeftManHost.value,
                 "\(cycle)회차 비선택 클대리 SwiftUI 그래프가 해제되지 않았습니다."
             )
 
@@ -612,7 +614,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         }
         for character in selectionSequence {
             var previousHost = liveFeedHost(in: container)
-            weak let releasedPreviousHost = previousHost
+            let releasedPreviousHost = WeakTestReference(previousHost)
             director.selectedCharacterID = character
             container.configure(
                 director: director,
@@ -663,7 +665,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             let didReleasePreviousHost = try await waitUntil(
                 timeout: .seconds(1)
             ) {
-                releasedPreviousHost == nil
+                releasedPreviousHost.value == nil
             }
             XCTAssertTrue(
                 didReleasePreviousHost,
@@ -1472,7 +1474,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 "\(character.rawValue) 회귀 데이터가 실제 Claude backend가 아닙니다."
             )
             var previousHost = liveFeedHost(in: container)
-            weak let releasedPreviousHost = previousHost
+            let releasedPreviousHost = WeakTestReference(previousHost)
             director.selectedCharacterID = character
             container.configure(
                 director: director,
@@ -1510,7 +1512,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 "Claude 화면 전환 중 live host가 겹쳤습니다."
             )
             XCTAssertNil(
-                releasedPreviousHost,
+                releasedPreviousHost.value,
                 "Claude 전환 중 비선택 직원의 SwiftUI host가 남았습니다."
             )
 
@@ -2831,5 +2833,13 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 private final class FlippedScrollDocumentView: NSView {
     override var isFlipped: Bool {
         true
+    }
+}
+
+private final class WeakTestReference<Object: AnyObject> {
+    weak var value: Object?
+
+    init(_ value: Object?) {
+        self.value = value
     }
 }
