@@ -13,10 +13,6 @@ struct PendingAgentQuestion: Identifiable, Equatable {
 @MainActor
 final class CharacterSelectionStore: ObservableObject {
     @Published private(set) var selectedCharacterID: OfficeCharacter?
-    // 같은 직원을 다시 선택한 것과 동일한 효과를 내기 위한 토큰이다.
-    // 값이 바뀌면 대화 화면을 다른 직원에 갔다 돌아왔을 때처럼
-    // 새 호스트로 다시 만들고 목록을 다시 발행한다.
-    @Published private(set) var feedRemountToken = 0
 
     init(selectedCharacterID: OfficeCharacter? = .boss) {
         self.selectedCharacterID = selectedCharacterID
@@ -27,10 +23,6 @@ final class CharacterSelectionStore: ObservableObject {
             return
         }
         selectedCharacterID = characterID
-    }
-
-    func requestFeedRemount() {
-        feedRemountToken &+= 1
     }
 }
 
@@ -1202,15 +1194,6 @@ final class AgentDirector: ObservableObject {
                 latestSubmittedTurnID = started.turnId
                 scheduleRealtimeFeedRefresh(turnID: started.turnId)
                 latestStartedCommandID = commandID
-                // CLI로 넘긴 뒤 딱 한 번, 같은 직원을 다시 선택한 것과
-                // 동일하게 대화 화면을 새로 만든다. 제출 순간의 표시
-                // 창·스크롤 보정에 기대지 않고 목록을 처음부터 다시
-                // 그리므로 흰 화면이 남지 않는다.
-                if characterSelectionStore.selectedCharacterID
-                    == character.id
-                {
-                    characterSelectionStore.requestFeedRemount()
-                }
             } catch {
                 liveFeedStore.removeOptimisticTurn(id: optimisticTurnID)
                 runningCharacters.remove(character.id)

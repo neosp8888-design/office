@@ -305,7 +305,11 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(container.subviews.count, 1)
+        XCTAssertLessThanOrEqual(
+            container.liveHostingViewCountForTesting,
+            1,
+            "빠른 전환 중 live SwiftUI 호스트가 겹쳤습니다."
+        )
         let clock = ContinuousClock()
         let startedAt = clock.now
         try await settle(for: .seconds(2))
@@ -315,7 +319,260 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             "입력 종료 뒤에도 live feed transaction이 "
                 + "메인 스레드를 점유합니다."
         )
-        XCTAssertEqual(container.subviews.count, 1)
+        XCTAssertEqual(container.liveHostingViewCountForTesting, 1)
+        XCTAssertEqual(
+            container.activeCharacterIDForTesting,
+            director.selectedCharacterID
+        )
+        XCTAssertFalse(
+            container.hasTransitionSnapshotForTesting,
+            "빠른 전환이 끝난 뒤 정적 차폐 이미지가 남았습니다."
+        )
+    }
+
+    func testReturningToStreamingEmployeeStartsInDocumentAndQuiesces()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let baseDate = Date(timeIntervalSinceReferenceDate: 80_000)
+        let leftManTurns = (0..<10).map { index in
+            makeTurn(
+                id: "left-man-stable-\(index)",
+                characterID: OfficeCharacter.leftMan.rawValue,
+                prompt: "클대리 대화 \(index)",
+                response: "클대리의 완료 응답 \(index)",
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(TimeInterval(index))
+            )
+        }
+        var bossTurns = try makeComplexBossTurns(
+            updateStep: 0,
+            baseDate: baseDate
+        )
+        director.liveFeedStore.replace(with: bossTurns + leftManTurns)
+        director.liveFeedStore.finishInitialLoading()
+
+        let rootHost = NSHostingView(
+            rootView: CachedLiveWorkspaceFeeds(director: director)
+                .frame(width: 900, height: 700)
+        )
+        rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(
+            contentRect: rootHost.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = rootHost
+        rootHost.layoutSubtreeIfNeeded()
+
+        guard let container = allDescendants(of: rootHost)
+            .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
+            .first
+        else {
+            XCTFail("직원 복귀 회귀 테스트의 live feed container가 없습니다.")
+            window.contentView = nil
+            return
+        }
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        let didMountBoss = try await waitUntil(
+            in: rootHost,
+            timeout: .seconds(2)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && self.primaryScrollView(in: container) != nil
+        }
+        XCTAssertTrue(didMountBoss, "첫 백부장 대화 화면이 준비되지 않았습니다.")
+
+        let bossStore = director.liveFeedStore.characterStore(
+            for: OfficeCharacter.boss.rawValue
+        )
+        var finalScrollView: NSScrollView?
+        var finalDocumentView: NSView?
+
+        for cycle in 1...4 {
+            var previousBossHost = liveFeedHost(in: container)
+            weak let releasedPreviousBossHost = previousBossHost
+            previousBossHost = nil
+            director.selectedCharacterID = .leftMan
+            rootHost.layoutSubtreeIfNeeded()
+            XCTAssertTrue(
+                container.hasTransitionSnapshotForTesting,
+                "\(cycle)회차 클대리 전환 준비 중 이전 화면 차폐가 없습니다."
+            )
+            var maximumLiveHostCount = liveFeedHostCount(in: container)
+            let didMountLeftMan = try await waitUntil(
+                in: rootHost,
+                timeout: .seconds(2)
+            ) {
+                maximumLiveHostCount = max(
+                    maximumLiveHostCount,
+                    self.liveFeedHostCount(in: container)
+                )
+                return container.activeCharacterIDForTesting == .leftMan
+                    && self.primaryScrollView(in: container) != nil
+            }
+            XCTAssertTrue(
+                didMountLeftMan,
+                "\(cycle)회차 클대리 전환 화면이 준비되지 않았습니다."
+            )
+            XCTAssertLessThanOrEqual(
+                maximumLiveHostCount,
+                1,
+                "\(cycle)회차 전환 중 live NSHostingView가 겹쳤습니다."
+            )
+            XCTAssertNil(
+                releasedPreviousBossHost,
+                "\(cycle)회차 비선택 백부장 SwiftUI 그래프가 해제되지 않았습니다."
+            )
+
+            // 백부장 호스트가 화면에서 빠진 동안 실제 스트리밍처럼 응답과
+            // 활동 수를 여러 번 늘린다. 이 갱신은 숨은 호스트를 살려 두지
+            // 않으면서도 복귀 첫 프레임에는 전부 반영돼야 한다.
+            for step in 1...5 {
+                bossTurns = try makeComplexBossTurns(
+                    updateStep: cycle * 10 + step,
+                    baseDate: baseDate
+                )
+                director.liveFeedStore.replace(with: bossTurns + leftManTurns)
+                rootHost.layoutSubtreeIfNeeded()
+                try await settle(for: .milliseconds(6))
+            }
+
+            let expectedStep = cycle * 10 + 5
+            var leftManHost = liveFeedHost(in: container)
+            weak let releasedLeftManHost = leftManHost
+            leftManHost = nil
+            director.selectedCharacterID = .boss
+            rootHost.layoutSubtreeIfNeeded()
+            XCTAssertTrue(
+                container.hasTransitionSnapshotForTesting,
+                "\(cycle)회차 백부장 복귀 준비 중 이전 화면 차폐가 없습니다."
+            )
+            maximumLiveHostCount = liveFeedHostCount(in: container)
+            let didReturnToBoss = try await waitUntil(
+                in: rootHost,
+                timeout: .seconds(2)
+            ) {
+                maximumLiveHostCount = max(
+                    maximumLiveHostCount,
+                    self.liveFeedHostCount(in: container)
+                )
+                return container.activeCharacterIDForTesting == .boss
+                    && self.primaryScrollView(in: container) != nil
+            }
+            XCTAssertTrue(
+                didReturnToBoss,
+                "\(cycle)회차 백부장 복귀 화면이 준비되지 않았습니다."
+            )
+            XCTAssertLessThanOrEqual(
+                maximumLiveHostCount,
+                1,
+                "\(cycle)회차 복귀 중 live NSHostingView가 겹쳤습니다."
+            )
+            XCTAssertNil(
+                releasedLeftManHost,
+                "\(cycle)회차 비선택 클대리 SwiftUI 그래프가 해제되지 않았습니다."
+            )
+
+            guard
+                let returnedHost = liveFeedHost(in: container),
+                let returnedScrollView = primaryScrollView(in: container),
+                let returnedDocumentView = returnedScrollView.documentView
+            else {
+                XCTFail("\(cycle)회차 복귀 첫 유효 프레임의 scroll 계층이 없습니다.")
+                return
+            }
+
+            XCTAssertTrue(returnedHost.superview === container)
+
+            // activeCharacterIDForTesting은 pending 호스트가 준비돼 실제로
+            // 화면에 교체된 순간에만 바뀐다. 따라서 여기의 첫 assertion이
+            // 사용자가 보게 되는 복귀 첫 유효 프레임을 검사한다.
+            assertViewportIntersectsDocument(
+                returnedScrollView,
+                step: "\(cycle)회차 복귀 첫 유효 프레임"
+            )
+            XCTAssertEqual(
+                bossStore.turns.first?.id,
+                "boss-streaming",
+                "숨은 동안 갱신된 최신 running 턴이 복귀 때 보존되지 않았습니다."
+            )
+            XCTAssertEqual(
+                bossStore.turns.first?.activities.count,
+                expectedStep,
+                "숨은 동안 늘어난 activities가 복귀 첫 프레임에 반영되지 않았습니다."
+            )
+            XCTAssertTrue(
+                bossStore.turns.first?.response.contains(
+                    "스트리밍 갱신 \(expectedStep)"
+                ) == true,
+                "숨은 동안 늘어난 응답이 복귀 첫 프레임에 반영되지 않았습니다."
+            )
+
+            try await settle(for: .milliseconds(350))
+            rootHost.layoutSubtreeIfNeeded()
+            assertViewportIntersectsDocument(
+                returnedScrollView,
+                step: "\(cycle)회차 복귀 정착 후"
+            )
+            let snapshot = LiveWorkspaceFeedScrollGeometry.snapshot(
+                documentBounds: returnedDocumentView.bounds,
+                visibleRect: returnedScrollView.documentVisibleRect,
+                isFlipped: returnedDocumentView.isFlipped
+            )
+            XCTAssertLessThanOrEqual(
+                snapshot.distanceFromBottom,
+                20,
+                "\(cycle)회차 복귀 뒤 최신 running 턴이 보이는 하단에 "
+                    + "정착하지 않았습니다."
+            )
+
+            finalScrollView = returnedScrollView
+            finalDocumentView = returnedDocumentView
+        }
+
+        guard
+            let finalScrollView,
+            let finalDocumentView
+        else {
+            XCTFail("최종 복귀의 scroll 계층이 없습니다.")
+            return
+        }
+        var geometryNotificationCount = 0
+        let notificationCenter = NotificationCenter.default
+        let registrations = [
+            notificationCenter.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: finalScrollView.contentView,
+                queue: .main
+            ) { _ in
+                geometryNotificationCount += 1
+            },
+            notificationCenter.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: finalDocumentView,
+                queue: .main
+            ) { _ in
+                geometryNotificationCount += 1
+            },
+        ]
+        defer {
+            registrations.forEach(notificationCenter.removeObserver)
+        }
+
+        try await settle(for: .seconds(1))
+        XCTAssertLessThanOrEqual(
+            geometryNotificationCount,
+            12,
+            "복귀와 스트리밍 입력이 끝난 뒤에도 geometry가 "
+                + "\(geometryNotificationCount)회 변했습니다. 하단 보정이나 "
+                + "레이아웃 작업이 정착하지 않았습니다."
+        )
     }
 
     func testRapidSelectionReleasesInactiveHostsAndCreatesFreshHosts()
@@ -327,74 +584,92 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         let container = CachedLiveWorkspaceFeedsNSView(
             frame: NSRect(x: 0, y: 0, width: 900, height: 700)
         )
-
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
         defer {
             container.tearDown()
+            window.contentView = nil
         }
 
-        var firstBossHost: NSView?
-        weak var releasedFirstBossHost: NSView?
-        var previouslyAttachedHost: NSView?
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        let didMountInitialBoss = try await waitUntil(
+            in: container,
+            timeout: .seconds(2)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && container.liveHostingViewCountForTesting == 1
+        }
+        XCTAssertTrue(didMountInitialBoss, "첫 백부장 호스트가 준비되지 않았습니다.")
+
         let selectionSequence = (0..<3).flatMap { _ in
-            OfficeCharacter.allCases
+            OfficeCharacter.allCases.filter { $0 != .boss } + [.boss]
         }
-
         for character in selectionSequence {
+            var previousHost = liveFeedHost(in: container)
+            weak let releasedPreviousHost = previousHost
             director.selectedCharacterID = character
             container.configure(
                 director: director,
                 selectedCharacterID: character
             )
             container.layoutSubtreeIfNeeded()
+            previousHost = nil
 
-            guard container.subviews.count == 1 else {
-                XCTFail(
-                    "직원 \(character.rawValue) 선택 뒤 연결된 호스트가 "
-                        + "\(container.subviews.count)개입니다. 선택된 호스트 "
-                        + "하나만 view/window 계층에 남아야 합니다."
+            XCTAssertTrue(
+                container.hasTransitionSnapshotForTesting,
+                "직원 \(character.rawValue) 전환 준비 중 정적 차폐가 없습니다."
+            )
+
+            XCTAssertLessThanOrEqual(
+                container.liveHostingViewCountForTesting,
+                1,
+                "직원 전환 시작부터 live NSHostingView는 하나 이하여야 합니다."
+            )
+            var maximumLiveHostCount =
+                container.liveHostingViewCountForTesting
+            let didActivate = try await waitUntil(
+                in: container,
+                timeout: .seconds(2)
+            ) {
+                maximumLiveHostCount = max(
+                    maximumLiveHostCount,
+                    container.liveHostingViewCountForTesting
                 )
+                return container.activeCharacterIDForTesting == character
+                    && self.primaryScrollView(in: container) != nil
+            }
+            XCTAssertTrue(
+                didActivate,
+                "직원 \(character.rawValue) 호스트가 준비되지 않았습니다."
+            )
+            XCTAssertLessThanOrEqual(
+                maximumLiveHostCount,
+                1,
+                "직원 \(character.rawValue) 전환 중 live 호스트가 "
+                    + "\(maximumLiveHostCount)개 겹쳤습니다."
+            )
+
+            guard let attachedHost = liveFeedHost(in: container) else {
+                XCTFail("직원 \(character.rawValue)의 live 호스트가 없습니다.")
                 return
             }
-
-            let attachedHost = container.subviews[0]
-            XCTAssertFalse(attachedHost.isHidden)
-
-            if firstBossHost == nil, character == .boss {
-                firstBossHost = attachedHost
-                releasedFirstBossHost = attachedHost
-            } else if
-                character == .boss,
-                let firstBossHost
-            {
-                XCTAssertFalse(
-                    attachedHost === firstBossHost,
-                    "직원 복귀 때 이전 NSHostingView를 재사용하면 비활성 "
-                        + "SwiftUI 그래프가 계속 살아 있습니다."
-                )
+            XCTAssertTrue(attachedHost.superview === container)
+            let didReleasePreviousHost = try await waitUntil(
+                timeout: .seconds(1)
+            ) {
+                releasedPreviousHost == nil
             }
-
-            if
-                let previouslyAttachedHost,
-                previouslyAttachedHost !== attachedHost
-            {
-                XCTAssertNil(previouslyAttachedHost.superview)
-                XCTAssertNil(
-                    previouslyAttachedHost.window,
-                    "비선택 호스트가 window에 남으면 스크롤 관찰자와 "
-                        + "애니메이션이 계속 동작할 수 있습니다."
-                )
-            }
-
-            previouslyAttachedHost = attachedHost
+            XCTAssertTrue(
+                didReleasePreviousHost,
+                "비선택 직원의 NSHostingView가 해제되지 않았습니다."
+            )
         }
-
-        firstBossHost = nil
-        try await settle(for: .milliseconds(50))
-        XCTAssertNil(
-            releasedFirstBossHost,
-            "컨테이너가 비활성 직원의 NSHostingView와 전체 SwiftUI "
-                + "그래프를 계속 강하게 보유하고 있습니다."
-        )
 
         director.selectedCharacterID = nil
         container.configure(
@@ -402,34 +677,38 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             selectedCharacterID: nil
         )
 
-        XCTAssertTrue(container.subviews.isEmpty)
-        weak var releasedLastHost: NSView?
-        releasedLastHost = previouslyAttachedHost
-        XCTAssertNil(previouslyAttachedHost?.superview)
-        XCTAssertNil(previouslyAttachedHost?.window)
-        previouslyAttachedHost = nil
-        try await settle(for: .milliseconds(50))
-        XCTAssertNil(releasedLastHost)
+        XCTAssertEqual(container.liveHostingViewCountForTesting, 0)
+        XCTAssertNil(container.activeCharacterIDForTesting)
+        XCTAssertNil(container.pendingCharacterIDForTesting)
+        XCTAssertFalse(container.hasTransitionSnapshotForTesting)
 
         director.selectedCharacterID = .boss
         container.configure(
             director: director,
             selectedCharacterID: .boss
         )
-
-        XCTAssertEqual(container.subviews.count, 1)
-        XCTAssertNotNil(container.subviews.first)
+        let didRestoreBoss = try await waitUntil(
+            in: container,
+            timeout: .seconds(2)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && container.liveHostingViewCountForTesting == 1
+        }
+        XCTAssertTrue(didRestoreBoss)
     }
 
-    func testFeedRemountTokenRebuildsSameEmployeeHostLikeReselection()
+    func testSameEmployeeSubmissionKeepsEntireScrollHierarchyIdentity()
         async throws
     {
         let director = AgentDirector(startBackgroundTasks: false)
-        director.liveFeedStore.replace(with: makeTurns())
-        director.liveFeedStore.finishInitialLoading()
-        let characterStore = director.liveFeedStore.characterStore(
-            for: OfficeCharacter.boss.rawValue
+        let baseDate = Date(timeIntervalSinceReferenceDate: 70_000)
+        var persistedTurns = Array(
+            makeTurns()
+                .filter { $0.characterId == OfficeCharacter.boss.rawValue }
+                .prefix(10)
         )
+        director.liveFeedStore.replace(with: persistedTurns)
+        director.liveFeedStore.finishInitialLoading()
         let container = CachedLiveWorkspaceFeedsNSView(
             frame: NSRect(x: 0, y: 0, width: 900, height: 700)
         )
@@ -447,103 +726,73 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 
         container.configure(
             director: director,
-            selectedCharacterID: .boss,
-            feedRemountToken: 0
+            selectedCharacterID: .boss
         )
         container.layoutSubtreeIfNeeded()
-        let didPublishInitialMount = try await waitUntil(in: container) {
-            characterStore.presentationRevision > 0
+        let didMount = try await waitUntil(
+            in: container,
+            timeout: .seconds(2)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && self.primaryScrollView(in: container) != nil
         }
         XCTAssertTrue(
-            didPublishInitialMount,
-            "첫 선택 뒤 목록 재발행이 제한 시간 안에 일어나지 않았습니다."
+            didMount,
+            "동일 직원 제출 전 대화 계층이 준비되지 않았습니다."
         )
 
-        var mountedHost: NSView? = container.subviews.first
-        guard mountedHost != nil else {
-            XCTFail("첫 선택에서 대화 호스트가 만들어지지 않았습니다.")
+        guard
+            let mountedHost = liveFeedHost(in: container),
+            let mountedScrollView = primaryScrollView(in: container),
+            let mountedDocumentView = mountedScrollView.documentView
+        else {
+            XCTFail("제출 전 NSHostingView/NSScrollView/documentView가 없습니다.")
             return
         }
-        let revisionAfterMount = characterStore.presentationRevision
-        XCTAssertEqual(revisionAfterMount, 1)
 
-        // 같은 직원·같은 토큰의 재구성은 아무것도 다시 만들지 않는다.
-        container.configure(
-            director: director,
-            selectedCharacterID: .boss,
-            feedRemountToken: 0
+        let localID = "local-same-employee-identity"
+        let serverID = "server-same-employee-identity"
+        let optimistic = makeTurn(
+            id: localID,
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "같은 직원에게 새 업무",
+            status: .running,
+            startedAt: baseDate
         )
+        director.liveFeedStore.insertOptimisticTurn(optimistic)
+        container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
-        XCTAssertTrue(
-            container.subviews.first === mountedHost,
-            "토큰이 그대로면 기존 호스트를 유지해야 합니다."
-        )
-        XCTAssertNotNil(mountedHost)
-        XCTAssertEqual(
-            characterStore.presentationRevision,
-            revisionAfterMount,
-            "토큰이 그대로면 목록을 다시 발행하지 않아야 합니다."
-        )
+        try await settle(for: .milliseconds(20))
 
-        // 제출이 CLI로 넘어간 뒤의 재마운트 요청. 다른 직원에 갔다
-        // 돌아온 것과 똑같이 호스트를 새로 만들고 목록을 다시 발행한다.
-        let mountedHostID = ObjectIdentifier(mountedHost!)
-        weak var releasedHost: NSView?
-        releasedHost = mountedHost
-        mountedHost = nil
-        container.configure(
-            director: director,
-            selectedCharacterID: .boss,
-            feedRemountToken: 1
+        director.liveFeedStore.reconcileOptimisticTurn(
+            id: localID,
+            with: serverID
         )
+        container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(20))
 
-        guard let remountedHost = container.subviews.first else {
-            XCTFail("재마운트 뒤 대화 호스트가 없습니다.")
-            return
-        }
-        XCTAssertNotEqual(
-            ObjectIdentifier(remountedHost),
-            mountedHostID,
-            "재마운트 요청이 기존 호스트를 그대로 뒀습니다. 직원 전환과 "
-                + "같은 경로를 타지 않았습니다."
-        )
-        XCTAssertEqual(
-            container.subviews.count,
-            1,
-            "이전 호스트가 화면에 남아 있으면 안 됩니다."
-        )
-        let didRepublish = try await waitUntil(in: container) {
-            characterStore.presentationRevision > revisionAfterMount
-        }
-        XCTAssertTrue(
-            didRepublish,
-            "재마운트 뒤 목록 재발행이 제한 시간 안에 일어나지 않았습니다."
-        )
-        XCTAssertGreaterThan(
-            characterStore.presentationRevision,
-            revisionAfterMount,
-            "재마운트 뒤 목록 재발행이 일어나지 않았습니다."
-        )
-        let remountedScrollView = try await waitForPrimaryScrollView(
-            in: container
-        )
-        XCTAssertNotNil(
-            remountedScrollView,
-            "재마운트 뒤 대화 목록이 실제로 다시 mount되어야 합니다."
-        )
+        persistedTurns.insert(optimistic.replacingID(with: serverID), at: 0)
+        director.liveFeedStore.replace(with: persistedTurns)
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(100))
 
-        let didReleasePreviousHost = try await waitUntil {
-            releasedHost == nil
-        }
         XCTAssertTrue(
-            didReleasePreviousHost,
-            "재마운트로 버려진 이전 호스트가 제한 시간 안에 해제되지 "
-                + "않았습니다."
+            liveFeedHost(in: container) === mountedHost,
+            "같은 직원 제출이 NSHostingView를 직원 전환처럼 교체했습니다."
         )
-        XCTAssertNil(
-            releasedHost,
-            "재마운트로 버려진 이전 호스트가 해제되지 않았습니다."
+        XCTAssertTrue(
+            primaryScrollView(in: container) === mountedScrollView,
+            "같은 직원 제출이 NSScrollView를 교체했습니다."
+        )
+        XCTAssertTrue(
+            mountedScrollView.documentView === mountedDocumentView,
+            "같은 직원 제출이 대화 documentView를 교체했습니다."
+        )
+        assertViewportIntersectsDocument(
+            mountedScrollView,
+            step: "같은 직원 제출 정착 후"
         )
     }
 
@@ -1156,7 +1405,9 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         response: String = "",
         status: LiveTurnStatus,
         needsInput: Bool = false,
-        startedAt: Date
+        startedAt: Date,
+        updatedAt: Date? = nil,
+        activities: [LiveFeedActivity] = []
     ) -> LiveFeedTurn {
         LiveFeedTurn(
             id: id,
@@ -1179,12 +1430,120 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             wikiProposalWarning: nil,
             startedAt: startedAt,
             endedAt: status.isRunning ? nil : startedAt,
-            updatedAt: startedAt,
+            updatedAt: updatedAt ?? startedAt,
             estimatedCostUsd: nil,
             sessionContext: nil,
-            activities: [],
+            activities: activities,
             sources: nil,
             workspace: nil
+        )
+    }
+
+    private func makeComplexBossTurns(
+        updateStep: Int,
+        baseDate: Date
+    ) throws -> [LiveFeedTurn] {
+        let completedTurns = (0..<9).map { index in
+            let response = """
+            ### 완료 카드 \(index)
+
+            | 항목 | 값 |
+            |---|---|
+            | 카드 | \(index) |
+            | 상태 | 완료 |
+
+            - 복귀할 때도 이 Markdown 카드가 유지되어야 합니다.
+            - 문서 높이가 충분히 커야 viewport 이탈을 검출할 수 있습니다.
+
+            ```text
+            완료 카드 \(index)의 여러 줄 코드 블록
+            첫 번째 줄
+            두 번째 줄
+            세 번째 줄
+            네 번째 줄
+            ```
+            """
+            return makeTurn(
+                id: "boss-completed-\(index)",
+                characterID: OfficeCharacter.boss.rawValue,
+                prompt: "백부장 완료 업무 \(index)",
+                response: response,
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(TimeInterval(index))
+            )
+        }
+        let activities = try (0..<updateStep).map { index in
+            try makeActivity(
+                id: "boss-stream-activity-\(index)",
+                kind: index.isMultiple(of: 2) ? "reasoning" : "command",
+                text: "숨은 동안 추가된 활동 \(index)",
+                status: index == updateStep - 1 ? "running" : "completed",
+                occurredAt: baseDate.addingTimeInterval(
+                    101 + TimeInterval(index)
+                )
+            )
+        }
+        let running = makeTurn(
+            id: "boss-streaming",
+            characterID: OfficeCharacter.boss.rawValue,
+            prompt: "백부장 실행 중 업무",
+            response: String(
+                repeating: "스트리밍 갱신 \(updateStep) 본문입니다.\n",
+                count: max(1, updateStep)
+            ),
+            status: .running,
+            startedAt: baseDate.addingTimeInterval(100),
+            updatedAt: baseDate.addingTimeInterval(100 + TimeInterval(updateStep)),
+            activities: activities
+        )
+        return [running] + Array(completedTurns.reversed())
+    }
+
+    private func makeActivity(
+        id: String,
+        kind: String,
+        text: String,
+        status: String,
+        occurredAt: Date
+    ) throws -> LiveFeedActivity {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": id,
+            "kind": kind,
+            "text": text,
+            "status": status,
+            "occurredAt": occurredAt.timeIntervalSince1970,
+        ])
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode(LiveFeedActivity.self, from: data)
+    }
+
+    private func assertViewportIntersectsDocument(
+        _ scrollView: NSScrollView,
+        step: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let documentView = scrollView.documentView else {
+            XCTFail("\(step): 대화 문서가 없습니다.", file: file, line: line)
+            return
+        }
+        let intersection = scrollView.documentVisibleRect.intersection(
+            documentView.bounds
+        )
+        XCTAssertGreaterThan(
+            intersection.width,
+            0,
+            "\(step): viewport 가로 영역이 문서와 겹치지 않습니다.",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThan(
+            intersection.height,
+            0,
+            "\(step): viewport가 문서 밖 흰 영역을 보고 있습니다.",
+            file: file,
+            line: line
         )
     }
 
@@ -1219,6 +1578,18 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 lhs.bounds.width * lhs.bounds.height
                     < rhs.bounds.width * rhs.bounds.height
             }
+    }
+
+    private func liveFeedHost(in container: NSView) -> NSView? {
+        container.subviews.first { subview in
+            primaryScrollView(in: subview) != nil
+        }
+    }
+
+    private func liveFeedHostCount(in container: NSView) -> Int {
+        container.subviews.count { subview in
+            primaryScrollView(in: subview) != nil
+        }
     }
 
     private func waitForPrimaryScrollView(
