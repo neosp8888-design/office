@@ -9,7 +9,6 @@
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
-  <a href="https://github.com/neosp8888-design/office/releases/tag/v1.3.2"><img src="https://img.shields.io/badge/Release-v1.3.2-4C78A8" alt="Release v1.3.2"></a>
 </p>
 
 OFFICESTRA는 여러 CLI 세션을 터미널 창마다 따로 관리하는 대신, 하나의
@@ -184,64 +183,25 @@ Git 저장소가 아닌 `workdir`는 기존 공유 폴더 방식으로 실행된
 
 ## 설치
 
-OFFICESTRA Community Preview는 Apple Silicon(M1 이상)과 macOS 14 이상에서
-동작한다. Intel Mac은 지원하지 않는다. 일반 비-Git 폴더를 사용하는 사람은
-Swift, Xcode, Node.js, npm, Git이나 저장소 clone이 필요 없다. 앱에 Node와
-백엔드가 포함되어 있고, 첫 실행 도우미가 기존 데이터를 보존하면서 PostgreSQL
-준비·마이그레이션·백엔드 연결을 자동 처리한다.
-
-현재 미리보기에서 사용자가 먼저 준비할 것은 두 가지뿐이다.
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치와 최초 실행
-- Codex CLI 또는 Claude Code CLI 중 하나의 설치와 로그인
-
-Git 저장소를 선택해 worktree 격리·검토·병합 기능을 쓰려는 경우에만 Mac에
-`git`이 필요하다. Git이 없는 일반 폴더는 공유 폴더 방식으로 그대로 동작한다.
+OFFICESTRA는 Apple Silicon(M1 이상)과 macOS 14 이상을 지원한다. Intel Mac은
+지원하지 않는다. 현재 저장소는 실행 앱, DMG, 앱 ZIP을 배포하지 않으며 최신
+`main` 소스만 제공한다. 실행하려면 Apple 개발 도구, Node.js, Docker Desktop,
+Codex CLI 또는 Claude Code CLI 하나가 필요하다.
 
 모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수 있다.
 
 ### 가장 쉬운 방법
 
-`v1.3.2`에는 DMG가 없다. 공식 바이너리 산출물은 Apple Silicon용 ZIP과
-`SHA256SUMS`뿐이다.
-
-1. [Releases](https://github.com/neosp8888-design/office/releases)에서
-   Apple Silicon용 `arm64` `adhoc` ZIP을 받는다. Community Preview는 Apple
-   Developer ID 서명이나 Apple 공증을 받지 않았으므로 macOS가 첫 실행을
-   차단할 수 있다. 공식 저장소의 Release 파일인지 확인하고 함께 제공되는
-   `SHA256SUMS`와 일치할 때만 설치한다.
-2. ZIP 압축을 풀고 `OFFICESTRA.app`을 `Applications`로 옮긴 뒤 실행한다.
-3. macOS가 차단하면 임의의 터미널 명령을 실행하지 않는다. 앱을 한 번 실행한 뒤
-   `Apple 메뉴 → 시스템 설정 → 개인정보 보호 및 보안 → 보안 → 그래도 열기`를
-   누르고 로그인 암호 또는 Touch ID로 인증한 다음 **열기**를 선택한다. 이 예외는
-   OFFICESTRA 앱 하나에만 적용된다. **그래도 열기**는 첫 실행 시도 뒤 약 1시간
-   동안 표시된다. 자세한 내용은 [Apple 공식 안내](https://support.apple.com/ko-kr/102445)를 참고한다.
-4. 직원들이 작업할 프로젝트 폴더를 선택한다.
-5. 준비 화면에서 Docker·Codex·Claude 상태를 확인한다. 누락된 항목만 준비한 뒤
-   **다시 확인**을 누르면 DB와 백엔드가 자동으로 이어서 시작된다.
-6. 새 설치에서는 Codex 또는 Claude Code 하나만 로그인돼 있어도 다섯 직원이
-   그 CLI로 자동 맞춰지고 바로 첫 업무를 보낼 수 있다. 기존 데이터에 다른 CLI
-   직원 설정이 남아 있으면 대화와 설정을 바꾸지 않고 해당 로그인을 요청한다.
-
-`xattr`, `sudo spctl --master-disable` 또는 Gatekeeper 전체 비활성화는 필요하지
-않으며 권장하지 않는다. 보안 예외를 허용하고 싶지 않으면 아래 개발자용 절차로
-이 태그의 소스를 직접 빌드한다. 체크섬은 Release 파일의 무결성을 확인하지만
-Apple 공증을 대신하지 않는다. 회사에서 관리하는 Mac은 조직 정책에 따라
-**그래도 열기**가 제한될 수 있다.
-
-Apple Silicon ZIP과 `SHA256SUMS`를 다운로드한 경우 터미널에서 아래 한 줄을
-실행해 `OK`가 나오는지 확인한다.
+GitHub 저장소의 **Code → Download ZIP**으로 현재 `main` 소스를 받을 수 있다.
+이 ZIP은 실행 앱이 아니라 소스 코드다. Git을 사용한다면 다음 명령으로 같은
+최신 소스를 받을 수 있다.
 
 ```sh
-cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.zip$' SHA256SUMS | shasum -a 256 -c -
+git clone --depth 1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
 ```
 
-설치 오류가 나면 준비 화면의 **로그 열기**로 진단 폴더를 열 수 있다. 앱은
-모르는 4317 프로세스를 종료하지 않으며, 다른 프로젝트용 OFFICESTRA 백엔드가
-실행 중이면 경로를 표시하고 중단한다.
-
-릴리스 담당자의 Community Preview와 향후 Developer ID 공증 배포 절차는
-[릴리스 가이드](docs/RELEASING.md)에 정리되어 있다.
+태그와 GitHub Release는 운영하지 않는다. 아래 절차에 따라 소스에서 직접
+실행하며, 배포 원칙은 [소스 공개 정책](docs/RELEASING.md)에 정리되어 있다.
 
 <details>
 <summary><strong>소스에서 직접 빌드하는 개발자용 명령 보기</strong></summary>
@@ -334,14 +294,14 @@ claude
 
 아래 clone 명령은 `~/OFFICESTRA` 폴더가 없을 때만 실행한다. 이미 있다면 삭제하거나
 덮어쓰지 말고 Codex나 Claude에게 기존 설치 상태 확인을 맡긴다.
-이 명령은 공개된 `v1.3.2` 버전을 고정해 내려받는다.
+이 명령은 현재 기본 브랜치의 최신 소스를 내려받는다.
 
 ```sh
-git clone --branch v1.3.2 --depth 1 \
+git clone --depth 1 \
   https://github.com/neosp8888-design/office.git \
   "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
-git describe --tags --exact-match
+git rev-parse HEAD
 ```
 
 직원들이 작업할 폴더를 하나 만든 뒤 공개 예시 경로를 자신의 경로로 바꾼다.
