@@ -1323,7 +1323,10 @@ private final class LiveWorkspaceFeedLoadingGateView: NSView {
     private let iconView: NSImageView
     private let label: NSTextField
 
-    override var isOpaque: Bool {
+    // isOpaque를 선언하고 상위 레이어에 직접 그리면 AppKit이 뒤쪽
+    // 그리기를 건너뛰어 배경 채움이 대화 영역 밖까지 번진다. 자기
+    // 레이어의 배경색만 쓰고 불투명 선언은 하지 않는다.
+    override var wantsUpdateLayer: Bool {
         true
     }
 
@@ -1346,6 +1349,8 @@ private final class LiveWorkspaceFeedLoadingGateView: NSView {
         identifier = NSUserInterfaceItemIdentifier(
             "live-workspace-feed-loading-gate"
         )
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         autoresizingMask = [.width, .height]
         addSubview(iconView)
         addSubview(label)
@@ -1361,9 +1366,8 @@ private final class LiveWorkspaceFeedLoadingGateView: NSView {
         nil
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        dirtyRect.fill()
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
     }
 
     override func layout() {
