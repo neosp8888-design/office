@@ -105,6 +105,15 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
                 + "갱신 루프에 빠졌을 때의 증상입니다. (스트레스 구간 "
                 + "\(Int(busyCPU * 100))%)"
         )
+        let didFinishFinalTransition = try await waitNaturallyUntil(
+            timeout: .seconds(6)
+        ) {
+            container.subviews.count == 1
+        }
+        XCTAssertTrue(
+            didFinishFinalTransition,
+            "마지막 직원 전환이 끝난 뒤에도 로딩 차폐나 이전 host가 남았습니다."
+        )
         XCTAssertEqual(container.subviews.count, 1)
     }
 
@@ -272,6 +281,22 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
     private func settle(for duration: Duration) async throws {
         try await Task.sleep(for: duration)
         await Task.yield()
+    }
+
+    private func waitNaturallyUntil(
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(20),
+        condition: () -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        repeat {
+            if condition() {
+                return true
+            }
+            try await settle(for: pollInterval)
+        } while clock.now < deadline
+        return condition()
     }
 
     private func primaryScrollView(in root: NSView) -> NSScrollView? {

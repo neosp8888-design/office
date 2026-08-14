@@ -12,17 +12,53 @@ struct PendingAgentQuestion: Identifiable, Equatable {
 
 @MainActor
 final class CharacterSelectionStore: ObservableObject {
-    @Published private(set) var selectedCharacterID: OfficeCharacter?
+    private struct State: Equatable {
+        var selectedCharacterID: OfficeCharacter?
+        var isConversationLoading: Bool
+    }
+
+    @Published private var state: State
+
+    var selectedCharacterID: OfficeCharacter? {
+        state.selectedCharacterID
+    }
+
+    var isConversationLoading: Bool {
+        state.isConversationLoading
+    }
 
     init(selectedCharacterID: OfficeCharacter? = .boss) {
-        self.selectedCharacterID = selectedCharacterID
+        state = State(
+            selectedCharacterID: selectedCharacterID,
+            // 첫 직원 대화도 실제 NSWindow와 문서 높이가 준비되기 전에는
+            // 입력하거나 다른 직원을 선택하지 못하게 한다.
+            isConversationLoading: selectedCharacterID != nil
+        )
     }
 
     func select(_ characterID: OfficeCharacter?) {
-        guard selectedCharacterID != characterID else {
+        guard state.selectedCharacterID != characterID else {
             return
         }
-        selectedCharacterID = characterID
+        state = State(
+            selectedCharacterID: characterID,
+            isConversationLoading: characterID != nil
+        )
+    }
+
+    func canSelect(_ characterID: OfficeCharacter) -> Bool {
+        !state.isConversationLoading
+            || state.selectedCharacterID == characterID
+    }
+
+    func completeConversationLoading(for characterID: OfficeCharacter) {
+        guard
+            state.selectedCharacterID == characterID,
+            state.isConversationLoading
+        else {
+            return
+        }
+        state.isConversationLoading = false
     }
 }
 
@@ -36,6 +72,7 @@ final class CharacterLiveFeedStore: ObservableObject {
     @Published private(set) var turns: [LiveFeedTurn]
     @Published private(set) var isLoadingInitialFeed: Bool
     @Published private(set) var presentationRevision = 0
+    private(set) var mountReadinessRevision = 0
 
     private var latestTurns: [LiveFeedTurn]
     private var latestIsLoadingInitialFeed: Bool
@@ -78,14 +115,25 @@ final class CharacterLiveFeedStore: ObservableObject {
         guard isPresented else {
             return
         }
+        mountReadinessRevision &+= 1
         presentationRevision &+= 1
     }
 
     private func publishLatestIfNeeded() {
-        if turns != latestTurns {
+        let didChangeTurns = turns != latestTurns
+        let didChangeLoadingState =
+            isLoadingInitialFeed != latestIsLoadingInitialFeed
+        guard didChangeTurns || didChangeLoadingState else {
+            return
+        }
+        // SwiftUI의 Published 갱신이 HostedLiveWorkspaceFeed를 다시 계산할 때
+        // mount reporter가 의미 있는 피드 변경만 구분해 재확인 예산을
+        // 재무장할 수 있도록 먼저 revision을 올린다.
+        mountReadinessRevision &+= 1
+        if didChangeTurns {
             turns = latestTurns
         }
-        if isLoadingInitialFeed != latestIsLoadingInitialFeed {
+        if didChangeLoadingState {
             isLoadingInitialFeed = latestIsLoadingInitialFeed
         }
     }
@@ -1062,6 +1110,9 @@ final class AgentDirector: ObservableObject {
     }
 
     func select(_ character: CharacterConfiguration) {
+        guard characterSelectionStore.canSelect(character.id) else {
+            return
+        }
         hasUserChosenCharacter = true
         var remainingCompletedCharacters =
             unreviewedCompletedCharacters

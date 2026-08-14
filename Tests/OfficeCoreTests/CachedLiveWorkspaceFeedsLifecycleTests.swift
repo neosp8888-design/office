@@ -325,7 +325,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             director.selectedCharacterID
         )
         XCTAssertFalse(
-            container.hasTransitionSnapshotForTesting,
+            container.hasTransitionLoadingGateForTesting,
             "빠른 전환이 끝난 뒤 정적 차폐 이미지가 남았습니다."
         )
     }
@@ -401,7 +401,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             director.selectedCharacterID = .leftMan
             rootHost.layoutSubtreeIfNeeded()
             XCTAssertTrue(
-                container.hasTransitionSnapshotForTesting,
+                container.hasTransitionLoadingGateForTesting,
                 "\(cycle)회차 클대리 전환 준비 중 이전 화면 차폐가 없습니다."
             )
             var maximumLiveHostCount = liveFeedHostCount(in: container)
@@ -450,7 +450,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             director.selectedCharacterID = .boss
             rootHost.layoutSubtreeIfNeeded()
             XCTAssertTrue(
-                container.hasTransitionSnapshotForTesting,
+                container.hasTransitionLoadingGateForTesting,
                 "\(cycle)회차 백부장 복귀 준비 중 이전 화면 차폐가 없습니다."
             )
             maximumLiveHostCount = liveFeedHostCount(in: container)
@@ -622,7 +622,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             previousHost = nil
 
             XCTAssertTrue(
-                container.hasTransitionSnapshotForTesting,
+                container.hasTransitionLoadingGateForTesting,
                 "직원 \(character.rawValue) 전환 준비 중 정적 차폐가 없습니다."
             )
 
@@ -680,7 +680,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertEqual(container.liveHostingViewCountForTesting, 0)
         XCTAssertNil(container.activeCharacterIDForTesting)
         XCTAssertNil(container.pendingCharacterIDForTesting)
-        XCTAssertFalse(container.hasTransitionSnapshotForTesting)
+        XCTAssertFalse(container.hasTransitionLoadingGateForTesting)
 
         director.selectedCharacterID = .boss
         container.configure(
@@ -695,6 +695,451 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 && container.liveHostingViewCountForTesting == 1
         }
         XCTAssertTrue(didRestoreBoss)
+    }
+
+    func testInitialLoadingGateHoldsBossToRightManUntilFeedIsReady()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        // 첫 snapshot이 오기 전의 기본 백부장 mount를 시작한 직후
+        // 코과장으로 선택이 바뀌는 실제 재시작 경합을 재현한다.
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss
+        )
+        container.layoutSubtreeIfNeeded()
+        XCTAssertTrue(container.hasTransitionLoadingGateForTesting)
+        XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
+        XCTAssertLessThanOrEqual(container.liveHostingViewCountForTesting, 1)
+        XCTAssertNil(container.activeCharacterIDForTesting)
+
+        director.selectedCharacterID = .rightMan
+        container.configure(
+            director: director,
+            selectedCharacterID: .rightMan
+        )
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(
+            container.hasTransitionLoadingGateForTesting,
+            "첫 피드를 기다리는 코과장 전환에서 로딩 차폐가 사라졌습니다."
+        )
+        XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
+        XCTAssertNil(
+            container.pendingCharacterIDForTesting,
+            "새 host는 로딩 차폐가 먼저 그려진 다음 main-queue 차례에 만들어야 합니다."
+        )
+        XCTAssertNil(container.activeCharacterIDForTesting)
+        XCTAssertEqual(container.liveHostingViewCountForTesting, 0)
+        XCTAssertEqual(
+            container.hitTest(
+                NSPoint(x: container.bounds.midX, y: container.bounds.midY)
+            )?.identifier?.rawValue,
+            "live-workspace-feed-loading-gate",
+            "로딩 차폐가 전환 중 hit-test를 받아 스크롤·클릭을 막아야 합니다."
+        )
+
+        let baseDate = Date(timeIntervalSinceReferenceDate: 120_000)
+        let rightManTurns = (0..<12).map { index in
+            makeTurn(
+                id: "initial-right-man-\(index)",
+                characterID: OfficeCharacter.rightMan.rawValue,
+                prompt: "코과장 초기 대화 \(index)",
+                response: String(
+                    repeating: "코과장 검증 결과 \(index)입니다.\n",
+                    count: 8
+                ),
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(TimeInterval(index))
+            )
+        }
+        director.liveFeedStore.replace(with: rightManTurns)
+        director.liveFeedStore.finishInitialLoading()
+
+        var maximumLiveHostCount = container.liveHostingViewCountForTesting
+        let didActivateRightMan = try await waitNaturallyUntil(
+            timeout: .seconds(4)
+        ) {
+            maximumLiveHostCount = max(
+                maximumLiveHostCount,
+                container.liveHostingViewCountForTesting
+            )
+            return container.activeCharacterIDForTesting == .rightMan
+                && !container.hasTransitionLoadingGateForTesting
+                && !director.characterSelectionStore.isConversationLoading
+        }
+        XCTAssertTrue(
+            didActivateRightMan,
+            "피드 반영 뒤 코과장 화면이 자연 run-loop에서 준비되지 않았습니다."
+        )
+        XCTAssertLessThanOrEqual(
+            maximumLiveHostCount,
+            1,
+            "초기 피드 전환 중 live host가 겹쳤습니다."
+        )
+        XCTAssertNil(container.pendingCharacterIDForTesting)
+        XCTAssertFalse(container.hasTransitionLoadingGateForTesting)
+        XCTAssertFalse(director.characterSelectionStore.isConversationLoading)
+
+        guard let scrollView = primaryScrollView(in: container) else {
+            XCTFail("준비된 코과장 대화의 NSScrollView가 없습니다.")
+            return
+        }
+        assertViewportIntersectsDocument(
+            scrollView,
+            step: "초기 피드 뒤 코과장 첫 표시"
+        )
+    }
+
+    func testInitialFeedCompletionAfterThreeSecondsRearmsMountChecks()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(3_200))
+        XCTAssertTrue(container.hasTransitionLoadingGateForTesting)
+        XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
+
+        director.liveFeedStore.replace(
+            with: Array(
+                makeTurns()
+                    .filter {
+                        $0.characterId == OfficeCharacter.boss.rawValue
+                    }
+                    .prefix(10)
+            )
+        )
+        director.liveFeedStore.finishInitialLoading()
+
+        let didActivate = try await waitNaturallyUntil(
+            timeout: .seconds(4)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+                && !director.characterSelectionStore.isConversationLoading
+        }
+        XCTAssertTrue(
+            didActivate,
+            "3초 자동 확인 예산 뒤 피드가 도착해도 준비 판정이 재무장되어야 합니다."
+        )
+    }
+
+    func testSelectionGatePrecedesAsynchronousHostReplacement()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.liveFeedStore.replace(with: makeTurns())
+        director.liveFeedStore.finishInitialLoading()
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(director: director, selectedCharacterID: .boss)
+        let didMountBoss = try await waitNaturallyUntil(
+            timeout: .seconds(3)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didMountBoss)
+        let bossHost = liveFeedHost(in: container)
+
+        director.selectedCharacterID = .leftWoman
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        container.configure(
+            director: director,
+            selectedCharacterID: .leftWoman
+        )
+        let configureElapsed = startedAt.duration(to: clock.now)
+
+        XCTAssertLessThan(
+            configureElapsed,
+            .milliseconds(100),
+            "직원 전환 configure가 긴 대화 host를 동기로 생성했습니다."
+        )
+        XCTAssertTrue(container.hasTransitionLoadingGateForTesting)
+        XCTAssertTrue(liveFeedHost(in: container) === bossHost)
+        XCTAssertEqual(container.activeCharacterIDForTesting, .boss)
+        XCTAssertNil(container.pendingCharacterIDForTesting)
+
+        let didMountLeftWoman = try await waitNaturallyUntil(
+            timeout: .seconds(4)
+        ) {
+            container.activeCharacterIDForTesting == .leftWoman
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didMountLeftWoman)
+    }
+
+    func testPendingViewportReclampsAfterDocumentGrowAndShrink()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let baseDate = Date(timeIntervalSinceReferenceDate: 140_000)
+        func turns(lineCount: Int) -> [LiveFeedTurn] {
+            (0..<10).map { index in
+                let startedAt = baseDate.addingTimeInterval(
+                    TimeInterval(index)
+                )
+                return makeTurn(
+                    id: "reclamp-\(index)",
+                    characterID: OfficeCharacter.leftWoman.rawValue,
+                    prompt: "높이 변경 \(index)",
+                    response: String(
+                        repeating: "Markdown 높이 검증 줄입니다.\n",
+                        count: lineCount
+                    ),
+                    status: .completed,
+                    startedAt: startedAt,
+                    updatedAt: startedAt.addingTimeInterval(
+                        TimeInterval(lineCount)
+                    ),
+                    backend: .claude
+                )
+            }
+        }
+
+        director.liveFeedStore.replace(with: turns(lineCount: 8))
+        director.liveFeedStore.finishInitialLoading()
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        director.selectedCharacterID = .leftWoman
+        container.configure(
+            director: director,
+            selectedCharacterID: .leftWoman
+        )
+        let didClampInitialHeight = try await waitNaturallyUntil(
+            timeout: .seconds(3),
+            pollInterval: .milliseconds(10)
+        ) {
+            container.pendingCharacterIDForTesting == .leftWoman
+                && container.viewportClampCountForTesting >= 1
+                && container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didClampInitialHeight)
+
+        director.liveFeedStore.replace(with: turns(lineCount: 80))
+        let didReclampGrownHeight = try await waitNaturallyUntil(
+            timeout: .seconds(3),
+            pollInterval: .milliseconds(10)
+        ) {
+            container.viewportClampCountForTesting >= 2
+        }
+        XCTAssertTrue(
+            didReclampGrownHeight,
+            "문서가 커진 뒤 새 안정 높이에서 viewport를 다시 보정하지 않았습니다."
+        )
+
+        director.liveFeedStore.replace(with: turns(lineCount: 2))
+        let didReclampShrunkHeight = try await waitNaturallyUntil(
+            timeout: .seconds(3),
+            pollInterval: .milliseconds(10)
+        ) {
+            container.viewportClampCountForTesting >= 3
+        }
+        XCTAssertTrue(
+            didReclampShrunkHeight,
+            "문서가 줄어든 뒤 문서 밖 origin을 다시 보정하지 않았습니다."
+        )
+
+        let didActivate = try await waitNaturallyUntil(
+            timeout: .seconds(3)
+        ) {
+            container.activeCharacterIDForTesting == .leftWoman
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didActivate)
+        guard let scrollView = primaryScrollView(in: container) else {
+            XCTFail("grow/shrink 뒤 NSScrollView가 없습니다.")
+            return
+        }
+        assertViewportIntersectsDocument(
+            scrollView,
+            step: "grow/shrink 재보정 뒤 첫 표시"
+        )
+    }
+
+    func testClaudeTranscriptTransitionsStayCoveredUntilViewportIsReady()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let baseDate = Date(timeIntervalSinceReferenceDate: 130_000)
+        let bossTurns = Array(
+            makeTurns()
+                .filter { $0.characterId == OfficeCharacter.boss.rawValue }
+                .prefix(10)
+        )
+        let leftWomanTurns = try makeClaudeTurns(
+            characterID: .leftWoman,
+            label: "로과장",
+            baseDate: baseDate
+        )
+        let leftManTurns = try makeClaudeTurns(
+            characterID: .leftMan,
+            label: "클대리",
+            baseDate: baseDate.addingTimeInterval(1_000)
+        )
+        director.liveFeedStore.replace(
+            with: bossTurns + leftWomanTurns + leftManTurns
+        )
+        director.liveFeedStore.finishInitialLoading()
+
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        let didMountBoss = try await waitNaturallyUntil(
+            timeout: .seconds(4)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didMountBoss, "Claude 전환 전 백부장 화면이 준비되지 않았습니다.")
+
+        for character in [OfficeCharacter.leftWoman, .leftMan] {
+            XCTAssertTrue(
+                director.liveFeedStore.turns(for: character.rawValue)
+                    .allSatisfy {
+                        $0.characterBackend == .claude
+                            && $0.backend == .claude
+                    },
+                "\(character.rawValue) 회귀 데이터가 실제 Claude backend가 아닙니다."
+            )
+            var previousHost = liveFeedHost(in: container)
+            weak let releasedPreviousHost = previousHost
+            director.selectedCharacterID = character
+            container.configure(
+                director: director,
+                selectedCharacterID: character
+            )
+            container.layoutSubtreeIfNeeded()
+            previousHost = nil
+
+            XCTAssertTrue(
+                container.hasTransitionLoadingGateForTesting,
+                "긴 Claude transcript 전환 직후 로딩 차폐가 없습니다."
+            )
+            XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
+            XCTAssertLessThanOrEqual(container.liveHostingViewCountForTesting, 1)
+
+            var maximumLiveHostCount = container.liveHostingViewCountForTesting
+            let didActivate = try await waitNaturallyUntil(
+                timeout: .seconds(6)
+            ) {
+                maximumLiveHostCount = max(
+                    maximumLiveHostCount,
+                    container.liveHostingViewCountForTesting
+                )
+                return container.activeCharacterIDForTesting == character
+                    && !container.hasTransitionLoadingGateForTesting
+                    && !director.characterSelectionStore.isConversationLoading
+            }
+            XCTAssertTrue(
+                didActivate,
+                "긴 Claude transcript가 준비된 뒤에도 차폐가 해제되지 않았습니다."
+            )
+            XCTAssertLessThanOrEqual(
+                maximumLiveHostCount,
+                1,
+                "Claude 화면 전환 중 live host가 겹쳤습니다."
+            )
+            XCTAssertNil(
+                releasedPreviousHost,
+                "Claude 전환 중 비선택 직원의 SwiftUI host가 남았습니다."
+            )
+
+            guard let scrollView = primaryScrollView(in: container) else {
+                XCTFail("준비된 Claude transcript의 NSScrollView가 없습니다.")
+                return
+            }
+            assertViewportIntersectsDocument(
+                scrollView,
+                step: "\(character.rawValue) Claude 첫 표시"
+            )
+            guard let documentView = scrollView.documentView else {
+                XCTFail("준비된 Claude transcript documentView가 없습니다.")
+                return
+            }
+            let snapshot = LiveWorkspaceFeedScrollGeometry.snapshot(
+                documentBounds: documentView.bounds,
+                visibleRect: scrollView.documentVisibleRect,
+                isFlipped: documentView.isFlipped
+            )
+            XCTAssertLessThanOrEqual(
+                snapshot.distanceFromBottom,
+                20,
+                "Claude transcript가 첫 표시에서 하단에 정착하지 않았습니다."
+            )
+        }
     }
 
     func testSameEmployeeSubmissionKeepsEntireScrollHierarchyIdentity()
@@ -740,6 +1185,8 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             didMount,
             "동일 직원 제출 전 대화 계층이 준비되지 않았습니다."
         )
+        XCTAssertFalse(container.hasTransitionLoadingGateForTesting)
+        XCTAssertFalse(director.characterSelectionStore.isConversationLoading)
 
         guard
             let mountedHost = liveFeedHost(in: container),
@@ -763,6 +1210,11 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
         try await settle(for: .milliseconds(20))
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "같은 직원 optimistic 삽입을 직원 전환으로 오인했습니다."
+        )
+        XCTAssertFalse(director.characterSelectionStore.isConversationLoading)
 
         director.liveFeedStore.reconcileOptimisticTurn(
             id: localID,
@@ -771,12 +1223,22 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
         try await settle(for: .milliseconds(20))
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "같은 직원 server ID 전환에서 로딩 차폐가 생겼습니다."
+        )
+        XCTAssertFalse(director.characterSelectionStore.isConversationLoading)
 
         persistedTurns.insert(optimistic.replacingID(with: serverID), at: 0)
         director.liveFeedStore.replace(with: persistedTurns)
         container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
         try await settle(for: .milliseconds(100))
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "같은 직원 persisted 반영에서 로딩 차폐가 생겼습니다."
+        )
+        XCTAssertFalse(director.characterSelectionStore.isConversationLoading)
 
         XCTAssertTrue(
             liveFeedHost(in: container) === mountedHost,
@@ -904,13 +1366,21 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
         window.contentView = rootHost
         rootHost.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(250))
+
+        let didMountBoss = try await waitNaturallyUntil(
+            timeout: .seconds(3)
+        ) {
+            allDescendants(of: rootHost)
+                .compactMap { $0 as? CachedLiveWorkspaceFeedsNSView }
+                .first?.activeCharacterIDForTesting == .boss
+        }
+        XCTAssertTrue(didMountBoss)
 
         guard
             let container = allDescendants(of: rootHost)
                 .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
                 .first,
-            let mountedHost = container.subviews.first,
+            let mountedHost = liveFeedHost(in: container),
             let mountedScrollView = try await waitForPrimaryScrollView(
                 in: rootHost
             ),
@@ -998,7 +1468,8 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
 
         XCTAssertEqual(director.selectedCharacterID, .boss)
-        XCTAssertEqual(container.subviews.count, 1)
+        XCTAssertEqual(container.liveHostingViewCountForTesting, 1)
+        XCTAssertFalse(container.hasTransitionLoadingGateForTesting)
         XCTAssertLessThanOrEqual(
             snapshot.distanceFromBottom,
             20,
@@ -1407,15 +1878,19 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         needsInput: Bool = false,
         startedAt: Date,
         updatedAt: Date? = nil,
-        activities: [LiveFeedActivity] = []
+        activities: [LiveFeedActivity] = [],
+        backend: AgentBackend = .codex,
+        model: String? = nil
     ) -> LiveFeedTurn {
         LiveFeedTurn(
             id: id,
             characterId: characterID,
             characterName: characterID,
-            characterBackend: .codex,
-            backend: .codex,
-            model: "gpt-5.6-sol",
+            characterBackend: backend,
+            backend: backend,
+            model: model ?? (backend == .claude
+                ? "claude-sonnet-5"
+                : "gpt-5.6-sol"),
             effort: "high",
             fastMode: false,
             externalSessionId: nil,
@@ -1437,6 +1912,69 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             sources: nil,
             workspace: nil
         )
+    }
+
+    private func makeClaudeTurns(
+        characterID: OfficeCharacter,
+        label: String,
+        baseDate: Date
+    ) throws -> [LiveFeedTurn] {
+        try (0..<10).map { turnIndex in
+            let occurredAt = baseDate.addingTimeInterval(
+                TimeInterval(turnIndex * 100)
+            )
+            let activities = try (0..<24).map { activityIndex in
+                let kind: String
+                switch activityIndex % 3 {
+                case 0:
+                    kind = "thinking"
+                case 1:
+                    kind = "tool"
+                default:
+                    kind = "message"
+                }
+                return try makeActivity(
+                    id: "\(characterID.rawValue)-claude-\(turnIndex)-\(activityIndex)",
+                    kind: kind,
+                    text: "\(label) Claude 활동 \(activityIndex): "
+                        + String(
+                            repeating: "긴 transcript 본문과 도구 결과 ",
+                            count: 5
+                        ),
+                    status: "completed",
+                    occurredAt: occurredAt.addingTimeInterval(
+                        TimeInterval(activityIndex)
+                    )
+                )
+            }
+            let response = """
+            ### \(label) Claude 완료 응답 \(turnIndex)
+
+            | 검증 항목 | 결과 |
+            |---|---|
+            | backend | Claude |
+            | transcript | 긴 활동 24개 |
+
+            \((0..<45).map {
+                "- \(label) 장문 Markdown \($0)번째 줄: 화면 전환 중 문서 높이와 viewport가 안정되어야 합니다."
+            }.joined(separator: "\n"))
+
+            ```text
+            \(String(repeating: "Claude 도구 출력과 추론 내용\n", count: 18))
+            ```
+            """
+            return makeTurn(
+                id: "\(characterID.rawValue)-claude-turn-\(turnIndex)",
+                characterID: characterID.rawValue,
+                prompt: "\(label) Claude 업무 \(turnIndex)",
+                response: response,
+                status: .completed,
+                startedAt: occurredAt,
+                updatedAt: occurredAt.addingTimeInterval(30),
+                activities: activities,
+                backend: .claude
+            )
+        }
     }
 
     private func makeComplexBossTurns(
@@ -1568,6 +2106,25 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             try await settle(for: pollInterval)
         } while clock.now < deadline
         root?.layoutSubtreeIfNeeded()
+        return condition()
+    }
+
+    /// AppKit/SwiftUI의 실제 layout 이벤트와 mount reporter만으로 준비되는지
+    /// 확인한다. 기존 waitUntil처럼 4ms마다 layoutSubtreeIfNeeded를 강제로
+    /// 호출하지 않아, 테스트가 준비 신호 결함을 가리지 못하게 한다.
+    private func waitNaturallyUntil(
+        timeout: Duration = .seconds(1),
+        pollInterval: Duration = .milliseconds(20),
+        condition: () -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        repeat {
+            if condition() {
+                return true
+            }
+            try await settle(for: pollInterval)
+        } while clock.now < deadline
         return condition()
     }
 

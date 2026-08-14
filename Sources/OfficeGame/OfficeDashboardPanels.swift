@@ -1139,8 +1139,28 @@ private struct HostedLiveWorkspaceFeed: View {
     let director: AgentDirector
     let characterID: OfficeCharacter
     @ObservedObject var metadataStore: LiveWorkspaceFeedMetadataStore
+    @ObservedObject private var characterFeedStore: CharacterLiveFeedStore
     let presentationStore: LiveWorkspaceFeedPresentationStore
-    let onMountReady: () -> LiveWorkspaceFeedMountReadiness
+    let onMountReady: (Int) -> LiveWorkspaceFeedMountReadiness
+
+    init(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        metadataStore: LiveWorkspaceFeedMetadataStore,
+        presentationStore: LiveWorkspaceFeedPresentationStore,
+        onMountReady: @escaping (Int) -> LiveWorkspaceFeedMountReadiness
+    ) {
+        self.director = director
+        self.characterID = characterID
+        self.metadataStore = metadataStore
+        _characterFeedStore = ObservedObject(
+            wrappedValue: director.liveFeedStore.characterStore(
+                for: characterID.rawValue
+            )
+        )
+        self.presentationStore = presentationStore
+        self.onMountReady = onMountReady
+    }
 
     var body: some View {
         LiveWorkspaceFeed(
@@ -1161,6 +1181,8 @@ private struct HostedLiveWorkspaceFeed: View {
         .textSelection(.enabled)
         .overlay {
             LiveWorkspaceFeedMountReadyReporter(
+                readinessRevision:
+                    characterFeedStore.mountReadinessRevision,
                 onReady: onMountReady
             )
             .allowsHitTesting(false)
@@ -1169,9 +1191,9 @@ private struct HostedLiveWorkspaceFeed: View {
 }
 
 // 직원 전환 중 새 SwiftUI 트리가 실제 window와 유효한 크기를 얻은
-// 시점만 AppKit 컨테이너에 알린다. 폴링이나 타이머로 준비 상태를
-// 추측하지 않고, 자연스러운 layout 이벤트마다 아직 준비되지 않은
-// 경우에만 다시 확인한다.
+// 시점만 AppKit 컨테이너에 알린다. documentView의 비동기 layout 이벤트가
+// overlay까지 전파되지 않는 경우를 위해 mount당 3초로 제한된 재확인만
+// 허용하며, 이후에는 자연스러운 layout/update 이벤트만 받는다.
 private enum LiveWorkspaceFeedMountReadiness: Equatable {
     case waitingForLayout
     case confirmValidLayout
@@ -1179,17 +1201,23 @@ private enum LiveWorkspaceFeedMountReadiness: Equatable {
 }
 
 private struct LiveWorkspaceFeedMountReadyReporter: NSViewRepresentable {
-    let onReady: () -> LiveWorkspaceFeedMountReadiness
+    let readinessRevision: Int
+    let onReady: (Int) -> LiveWorkspaceFeedMountReadiness
 
     func makeNSView(context: Context) -> AttachmentView {
         let view = AttachmentView()
-        view.onReady = onReady
+        view.update(
+            readinessRevision: readinessRevision,
+            onReady: onReady
+        )
         return view
     }
 
     func updateNSView(_ nsView: AttachmentView, context: Context) {
-        nsView.onReady = onReady
-        nsView.scheduleReportIfNeeded()
+        nsView.update(
+            readinessRevision: readinessRevision,
+            onReady: onReady
+        )
     }
 
     static func dismantleNSView(
@@ -1200,21 +1228,38 @@ private struct LiveWorkspaceFeedMountReadyReporter: NSViewRepresentable {
     }
 
     final class AttachmentView: NSView {
-        var onReady: (() -> LiveWorkspaceFeedMountReadiness)?
+        private static let automaticCheckInterval = TimeInterval(0.05)
+        private static let maximumAutomaticCheckCount = 60
+
+        var onReady: ((Int) -> LiveWorkspaceFeedMountReadiness)?
         private var didReportReady = false
         private var isReportScheduled = false
+        private var automaticChecksRemaining = maximumAutomaticCheckCount
+        private var readinessRevision: Int?
+
+        func update(
+            readinessRevision: Int,
+            onReady: @escaping (Int) -> LiveWorkspaceFeedMountReadiness
+        ) {
+            self.onReady = onReady
+            if self.readinessRevision != readinessRevision {
+                self.readinessRevision = readinessRevision
+                automaticChecksRemaining = Self.maximumAutomaticCheckCount
+            }
+            scheduleReportIfNeeded()
+        }
 
         override func layout() {
             super.layout()
-            scheduleReportIfNeeded()
+            scheduleReportIfNeeded(isAutomatic: false)
         }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            scheduleReportIfNeeded()
+            scheduleReportIfNeeded(isAutomatic: false)
         }
 
-        func scheduleReportIfNeeded() {
+        func scheduleReportIfNeeded(isAutomatic: Bool = false) {
             guard
                 !didReportReady,
                 !isReportScheduled,
@@ -1224,8 +1269,14 @@ private struct LiveWorkspaceFeedMountReadyReporter: NSViewRepresentable {
             else {
                 return
             }
+            if isAutomatic {
+                guard automaticChecksRemaining > 0 else {
+                    return
+                }
+                automaticChecksRemaining -= 1
+            }
             isReportScheduled = true
-            DispatchQueue.main.async { [weak self] in
+            let report = { [weak self] in
                 guard let self else {
                     return
                 }
@@ -1238,32 +1289,153 @@ private struct LiveWorkspaceFeedMountReadyReporter: NSViewRepresentable {
                 else {
                     return
                 }
-                switch self.onReady?() ?? .waitingForLayout {
+                switch self.onReady?(
+                    self.readinessRevision ?? -1
+                ) ?? .waitingForLayout {
                 case .waitingForLayout:
-                    break
+                    // 실제 documentView의 뒤늦은 높이 확정은 이 overlay의
+                    // layout을 다시 호출하지 않을 수 있다. mount 동안만
+                    // 제한된 횟수로 재확인하고, 예산을 다 쓰면 자연스러운
+                    // layout/update 이벤트만 기다린다.
+                    self.scheduleReportIfNeeded(isAutomatic: true)
                 case .confirmValidLayout:
-                    // 유효한 geometry를 서로 다른 두 MainActor 차례에서
-                    // 확인한다. 고정 지연이나 무제한 폴링이 아니라 준비
-                    // 판정이 요청한 제한된 확인만 한 번 더 수행한다.
-                    self.scheduleReportIfNeeded()
+                    self.scheduleReportIfNeeded(isAutomatic: true)
                 case .ready:
                     self.didReportReady = true
                 }
+            }
+            if isAutomatic {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + Self.automaticCheckInterval,
+                    execute: report
+                )
+            } else {
+                DispatchQueue.main.async(execute: report)
             }
         }
     }
 }
 
+// SwiftUI 화면을 캡처하면 긴 Claude transcript를 메인 스레드에서 다시
+// layout/draw하며 수 초간 멈출 수 있다. 전환 차폐는 캡처나 SwiftUI graph가
+// 없는 가벼운 AppKit 뷰로 고정한다.
+private final class LiveWorkspaceFeedLoadingGateView: NSView {
+    private let iconView: NSImageView
+    private let label: NSTextField
+
+    override var isOpaque: Bool {
+        true
+    }
+
+    override init(frame frameRect: NSRect) {
+        iconView = NSImageView()
+        iconView.image = NSImage(
+            systemSymbolName: "hourglass",
+            accessibilityDescription: nil
+        )
+        iconView.contentTintColor = .secondaryLabelColor
+        label = NSTextField(
+            labelWithString: OfficeLocalization.string(
+                "대화를 불러오는 중"
+            )
+        )
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .center
+        super.init(frame: frameRect)
+        identifier = NSUserInterfaceItemIdentifier(
+            "live-workspace-feed-loading-gate"
+        )
+        autoresizingMask = [.width, .height]
+        addSubview(iconView)
+        addSubview(label)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel(
+            OfficeLocalization.string("대화를 불러오는 중")
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    override func layout() {
+        super.layout()
+        let iconSize = CGFloat(18)
+        let labelSize = label.intrinsicContentSize
+        let spacing = CGFloat(8)
+        let totalWidth = iconSize + spacing + labelSize.width
+        let originX = max(0, (bounds.width - totalWidth) / 2)
+        let centerY = bounds.midY
+        iconView.frame = NSRect(
+            x: originX,
+            y: centerY - iconSize / 2,
+            width: iconSize,
+            height: iconSize
+        )
+        label.frame = NSRect(
+            x: originX + iconSize + spacing,
+            y: centerY - labelSize.height / 2,
+            width: labelSize.width,
+            height: labelSize.height
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
+    override func scrollWheel(with event: NSEvent) {}
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
+}
+
 @MainActor
 final class CachedLiveWorkspaceFeedsNSView: NSView {
+    private struct ViewportLayoutSignature: Equatable {
+        let documentWidth: Int
+        let documentHeight: Int
+        let viewportWidth: Int
+        let viewportHeight: Int
+
+        init(documentBounds: NSRect, viewportBounds: NSRect) {
+            func bucket(_ value: CGFloat) -> Int {
+                Int((value * 2).rounded())
+            }
+            documentWidth = bucket(documentBounds.width)
+            documentHeight = bucket(documentBounds.height)
+            viewportWidth = bucket(viewportBounds.width)
+            viewportHeight = bucket(viewportBounds.height)
+        }
+    }
+
     @MainActor
     private final class Entry {
         let characterID: OfficeCharacter
+        let characterFeedStore: CharacterLiveFeedStore
         let metadataStore: LiveWorkspaceFeedMetadataStore
         let presentationStore: LiveWorkspaceFeedPresentationStore
         let transitionID: UUID
-        var validViewportPassCount = 0
-        var didClampInitialViewport = false
+        var stablePreClampPassCount = 0
+        var stablePostClampPassCount = 0
+        var lastClampedViewportSignature: ViewportLayoutSignature?
+        var viewportClampCount = 0
+        var lastPreparedReadinessRevision: Int?
+        var didPrepareFirstDisplay = false
+        var didRequestPostMountRefresh = false
+        var lastViewportSignature: ViewportLayoutSignature?
         // NSView로 타입을 소거해 생성 이후 rootView 재할당을 컴파일 단계에서
         // 막는다. 메타데이터 갱신은 metadataStore만 담당한다.
         let hostingView: NSView
@@ -1273,9 +1445,12 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             characterID: OfficeCharacter,
             metadata: LiveWorkspaceFeedMetadata,
             transitionID: UUID,
-            onMountReady: @escaping () -> LiveWorkspaceFeedMountReadiness
+            onMountReady: @escaping (Int) -> LiveWorkspaceFeedMountReadiness
         ) {
             self.characterID = characterID
+            characterFeedStore = director.liveFeedStore.characterStore(
+                for: characterID.rawValue
+            )
             self.transitionID = transitionID
             let metadataStore = LiveWorkspaceFeedMetadataStore(
                 metadata: metadata
@@ -1307,7 +1482,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private weak var director: AgentDirector?
     private var activeEntry: Entry?
     private var pendingEntry: Entry?
-    private var transitionSnapshotView: NSImageView?
+    private var transitionLoadingGateView: LiveWorkspaceFeedLoadingGateView?
     private var selectedCharacterID: OfficeCharacter?
     private var selectionGeneration = 0
 
@@ -1319,14 +1494,20 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         pendingEntry?.characterID
     }
 
-    var hasTransitionSnapshotForTesting: Bool {
-        transitionSnapshotView?.superview === self
+    var hasTransitionLoadingGateForTesting: Bool {
+        transitionLoadingGateView?.superview === self
     }
 
     var liveHostingViewCountForTesting: Int {
         [activeEntry, pendingEntry].compactMap { $0 }.count { entry in
             entry.hostingView.superview === self
         }
+    }
+
+    var viewportClampCountForTesting: Int {
+        pendingEntry?.viewportClampCount
+            ?? activeEntry?.viewportClampCount
+            ?? 0
     }
 
     override init(frame frameRect: NSRect) {
@@ -1372,57 +1553,42 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
         selectionGeneration &+= 1
         let generation = selectionGeneration
-        releasePendingEntry()
-
-        // 이전 live SwiftUI 그래프를 새 그래프와 겹쳐 두면 직원 전환 CPU
-        // 방어가 무너진다. 보이는 한 프레임을 정적 이미지로 먼저 보존한
-        // 뒤 기존 host는 즉시 해제한다.
-        if let activeEntry {
-            installTransitionSnapshotIfPossible(
-                from: activeEntry.hostingView
-            )
-            release(entry: activeEntry)
-            self.activeEntry = nil
-        }
+        installTransitionLoadingGate()
 
         guard let selectedCharacterID else {
-            removeTransitionSnapshot()
+            releasePendingEntry()
+            releaseActiveEntry()
+            removeTransitionLoadingGate()
             return
         }
-
-        let transitionID = UUID()
-        let entry = Entry(
-            director: director,
-            characterID: selectedCharacterID,
-            metadata: metadata,
-            transitionID: transitionID,
-            onMountReady: { [weak self] in
-                self?.completePendingTransition(
-                    transitionID: transitionID,
-                    generation: generation
-                ) ?? .waitingForLayout
+        // 이 configure 차례에서는 가벼운 AppKit 차폐만 실제로 그린다.
+        // 긴 Claude transcript의 새 NSHostingView 생성은 다음 main-queue
+        // 차례로 넘겨 차폐가 먼저 표시될 기회를 보장한다.
+        transitionLoadingGateView?.needsDisplay = true
+        transitionLoadingGateView?.displayIfNeeded()
+        DispatchQueue.main.async { [weak self, weak director] in
+            guard
+                let self,
+                let director,
+                self.director === director,
+                self.selectionGeneration == generation,
+                self.selectedCharacterID == selectedCharacterID
+            else {
+                return
             }
-        )
-        entry.hostingView.frame = bounds
-        entry.hostingView.autoresizingMask = [.width, .height]
-        pendingEntry = entry
-        if let transitionSnapshotView {
-            addSubview(
-                entry.hostingView,
-                positioned: .below,
-                relativeTo: transitionSnapshotView
+            self.mountSelectedCharacter(
+                director: director,
+                characterID: selectedCharacterID,
+                generation: generation
             )
-        } else {
-            addSubview(entry.hostingView)
         }
-        needsLayout = true
     }
 
     func tearDown() {
         selectionGeneration &+= 1
         releasePendingEntry()
         releaseActiveEntry()
-        removeTransitionSnapshot()
+        removeTransitionLoadingGate()
         selectedCharacterID = nil
         director = nil
     }
@@ -1449,49 +1615,61 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         entry.hostingView.removeFromSuperview()
     }
 
-    private func installTransitionSnapshotIfPossible(from view: NSView) {
-        guard transitionSnapshotView == nil else {
+    private func installTransitionLoadingGate() {
+        guard transitionLoadingGateView == nil else {
             return
         }
-        view.layoutSubtreeIfNeeded()
-        guard
-            view.bounds.width > 0,
-            view.bounds.height > 0,
-            let image = snapshotImage(of: view)
-        else {
-            return
-        }
-        let imageView = NSImageView(frame: bounds)
-        imageView.identifier = NSUserInterfaceItemIdentifier(
-            "live-workspace-feed-transition-snapshot"
+        let gate = LiveWorkspaceFeedLoadingGateView(frame: bounds)
+        transitionLoadingGateView = gate
+        addSubview(gate)
+    }
+
+    private func mountSelectedCharacter(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        generation: Int
+    ) {
+        releasePendingEntry()
+        releaseActiveEntry()
+
+        let transitionID = UUID()
+        let entry = Entry(
+            director: director,
+            characterID: characterID,
+            metadata: LiveWorkspaceFeedMetadata(director: director),
+            transitionID: transitionID,
+            onMountReady: { [weak self] readinessRevision in
+                self?.completePendingTransition(
+                    transitionID: transitionID,
+                    generation: generation,
+                    readinessRevision: readinessRevision
+                ) ?? .waitingForLayout
+            }
         )
-        imageView.image = image
-        imageView.imageAlignment = .alignCenter
-        imageView.imageScaling = .scaleAxesIndependently
-        imageView.autoresizingMask = [.width, .height]
-        transitionSnapshotView = imageView
-        addSubview(imageView)
-    }
-
-    private func snapshotImage(of view: NSView) -> NSImage? {
-        let rect = view.bounds
-        if let representation = view.bitmapImageRepForCachingDisplay(in: rect) {
-            view.cacheDisplay(in: rect, to: representation)
-            let image = NSImage(size: rect.size)
-            image.addRepresentation(representation)
-            return image
+        entry.hostingView.frame = bounds
+        entry.hostingView.autoresizingMask = [.width, .height]
+        pendingEntry = entry
+        if let transitionLoadingGateView {
+            addSubview(
+                entry.hostingView,
+                positioned: .below,
+                relativeTo: transitionLoadingGateView
+            )
+        } else {
+            addSubview(entry.hostingView)
         }
-        return NSImage(data: view.dataWithPDF(inside: rect))
+        needsLayout = true
     }
 
-    private func removeTransitionSnapshot() {
-        transitionSnapshotView?.removeFromSuperview()
-        transitionSnapshotView = nil
+    private func removeTransitionLoadingGate() {
+        transitionLoadingGateView?.removeFromSuperview()
+        transitionLoadingGateView = nil
     }
 
     private func completePendingTransition(
         transitionID: UUID,
-        generation: Int
+        generation: Int,
+        readinessRevision: Int
     ) -> LiveWorkspaceFeedMountReadiness {
         guard
             let director,
@@ -1500,10 +1678,21 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             let pendingEntry,
             pendingEntry.transitionID == transitionID,
             pendingEntry.characterID == characterID,
+            pendingEntry.characterFeedStore.mountReadinessRevision
+                == readinessRevision,
             pendingEntry.hostingView.superview === self,
             pendingEntry.hostingView.window === window
         else {
             return .waitingForLayout
+        }
+        if pendingEntry.lastPreparedReadinessRevision
+            != readinessRevision
+        {
+            pendingEntry.lastPreparedReadinessRevision = readinessRevision
+            resetViewportStability(for: pendingEntry)
+            pendingEntry.hostingView.needsLayout = true
+            pendingEntry.hostingView.needsDisplay = true
+            return .confirmValidLayout
         }
         let readiness = prepareInitialViewport(for: pendingEntry)
         guard readiness == .ready else {
@@ -1515,11 +1704,10 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
         self.pendingEntry = nil
         activeEntry = pendingEntry
-        director.liveFeedStore.refreshSelectedCharacterFeedAfterMount(
-            characterID.rawValue
+        removeTransitionLoadingGate()
+        director.characterSelectionStore.completeConversationLoading(
+            for: characterID
         )
-        pendingEntry.hostingView.needsDisplay = true
-        removeTransitionSnapshot()
         return .ready
     }
 
@@ -1531,41 +1719,68 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             host.bounds.width > 0,
             host.bounds.height > 0
         else {
-            entry.validViewportPassCount = 0
+            resetViewportStability(for: entry)
             return .waitingForLayout
         }
         host.layoutSubtreeIfNeeded()
 
+        guard
+            let director,
+            !director.liveFeedStore.characterStore(
+                for: entry.characterID.rawValue
+            ).isLoadingInitialFeed
+        else {
+            resetViewportStability(for: entry)
+            return .waitingForLayout
+        }
+
+        if !entry.didRequestPostMountRefresh {
+            entry.didRequestPostMountRefresh = true
+            director.liveFeedStore.refreshSelectedCharacterFeedAfterMount(
+                entry.characterID.rawValue
+            )
+            resetViewportStability(for: entry)
+            return .confirmValidLayout
+        }
+
         guard let scrollView = primaryScrollView(in: host) else {
             // 대화가 정말 비어 있는 ContentUnavailableView에는 scroll view가
             // 없다. 이 경우 host 자체가 준비됐으면 바로 교체해도 된다.
-            guard
-                let director,
-                let selectedCharacterID
-            else {
-                entry.validViewportPassCount = 0
+            guard let selectedCharacterID else {
+                resetViewportStability(for: entry)
                 return .waitingForLayout
             }
-            guard director.liveFeedStore.turns(
+            let characterStore = director.liveFeedStore.characterStore(
                 for: selectedCharacterID.rawValue
-            ).isEmpty else {
-                entry.validViewportPassCount = 0
+            )
+            guard
+                !characterStore.isLoadingInitialFeed,
+                characterStore.turns.isEmpty
+            else {
+                resetViewportStability(for: entry)
                 return .waitingForLayout
             }
-            entry.validViewportPassCount += 1
-            return entry.validViewportPassCount >= 2
-                ? .ready
-                : .confirmValidLayout
+            entry.stablePostClampPassCount += 1
+            guard entry.stablePostClampPassCount >= 2 else {
+                return .confirmValidLayout
+            }
+            return prepareFirstDisplayIfNeeded(for: entry)
         }
 
         scrollView.layoutSubtreeIfNeeded()
         scrollView.documentView?.layoutSubtreeIfNeeded()
         guard
             let documentView = scrollView.documentView,
+            scrollView.contentView.bounds.width.isFinite,
+            scrollView.contentView.bounds.height.isFinite,
+            documentView.bounds.width.isFinite,
+            documentView.bounds.height.isFinite,
+            scrollView.contentView.bounds.width > 0,
             scrollView.contentView.bounds.height > 0,
+            documentView.bounds.width > 0,
             documentView.bounds.height > 0
         else {
-            entry.validViewportPassCount = 0
+            resetViewportStability(for: entry)
             return .waitingForLayout
         }
 
@@ -1577,16 +1792,33 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             documentBounds.height
         )
         let visibleIntersectionHeight = documentBounds
-            .intersection(clipView.bounds).height
+            .intersection(scrollView.documentVisibleRect).height
         let hasValidViewport = visibleIntersectionHeight
             >= max(0, requiredVisibleHeight - 1)
 
-        if !entry.didClampInitialViewport {
-            entry.validViewportPassCount = 0
-            // 새 host의 문서 높이가 확정된 뒤 AppKit 좌표계에서 mount당
-            // 딱 한 번만 하단으로 정착한다. SwiftUI scrollTo 재시도나
-            // 지연 타이머는 없다.
-            entry.didClampInitialViewport = true
+        let signature = ViewportLayoutSignature(
+            documentBounds: documentBounds,
+            viewportBounds: clipView.bounds
+        )
+        guard entry.lastViewportSignature == signature else {
+            entry.lastViewportSignature = signature
+            entry.stablePreClampPassCount = 0
+            entry.stablePostClampPassCount = 0
+            entry.didPrepareFirstDisplay = false
+            return .confirmValidLayout
+        }
+
+        if entry.lastClampedViewportSignature != signature {
+            entry.stablePreClampPassCount += 1
+            guard entry.stablePreClampPassCount >= 2 else {
+                return .confirmValidLayout
+            }
+            // 문서 높이가 연속해서 안정된 뒤 AppKit 좌표계에서 해당
+            // layout signature당 한 번만 하단으로 정착한다. Markdown의
+            // 늦은 grow/shrink가 생기면 새 signature에서 다시 한 번만
+            // 보정하고 SwiftUI scrollTo 재시도는 사용하지 않는다.
+            entry.lastClampedViewportSignature = signature
+            entry.viewportClampCount += 1
             let bottomY = documentView.isFlipped
                 ? max(
                     documentBounds.minY,
@@ -1600,18 +1832,45 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             )
             clipView.scroll(to: constrainedBounds.origin)
             scrollView.reflectScrolledClipView(clipView)
+            entry.stablePostClampPassCount = 0
             return .confirmValidLayout
         }
 
         guard hasValidViewport else {
-            entry.validViewportPassCount = 0
-            return .waitingForLayout
+            // 크기는 그대로인데 AppKit이 문서 밖 origin을 남긴 경우에도
+            // 다음 안정 pass에서 한 번 재보정할 수 있어야 한다.
+            entry.lastClampedViewportSignature = nil
+            entry.stablePreClampPassCount = 0
+            entry.stablePostClampPassCount = 0
+            entry.didPrepareFirstDisplay = false
+            return .confirmValidLayout
         }
 
-        entry.validViewportPassCount += 1
-        return entry.validViewportPassCount >= 2
-            ? .ready
-            : .confirmValidLayout
+        entry.stablePostClampPassCount += 1
+        guard entry.stablePostClampPassCount >= 2 else {
+            return .confirmValidLayout
+        }
+        return prepareFirstDisplayIfNeeded(for: entry)
+    }
+
+    private func resetViewportStability(for entry: Entry) {
+        entry.lastViewportSignature = nil
+        entry.lastClampedViewportSignature = nil
+        entry.stablePreClampPassCount = 0
+        entry.stablePostClampPassCount = 0
+        entry.didPrepareFirstDisplay = false
+    }
+
+    private func prepareFirstDisplayIfNeeded(
+        for entry: Entry
+    ) -> LiveWorkspaceFeedMountReadiness {
+        guard entry.didPrepareFirstDisplay else {
+            entry.didPrepareFirstDisplay = true
+            entry.hostingView.needsDisplay = true
+            entry.hostingView.displayIfNeeded()
+            return .confirmValidLayout
+        }
+        return .ready
     }
 
     private func primaryScrollView(in root: NSView) -> NSScrollView? {
@@ -1632,6 +1891,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
 struct LiveWorkspaceFeed: View, Equatable {
     @ObservedObject private var characterFeedStore: CharacterLiveFeedStore
+    private let characterFeedRevision: Int
     private let director: AgentDirector
     private let liveFeedStore: LiveFeedStore
     private let characterID: OfficeCharacter
@@ -1662,11 +1922,13 @@ struct LiveWorkspaceFeed: View, Equatable {
         metadata: LiveWorkspaceFeedMetadata
     ) {
         let liveFeedStore = director.liveFeedStore
-        _characterFeedStore = ObservedObject(
-            wrappedValue: liveFeedStore.characterStore(
-                for: characterID.rawValue
-            )
+        let characterFeedStore = liveFeedStore.characterStore(
+            for: characterID.rawValue
         )
+        _characterFeedStore = ObservedObject(
+            wrappedValue: characterFeedStore
+        )
+        characterFeedRevision = characterFeedStore.mountReadinessRevision
         self.director = director
         self.liveFeedStore = liveFeedStore
         self.characterID = characterID
@@ -1699,6 +1961,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         lhs.director === rhs.director
             && lhs.liveFeedStore === rhs.liveFeedStore
             && lhs.characterFeedStore === rhs.characterFeedStore
+            && lhs.characterFeedRevision == rhs.characterFeedRevision
             && lhs.characterID == rhs.characterID
             && lhs.presentationStore === rhs.presentationStore
             && lhs.workspaceDirectory == rhs.workspaceDirectory
