@@ -216,12 +216,15 @@ final class CommandEntryDraftTests: XCTestCase {
         let textView = CommandComposerTextView()
         textView.string = "업무"
         var submittedText: String?
-        textView.onSubmit = { submittedText = $0 }
+        textView.onSubmit = {
+            submittedText = $0
+            return true
+        }
 
         textView.keyDown(with: try makeReturnEvent())
 
         XCTAssertEqual(submittedText, "업무")
-        XCTAssertEqual(textView.string, "업무")
+        XCTAssertEqual(textView.string, "")
     }
 
     func testReturnCommitsMarkedKoreanTextAndSubmits() async throws {
@@ -236,6 +239,7 @@ final class CommandEntryDraftTests: XCTestCase {
         textView.onSubmit = {
             submittedText = $0
             didSubmit.fulfill()
+            return true
         }
 
         textView.keyDown(with: try makeReturnEvent())
@@ -247,7 +251,7 @@ final class CommandEntryDraftTests: XCTestCase {
         )
         await fulfillment(of: [didSubmit], timeout: 1)
         XCTAssertEqual(submittedText, "한글")
-        XCTAssertEqual(textView.string, "한글")
+        XCTAssertEqual(textView.string, "")
     }
 
     func testLateKoreanCompositionChangeCannotRestoreSubmittedFinalSyllable()
@@ -258,6 +262,7 @@ final class CommandEntryDraftTests: XCTestCase {
         let composer = makeComposer(textBox: textBox) {
             textBox.value = ""
             didSubmit.fulfill()
+            return true
         }
         let coordinator = composer.makeCoordinator()
         let textView = CommandComposerTextView()
@@ -272,6 +277,13 @@ final class CommandEntryDraftTests: XCTestCase {
         _ = composer.updateTextView(textView)
 
         textView.keyDown(with: try makeReturnEvent())
+        await fulfillment(of: [didSubmit], timeout: 1)
+        XCTAssertEqual(textBox.value, "")
+        XCTAssertEqual(textView.string, "")
+
+        // Chrome 원격 IME가 전송 완료 뒤 이전 마지막 음절을 다시
+        // insertText한 상황을 그대로 흉내 낸다.
+        textView.string = "됨"
         coordinator.textDidChange(
             Notification(
                 name: NSText.didChangeNotification,
@@ -279,13 +291,52 @@ final class CommandEntryDraftTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(textBox.value, "요청됨")
-        await fulfillment(of: [didSubmit], timeout: 1)
         XCTAssertEqual(
             textBox.value,
             "",
             "늦은 IME 변경이 전송 뒤 마지막 음절을 초안에 복원했습니다."
         )
+        XCTAssertEqual(textView.string, "")
+
+        textView.keyDown(with: try makeTextEvent("n", keyCode: 45))
+        // window 밖의 단위 테스트 NSTextView는 keyDown만으로 문자를
+        // 삽입하지 않으므로, 실제 키 이벤트가 차단을 해제한 뒤 입력기가
+        // 보내는 insertText를 별도로 재현한다.
+        textView.insertText(
+            "n",
+            replacementRange: NSRange(location: 0, length: 0)
+        )
+        coordinator.textDidChange(
+            Notification(
+                name: NSText.didChangeNotification,
+                object: textView
+            )
+        )
+        XCTAssertEqual(
+            textBox.value,
+            "n",
+            "다음 실제 키 입력까지 잔여 IME 차단이 막으면 안 됩니다."
+        )
+    }
+
+    func testRejectedSubmissionKeepsCommittedKoreanText() async throws {
+        let textView = CommandComposerTextView()
+        textView.setMarkedText(
+            "보존됨",
+            selectedRange: NSRange(location: 3, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        let didReject = expectation(description: "전송 거절")
+        textView.onSubmit = { _ in
+            didReject.fulfill()
+            return false
+        }
+
+        textView.keyDown(with: try makeReturnEvent())
+        await fulfillment(of: [didReject], timeout: 1)
+
+        XCTAssertEqual(textView.string, "보존됨")
+        XCTAssertFalse(textView.hasMarkedText())
     }
 
     func testShiftReturnIsTheOnlyReturnThatInsertsNewline() throws {
@@ -293,7 +344,10 @@ final class CommandEntryDraftTests: XCTestCase {
         textView.string = "업무"
         textView.setSelectedRange(NSRange(location: 2, length: 0))
         var submittedText: String?
-        textView.onSubmit = { submittedText = $0 }
+        textView.onSubmit = {
+            submittedText = $0
+            return true
+        }
 
         textView.keyDown(with: try makeReturnEvent(modifiers: [.shift]))
 
@@ -336,7 +390,7 @@ final class CommandEntryDraftTests: XCTestCase {
 
     private func makeComposer(
         textBox: TextBox,
-        onSubmit: @escaping () -> Void = {}
+        onSubmit: @escaping () -> Bool = { true }
     ) -> CommandComposerView {
         CommandComposerView(
             text: Binding(
@@ -365,6 +419,26 @@ final class CommandEntryDraftTests: XCTestCase {
                 charactersIgnoringModifiers: "\r",
                 isARepeat: false,
                 keyCode: 36
+            )
+        )
+    }
+
+    private func makeTextEvent(
+        _ characters: String,
+        keyCode: UInt16
+    ) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
             )
         )
     }
