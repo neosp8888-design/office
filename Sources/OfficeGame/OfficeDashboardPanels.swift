@@ -1493,6 +1493,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var activeEntry: Entry?
     private var pendingEntry: Entry?
     private var transitionLoadingGateView: LiveWorkspaceFeedLoadingGateView?
+    private var transitionLoadingGateInstallCount = 0
     private var selectedCharacterID: OfficeCharacter?
     private var selectionGeneration = 0
     private var lastLaidOutBounds = CGRect.zero
@@ -1508,6 +1509,10 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     var hasTransitionLoadingGateForTesting: Bool {
         transitionLoadingGateView?.superview === self
+    }
+
+    var transitionLoadingGateInstallCountForTesting: Int {
+        transitionLoadingGateInstallCount
     }
 
     var liveHostingViewCountForTesting: Int {
@@ -1726,6 +1731,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let gate = LiveWorkspaceFeedLoadingGateView(frame: bounds)
         transitionLoadingGateView = gate
         addSubview(gate)
+        transitionLoadingGateInstallCount &+= 1
     }
 
     private func mountSelectedCharacter(

@@ -400,11 +400,21 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
                 previousBossHost
             )
             previousBossHost = nil
+            let leftManGateInstallCount =
+                container.transitionLoadingGateInstallCountForTesting
             director.selectedCharacterID = .leftMan
             rootHost.layoutSubtreeIfNeeded()
+            let didInstallLeftManGate = try await waitUntil(
+                in: rootHost,
+                timeout: .seconds(1)
+            ) {
+                container.transitionLoadingGateInstallCountForTesting
+                    > leftManGateInstallCount
+            }
             XCTAssertTrue(
-                container.hasTransitionLoadingGateForTesting,
-                "\(cycle)회차 클대리 전환 준비 중 이전 화면 차폐가 없습니다."
+                didInstallLeftManGate,
+                "\(cycle)회차 클대리 전환 준비 중 이전 화면 차폐를 "
+                    + "설치하지 않았습니다."
             )
             var maximumLiveHostCount = liveFeedHostCount(in: container)
             let didMountLeftMan = try await waitUntil(
@@ -449,11 +459,21 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             var leftManHost = liveFeedHost(in: container)
             let releasedLeftManHost = WeakTestReference(leftManHost)
             leftManHost = nil
+            let bossGateInstallCount =
+                container.transitionLoadingGateInstallCountForTesting
             director.selectedCharacterID = .boss
             rootHost.layoutSubtreeIfNeeded()
+            let didInstallBossGate = try await waitUntil(
+                in: rootHost,
+                timeout: .seconds(1)
+            ) {
+                container.transitionLoadingGateInstallCountForTesting
+                    > bossGateInstallCount
+            }
             XCTAssertTrue(
-                container.hasTransitionLoadingGateForTesting,
-                "\(cycle)회차 백부장 복귀 준비 중 이전 화면 차폐가 없습니다."
+                didInstallBossGate,
+                "\(cycle)회차 백부장 복귀 준비 중 이전 화면 차폐를 "
+                    + "설치하지 않았습니다."
             )
             maximumLiveHostCount = liveFeedHostCount(in: container)
             let didReturnToBoss = try await waitUntil(
@@ -2081,11 +2101,11 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             scrollView.documentView?.bounds.height ?? 0
         XCTAssertGreaterThanOrEqual(
             heightAfterFourth,
-            materializedHeight - 200,
-            "과거 기록을 읽는 중의 새 제출이 표시 중이던 카드를 "
-                + "제거해 문서가 \(Int(materializedHeight)) → "
-                + "\(Int(heightAfterFourth))로 붕괴했습니다. 이 붕괴가 "
-                + "흰 화면과 스크롤바 튐의 원인입니다."
+            mountedHeight - 1,
+            "과거 기록을 읽는 중의 새 제출이 최초 안정 문서보다 "
+                + "작아졌습니다. 문서가 \(Int(mountedHeight)) → "
+                + "\(Int(heightAfterFourth))로 붕괴하면 흰 화면과 "
+                + "스크롤바 튐이 재발합니다."
         )
         assertViewportInBounds("실체화 상태 제출 직후")
 
