@@ -1428,6 +1428,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let metadataStore: LiveWorkspaceFeedMetadataStore
         let presentationStore: LiveWorkspaceFeedPresentationStore
         let transitionID: UUID
+        // 리사이즈 직전에 하단을 보고 있었는지 기억한다. 크기가 바뀐
+        // 뒤에는 이전 상태를 알 수 없어 미리 담아 둔다.
+        var wasAtBottomBeforeResize = true
         var stablePreClampPassCount = 0
         var stablePostClampPassCount = 0
         var lastClampedViewportSignature: ViewportLayoutSignature?
@@ -1485,6 +1488,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var transitionLoadingGateView: LiveWorkspaceFeedLoadingGateView?
     private var selectedCharacterID: OfficeCharacter?
     private var selectionGeneration = 0
+    private var lastLaidOutBounds = CGRect.zero
+    private static let resizeBottomTolerance = CGFloat(20)
 
     var activeCharacterIDForTesting: OfficeCharacter? {
         activeEntry?.characterID
@@ -1520,11 +1525,94 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         nil
     }
 
+    // 크기가 바뀌기 전에 호출되므로 여기서 이전 보기 위치를 기록한다.
+    override func setFrameSize(_ newSize: NSSize) {
+        if newSize != frame.size {
+            captureViewportAnchorBeforeResize()
+        }
+        super.setFrameSize(newSize)
+    }
+
+    private func captureViewportAnchorBeforeResize() {
+        guard
+            let activeEntry,
+            let scrollView = primaryScrollView(in: activeEntry.hostingView),
+            let documentView = scrollView.documentView
+        else {
+            return
+        }
+        let snapshot = LiveWorkspaceFeedScrollGeometry.snapshot(
+            documentBounds: documentView.bounds,
+            visibleRect: scrollView.documentVisibleRect,
+            isFlipped: documentView.isFlipped
+        )
+        activeEntry.wasAtBottomBeforeResize =
+            snapshot.distanceFromBottom <= Self.resizeBottomTolerance
+    }
+
     override func layout() {
         super.layout()
+        let didResize = lastLaidOutBounds != bounds
         for subview in subviews where subview.frame != bounds {
             subview.frame = bounds
         }
+        guard didResize else {
+            return
+        }
+        lastLaidOutBounds = bounds
+        // 입력창이 여러 줄로 커지면 대화 영역 높이가 줄어든다. 이때
+        // clip view가 이전 높이 기준 좌표에 남으면 문서 밖을 보게 되어
+        // 대화가 사라진 것처럼 보인다. 활성 대화의 보기 위치를 문서
+        // 안으로 되돌린다.
+        if let activeEntry {
+            restoreViewportAfterResize(for: activeEntry)
+        }
+    }
+
+    // 리사이즈 직전 하단에 있었으면 하단을, 아니면 보던 위치를 문서
+    // 범위 안으로 제한해 유지한다. 사용자가 과거를 읽는 중에 임의로
+    // 하단으로 끌어내리지 않는다.
+    private func restoreViewportAfterResize(for entry: Entry) {
+        let host = entry.hostingView
+        guard
+            host.bounds.width > 0,
+            host.bounds.height > 0,
+            let scrollView = primaryScrollView(in: host),
+            let documentView = scrollView.documentView
+        else {
+            return
+        }
+        host.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+        documentView.layoutSubtreeIfNeeded()
+
+        let clipView = scrollView.contentView
+        let documentBounds = documentView.bounds
+        let viewportHeight = clipView.bounds.height
+        guard
+            documentBounds.height.isFinite,
+            documentBounds.height > 0,
+            viewportHeight.isFinite,
+            viewportHeight > 0
+        else {
+            return
+        }
+
+        var proposedBounds = clipView.bounds
+        if entry.wasAtBottomBeforeResize {
+            proposedBounds.origin.y = documentView.isFlipped
+                ? max(
+                    documentBounds.minY,
+                    documentBounds.maxY - viewportHeight
+                )
+                : documentBounds.minY
+        }
+        let constrainedBounds = clipView.constrainBoundsRect(proposedBounds)
+        guard constrainedBounds.origin != clipView.bounds.origin else {
+            return
+        }
+        clipView.scroll(to: constrainedBounds.origin)
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     func configure(
@@ -2052,11 +2140,19 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
     }
 
+    // 로딩 자리표시자는 실행 후 첫 적재가 끝나기 전까지만 쓴다.
+    // 그 뒤에는 직원별 재조회가 잠깐 로딩으로 표시되더라도 자리표시자로
+    // 바꾸지 않는다. 대화 영역을 통째로 교체하면 화면이 비어 보인다.
+    private var shouldShowInitialLoadingPlaceholder: Bool {
+        characterFeedStore.isLoadingInitialFeed
+            && !liveFeedStore.didCompleteFirstFeedLoad
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             Group {
                 if displayTurns.isEmpty {
-                    if characterFeedStore.isLoadingInitialFeed {
+                    if shouldShowInitialLoadingPlaceholder {
                         VStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
