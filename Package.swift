@@ -54,8 +54,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("SpriteKit"),
-                .linkedFramework("WebKit")
+                .linkedFramework("SpriteKit")
             ]
         ),
         .testTarget(

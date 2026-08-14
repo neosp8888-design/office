@@ -4,9 +4,6 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 
-import { serveConversationWeb } from "./conversation-web.mjs";
-import { isTrustedLoopbackOrigin } from "./request-origin-security.mjs";
-
 import {
   AgentBusyError,
   AgentDrainingError,
@@ -1325,19 +1322,23 @@ function trustedJSONMutation(request, response) {
     });
     return false;
   }
-  return trustedLoopbackOrigin(request, response);
-}
-
-function trustedLoopbackOrigin(request, response = null) {
-  if (isTrustedLoopbackOrigin({
-    origin: request.headers.origin,
-    host: request.headers.host,
-  })) {
+  const origin = request.headers.origin;
+  if (!origin) {
     return true;
   }
-  if (response) {
-    send(response, 403, { error: "신뢰할 수 없는 요청 출처입니다." });
+  try {
+    const originURL = new URL(origin);
+    const hostname = originURL.hostname;
+    if (
+      ["127.0.0.1", "localhost", "::1"].includes(hostname) &&
+      originURL.host === request.headers.host
+    ) {
+      return true;
+    }
+  } catch {
+    // 올바르지 않은 Origin은 아래에서 거절한다.
   }
+  send(response, 403, { error: "신뢰할 수 없는 요청 출처입니다." });
   return false;
 }
 
@@ -1970,13 +1971,6 @@ async function searchRAG(response, body) {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (
-      request.method === "GET" &&
-      url.pathname.startsWith("/conversation") &&
-      await serveConversationWeb(response, url.pathname)
-    ) {
-      return;
-    }
     const characterID = routeCharacterName(url.pathname);
     const settingsCharacterID = routeCharacterSettings(url.pathname);
     const identityPromptCharacterID = routeCharacterIdentityPrompt(
@@ -2126,17 +2120,11 @@ const server = createServer(async (request, response) => {
       request.method === "POST" &&
       url.pathname === "/api/agent-jobs"
     ) {
-      if (!trustedJSONMutation(request, response)) {
-        return;
-      }
       await startAgentJob(response, await readJSON(request));
     } else if (
       request.method === "DELETE" &&
       jobCharacterID
     ) {
-      if (!trustedLoopbackOrigin(request, response)) {
-        return;
-      }
       await cancelAgentJob(response, jobCharacterID);
     } else if (
       request.method === "POST" &&
@@ -2222,10 +2210,7 @@ webSocketServer.on("connection", (socket) => {
 
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
-  if (
-    url.pathname !== "/ws" ||
-    !trustedLoopbackOrigin(request)
-  ) {
+  if (url.pathname !== "/ws") {
     socket.destroy();
     return;
   }

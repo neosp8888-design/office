@@ -787,8 +787,316 @@ private struct UsageMeter: View {
     }
 }
 
-// ConversationMarkdownView의 로컬 동영상 재생 정지는 대화 화면 교체 뒤에도
-// 대화 보관함에서 사용하므로 이 작은 상태 객체만 공용으로 유지한다.
+struct LiveWorkspaceFeedFollowState: Equatable {
+    private(set) var isFollowingLatest = true
+
+    mutating func userWillScroll() {
+        guard isFollowingLatest else {
+            return
+        }
+        isFollowingLatest = false
+    }
+
+    mutating func userDidScroll(
+        distanceFromBottom: CGFloat,
+        tolerance: CGFloat
+    ) {
+        let shouldFollowLatest = distanceFromBottom <= tolerance
+        guard isFollowingLatest != shouldFollowLatest else {
+            return
+        }
+        isFollowingLatest = shouldFollowLatest
+    }
+
+    mutating func resume() {
+        guard !isFollowingLatest else {
+            return
+        }
+        isFollowingLatest = true
+    }
+}
+
+enum LiveWorkspaceFeedContentRevisionAction: Equatable {
+    case settleInitialAnchor
+    case followLatest
+    case revealContentBelow
+}
+
+struct LiveWorkspaceFeedContentRevisionPolicy: Equatable {
+    static func action(
+        didPerformInitialScroll: Bool,
+        isFollowingLatest: Bool
+    ) -> LiveWorkspaceFeedContentRevisionAction {
+        guard didPerformInitialScroll else {
+            return .settleInitialAnchor
+        }
+        return isFollowingLatest ? .followLatest : .revealContentBelow
+    }
+}
+
+struct LiveWorkspaceFeedPagingPolicy: Equatable {
+    // 직원 전환 때 NSHostingView를 새로 만드는 CPU 방어는 유지한다.
+    // 다만 첫 화면을 두 건으로 좁히면 스냅샷이 보유한 최근 10턴이
+    // 대부분 "위로 더 올리면 이전 N건 추가"로 숨겨져, 평소 대화가
+    // 두 건만 보인다. 첫 mount 표시를 스냅샷 보유량과 같은 10건으로
+    // 맞춰 정상 상황에서는 숨김 안내가 뜨지 않게 한다.
+    static let initialVisibleTurnCount = 10
+    static let pageSize = 10
+    static let maximumVisibleTurnCount = 30
+
+    static func includesTurn(
+        at index: Int,
+        visibleTurnLimit: Int,
+        isRunning: Bool,
+        isLatestTerminalTurn: Bool
+    ) -> Bool {
+        index < visibleTurnLimit
+            || isRunning
+            || isLatestTerminalTurn
+    }
+
+    static func nextVisibleTurnLimit(
+        current: Int,
+        total: Int
+    ) -> Int {
+        min(
+            current + pageSize,
+            maximumVisibleTurnCount,
+            total
+        )
+    }
+}
+
+// 최신 N개 인덱스로 매번 다시 자르면 새 턴이 앞에 삽입될 때 기존
+// 카드가 밀려나 문서 높이가 급락하고 viewport가 문서 밖에 남는다.
+// 가장 오래된 표시 턴의 ID를 앵커로 고정해, 앵커보다 새로운 턴은
+// 삽입·ID 교체 중에도 전부 창에 포함시킨다.
+struct LiveWorkspaceFeedDisplayAnchor: Equatable {
+    private(set) var oldestVisibleTurnID: String?
+    private(set) var lastKnownLimit =
+        LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
+
+    func effectiveLimit(turnIDsNewestFirst: [String]) -> Int {
+        guard
+            let oldestVisibleTurnID,
+            let index = turnIDsNewestFirst.firstIndex(
+                of: oldestVisibleTurnID
+            )
+        else {
+            // 앵커가 아직 없거나(첫 마운트) 목록에서 사라졌으면
+            // (optimistic ID 교체·정리) 직전 표시 규모를 유지해
+            // 창이 다시 줄어들며 카드가 제거되는 일을 막는다.
+            return lastKnownLimit
+        }
+        return max(index + 1, 1)
+    }
+
+    func pinning(turnIDsNewestFirst: [String]) -> Self {
+        pinning(
+            limit: effectiveLimit(turnIDsNewestFirst: turnIDsNewestFirst),
+            turnIDsNewestFirst: turnIDsNewestFirst
+        )
+    }
+
+    func pinning(
+        limit: Int,
+        turnIDsNewestFirst: [String]
+    ) -> Self {
+        let boundedLimit = min(limit, turnIDsNewestFirst.count)
+        guard boundedLimit > 0 else {
+            return self
+        }
+        var pinned = self
+        pinned.oldestVisibleTurnID = turnIDsNewestFirst[boundedLimit - 1]
+        pinned.lastKnownLimit = boundedLimit
+        return pinned
+    }
+}
+
+struct LiveWorkspaceFeedScrollPolicy: Equatable {
+    // 제출 직후 하단 보정은 레이아웃 확정 뒤 한 번만 수행한다.
+    // 반복 보정은 문서 높이가 변하는 중에 스크롤바 왕복을 만든다.
+    static let submittedMaximumAttempts = 1
+    static let stablePassesRequired = 2
+
+    private(set) var stablePassCount = 0
+
+    mutating func shouldStop(
+        distanceFromBottom: CGFloat,
+        tolerance: CGFloat
+    ) -> Bool {
+        if distanceFromBottom <= tolerance {
+            stablePassCount += 1
+        } else {
+            stablePassCount = 0
+        }
+        return stablePassCount >= Self.stablePassesRequired
+    }
+}
+
+struct LiveWorkspaceFeedTopLoadGate: Equatable {
+    // 한 번 로드하면 상단 임계 밖으로 나갔다 돌아와야 다시 장전된다.
+    // 제스처 시작마다 재장전하면 짧은 휠 세션이 연달아 페이지를
+    // 연쇄 로드해 무거운 과거 카드가 한꺼번에 쌓인다. 정상 흐름은
+    // 로드 직후 위쪽에 새 카드가 붙어 임계 밖으로 밀려나므로
+    // 자연스럽게 재장전된다.
+    private(set) var isArmed = true
+
+    mutating func shouldLoad(
+        distanceFromTop: CGFloat,
+        threshold: CGFloat,
+        isProgrammaticScrollInFlight: Bool
+    ) -> Bool {
+        if distanceFromTop > threshold {
+            isArmed = true
+            return false
+        }
+        guard
+            !isProgrammaticScrollInFlight,
+            isArmed
+        else {
+            return false
+        }
+        isArmed = false
+        return true
+    }
+}
+
+struct CachedLiveWorkspaceFeeds: NSViewRepresentable {
+    @ObservedObject private var characterSelectionStore:
+        CharacterSelectionStore
+    private let director: AgentDirector
+
+    @MainActor
+    init(director: AgentDirector) {
+        self.director = director
+        _characterSelectionStore = ObservedObject(
+            wrappedValue: director.characterSelectionStore
+        )
+    }
+
+    func makeNSView(context: Context) -> CachedLiveWorkspaceFeedsNSView {
+        let view = CachedLiveWorkspaceFeedsNSView()
+        view.configure(
+            director: director,
+            selectedCharacterID:
+                characterSelectionStore.selectedCharacterID
+        )
+        return view
+    }
+
+    func updateNSView(
+        _ nsView: CachedLiveWorkspaceFeedsNSView,
+        context: Context
+    ) {
+        nsView.configure(
+            director: director,
+            selectedCharacterID:
+                characterSelectionStore.selectedCharacterID
+        )
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: CachedLiveWorkspaceFeedsNSView,
+        context: Context
+    ) -> CGSize? {
+        guard
+            let width = resolvedDimension(
+                proposal.width,
+                fallback: nsView.bounds.width
+            ),
+            let height = resolvedDimension(
+                proposal.height,
+                fallback: nsView.bounds.height
+            )
+        else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    static func dismantleNSView(
+        _ nsView: CachedLiveWorkspaceFeedsNSView,
+        coordinator: ()
+    ) {
+        nsView.tearDown()
+    }
+
+    private func resolvedDimension(
+        _ proposed: CGFloat?,
+        fallback: CGFloat
+    ) -> CGFloat? {
+        if let proposed, proposed.isFinite, proposed > 0 {
+            return proposed
+        }
+        guard fallback.isFinite, fallback > 0 else {
+            return nil
+        }
+        return fallback
+    }
+}
+
+struct LiveWorkspaceFeedMetadata: Equatable {
+    let latestTerminalTurnID: String?
+    let latestSubmittedCommandID: UUID?
+    let latestStartedCommandID: UUID?
+
+    init(
+        latestTerminalTurnID: String?,
+        latestSubmittedCommandID: UUID?,
+        latestStartedCommandID: UUID?
+    ) {
+        self.latestTerminalTurnID = latestTerminalTurnID
+        self.latestSubmittedCommandID = latestSubmittedCommandID
+        self.latestStartedCommandID = latestStartedCommandID
+    }
+
+    @MainActor
+    init(director: AgentDirector) {
+        latestTerminalTurnID = director.latestTerminalTurnID
+        latestSubmittedCommandID = director.latestSubmittedCommandID
+        latestStartedCommandID = director.latestStartedCommandID
+    }
+}
+
+@MainActor
+final class LiveWorkspaceFeedMetadataStore: ObservableObject {
+    @Published private(set) var metadata: LiveWorkspaceFeedMetadata
+    private var desiredMetadata: LiveWorkspaceFeedMetadata
+    private var publicationTask: Task<Void, Never>?
+
+    init(metadata: LiveWorkspaceFeedMetadata) {
+        self.metadata = metadata
+        desiredMetadata = metadata
+    }
+
+    func setMetadata(_ metadata: LiveWorkspaceFeedMetadata) {
+        guard desiredMetadata != metadata else {
+            return
+        }
+        desiredMetadata = metadata
+        publicationTask?.cancel()
+        publicationTask = Task { [weak self] in
+            // updateNSView 안에서 ObservableObject를 즉시 발행하면 SwiftUI가
+            // 호스트 갱신 도중 다시 무효화될 수 있으므로 다음 MainActor
+            // 차례에 마지막 snapshot만 한 번 전달한다.
+            await Task.yield()
+            guard
+                let self,
+                !Task.isCancelled,
+                self.desiredMetadata == metadata
+            else {
+                return
+            }
+            if self.metadata != metadata {
+                self.metadata = metadata
+            }
+            self.publicationTask = nil
+        }
+    }
+}
+
 @MainActor
 final class LiveWorkspaceFeedPresentationStore: ObservableObject {
     @Published private(set) var isPresented: Bool
@@ -827,6 +1135,1820 @@ final class LiveWorkspaceFeedPresentationStore: ObservableObject {
     }
 }
 
+private struct HostedLiveWorkspaceFeed: View {
+    let director: AgentDirector
+    let characterID: OfficeCharacter
+    @ObservedObject var metadataStore: LiveWorkspaceFeedMetadataStore
+    @ObservedObject private var characterFeedStore: CharacterLiveFeedStore
+    let presentationStore: LiveWorkspaceFeedPresentationStore
+    let onMountReady: (Int) -> LiveWorkspaceFeedMountReadiness
+
+    init(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        metadataStore: LiveWorkspaceFeedMetadataStore,
+        presentationStore: LiveWorkspaceFeedPresentationStore,
+        onMountReady: @escaping (Int) -> LiveWorkspaceFeedMountReadiness
+    ) {
+        self.director = director
+        self.characterID = characterID
+        self.metadataStore = metadataStore
+        _characterFeedStore = ObservedObject(
+            wrappedValue: director.liveFeedStore.characterStore(
+                for: characterID.rawValue
+            )
+        )
+        self.presentationStore = presentationStore
+        self.onMountReady = onMountReady
+    }
+
+    var body: some View {
+        LiveWorkspaceFeed(
+            director: director,
+            characterID: characterID,
+            presentationStore: presentationStore,
+            metadata: metadataStore.metadata
+        )
+        .equatable()
+        .environment(
+            \.liveWorkspaceFeedPresentationStore,
+            presentationStore
+        )
+        .environment(\.locale, OfficeLocalization.locale)
+        // 이 NSHostingView는 앱 루트와 분리된 SwiftUI 트리라 루트에서
+        // 켠 환경 값이 넘어오지 않는다. 대화 카드 전체를 드래그로
+        // 선택해 복사할 수 있도록 여기서 다시 켠다.
+        .textSelection(.enabled)
+        .overlay {
+            LiveWorkspaceFeedMountReadyReporter(
+                readinessRevision:
+                    characterFeedStore.mountReadinessRevision,
+                onReady: onMountReady
+            )
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+// 직원 전환 중 새 SwiftUI 트리가 실제 window와 유효한 크기를 얻은
+// 시점만 AppKit 컨테이너에 알린다. documentView의 비동기 layout 이벤트가
+// overlay까지 전파되지 않는 경우를 위해 mount당 3초로 제한된 재확인만
+// 허용하며, 이후에는 자연스러운 layout/update 이벤트만 받는다.
+private enum LiveWorkspaceFeedMountReadiness: Equatable {
+    case waitingForLayout
+    case confirmValidLayout
+    case ready
+}
+
+private struct LiveWorkspaceFeedMountReadyReporter: NSViewRepresentable {
+    let readinessRevision: Int
+    let onReady: (Int) -> LiveWorkspaceFeedMountReadiness
+
+    func makeNSView(context: Context) -> AttachmentView {
+        let view = AttachmentView()
+        view.update(
+            readinessRevision: readinessRevision,
+            onReady: onReady
+        )
+        return view
+    }
+
+    func updateNSView(_ nsView: AttachmentView, context: Context) {
+        nsView.update(
+            readinessRevision: readinessRevision,
+            onReady: onReady
+        )
+    }
+
+    static func dismantleNSView(
+        _ nsView: AttachmentView,
+        coordinator: ()
+    ) {
+        nsView.onReady = nil
+    }
+
+    final class AttachmentView: NSView {
+        private static let automaticCheckInterval = TimeInterval(0.05)
+        private static let maximumAutomaticCheckCount = 60
+
+        var onReady: ((Int) -> LiveWorkspaceFeedMountReadiness)?
+        private var didReportReady = false
+        private var isReportScheduled = false
+        private var automaticChecksRemaining = maximumAutomaticCheckCount
+        private var readinessRevision: Int?
+
+        func update(
+            readinessRevision: Int,
+            onReady: @escaping (Int) -> LiveWorkspaceFeedMountReadiness
+        ) {
+            self.onReady = onReady
+            if self.readinessRevision != readinessRevision {
+                self.readinessRevision = readinessRevision
+                automaticChecksRemaining = Self.maximumAutomaticCheckCount
+            }
+            scheduleReportIfNeeded()
+        }
+
+        override func layout() {
+            super.layout()
+            scheduleReportIfNeeded(isAutomatic: false)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            scheduleReportIfNeeded(isAutomatic: false)
+        }
+
+        func scheduleReportIfNeeded(isAutomatic: Bool = false) {
+            guard
+                !didReportReady,
+                !isReportScheduled,
+                window != nil,
+                bounds.width > 0,
+                bounds.height > 0
+            else {
+                return
+            }
+            if isAutomatic {
+                guard automaticChecksRemaining > 0 else {
+                    return
+                }
+                automaticChecksRemaining -= 1
+            }
+            isReportScheduled = true
+            let report = { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.isReportScheduled = false
+                guard
+                    !self.didReportReady,
+                    self.window != nil,
+                    self.bounds.width > 0,
+                    self.bounds.height > 0
+                else {
+                    return
+                }
+                switch self.onReady?(
+                    self.readinessRevision ?? -1
+                ) ?? .waitingForLayout {
+                case .waitingForLayout:
+                    // 실제 documentView의 뒤늦은 높이 확정은 이 overlay의
+                    // layout을 다시 호출하지 않을 수 있다. mount 동안만
+                    // 제한된 횟수로 재확인하고, 예산을 다 쓰면 자연스러운
+                    // layout/update 이벤트만 기다린다.
+                    self.scheduleReportIfNeeded(isAutomatic: true)
+                case .confirmValidLayout:
+                    self.scheduleReportIfNeeded(isAutomatic: true)
+                case .ready:
+                    self.didReportReady = true
+                }
+            }
+            if isAutomatic {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + Self.automaticCheckInterval,
+                    execute: report
+                )
+            } else {
+                DispatchQueue.main.async(execute: report)
+            }
+        }
+    }
+}
+
+// SwiftUI 화면을 캡처하면 긴 Claude transcript를 메인 스레드에서 다시
+// layout/draw하며 수 초간 멈출 수 있다. 전환 차폐는 캡처나 SwiftUI graph가
+// 없는 가벼운 AppKit 뷰로 고정한다.
+private final class LiveWorkspaceFeedLoadingGateView: NSView {
+    private let iconView: NSImageView
+    private let label: NSTextField
+
+    override var isOpaque: Bool {
+        true
+    }
+
+    override init(frame frameRect: NSRect) {
+        iconView = NSImageView()
+        iconView.image = NSImage(
+            systemSymbolName: "hourglass",
+            accessibilityDescription: nil
+        )
+        iconView.contentTintColor = .secondaryLabelColor
+        label = NSTextField(
+            labelWithString: OfficeLocalization.string(
+                "대화를 불러오는 중"
+            )
+        )
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .center
+        super.init(frame: frameRect)
+        identifier = NSUserInterfaceItemIdentifier(
+            "live-workspace-feed-loading-gate"
+        )
+        autoresizingMask = [.width, .height]
+        addSubview(iconView)
+        addSubview(label)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel(
+            OfficeLocalization.string("대화를 불러오는 중")
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    override func layout() {
+        super.layout()
+        let iconSize = CGFloat(18)
+        let labelSize = label.intrinsicContentSize
+        let spacing = CGFloat(8)
+        let totalWidth = iconSize + spacing + labelSize.width
+        let originX = max(0, (bounds.width - totalWidth) / 2)
+        let centerY = bounds.midY
+        iconView.frame = NSRect(
+            x: originX,
+            y: centerY - iconSize / 2,
+            width: iconSize,
+            height: iconSize
+        )
+        label.frame = NSRect(
+            x: originX + iconSize + spacing,
+            y: centerY - labelSize.height / 2,
+            width: labelSize.width,
+            height: labelSize.height
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
+    override func scrollWheel(with event: NSEvent) {}
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
+}
+
+@MainActor
+final class CachedLiveWorkspaceFeedsNSView: NSView {
+    private struct ViewportLayoutSignature: Equatable {
+        let documentWidth: Int
+        let documentHeight: Int
+        let viewportWidth: Int
+        let viewportHeight: Int
+
+        init(documentBounds: NSRect, viewportBounds: NSRect) {
+            func bucket(_ value: CGFloat) -> Int {
+                Int((value * 2).rounded())
+            }
+            documentWidth = bucket(documentBounds.width)
+            documentHeight = bucket(documentBounds.height)
+            viewportWidth = bucket(viewportBounds.width)
+            viewportHeight = bucket(viewportBounds.height)
+        }
+    }
+
+    @MainActor
+    private final class Entry {
+        let characterID: OfficeCharacter
+        let characterFeedStore: CharacterLiveFeedStore
+        let metadataStore: LiveWorkspaceFeedMetadataStore
+        let presentationStore: LiveWorkspaceFeedPresentationStore
+        let transitionID: UUID
+        var stablePreClampPassCount = 0
+        var stablePostClampPassCount = 0
+        var lastClampedViewportSignature: ViewportLayoutSignature?
+        var viewportClampCount = 0
+        var lastPreparedReadinessRevision: Int?
+        var didPrepareFirstDisplay = false
+        var didRequestPostMountRefresh = false
+        var lastViewportSignature: ViewportLayoutSignature?
+        // NSView로 타입을 소거해 생성 이후 rootView 재할당을 컴파일 단계에서
+        // 막는다. 메타데이터 갱신은 metadataStore만 담당한다.
+        let hostingView: NSView
+
+        init(
+            director: AgentDirector,
+            characterID: OfficeCharacter,
+            metadata: LiveWorkspaceFeedMetadata,
+            transitionID: UUID,
+            onMountReady: @escaping (Int) -> LiveWorkspaceFeedMountReadiness
+        ) {
+            self.characterID = characterID
+            characterFeedStore = director.liveFeedStore.characterStore(
+                for: characterID.rawValue
+            )
+            self.transitionID = transitionID
+            let metadataStore = LiveWorkspaceFeedMetadataStore(
+                metadata: metadata
+            )
+            self.metadataStore = metadataStore
+            // Entry는 선택된 직원에게만 처음 생성된다. 첫 mount부터 표시
+            // 상태로 만들면 재시작 뒤 첫 직원 진입에서 false→true 발행을
+            // 기다리는 동안 빈 호스트가 노출되지 않는다.
+            let presentationStore = LiveWorkspaceFeedPresentationStore(
+                isPresented: true
+            )
+            self.presentationStore = presentationStore
+            hostingView = NSHostingView(
+                rootView: HostedLiveWorkspaceFeed(
+                    director: director,
+                    characterID: characterID,
+                    metadataStore: metadataStore,
+                    presentationStore: presentationStore,
+                    onMountReady: onMountReady
+                )
+            )
+        }
+
+        func updateMetadata(_ metadata: LiveWorkspaceFeedMetadata) {
+            metadataStore.setMetadata(metadata)
+        }
+    }
+
+    private weak var director: AgentDirector?
+    private var activeEntry: Entry?
+    private var pendingEntry: Entry?
+    private var transitionLoadingGateView: LiveWorkspaceFeedLoadingGateView?
+    private var selectedCharacterID: OfficeCharacter?
+    private var selectionGeneration = 0
+
+    var activeCharacterIDForTesting: OfficeCharacter? {
+        activeEntry?.characterID
+    }
+
+    var pendingCharacterIDForTesting: OfficeCharacter? {
+        pendingEntry?.characterID
+    }
+
+    var hasTransitionLoadingGateForTesting: Bool {
+        transitionLoadingGateView?.superview === self
+    }
+
+    var liveHostingViewCountForTesting: Int {
+        [activeEntry, pendingEntry].compactMap { $0 }.count { entry in
+            entry.hostingView.superview === self
+        }
+    }
+
+    var viewportClampCountForTesting: Int {
+        pendingEntry?.viewportClampCount
+            ?? activeEntry?.viewportClampCount
+            ?? 0
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        for subview in subviews where subview.frame != bounds {
+            subview.frame = bounds
+        }
+    }
+
+    func configure(
+        director: AgentDirector,
+        selectedCharacterID: OfficeCharacter?
+    ) {
+        if self.director !== director {
+            tearDown()
+            self.director = director
+        }
+
+        let previousCharacterID = self.selectedCharacterID
+        let didChangeSelection = previousCharacterID != selectedCharacterID
+        self.selectedCharacterID = selectedCharacterID
+        let metadata = LiveWorkspaceFeedMetadata(director: director)
+
+        guard didChangeSelection else {
+            if activeEntry?.characterID == selectedCharacterID {
+                activeEntry?.updateMetadata(metadata)
+            }
+            if pendingEntry?.characterID == selectedCharacterID {
+                pendingEntry?.updateMetadata(metadata)
+            }
+            return
+        }
+
+        selectionGeneration &+= 1
+        let generation = selectionGeneration
+        installTransitionLoadingGate()
+
+        guard let selectedCharacterID else {
+            releasePendingEntry()
+            releaseActiveEntry()
+            removeTransitionLoadingGate()
+            return
+        }
+        // 이 configure 차례에서는 가벼운 AppKit 차폐만 실제로 그린다.
+        // 긴 Claude transcript의 새 NSHostingView 생성은 다음 main-queue
+        // 차례로 넘겨 차폐가 먼저 표시될 기회를 보장한다.
+        transitionLoadingGateView?.needsDisplay = true
+        transitionLoadingGateView?.displayIfNeeded()
+        DispatchQueue.main.async { [weak self, weak director] in
+            guard
+                let self,
+                let director,
+                self.director === director,
+                self.selectionGeneration == generation,
+                self.selectedCharacterID == selectedCharacterID
+            else {
+                return
+            }
+            self.mountSelectedCharacter(
+                director: director,
+                characterID: selectedCharacterID,
+                generation: generation
+            )
+        }
+    }
+
+    func tearDown() {
+        selectionGeneration &+= 1
+        releasePendingEntry()
+        releaseActiveEntry()
+        removeTransitionLoadingGate()
+        selectedCharacterID = nil
+        director = nil
+    }
+
+    private func releaseActiveEntry() {
+        guard let activeEntry else {
+            return
+        }
+        activeEntry.presentationStore.setPresented(false)
+        activeEntry.hostingView.removeFromSuperview()
+        self.activeEntry = nil
+    }
+
+    private func releasePendingEntry() {
+        guard let pendingEntry else {
+            return
+        }
+        release(entry: pendingEntry)
+        self.pendingEntry = nil
+    }
+
+    private func release(entry: Entry) {
+        entry.presentationStore.setPresented(false)
+        entry.hostingView.removeFromSuperview()
+    }
+
+    private func installTransitionLoadingGate() {
+        guard transitionLoadingGateView == nil else {
+            return
+        }
+        let gate = LiveWorkspaceFeedLoadingGateView(frame: bounds)
+        transitionLoadingGateView = gate
+        addSubview(gate)
+    }
+
+    private func mountSelectedCharacter(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        generation: Int
+    ) {
+        releasePendingEntry()
+        releaseActiveEntry()
+
+        let transitionID = UUID()
+        let entry = Entry(
+            director: director,
+            characterID: characterID,
+            metadata: LiveWorkspaceFeedMetadata(director: director),
+            transitionID: transitionID,
+            onMountReady: { [weak self] readinessRevision in
+                self?.completePendingTransition(
+                    transitionID: transitionID,
+                    generation: generation,
+                    readinessRevision: readinessRevision
+                ) ?? .waitingForLayout
+            }
+        )
+        entry.hostingView.frame = bounds
+        entry.hostingView.autoresizingMask = [.width, .height]
+        pendingEntry = entry
+        if let transitionLoadingGateView {
+            addSubview(
+                entry.hostingView,
+                positioned: .below,
+                relativeTo: transitionLoadingGateView
+            )
+        } else {
+            addSubview(entry.hostingView)
+        }
+        needsLayout = true
+    }
+
+    private func removeTransitionLoadingGate() {
+        transitionLoadingGateView?.removeFromSuperview()
+        transitionLoadingGateView = nil
+    }
+
+    private func completePendingTransition(
+        transitionID: UUID,
+        generation: Int,
+        readinessRevision: Int
+    ) -> LiveWorkspaceFeedMountReadiness {
+        guard
+            let director,
+            let characterID = selectedCharacterID,
+            generation == selectionGeneration,
+            let pendingEntry,
+            pendingEntry.transitionID == transitionID,
+            pendingEntry.characterID == characterID,
+            pendingEntry.characterFeedStore.mountReadinessRevision
+                == readinessRevision,
+            pendingEntry.hostingView.superview === self,
+            pendingEntry.hostingView.window === window
+        else {
+            return .waitingForLayout
+        }
+        if pendingEntry.lastPreparedReadinessRevision
+            != readinessRevision
+        {
+            pendingEntry.lastPreparedReadinessRevision = readinessRevision
+            resetViewportStability(for: pendingEntry)
+            pendingEntry.hostingView.needsLayout = true
+            pendingEntry.hostingView.needsDisplay = true
+            return .confirmValidLayout
+        }
+        let readiness = prepareInitialViewport(for: pendingEntry)
+        guard readiness == .ready else {
+            if readiness == .confirmValidLayout {
+                pendingEntry.hostingView.needsLayout = true
+            }
+            return readiness
+        }
+
+        self.pendingEntry = nil
+        activeEntry = pendingEntry
+        removeTransitionLoadingGate()
+        director.characterSelectionStore.completeConversationLoading(
+            for: characterID
+        )
+        return .ready
+    }
+
+    private func prepareInitialViewport(
+        for entry: Entry
+    ) -> LiveWorkspaceFeedMountReadiness {
+        let host = entry.hostingView
+        guard
+            host.bounds.width > 0,
+            host.bounds.height > 0
+        else {
+            resetViewportStability(for: entry)
+            return .waitingForLayout
+        }
+        host.layoutSubtreeIfNeeded()
+
+        guard
+            let director,
+            !director.liveFeedStore.characterStore(
+                for: entry.characterID.rawValue
+            ).isLoadingInitialFeed
+        else {
+            resetViewportStability(for: entry)
+            return .waitingForLayout
+        }
+
+        if !entry.didRequestPostMountRefresh {
+            entry.didRequestPostMountRefresh = true
+            director.liveFeedStore.refreshSelectedCharacterFeedAfterMount(
+                entry.characterID.rawValue
+            )
+            resetViewportStability(for: entry)
+            return .confirmValidLayout
+        }
+
+        guard let scrollView = primaryScrollView(in: host) else {
+            // 대화가 정말 비어 있는 ContentUnavailableView에는 scroll view가
+            // 없다. 이 경우 host 자체가 준비됐으면 바로 교체해도 된다.
+            guard let selectedCharacterID else {
+                resetViewportStability(for: entry)
+                return .waitingForLayout
+            }
+            let characterStore = director.liveFeedStore.characterStore(
+                for: selectedCharacterID.rawValue
+            )
+            guard
+                !characterStore.isLoadingInitialFeed,
+                characterStore.turns.isEmpty
+            else {
+                resetViewportStability(for: entry)
+                return .waitingForLayout
+            }
+            entry.stablePostClampPassCount += 1
+            guard entry.stablePostClampPassCount >= 2 else {
+                return .confirmValidLayout
+            }
+            return prepareFirstDisplayIfNeeded(for: entry)
+        }
+
+        scrollView.layoutSubtreeIfNeeded()
+        scrollView.documentView?.layoutSubtreeIfNeeded()
+        guard
+            let documentView = scrollView.documentView,
+            scrollView.contentView.bounds.width.isFinite,
+            scrollView.contentView.bounds.height.isFinite,
+            documentView.bounds.width.isFinite,
+            documentView.bounds.height.isFinite,
+            scrollView.contentView.bounds.width > 0,
+            scrollView.contentView.bounds.height > 0,
+            documentView.bounds.width > 0,
+            documentView.bounds.height > 0
+        else {
+            resetViewportStability(for: entry)
+            return .waitingForLayout
+        }
+
+        let clipView = scrollView.contentView
+        let documentBounds = documentView.bounds
+        let viewportHeight = clipView.bounds.height
+        let requiredVisibleHeight = min(
+            viewportHeight,
+            documentBounds.height
+        )
+        let visibleIntersectionHeight = documentBounds
+            .intersection(scrollView.documentVisibleRect).height
+        let hasValidViewport = visibleIntersectionHeight
+            >= max(0, requiredVisibleHeight - 1)
+
+        let signature = ViewportLayoutSignature(
+            documentBounds: documentBounds,
+            viewportBounds: clipView.bounds
+        )
+        guard entry.lastViewportSignature == signature else {
+            entry.lastViewportSignature = signature
+            entry.stablePreClampPassCount = 0
+            entry.stablePostClampPassCount = 0
+            entry.didPrepareFirstDisplay = false
+            return .confirmValidLayout
+        }
+
+        if entry.lastClampedViewportSignature != signature {
+            entry.stablePreClampPassCount += 1
+            guard entry.stablePreClampPassCount >= 2 else {
+                return .confirmValidLayout
+            }
+            // 문서 높이가 연속해서 안정된 뒤 AppKit 좌표계에서 해당
+            // layout signature당 한 번만 하단으로 정착한다. Markdown의
+            // 늦은 grow/shrink가 생기면 새 signature에서 다시 한 번만
+            // 보정하고 SwiftUI scrollTo 재시도는 사용하지 않는다.
+            entry.lastClampedViewportSignature = signature
+            entry.viewportClampCount += 1
+            let bottomY = documentView.isFlipped
+                ? max(
+                    documentBounds.minY,
+                    documentBounds.maxY - viewportHeight
+                )
+                : documentBounds.minY
+            var proposedBounds = clipView.bounds
+            proposedBounds.origin.y = bottomY
+            let constrainedBounds = clipView.constrainBoundsRect(
+                proposedBounds
+            )
+            clipView.scroll(to: constrainedBounds.origin)
+            scrollView.reflectScrolledClipView(clipView)
+            entry.stablePostClampPassCount = 0
+            return .confirmValidLayout
+        }
+
+        guard hasValidViewport else {
+            // 크기는 그대로인데 AppKit이 문서 밖 origin을 남긴 경우에도
+            // 다음 안정 pass에서 한 번 재보정할 수 있어야 한다.
+            entry.lastClampedViewportSignature = nil
+            entry.stablePreClampPassCount = 0
+            entry.stablePostClampPassCount = 0
+            entry.didPrepareFirstDisplay = false
+            return .confirmValidLayout
+        }
+
+        entry.stablePostClampPassCount += 1
+        guard entry.stablePostClampPassCount >= 2 else {
+            return .confirmValidLayout
+        }
+        return prepareFirstDisplayIfNeeded(for: entry)
+    }
+
+    private func resetViewportStability(for entry: Entry) {
+        entry.lastViewportSignature = nil
+        entry.lastClampedViewportSignature = nil
+        entry.stablePreClampPassCount = 0
+        entry.stablePostClampPassCount = 0
+        entry.didPrepareFirstDisplay = false
+    }
+
+    private func prepareFirstDisplayIfNeeded(
+        for entry: Entry
+    ) -> LiveWorkspaceFeedMountReadiness {
+        guard entry.didPrepareFirstDisplay else {
+            entry.didPrepareFirstDisplay = true
+            entry.hostingView.needsDisplay = true
+            entry.hostingView.displayIfNeeded()
+            return .confirmValidLayout
+        }
+        return .ready
+    }
+
+    private func primaryScrollView(in root: NSView) -> NSScrollView? {
+        descendantViews(of: root)
+            .compactMap { $0 as? NSScrollView }
+            .max { lhs, rhs in
+                lhs.bounds.width * lhs.bounds.height
+                    < rhs.bounds.width * rhs.bounds.height
+            }
+    }
+
+    private func descendantViews(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { subview in
+            [subview] + descendantViews(of: subview)
+        }
+    }
+}
+
+struct LiveWorkspaceFeed: View, Equatable {
+    @ObservedObject private var characterFeedStore: CharacterLiveFeedStore
+    private let characterFeedRevision: Int
+    private let director: AgentDirector
+    private let liveFeedStore: LiveFeedStore
+    private let characterID: OfficeCharacter
+    private let presentationStore: LiveWorkspaceFeedPresentationStore
+    private let workspaceDirectory: String
+    private let latestTerminalTurnID: String?
+    private let latestSubmittedCommandID: UUID?
+    private let latestStartedCommandID: UUID?
+    private let fetchWorkspaceReview: WorkspaceReviewFetcher
+    private let resolveWorkspaceReview: WorkspaceReviewResolver
+    private let updateResponseFeedback:
+        (String, TurnResponseFeedback?) async -> Void
+    @State private var followState = LiveWorkspaceFeedFollowState()
+    @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
+    @State private var displayAnchor = LiveWorkspaceFeedDisplayAnchor()
+    @State private var didPerformInitialScroll = false
+    @State private var isLoadingOlderTurns = false
+    @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
+
+    private static let bottomTolerance = CGFloat(20)
+    private static let topLoadThreshold = CGFloat(120)
+    private static let bottomMarkerID = "live-workspace-feed-bottom"
+
+    fileprivate init(
+        director: AgentDirector,
+        characterID: OfficeCharacter,
+        presentationStore: LiveWorkspaceFeedPresentationStore,
+        metadata: LiveWorkspaceFeedMetadata
+    ) {
+        let liveFeedStore = director.liveFeedStore
+        let characterFeedStore = liveFeedStore.characterStore(
+            for: characterID.rawValue
+        )
+        _characterFeedStore = ObservedObject(
+            wrappedValue: characterFeedStore
+        )
+        characterFeedRevision = characterFeedStore.mountReadinessRevision
+        self.director = director
+        self.liveFeedStore = liveFeedStore
+        self.characterID = characterID
+        self.presentationStore = presentationStore
+        workspaceDirectory = director.workspaceDirectory
+        latestTerminalTurnID = metadata.latestTerminalTurnID
+        latestSubmittedCommandID = metadata.latestSubmittedCommandID
+        latestStartedCommandID = metadata.latestStartedCommandID
+        fetchWorkspaceReview = { turnID in
+            try await director.fetchWorkspaceReview(turnID: turnID)
+        }
+        resolveWorkspaceReview = { turnID, decision in
+            try await director.resolveWorkspaceReview(
+                turnID: turnID,
+                decision: decision
+            )
+        }
+        updateResponseFeedback = { turnID, feedback in
+            await director.updateResponseFeedback(
+                turnID: turnID,
+                feedback: feedback
+            )
+        }
+    }
+
+    static func == (
+        lhs: LiveWorkspaceFeed,
+        rhs: LiveWorkspaceFeed
+    ) -> Bool {
+        lhs.director === rhs.director
+            && lhs.liveFeedStore === rhs.liveFeedStore
+            && lhs.characterFeedStore === rhs.characterFeedStore
+            && lhs.characterFeedRevision == rhs.characterFeedRevision
+            && lhs.characterID == rhs.characterID
+            && lhs.presentationStore === rhs.presentationStore
+            && lhs.workspaceDirectory == rhs.workspaceDirectory
+            && lhs.latestTerminalTurnID == rhs.latestTerminalTurnID
+            && lhs.latestSubmittedCommandID == rhs.latestSubmittedCommandID
+            && lhs.latestStartedCommandID == rhs.latestStartedCommandID
+    }
+
+    private var selectedTurns: [LiveFeedTurn] {
+        characterFeedStore.turns
+    }
+
+    private var visibleTurnLimit: Int {
+        displayAnchor.effectiveLimit(
+            turnIDsNewestFirst: selectedTurns.map(\.id)
+        )
+    }
+
+    private var displayTurns: [LiveFeedTurn] {
+        let visibleTurnLimit = visibleTurnLimit
+        return Array(
+            selectedTurns.enumerated().compactMap { index, turn in
+                LiveWorkspaceFeedPagingPolicy.includesTurn(
+                    at: index,
+                    visibleTurnLimit: visibleTurnLimit,
+                    isRunning: turn.status.isRunning,
+                    isLatestTerminalTurn:
+                        turn.id == latestTerminalTurnID
+                )
+                    ? turn
+                    : nil
+            }
+            .reversed()
+        )
+    }
+
+    private func repinDisplayAnchor() {
+        let pinned = displayAnchor.pinning(
+            turnIDsNewestFirst: selectedTurns.map(\.id)
+        )
+        if displayAnchor != pinned {
+            displayAnchor = pinned
+        }
+    }
+
+    private var displayItems: [LiveWorkspaceFeedTurnItem] {
+        displayTurns.map { turn in
+            LiveWorkspaceFeedTurnItem(
+                id: liveFeedStore.presentationID(forTurnID: turn.id),
+                turn: turn
+            )
+        }
+    }
+
+    private var hiddenTurnCount: Int {
+        max(0, selectedTurns.count - displayTurns.count)
+    }
+
+    private var canLoadOlderTurns: Bool {
+        visibleTurnLimit
+            < min(
+                LiveWorkspaceFeedPagingPolicy.maximumVisibleTurnCount,
+                selectedTurns.count
+            )
+    }
+
+    private var nextArchivedTurnCount: Int {
+        min(
+            LiveWorkspaceFeedPagingPolicy.pageSize,
+            hiddenTurnCount
+        )
+    }
+
+    private var initialLayoutRevision:
+        [LiveWorkspaceFeedTurnRevision]
+    {
+        displayItems.map { item in
+            let turn = item.turn
+            return LiveWorkspaceFeedTurnRevision(
+                id: item.id,
+                updatedAt: turn.updatedAt,
+                status: turn.status,
+                activityCount: turn.activities.count,
+                responseLength: turn.response.count,
+                workspaceStatus: turn.workspace?.status,
+                changedFileCount: turn.workspace?.changedFiles.count ?? 0
+            )
+        }
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            Group {
+                if displayTurns.isEmpty {
+                    if characterFeedStore.isLoadingInitialFeed {
+                        VStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("대화를 불러오는 중")
+                                .font(
+                                    .system(
+                                        size: 12,
+                                        weight: .semibold,
+                                        design: .rounded
+                                    )
+                                )
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("대화를 불러오는 중")
+                    } else {
+                        ContentUnavailableView(
+                            "아직 업무 대화가 없습니다",
+                            systemImage:
+                                "bubble.left.and.text.bubble.right",
+                            description: Text(
+                                "오피스에서 직원을 선택하고 첫 업무를 보내보세요."
+                            )
+                        )
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            LiveWorkspaceFeedScrollObserver(
+                                onMetrics: { metrics in
+                                    handleScrollMetrics(
+                                        metrics,
+                                        proxy: proxy
+                                    )
+                                },
+                                onUserScrollStarted: {
+                                    if !didPerformInitialScroll {
+                                        didPerformInitialScroll = true
+                                    }
+                                    pauseFollowingLatest()
+                                },
+                                onUserScrollActivity: {
+                                    if !didPerformInitialScroll {
+                                        didPerformInitialScroll = true
+                                    }
+                                    pauseFollowingLatest()
+                                },
+                                onUserScroll: { metrics in
+                                    handleUserScroll(
+                                        metrics,
+                                        proxy: proxy
+                                    )
+                                }
+                            )
+                            .frame(height: 1)
+
+                            LazyVStack(spacing: 14) {
+                                if hiddenTurnCount > 0 {
+                                    archivedTurnsNotice
+                                }
+
+                                ForEach(displayItems) { item in
+                                    let turn = item.turn
+                                    EquatableLiveTurnCard(
+                                        director: director,
+                                        turn: turn,
+                                        workspaceDirectory: workspaceDirectory,
+                                        shouldAnimateResponse:
+                                            liveFeedStore
+                                            .shouldAnimateResponse(for: turn),
+                                        shouldAnimateInitialResponse:
+                                            liveFeedStore
+                                            .shouldAnimateInitialResponse(
+                                                for: turn
+                                            ),
+                                        fetchWorkspaceReview:
+                                            fetchWorkspaceReview,
+                                        resolveWorkspaceReview:
+                                            resolveWorkspaceReview,
+                                        updateResponseFeedback:
+                                            updateResponseFeedback
+                                    ) {
+                                        liveFeedStore
+                                            .finishResponseAnimation(
+                                                for: turn.id
+                                            )
+                                    }
+                                        .equatable()
+                                        .id(item.id)
+                                }
+                            }
+
+                            LiveWorkspaceFeedBottomMarker()
+                                .frame(height: 16)
+                                .id(Self.bottomMarkerID)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.top, 16)
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .onAppear {
+                        settleInitialAnchorIfNeeded()
+                    }
+                    .onChange(
+                        of: characterFeedStore.isLoadingInitialFeed
+                    ) { _, isLoading in
+                        guard !isLoading else {
+                            return
+                        }
+                        settleInitialAnchorIfNeeded()
+                    }
+                    .onChange(of: initialLayoutRevision) { _, _ in
+                        repinDisplayAnchor()
+                        switch LiveWorkspaceFeedContentRevisionPolicy.action(
+                            didPerformInitialScroll: didPerformInitialScroll,
+                            isFollowingLatest: followState.isFollowingLatest
+                        ) {
+                        case .settleInitialAnchor:
+                            settleInitialAnchorIfNeeded()
+                        case .followLatest:
+                            scheduleScrollToLatest(proxy)
+                        case .revealContentBelow:
+                            // 버튼이 항상 보이므로 별도 표시 상태를
+                            // 갱신하지 않는다.
+                            break
+                        }
+                    }
+                    // 제출 시 revealSubmittedTurn이 하단 보정을 1회
+                    // 수행하고, 시작·진행 갱신은 followLatest 경로가
+                    // 담당한다. latestStartedCommandID의 별도 하단
+                    // 이동은 같은 프레임에 스크롤을 중복 예약해
+                    // 깜빡임을 만들므로 두지 않는다.
+                    .onChange(of: latestSubmittedCommandID) {
+                        _, commandID in
+                        guard commandID != nil else {
+                            return
+                        }
+                        revealSubmittedTurn(proxy: proxy)
+                    }
+                    .overlay(
+                        alignment: LiveWorkspaceFeedJumpButtonLayout.alignment
+                    ) {
+                        jumpToLatestButton(proxy: proxy)
+                            .padding(
+                                .leading,
+                                LiveWorkspaceFeedJumpButtonLayout
+                                    .leadingPadding
+                            )
+                            .padding(
+                                .bottom,
+                                LiveWorkspaceFeedJumpButtonLayout.bottomPadding
+                            )
+                    }
+                    .onDisappear {
+                        cancelScheduledScrolls()
+                    }
+                }
+            }
+            .onReceive(presentationStore.$isPresented) { isPresented in
+                if !isPresented {
+                    cancelScheduledScrolls()
+                }
+            }
+        }
+    }
+
+    private func handleScrollMetrics(
+        _ metrics: LiveWorkspaceFeedScrollSnapshot,
+        proxy: ScrollViewProxy
+    ) {
+        guard presentationStore.isPresentationRequested else {
+            return
+        }
+        scrollMetrics.hasSnapshot = true
+        scrollMetrics.distanceFromBottom = metrics.distanceFromBottom
+        scrollMetrics.viewportHeight = metrics.viewportHeight
+        scrollMetrics.contentHeight = metrics.contentHeight
+
+        settleInitialAnchorIfNeeded()
+        if !didPerformInitialScroll {
+            return
+        }
+
+    }
+
+    private func handleUserScroll(
+        _ metrics: LiveWorkspaceFeedScrollSnapshot,
+        proxy: ScrollViewProxy
+    ) {
+        guard presentationStore.isPresentationRequested else {
+            return
+        }
+        let shouldFollowLatest =
+            metrics.distanceFromBottom <= Self.bottomTolerance
+        if followState.isFollowingLatest != shouldFollowLatest {
+            followState.userDidScroll(
+                distanceFromBottom: metrics.distanceFromBottom,
+                tolerance: Self.bottomTolerance
+            )
+        }
+        if topLoadGate.shouldLoad(
+            distanceFromTop: metrics.distanceFromTop,
+            threshold: Self.topLoadThreshold,
+            isProgrammaticScrollInFlight:
+                scrollMetrics.isProgrammaticScrollInFlight
+        ) {
+            loadMoreTurnsIfNeeded(proxy: proxy)
+        }
+    }
+
+    private func scrollToLatest(
+        _ proxy: ScrollViewProxy,
+        animated: Bool = true
+    ) {
+        cancelScheduledScrolls()
+        let generation = beginProgrammaticScroll()
+        markAtBottom()
+        scrollMetrics.followScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.followScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
+            await Task.yield()
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
+                return
+            }
+            guard animated else {
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+                return
+            }
+            withAnimation(.easeOut(duration: 0.20)) {
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+            }
+            try? await Task.sleep(for: .milliseconds(220))
+        }
+    }
+
+    private func scheduleScrollToLatest(
+        _ proxy: ScrollViewProxy
+    ) {
+        guard
+            presentationStore.isPresentationRequested,
+            didPerformInitialScroll,
+            followState.isFollowingLatest,
+            scrollMetrics.submittedScrollTask == nil
+        else {
+            return
+        }
+        guard scrollMetrics.followScrollTask == nil else {
+            return
+        }
+        markAtBottom()
+        let generation = beginProgrammaticScroll()
+        scrollMetrics.followScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.followScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(16))
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
+                return
+            }
+            proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+        }
+    }
+
+    private func settleInitialAnchorIfNeeded() {
+        guard
+            !didPerformInitialScroll,
+            !characterFeedStore.isLoadingInitialFeed,
+            !displayTurns.isEmpty,
+            scrollMetrics.hasSnapshot,
+            scrollMetrics.viewportHeight > 0,
+            scrollMetrics.contentHeight > 0
+        else {
+            return
+        }
+
+        didPerformInitialScroll = true
+        repinDisplayAnchor()
+    }
+
+    private func cancelScheduledScrolls() {
+        scrollMetrics.scrollGeneration &+= 1
+        scrollMetrics.isProgrammaticScrollInFlight = false
+        scrollMetrics.followScrollTask?.cancel()
+        scrollMetrics.followScrollTask = nil
+        scrollMetrics.submittedScrollTask?.cancel()
+        scrollMetrics.submittedScrollTask = nil
+    }
+
+    private func beginProgrammaticScroll() -> Int {
+        scrollMetrics.scrollGeneration &+= 1
+        scrollMetrics.isProgrammaticScrollInFlight = true
+        return scrollMetrics.scrollGeneration
+    }
+
+    private func finishProgrammaticScroll(generation: Int) {
+        guard scrollMetrics.scrollGeneration == generation else {
+            return
+        }
+        scrollMetrics.isProgrammaticScrollInFlight = false
+    }
+
+    private func revealSubmittedTurn(proxy: ScrollViewProxy) {
+        cancelScheduledScrolls()
+        markAtBottom()
+        let generation = beginProgrammaticScroll()
+        scrollMetrics.submittedScrollTask = Task { @MainActor in
+            defer {
+                if scrollMetrics.scrollGeneration == generation {
+                    scrollMetrics.submittedScrollTask = nil
+                    finishProgrammaticScroll(generation: generation)
+                }
+            }
+            await Task.yield()
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
+                return
+            }
+            var policy = LiveWorkspaceFeedScrollPolicy()
+            for _ in 0..<LiveWorkspaceFeedScrollPolicy.submittedMaximumAttempts {
+                guard
+                    !Task.isCancelled,
+                    presentationStore.isPresentationRequested,
+                    scrollMetrics.scrollGeneration == generation
+                else {
+                    return
+                }
+                proxy.scrollTo(Self.bottomMarkerID, anchor: .bottom)
+                try? await Task.sleep(for: .milliseconds(40))
+                if policy.shouldStop(
+                    distanceFromBottom:
+                        scrollMetrics.distanceFromBottom,
+                    tolerance: Self.bottomTolerance
+                ) {
+                    break
+                }
+            }
+            guard
+                !Task.isCancelled,
+                presentationStore.isPresentationRequested,
+                scrollMetrics.scrollGeneration == generation
+            else {
+                return
+            }
+            markAtBottom()
+        }
+    }
+
+    private func loadMoreTurnsIfNeeded(
+        proxy: ScrollViewProxy
+    ) {
+        guard
+            didPerformInitialScroll,
+            canLoadOlderTurns,
+            !isLoadingOlderTurns
+        else {
+            return
+        }
+
+        let readingAnchorID = displayItems.first?.id
+        let currentLimit = visibleTurnLimit
+        let nextLimit = LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
+            current: currentLimit,
+            total: selectedTurns.count
+        )
+        guard nextLimit > currentLimit else {
+            return
+        }
+
+        isLoadingOlderTurns = true
+        displayAnchor = displayAnchor.pinning(
+            limit: nextLimit,
+            turnIDsNewestFirst: selectedTurns.map(\.id)
+        )
+        // 읽던 위치 복원 scrollTo도 programmatic으로 표시해, 복원
+        // 이동이 상단 근접으로 해석돼 다음 페이지를 연쇄 로드하는
+        // 재진입을 막는다.
+        let generation = beginProgrammaticScroll()
+        DispatchQueue.main.async {
+            guard presentationStore.isPresentationRequested else {
+                isLoadingOlderTurns = false
+                finishProgrammaticScroll(generation: generation)
+                return
+            }
+            if let readingAnchorID {
+                proxy.scrollTo(readingAnchorID, anchor: .top)
+            }
+            DispatchQueue.main.async {
+                isLoadingOlderTurns = false
+                finishProgrammaticScroll(generation: generation)
+            }
+        }
+    }
+
+    private func jumpToLatestButton(
+        proxy: ScrollViewProxy
+    ) -> some View {
+        Button {
+            scrollToLatest(proxy)
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .black))
+            .foregroundStyle(DashboardPalette.accent)
+            .frame(
+                width: LiveWorkspaceFeedJumpButtonLayout.diameter,
+                height: LiveWorkspaceFeedJumpButtonLayout.diameter
+            )
+            .background {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        Circle()
+                            .stroke(
+                                DashboardPalette.accent.opacity(0.62),
+                                lineWidth: 1.4
+                            )
+                    }
+            }
+            .shadow(
+                color: DashboardPalette.accent.opacity(0.28),
+                radius: 7,
+                y: 3
+            )
+            .shadow(color: .black.opacity(0.12), radius: 3, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("맨 아래로 이동")
+        .help("맨 아래로 이동")
+    }
+
+    private var archivedTurnsNotice: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "books.vertical")
+            if canLoadOlderTurns {
+                Text(
+                    "위로 더 올리면 이전 "
+                        + "\(nextArchivedTurnCount)건 추가"
+                )
+            } else {
+                Text(
+                    "이전 \(hiddenTurnCount)건은 대화 책꽂이에서 확인"
+                )
+            }
+        }
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 30)
+        .background(
+            Color.primary.opacity(0.035),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+    }
+
+    private func markAtBottom() {
+        if !followState.isFollowingLatest {
+            followState.resume()
+        }
+    }
+
+    private func pauseFollowingLatest() {
+        if followState.isFollowingLatest {
+            followState.userWillScroll()
+        }
+        cancelScheduledScrolls()
+    }
+}
+
+enum LiveWorkspaceFeedJumpButtonLayout {
+    static let alignment = Alignment.bottomLeading
+    static let contentHorizontalPadding = CGFloat(18)
+    static let avatarDiameter = CGFloat(38)
+    static let diameter = CGFloat(32)
+    static let bottomPadding = CGFloat(12)
+    static let leadingPadding =
+        contentHorizontalPadding + (avatarDiameter - diameter) / 2
+}
+
+private struct LiveWorkspaceFeedTurnItem: Identifiable {
+    let id: String
+    let turn: LiveFeedTurn
+}
+
+private struct LiveWorkspaceFeedTurnRevision: Equatable {
+    let id: String
+    let updatedAt: Date
+    let status: LiveTurnStatus
+    let activityCount: Int
+    let responseLength: Int
+    let workspaceStatus: WorkspaceReviewStatus?
+    let changedFileCount: Int
+}
+
+private final class LiveWorkspaceFeedScrollMetrics {
+    var hasSnapshot = false
+    var distanceFromBottom = CGFloat.zero
+    var viewportHeight = CGFloat.zero
+    var contentHeight = CGFloat.zero
+    var isProgrammaticScrollInFlight = false
+    var scrollGeneration = 0
+    var followScrollTask: Task<Void, Never>?
+    var submittedScrollTask: Task<Void, Never>?
+}
+
+private struct LiveWorkspaceFeedBottomMarker: View {
+    var body: some View {
+        Color.clear
+    }
+}
+
+struct LiveWorkspaceFeedScrollSnapshot: Equatable {
+    let distanceFromTop: CGFloat
+    let distanceFromBottom: CGFloat
+    let viewportHeight: CGFloat
+    let contentHeight: CGFloat
+
+    func isApproximatelyEqual(
+        to other: LiveWorkspaceFeedScrollSnapshot,
+        tolerance: CGFloat = 0.5
+    ) -> Bool {
+        abs(distanceFromTop - other.distanceFromTop) <= tolerance
+            && abs(distanceFromBottom - other.distanceFromBottom) <= tolerance
+            && abs(viewportHeight - other.viewportHeight) <= tolerance
+            && abs(contentHeight - other.contentHeight) <= tolerance
+    }
+}
+
+struct LiveWorkspaceFeedScrollGeometry {
+    static func snapshot(
+        documentBounds: CGRect,
+        visibleRect: CGRect,
+        isFlipped: Bool
+    ) -> LiveWorkspaceFeedScrollSnapshot {
+        let viewportHeight = max(0, visibleRect.height)
+        let contentHeight = max(0, documentBounds.height)
+        let scrollableHeight = max(0, contentHeight - viewportHeight)
+        let rawDistanceFromTop =
+            isFlipped
+            ? visibleRect.minY - documentBounds.minY
+            : documentBounds.maxY - visibleRect.maxY
+        let distanceFromTop = min(
+            scrollableHeight,
+            max(0, rawDistanceFromTop)
+        )
+        return LiveWorkspaceFeedScrollSnapshot(
+            distanceFromTop: distanceFromTop,
+            distanceFromBottom: max(
+                0,
+                scrollableHeight - distanceFromTop
+            ),
+            viewportHeight: viewportHeight,
+            contentHeight: contentHeight
+        )
+    }
+}
+
+struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
+    let onMetrics: (LiveWorkspaceFeedScrollSnapshot) -> Void
+    let onUserScrollStarted: () -> Void
+    let onUserScrollActivity: () -> Void
+    let onUserScroll: (LiveWorkspaceFeedScrollSnapshot) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            onMetrics: onMetrics,
+            onUserScrollStarted: onUserScrollStarted,
+            onUserScrollActivity: onUserScrollActivity,
+            onUserScroll: onUserScroll
+        )
+    }
+
+    func makeNSView(context: Context) -> AttachmentView {
+        let view = AttachmentView()
+        view.onHierarchyChange = {
+            [weak view, weak coordinator = context.coordinator] in
+            coordinator?.attach(
+                to: view?.window == nil
+                    ? nil
+                    : view?.enclosingScrollView
+            )
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: AttachmentView, context: Context) {
+        context.coordinator.onMetrics = onMetrics
+        context.coordinator.onUserScrollStarted = onUserScrollStarted
+        context.coordinator.onUserScrollActivity = onUserScrollActivity
+        context.coordinator.onUserScroll = onUserScroll
+        context.coordinator.attach(
+            to: nsView.window == nil
+                ? nil
+                : nsView.enclosingScrollView
+        )
+    }
+
+    static func dismantleNSView(
+        _ nsView: AttachmentView,
+        coordinator: Coordinator
+    ) {
+        nsView.onHierarchyChange = nil
+        coordinator.detach()
+    }
+
+    final class Coordinator {
+        var onMetrics: (LiveWorkspaceFeedScrollSnapshot) -> Void
+        var onUserScrollStarted: () -> Void
+        var onUserScrollActivity: () -> Void
+        var onUserScroll: (LiveWorkspaceFeedScrollSnapshot) -> Void
+        private weak var scrollView: NSScrollView?
+        private weak var documentView: NSView?
+        private var boundsObserver: NSObjectProtocol?
+        private var clipFrameObserver: NSObjectProtocol?
+        private var liveScrollStartObserver: NSObjectProtocol?
+        private var liveScrollUpdateObserver: NSObjectProtocol?
+        private var liveScrollEndObserver: NSObjectProtocol?
+        private var isReportScheduled = false
+        private var reportsUserScroll = false
+        private var reportsUserScrollActivity = false
+        private var lastReportedSnapshot: LiveWorkspaceFeedScrollSnapshot?
+        private var attachmentGeneration = 0
+        private var isLiveScrollActive = false
+        private var didReportLiveScrollActivity = false
+
+        init(
+            onMetrics: @escaping (LiveWorkspaceFeedScrollSnapshot) -> Void,
+            onUserScrollStarted: @escaping () -> Void,
+            onUserScrollActivity: @escaping () -> Void,
+            onUserScroll: @escaping (LiveWorkspaceFeedScrollSnapshot) -> Void
+        ) {
+            self.onMetrics = onMetrics
+            self.onUserScrollStarted = onUserScrollStarted
+            self.onUserScrollActivity = onUserScrollActivity
+            self.onUserScroll = onUserScroll
+        }
+
+        deinit {
+            // SwiftUI가 빠른 직원 전환 중 dismantle 콜백을 건너뛰더라도
+            // NotificationCenter observer가 다음 호스트까지 남지 않게 한다.
+            detach()
+        }
+
+        func attach(to scrollView: NSScrollView?) {
+            let documentView = scrollView?.documentView
+            guard
+                self.scrollView !== scrollView
+                    || self.documentView !== documentView
+            else {
+                return
+            }
+            detach()
+            guard let scrollView, let documentView else {
+                return
+            }
+            self.scrollView = scrollView
+            self.documentView = documentView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            scrollView.contentView.postsFrameChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleMetricsReport()
+            }
+            clipFrameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleMetricsReport()
+            }
+            liveScrollStartObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                self.isLiveScrollActive = true
+                self.didReportLiveScrollActivity = false
+                self.onUserScrollStarted()
+            }
+            liveScrollUpdateObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                if !self.isLiveScrollActive {
+                    self.isLiveScrollActive = true
+                    self.didReportLiveScrollActivity = false
+                    self.onUserScrollStarted()
+                }
+                if !self.didReportLiveScrollActivity {
+                    self.didReportLiveScrollActivity = true
+                    self.reportsUserScrollActivity = true
+                }
+                self.scheduleMetricsReport()
+            }
+            liveScrollEndObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isLiveScrollActive else {
+                    return
+                }
+                self.isLiveScrollActive = false
+                self.didReportLiveScrollActivity = false
+                self.scheduleMetricsReport(reportsUserScroll: true)
+            }
+            scheduleMetricsReport()
+        }
+
+        func detach() {
+            attachmentGeneration &+= 1
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            if let liveScrollStartObserver {
+                NotificationCenter.default.removeObserver(
+                    liveScrollStartObserver
+                )
+            }
+            if let liveScrollUpdateObserver {
+                NotificationCenter.default.removeObserver(
+                    liveScrollUpdateObserver
+                )
+            }
+            if let liveScrollEndObserver {
+                NotificationCenter.default.removeObserver(liveScrollEndObserver)
+            }
+            if let clipFrameObserver {
+                NotificationCenter.default.removeObserver(clipFrameObserver)
+            }
+            boundsObserver = nil
+            clipFrameObserver = nil
+            liveScrollStartObserver = nil
+            liveScrollUpdateObserver = nil
+            liveScrollEndObserver = nil
+            scrollView = nil
+            documentView = nil
+            isReportScheduled = false
+            reportsUserScroll = false
+            reportsUserScrollActivity = false
+            lastReportedSnapshot = nil
+            isLiveScrollActive = false
+            didReportLiveScrollActivity = false
+        }
+
+        private func scheduleMetricsReport(
+            reportsUserScroll: Bool = false
+        ) {
+            if reportsUserScroll {
+                self.reportsUserScroll = true
+            }
+            guard !isReportScheduled else {
+                return
+            }
+            isReportScheduled = true
+            let generation = attachmentGeneration
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(16)
+            ) { [weak self] in
+                guard let self else {
+                    return
+                }
+                guard self.attachmentGeneration == generation else {
+                    return
+                }
+                self.isReportScheduled = false
+                let reportsUserScroll = self.reportsUserScroll
+                let reportsUserScrollActivity =
+                    self.reportsUserScrollActivity
+                self.reportsUserScroll = false
+                self.reportsUserScrollActivity = false
+                guard let snapshot = self.scrollSnapshot() else {
+                    return
+                }
+                if reportsUserScrollActivity {
+                    self.onUserScrollActivity()
+                }
+                if
+                    self.lastReportedSnapshot?.isApproximatelyEqual(
+                        to: snapshot
+                    ) != true
+                {
+                    self.lastReportedSnapshot = snapshot
+                    self.onMetrics(snapshot)
+                }
+                if reportsUserScroll {
+                    self.onUserScroll(snapshot)
+                }
+            }
+        }
+
+        private func scrollSnapshot() -> LiveWorkspaceFeedScrollSnapshot? {
+            guard
+                let scrollView,
+                let documentView,
+                documentView === scrollView.documentView
+            else {
+                return nil
+            }
+            let documentBounds = documentView.bounds
+            let visibleRect = scrollView.documentVisibleRect
+            return LiveWorkspaceFeedScrollGeometry.snapshot(
+                documentBounds: documentBounds,
+                visibleRect: visibleRect,
+                isFlipped: documentView.isFlipped
+            )
+        }
+
+    }
+
+    final class AttachmentView: NSView {
+        var onHierarchyChange: (() -> Void)?
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            onHierarchyChange?()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onHierarchyChange?()
+        }
+    }
+}
+
+private struct EquatableLiveTurnCard: View, Equatable {
+    let director: AgentDirector
+    let turn: LiveFeedTurn
+    let workspaceDirectory: String
+    let shouldAnimateResponse: Bool
+    let shouldAnimateInitialResponse: Bool
+    let fetchWorkspaceReview: WorkspaceReviewFetcher
+    let resolveWorkspaceReview: WorkspaceReviewResolver
+    let updateResponseFeedback:
+        (String, TurnResponseFeedback?) async -> Void
+    let finishResponseAnimation: () -> Void
+
+    static func == (
+        lhs: EquatableLiveTurnCard,
+        rhs: EquatableLiveTurnCard
+    ) -> Bool {
+        lhs.director === rhs.director
+            && lhs.turn == rhs.turn
+            && lhs.workspaceDirectory == rhs.workspaceDirectory
+            && lhs.shouldAnimateResponse == rhs.shouldAnimateResponse
+            && lhs.shouldAnimateInitialResponse
+                == rhs.shouldAnimateInitialResponse
+    }
+
+    var body: some View {
+        LiveTurnCard(
+            director: director,
+            turn: turn,
+            workspaceDirectory: workspaceDirectory,
+            shouldAnimateResponse: shouldAnimateResponse,
+            shouldAnimateInitialResponse:
+                shouldAnimateInitialResponse,
+            fetchWorkspaceReview: fetchWorkspaceReview,
+            resolveWorkspaceReview: resolveWorkspaceReview,
+            updateResponseFeedback: updateResponseFeedback,
+            finishResponseAnimation: finishResponseAnimation
+        )
+    }
+}
 
 struct LiveTurnPromptBlock: View {
     let presentation: TaskPromptPresentation

@@ -12,23 +12,54 @@ struct PendingAgentQuestion: Identifiable, Equatable {
 
 @MainActor
 final class CharacterSelectionStore: ObservableObject {
-    @Published private(set) var selectedCharacterID: OfficeCharacter?
+    private struct State: Equatable {
+        var selectedCharacterID: OfficeCharacter?
+        var isConversationLoading: Bool
+    }
+
+    @Published private var state: State
+
+    var selectedCharacterID: OfficeCharacter? {
+        state.selectedCharacterID
+    }
+
+    var isConversationLoading: Bool {
+        state.isConversationLoading
+    }
 
     init(selectedCharacterID: OfficeCharacter? = .boss) {
-        self.selectedCharacterID = selectedCharacterID
+        state = State(
+            selectedCharacterID: selectedCharacterID,
+            // 첫 직원 대화도 실제 NSWindow와 문서 높이가 준비되기 전에는
+            // 입력하거나 다른 직원을 선택하지 못하게 한다.
+            isConversationLoading: selectedCharacterID != nil
+        )
     }
 
     func select(_ characterID: OfficeCharacter?) {
-        guard selectedCharacterID != characterID else {
+        guard state.selectedCharacterID != characterID else {
             return
         }
-        selectedCharacterID = characterID
+        state = State(
+            selectedCharacterID: characterID,
+            isConversationLoading: characterID != nil
+        )
     }
 
     func canSelect(_ characterID: OfficeCharacter) -> Bool {
-        true
+        !state.isConversationLoading
+            || state.selectedCharacterID == characterID
     }
 
+    func completeConversationLoading(for characterID: OfficeCharacter) {
+        guard
+            state.selectedCharacterID == characterID,
+            state.isConversationLoading
+        else {
+            return
+        }
+        state.isConversationLoading = false
+    }
 }
 
 enum WorkspaceReviewDecision {

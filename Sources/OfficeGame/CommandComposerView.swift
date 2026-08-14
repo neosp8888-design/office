@@ -67,10 +67,6 @@ struct CommandEntryAvailability: Equatable {
 enum CommandComposerLayout {
     static let minimumHeight: CGFloat = 40
     static let maximumHeight: CGFloat = 160
-    // 대화 패널과 입력창의 높이를 분리한다. 줄바꿈·전송으로 입력창의
-    // 외부 프레임이 바뀌면 위 대화 viewport도 함께 재배치되므로,
-    // 편집기는 고정 높이 안에서 자체 스크롤한다.
-    static let fixedEditorHeight: CGFloat = 72
 
     static func measuredHeight(for textView: NSTextView) -> CGFloat {
         guard
@@ -116,6 +112,7 @@ struct CommandEntryRow: View {
     let onSubmit: (String) -> Bool
 
     @State private var draft = CommandEntryDraft()
+    @State private var composerHeight = CommandComposerLayout.minimumHeight
 
     private var availability: CommandEntryAvailability {
         CommandEntryAvailability(
@@ -170,16 +167,14 @@ struct CommandEntryRow: View {
 
             CommandComposerView(
                 text: $draft.text,
-                measuredHeight: .constant(
-                    CommandComposerLayout.fixedEditorHeight
-                ),
+                measuredHeight: $composerHeight,
                 placeholder: placeholder,
                 isEnabled:
                     director.isReadyForSubmissions
                         && !director.isUpdatingConfiguration,
                 onSubmit: submitDraft
             )
-            .frame(height: CommandComposerLayout.fixedEditorHeight)
+            .frame(height: composerHeight)
 
             if director.isSelectedCharacterRunning {
                 Button(action: director.cancelSelectedJob) {
