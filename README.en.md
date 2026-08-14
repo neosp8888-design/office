@@ -9,7 +9,6 @@
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
-  <a href="https://github.com/neosp8888-design/office/releases/tag/v1.3.2"><img src="https://img.shields.io/badge/Release-v1.3.2-4C78A8" alt="Release v1.3.2"></a>
 </p>
 
 OFFICESTRA replaces a collection of separate terminal sessions with one interactive office. Select an AI coworker, assign a task, and watch their user-visible progress and final response in real time. Every coworker has an independent role, CLI provider, model, reasoning effort, speed tier, permission level, and persistent conversation session. The backend keeps work running even when the app window is closed.
@@ -153,69 +152,28 @@ Non-Git workdirs continue to use the existing shared-folder behavior. A Git work
 
 ## Installation
 
-OFFICESTRA Community Preview requires Apple silicon (M1 or later) and macOS 14
-or later. Intel Macs are not supported. People using an ordinary non-Git folder
-do not need Swift, Xcode, Node.js, npm, Git, or a source checkout. Node and the
-backend are bundled with the app. The first-run assistant preserves existing
-data while it prepares PostgreSQL, applies migrations, and connects the backend.
-
-The current preview has only two prerequisites:
-
-- Install and open [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- Install and sign in to either Codex CLI or Claude Code CLI
-
-Git is required only when the selected folder is a Git repository and you want
-worktree isolation, review, and merge. An ordinary folder still works in shared
-folder mode when Git is not installed.
+OFFICESTRA supports Apple silicon (M1 or later) and macOS 14 or later. Intel
+Macs are not supported. This repository distributes the latest `main` source
+only; it does not publish a runnable app, DMG, or app ZIP. Running the project
+requires Apple developer tools, Node.js, Docker Desktop, and either Codex CLI
+or Claude Code CLI.
 
 Available models still depend on the installed CLI version and account
 entitlements.
 
 ### Easiest path
 
-`v1.3.2` does not publish a DMG. Its only official binary artifacts are the
-Apple silicon ZIP and `SHA256SUMS`.
-
-1. Download the `arm64` `adhoc` ZIP for Apple silicon from
-   [Releases](https://github.com/neosp8888-design/office/releases). The
-   Community Preview is not Developer ID signed or notarized by Apple, so
-   macOS may block its first launch. Install only files from this official
-   repository after matching them against the supplied `SHA256SUMS`.
-2. Extract the ZIP, move `OFFICESTRA.app` to `Applications`, and launch it.
-3. If macOS blocks the app, do not run an arbitrary Terminal command. Attempt
-   one launch, then open `Apple menu → System Settings → Privacy & Security →
-   Security → Open Anyway`. Authenticate with your login password or Touch ID
-   and choose **Open**. This creates an exception for OFFICESTRA only. **Open
-   Anyway** is available for about one hour after the blocked launch attempt;
-   see [Apple's official guidance](https://support.apple.com/en-us/102445).
-4. Choose the project folder your teammates will work in.
-5. Review Docker, Codex, and Claude on the setup screen. Prepare only the items
-   that need attention, then choose **Check Again**. Database and backend setup
-   resume automatically.
-6. On a new installation, signing in to either Codex or Claude Code maps all
-   five teammates to that available CLI so you can send the first task. If
-   existing data still assigns a teammate to another CLI, setup preserves the
-   conversation and settings and asks you to sign in to that provider.
-
-Do not use `xattr`, `sudo spctl --master-disable`, or any global Gatekeeper
-disablement. Build this tag from source using the developer instructions below
-if you do not want to allow a security exception. Checksums verify Release-file
-integrity; they do not replace Apple notarization. Organization-managed Macs
-may block **Open Anyway** through policy.
-
-After downloading the Apple silicon ZIP and `SHA256SUMS`, run the following
-single line in Terminal and require an `OK` result.
+Use **Code → Download ZIP** on the GitHub repository to download the current
+`main` source. That ZIP contains source code, not a runnable app. With Git, the
+following command downloads the same latest source.
 
 ```sh
-cd "$HOME/Downloads" && grep 'OFFICESTRA-1.3.2-5-macOS-arm64-adhoc.zip$' SHA256SUMS | shasum -a 256 -c -
+git clone --depth 1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
 ```
 
-Choose **Open Logs** on the setup screen if installation fails. OFFICESTRA does
-not terminate an unknown process on port 4317. It also stops and shows the path
-when another OFFICESTRA backend is serving a different project.
-
-Maintainers can follow the [release guide](docs/RELEASING.md) for Community
-Preview publishing and a future Developer ID notarized release.
+Tags and GitHub Releases are not used. Follow the instructions below to run
+from source; see the [source publishing policy](docs/RELEASING.md) for the
+repository policy.
 
 <details>
 <summary><strong>Show developer commands for building from source</strong></summary>
@@ -308,14 +266,14 @@ for current provider-specific details.
 
 Run the clone command only when `~/OFFICESTRA` does not already exist. If it
 does exist, do not delete or overwrite it; ask Codex or Claude to inspect the
-existing installation first. This command pins the public `v1.3.2` source.
+existing installation first. This command downloads the latest default branch.
 
 ```sh
-git clone --branch v1.3.2 --depth 1 \
+git clone --depth 1 \
   https://github.com/neosp8888-design/office.git \
   "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
-git describe --tags --exact-match
+git rev-parse HEAD
 ```
 
 Create a workspace for your AI coworkers and replace the public placeholder.

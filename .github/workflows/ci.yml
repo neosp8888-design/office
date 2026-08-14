@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - README.md
+      - README.en.md
+      - "docs/**"
   pull_request:
   workflow_dispatch:
 
@@ -15,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  community-preview-e2e:
-    name: Community Preview first task
+  backend-first-task:
+    name: Backend first task
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -42,9 +46,9 @@ jobs:
         run: ./scripts/test-community-preview-e2e.sh
 
   verify:
-    name: Backend, Swift, and app bundle
+    name: Backend and Swift
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -72,206 +76,18 @@ jobs:
       - name: Test backend
         run: npm --prefix backend test
 
-      - name: Test release identity tooling
-        run: python3 scripts/test-backend-release-id.py
-
       - name: Test Swift package
         run: |
           /usr/bin/defaults write NSGlobalDomain AppleLanguages -array ko
           swift test -Xswiftc -warnings-as-errors
 
-      - name: Build signed app bundle
-        run: |
-          set -euo pipefail
-          export OFFICESTRA_NODE_EXECUTABLE="$(command -v node)"
-          ./scripts/build-app.sh
-
-      - name: Verify packaged runtime and resources
-        run: |
-          set -euo pipefail
-          app="dist/OFFICESTRA.app"
-          resources="$app/Contents/Resources"
-          runtime="$resources/OFFICESTRARuntime"
-
-          required_paths=(
-            "$app/Contents/Info.plist"
-            "$app/Contents/MacOS/OfficeLLM"
-            "$resources/OfficeLLM_OfficeCore.bundle/Info.plist"
-            "$resources/OfficeLLM_OfficeCore.bundle/characters.json"
-            "$resources/OfficeLLM_OfficeCore.bundle/office-retina-v1"
-            "$resources/OfficeLLM_OfficeCore.bundle/avatars"
-            "$resources/OfficeLLM_OfficeCore.bundle/profiles"
-            "$resources/OfficeLLM_OfficeGame.bundle/Info.plist"
-            "$resources/OfficeLLM_OfficeGame.bundle/en.lproj/Localizable.strings"
-            "$resources/OfficeLLM_OfficeGame.bundle/ko.lproj/Localizable.strings"
-            "$runtime/node/bin/node"
-            "$runtime/node/SHA256"
-            "$runtime/node/VERSION"
-            "$runtime/node/CDHASH"
-            "$runtime/node/ENTITLEMENTS.plist"
-            "$runtime/infra/compose.yaml"
-            "$runtime/backend/src/server.mjs"
-            "$runtime/backend/src/health.mjs"
-            "$runtime/backend/package.json"
-            "$runtime/backend/package-lock.json"
-            "$runtime/backend/node_modules/pg/package.json"
-            "$runtime/backend/node_modules/ws/package.json"
-            "$runtime/backend/node_modules/@slack/bolt/package.json"
-            "$runtime/database/migrations/001_initial.sql"
-            "$runtime/licenses/Node-LICENSE"
-            "$runtime/licenses/OFFICESTRA-LICENSE"
-            "$runtime/licenses/THIRD-PARTY-NOTICES.md"
-          )
-
-          for path in "${required_paths[@]}"; do
-            if [[ ! -e "$path" ]]; then
-              echo "Missing required app-bundle path: $path" >&2
-              exit 1
-            fi
-          done
-
-          test -x "$app/Contents/MacOS/OfficeLLM"
-          test -x "$runtime/node/bin/node"
-          app_architectures="$(lipo -archs "$app/Contents/MacOS/OfficeLLM")"
-          node_architectures="$(lipo -archs "$runtime/node/bin/node")"
-          test "$app_architectures" = "arm64"
-          test "$node_architectures" = "$app_architectures"
-          test "$("$runtime/node/bin/node" -p 'process.versions.node')" = \
-            "$(cat "$runtime/node/VERSION")"
-          python3 scripts/backend-release-id.py \
-            --verify \
-            --verify-node-signature \
-            "$app"
-          plutil -lint "$app/Contents/Info.plist"
-          plutil -lint "$resources/OfficeLLM_OfficeCore.bundle/Info.plist"
-          plutil -lint "$resources/OfficeLLM_OfficeGame.bundle/Info.plist"
-          jq -e \
-            '.workdir == "/Users/your-name/Projects"' \
-            "$resources/OfficeLLM_OfficeCore.bundle/characters.json"
-          codesign --verify --deep --strict --verbose=2 "$app"
-
-      - name: Launch the first-run app screen
-        run: ./scripts/smoke-test-macos-release.sh dist/OFFICESTRA.app
-
-      - name: Stage the exact packaged runtime for Docker E2E
-        run: |
-          set -euo pipefail
-          source_app="dist/OFFICESTRA.app"
-          staging="dist/packaged-runtime-e2e/OFFICESTRA.app/Contents"
-          mkdir -p "$staging/Resources/OfficeLLM_OfficeCore.bundle"
-          cp "$source_app/Contents/Info.plist" "$staging/Info.plist"
-          cp \
-            "$source_app/Contents/Resources/OfficeLLM_OfficeCore.bundle/characters.json" \
-            "$staging/Resources/OfficeLLM_OfficeCore.bundle/characters.json"
-          rsync -a \
-            --exclude 'node/bin/node' \
-            "$source_app/Contents/Resources/OFFICESTRARuntime/" \
-            "$staging/Resources/OFFICESTRARuntime/"
-          tar -czf dist/packaged-runtime-e2e.tgz \
-            -C dist/packaged-runtime-e2e \
-            OFFICESTRA.app
-
-      - name: Upload packaged runtime E2E fixture
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-runtime-e2e
-          path: dist/packaged-runtime-e2e.tgz
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Reject local paths and sensitive files
-        run: python3 scripts/verify-release-safety.py --require-app
-
-      - name: Package and verify preview artifacts
-        run: |
-          set -euo pipefail
-          ./scripts/package-release.sh
-          (
-            cd dist/release
-            shasum -a 256 -c SHA256SUMS
-          )
-          test "$(find dist/release -maxdepth 1 -name '*-arm64-adhoc.zip' | wc -l | tr -d ' ')" = 1
-          test "$(find dist/release -maxdepth 1 -name '*.zip' | wc -l | tr -d ' ')" = 1
-          test "$(find dist/release -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')" = 0
-          test "$(wc -l < dist/release/SHA256SUMS | tr -d ' ')" = 1
-          test "$(awk '{print $2}' dist/release/SHA256SUMS | grep -Ec -- '-arm64-adhoc\.zip$')" = 1
-
       - name: Check repository and YAML syntax
         run: |
           set -euo pipefail
           git diff --check
-          bash -n scripts/test-packaged-community-preview-e2e.sh
-          zsh -n scripts/build-app.sh
-          zsh -n scripts/smoke-test-macos-release.sh
-          zsh -n scripts/package-release.sh
-          zsh -n scripts/notarize-app.sh
-          if rg -n \
-            'x86_64|macos-15-intel|universal2' \
-            .github/workflows/release-ui-preflight.yml \
-            .github/workflows/community-preview-release.yml \
-            .github/workflows/release.yml \
-            scripts/build-app.sh \
-            scripts/package-release.sh; then
-            echo "Apple Silicon 전용 릴리스 경로에 Intel 지원이 다시 들어왔습니다." >&2
-            exit 1
-          fi
-          if rg -n \
-            '\.dmg|hdiutil[[:space:]]+create' \
-            .github/workflows/community-preview-release.yml \
-            .github/workflows/release.yml \
-            scripts/package-release.sh \
-            scripts/notarize-app.sh \
-            scripts/smoke-test-macos-release.sh \
-            scripts/test-packaged-community-preview-e2e.sh \
-            | grep -vE 'wc -l.*= 0'; then
-            echo "ZIP 전용 릴리스 경로에 DMG 배포가 다시 들어왔습니다." >&2
-            exit 1
-          fi
           ruby -e \
             'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
             .github/workflows/ci.yml
           ruby -e \
             'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
-            .github/workflows/release.yml
-          ruby -e \
-            'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
-            .github/workflows/community-preview-release.yml
-          ruby -e \
-            'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
-            .github/workflows/release-ui-preflight.yml
-          ruby -e \
-            'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' \
             infra/compose.yaml
-
-  packaged-runtime-e2e:
-    name: Packaged backend first task
-    needs:
-      - verify
-      - community-preview-e2e
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Download the macOS packaged runtime
-        uses: actions/download-artifact@v4
-        with:
-          name: packaged-runtime-e2e
-          path: dist
-
-      - name: Run the packaged runtime against Docker
-        run: |
-          set -euo pipefail
-          mkdir -p dist/packaged-runtime-e2e
-          tar -xzf dist/packaged-runtime-e2e.tgz \
-            -C dist/packaged-runtime-e2e
-          OFFICESTRA_PACKAGED_E2E_NODE_EXECUTABLE="$(command -v node)" \
-            ./scripts/test-packaged-community-preview-e2e.sh \
-              dist/packaged-runtime-e2e/OFFICESTRA.app
