@@ -1258,6 +1258,77 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         }
     }
 
+    func testLoadingGateDoesNotBleedBackgroundOutsideItsBounds() async throws {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.liveFeedStore.replace(with: makeTurns())
+        director.liveFeedStore.finishInitialLoading()
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 800),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let root = NSView(frame: window.contentLayoutRect)
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 420, y: 120, width: 700, height: 560)
+        )
+        root.addSubview(container)
+        window.contentView = root
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        _ = try await waitNaturallyUntil(timeout: .seconds(4)) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+
+        director.selectedCharacterID = .leftWoman
+        container.configure(
+            director: director,
+            selectedCharacterID: .leftWoman
+        )
+        container.layoutSubtreeIfNeeded()
+
+        guard
+            let gate = container.subviews.first(where: {
+                $0.identifier?.rawValue == "live-workspace-feed-loading-gate"
+            })
+        else {
+            XCTFail("전환 차폐 뷰를 찾지 못했습니다.")
+            return
+        }
+
+        // isOpaque를 선언하면 AppKit이 뒤쪽 그리기를 건너뛴다. 차폐 뷰가
+        // 상위 레이어를 공유한 채 이 최적화를 쓰면 배경 채움이 대화
+        // 영역 밖 창 전체로 번진다.
+        XCTAssertFalse(
+            gate.isOpaque,
+            "차폐 뷰가 불투명을 선언하면 배경이 창 전체로 번집니다."
+        )
+        XCTAssertTrue(
+            gate.wantsLayer,
+            "차폐 뷰는 자기 레이어에만 배경을 그려야 합니다."
+        )
+        XCTAssertNotNil(
+            gate.layer?.backgroundColor,
+            "차폐 배경은 레이어 배경색으로 그려야 합니다."
+        )
+        XCTAssertEqual(
+            gate.frame,
+            container.bounds,
+            "차폐 뷰는 대화 영역과 정확히 같은 범위여야 합니다."
+        )
+        XCTAssertTrue(
+            container.clipsToBounds,
+            "대화 영역 밖으로 그려지지 않도록 경계를 잘라야 합니다."
+        )
+    }
+
     func testClaudeTranscriptTransitionsStayCoveredUntilViewportIsReady()
         async throws
     {
