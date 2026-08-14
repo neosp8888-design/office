@@ -725,6 +725,9 @@ final class AgentDirector: ObservableObject {
     /// 바로 적용으로 중단시킨 직원이다. 이 중단만은 실패·중단 상태에서도
     /// 다음 예약을 이어서 보낸다.
     private var immediateQueueDrainCharacters: Set<OfficeCharacter> = []
+    /// 변경사항 검토가 끝나기를 기다리는 예약 배출이다. 검토가 풀린
+    /// 시점에 이어서 보낸다.
+    private var deferredQueueDrainCharacters: Set<OfficeCharacter> = []
     private var acknowledgedWarningMessages: [OfficeCharacter: String] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
@@ -1153,7 +1156,8 @@ final class AgentDirector: ObservableObject {
         _ prompt: String,
         attachmentPaths: [String] = [],
         to requestedCharacter: OfficeCharacter? = nil,
-        onRequestFinished: (() -> Void)? = nil
+        onRequestFinished: (() -> Void)? = nil,
+        onSubmissionFailed: (() -> Void)? = nil
     ) {
         let character: CharacterConfiguration?
         if let requestedCharacter {
@@ -1169,6 +1173,7 @@ final class AgentDirector: ObservableObject {
             !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             !runningCharacters.contains(character.id)
         else {
+            onSubmissionFailed?()
             onRequestFinished?()
             return
         }
@@ -1259,6 +1264,7 @@ final class AgentDirector: ObservableObject {
             } catch {
                 liveFeedStore.removeOptimisticTurn(id: optimisticTurnID)
                 runningCharacters.remove(character.id)
+                onSubmissionFailed?()
                 let message = error.localizedDescription
                 if AgentUsageLimitClassifier.isLimitReached(message) {
                     pendingQuestions[character.id] = nil
@@ -1428,6 +1434,17 @@ final class AgentDirector: ObservableObject {
             to: character,
             onRequestFinished: { [weak self] in
                 self?.releaseStagedAttachments(next.attachments)
+            },
+            // 제출이 실패하면 예약을 되돌린다. 되돌리지 않으면 사용자가
+            // 적어 둔 업무가 말없이 사라진다.
+            onSubmissionFailed: { [weak self] in
+                guard let self else {
+                    return
+                }
+                var queue = self.queuedCommands[character]
+                    ?? QueuedCommandQueue()
+                queue.restoreToFront(next)
+                self.queuedCommands[character] = queue
             }
         )
     }
@@ -2182,7 +2199,14 @@ final class AgentDirector: ObservableObject {
             }
         )
         if pendingWorkspaceReviewCharacters != updatedReviewCharacters {
+            let resolvedCharacters = pendingWorkspaceReviewCharacters
+                .subtracting(updatedReviewCharacters)
             pendingWorkspaceReviewCharacters = updatedReviewCharacters
+            for character in resolvedCharacters
+            where deferredQueueDrainCharacters.contains(character) {
+                deferredQueueDrainCharacters.remove(character)
+                drainQueuedCommand(for: character)
+            }
         }
 
         let runningTurns = turns.filter { $0.status.isRunning }
@@ -2274,11 +2298,17 @@ final class AgentDirector: ObservableObject {
 
             let isImmediateRequest = immediateQueueDrainCharacters
                 .contains(character)
+            let isWorkspaceBlocking =
+                turn.workspace?.status.blocksNewTasks == true
             if QueuedCommandDrainPolicy.shouldDrain(
                 status: turn.status,
-                isImmediateRequest: isImmediateRequest
+                isImmediateRequest: isImmediateRequest,
+                isWorkspaceBlocking: isWorkspaceBlocking
             ) {
                 drainQueuedCommand(for: character)
+            } else if isWorkspaceBlocking {
+                // 검토·병합이 끝나면 이어서 보낸다.
+                deferredQueueDrainCharacters.insert(character)
             } else if isImmediateRequest {
                 immediateQueueDrainCharacters.remove(character)
             }

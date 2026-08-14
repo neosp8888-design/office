@@ -109,6 +109,86 @@ final class QueuedCommandQueueTests: XCTestCase {
         }
     }
 
+    func testAutomaticMergeDefersDrainInsteadOfDroppingReservation() {
+        // 자동 병합이 켜져 있으면 턴이 completed로 끝나는 순간 작업
+        // 공간이 아직 승인·병합 대기다. 이때 예약을 꺼내면 백엔드가
+        // 거부해 그대로 사라진다.
+        for status in [LiveTurnStatus.completed, .interrupted, .failed] {
+            XCTAssertFalse(
+                QueuedCommandDrainPolicy.shouldDrain(
+                    status: status,
+                    isImmediateRequest: false,
+                    isWorkspaceBlocking: true
+                ),
+                "\(status): 검토·병합 대기 중에는 예약을 꺼내면 안 됩니다."
+            )
+            XCTAssertFalse(
+                QueuedCommandDrainPolicy.shouldDrain(
+                    status: status,
+                    isImmediateRequest: true,
+                    isWorkspaceBlocking: true
+                ),
+                "\(status): 바로 적용도 검토·병합 대기 중에는 보류해야 합니다."
+            )
+        }
+
+        // 병합이 끝나 차단이 풀리면 그대로 이어 간다.
+        XCTAssertTrue(
+            QueuedCommandDrainPolicy.shouldDrain(
+                status: .completed,
+                isImmediateRequest: false,
+                isWorkspaceBlocking: false
+            )
+        )
+    }
+
+    func testFailedSubmissionRestoresReservationToFront() {
+        var queue = QueuedCommandQueue()
+        XCTAssertTrue(queue.enqueue(QueuedCommand(prompt: "첫 예약")))
+        XCTAssertTrue(queue.enqueue(QueuedCommand(prompt: "둘째 예약")))
+
+        guard let drained = queue.removeFirst() else {
+            XCTFail("배출할 예약이 없습니다.")
+            return
+        }
+        XCTAssertEqual(queue.commands.map(\.prompt), ["둘째 예약"])
+
+        queue.restoreToFront(drained)
+        XCTAssertEqual(
+            queue.commands.map(\.prompt),
+            ["첫 예약", "둘째 예약"],
+            "제출이 실패한 예약은 원래 순서대로 되돌아와야 합니다."
+        )
+
+        // 같은 예약을 두 번 되돌려도 중복되지 않는다.
+        queue.restoreToFront(drained)
+        XCTAssertEqual(queue.commands.count, 2)
+
+        // 큐가 가득 찬 상태에서도 원래 자기 자리는 되찾는다.
+        var fullQueue = QueuedCommandQueue()
+        for index in 0..<QueuedCommandQueue.maximumCount {
+            XCTAssertTrue(
+                fullQueue.enqueue(QueuedCommand(prompt: "예약 \(index)"))
+            )
+        }
+        guard let head = fullQueue.removeFirst() else {
+            XCTFail("배출할 예약이 없습니다.")
+            return
+        }
+        XCTAssertTrue(fullQueue.enqueue(QueuedCommand(prompt: "새 예약")))
+        XCTAssertTrue(fullQueue.isFull)
+        fullQueue.restoreToFront(head)
+        XCTAssertEqual(
+            fullQueue.commands.first?.prompt,
+            head.prompt,
+            "가득 찼다는 이유로 실패한 예약을 버리면 안 됩니다."
+        )
+        XCTAssertEqual(
+            fullQueue.commands.count,
+            QueuedCommandQueue.maximumCount + 1
+        )
+    }
+
     func testDirectorRejectsReservationForIdleCharacter() {
         let director = AgentDirector(startBackgroundTasks: false)
 

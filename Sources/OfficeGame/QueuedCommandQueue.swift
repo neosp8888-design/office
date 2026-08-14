@@ -66,6 +66,15 @@ struct QueuedCommandQueue: Equatable {
         commands.isEmpty ? nil : commands.removeFirst()
     }
 
+    /// 제출이 실패한 예약을 원래 자리로 되돌린다. 큐가 가득 차 있어도
+    /// 이미 우리 것이던 자리를 되찾는 것이므로 최대 개수로 막지 않는다.
+    mutating func restoreToFront(_ command: QueuedCommand) {
+        guard !commands.contains(where: { $0.id == command.id }) else {
+            return
+        }
+        commands.insert(command, at: 0)
+    }
+
     /// 바로 적용은 고른 예약을 맨 앞으로 옮긴 뒤 배수 경로를 그대로
     /// 태운다. 순서만 바꾸므로 나머지 예약은 그대로 남는다.
     @discardableResult
@@ -86,8 +95,15 @@ enum QueuedCommandDrainPolicy {
     /// 바로 적용은 사용자가 명시적으로 요청한 중단이므로 예외다.
     static func shouldDrain(
         status: LiveTurnStatus,
-        isImmediateRequest: Bool
+        isImmediateRequest: Bool,
+        isWorkspaceBlocking: Bool = false
     ) -> Bool {
+        // 변경사항이 승인·병합 대기면 백엔드가 새 업무를 거부한다.
+        // 자동 병합이 켜져 있으면 완료와 병합이 붙어 일어나므로 완료
+        // 시점에 예약을 꺼내면 그대로 버려진다. 검토가 풀린 뒤 보낸다.
+        if isWorkspaceBlocking {
+            return false
+        }
         if isImmediateRequest {
             return true
         }
