@@ -1512,6 +1512,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var blankDeadline: DispatchWorkItem?
     private var didReportCurrentBlank = false
     private var sessionReportCount = 0
+    // 대화를 덮고 있는 차폐의 수명을 직접 잰다. 준비 콜백은 3초 뒤
+    // 멈추므로 콜백에 기대면 오래 덮인 구간을 놓친다.
+    private var gateInstalledAt: Date?
+    private var gateWatchdog: Timer?
+    private var gatePolicy = LiveWorkspaceFeedStallPolicy()
     private static let resizeBottomTolerance = CGFloat(20)
 
     var activeCharacterIDForTesting: OfficeCharacter? {
@@ -1769,6 +1774,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         transitionLoadingGateView = gate
         addSubview(gate)
         transitionLoadingGateInstallCount &+= 1
+        startGateWatchdog()
     }
 
     private func mountSelectedCharacter(
@@ -1811,6 +1817,133 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private func removeTransitionLoadingGate() {
         transitionLoadingGateView?.removeFromSuperview()
         transitionLoadingGateView = nil
+        finishGateWatchdog()
+    }
+
+    private func startGateWatchdog() {
+        gateWatchdog?.invalidate()
+        gateInstalledAt = Date()
+        gatePolicy.reset()
+        let timer = Timer.scheduledTimer(
+            withTimeInterval: 0.25,
+            repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.checkGateCoverage()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        gateWatchdog = timer
+    }
+
+    private func finishGateWatchdog() {
+        gateWatchdog?.invalidate()
+        gateWatchdog = nil
+        defer {
+            gateInstalledAt = nil
+            gatePolicy.reset()
+        }
+        guard let gateInstalledAt else {
+            return
+        }
+        let elapsed = Date().timeIntervalSince(gateInstalledAt)
+        guard elapsed >= LiveWorkspaceFeedStallPolicy.recoveredThreshold else {
+            return
+        }
+        recordGateCoverage(
+            kind: "gate-covered-recovered",
+            elapsed: elapsed
+        )
+    }
+
+    /// 차폐가 계속 덮고 있는 동안 무엇이 준비되지 않았는지 남긴다.
+    private func checkGateCoverage() {
+        guard
+            transitionLoadingGateView?.superview === self,
+            let gateInstalledAt
+        else {
+            return
+        }
+        let elapsed = Date().timeIntervalSince(gateInstalledAt)
+        guard gatePolicy.shouldReport(elapsed: elapsed) else {
+            return
+        }
+        recordGateCoverage(kind: "gate-covering", elapsed: elapsed)
+    }
+
+    private func recordGateCoverage(kind: String, elapsed: TimeInterval) {
+        let entry = pendingEntry ?? activeEntry
+        let stage = gateCoverageStage()
+        guard let entry else {
+            recordBare(kind: kind, elapsed: elapsed, stage: stage)
+            return
+        }
+        record(
+            kind: kind,
+            entry: entry,
+            elapsed: elapsed,
+            readiness: stage,
+            readinessRevision:
+                entry.characterFeedStore.mountReadinessRevision,
+            trace: blankDetector.documentHeightTrace
+        )
+    }
+
+    /// 준비가 막힌 지점을 그대로 문자열로 남긴다. 어느 조건에서 멈췄는지
+    /// 알아야 다음 수정을 고를 수 있다.
+    private func gateCoverageStage() -> String {
+        guard let pendingEntry else {
+            return "pending=none active=\(activeEntry == nil ? "none" : "yes")"
+        }
+        let host = pendingEntry.hostingView
+        let store = pendingEntry.characterFeedStore
+        return [
+            "pending=\(pendingEntry.characterID.rawValue)",
+            "inSelf=\(host.superview === self)",
+            "inWindow=\(host.window === window && window != nil)",
+            "revision=\(pendingEntry.lastPreparedReadinessRevision.map(String.init) ?? "nil")"
+                + "/\(store.mountReadinessRevision)",
+            "loading=\(store.isLoadingInitialFeed)",
+            "turns=\(store.turns.count)",
+            "scroll=\(primaryScrollView(in: host) != nil)",
+        ].joined(separator: " ")
+    }
+
+    private func recordBare(
+        kind: String,
+        elapsed: TimeInterval,
+        stage: String
+    ) {
+        guard
+            let stallRecorder,
+            sessionReportCount
+                < LiveWorkspaceFeedStallPolicy.maximumReportsPerSession
+        else {
+            return
+        }
+        sessionReportCount += 1
+        stallRecorder.record(
+            LiveWorkspaceFeedStallReport(
+                kind: kind,
+                characterID: selectedCharacterID?.rawValue ?? "none",
+                elapsedSeconds: elapsed,
+                readiness: stage,
+                hostWidth: Double(bounds.width),
+                hostHeight: Double(bounds.height),
+                hasScrollView: false,
+                documentHeight: 0,
+                viewportHeight: 0,
+                visibleIntersectionHeight: 0,
+                turnCount: 0,
+                isLoadingInitialFeed: false,
+                readinessRevision: 0,
+                preClampPassCount: 0,
+                postClampPassCount: 0,
+                viewportClampCount: 0,
+                hasLoadingGate: true
+            ),
+            at: Date()
+        )
     }
 
     private func completePendingTransition(

@@ -104,10 +104,10 @@ struct LiveWorkspaceFeedBlankDetector: Equatable {
 struct LiveWorkspaceFeedStallPolicy: Equatable {
     /// 정상 전환은 보통 수백 ms 안에 끝난다. 사람이 "오래"라고 느끼는
     /// 구간부터 남겨야 기록이 잡음이 되지 않는다.
-    static let firstReportDelay = TimeInterval(2.5)
+    static let firstReportDelay = TimeInterval(1)
     /// 한 번 걸린 전환이 계속 안 풀리면 시간에 따른 변화도 필요하다.
     /// 다만 무한정 쌓지 않는다.
-    static let repeatReportInterval = TimeInterval(5)
+    static let repeatReportInterval = TimeInterval(2)
     static let maximumReportsPerTransition = 4
     /// 깜빡임을 전부 잡는 것이 목적이므로 짧은 구간도 남긴다. 대신 한
     /// 실행에서 남기는 총량에 상한을 둔다.

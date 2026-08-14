@@ -116,7 +116,9 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
         var policy = LiveWorkspaceFeedStallPolicy()
 
         XCTAssertFalse(
-            policy.shouldReport(elapsed: 1),
+            policy.shouldReport(
+                elapsed: LiveWorkspaceFeedStallPolicy.firstReportDelay / 2
+            ),
             "짧은 지연까지 남기면 기록이 잡음이 됩니다."
         )
         XCTAssertTrue(
@@ -126,7 +128,8 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
         )
         XCTAssertFalse(
             policy.shouldReport(
-                elapsed: LiveWorkspaceFeedStallPolicy.firstReportDelay + 1
+                elapsed: LiveWorkspaceFeedStallPolicy.firstReportDelay
+                    + LiveWorkspaceFeedStallPolicy.repeatReportInterval / 2
             ),
             "반복 기록은 간격을 두어야 합니다."
         )
