@@ -193,6 +193,67 @@ final class CommandEntryDraftTests: XCTestCase {
         }
     }
 
+    func testSwiftUIUpdatePreservesMarkedKoreanComposition() {
+        let textBox = TextBox(value: "")
+        let composer = makeComposer(textBox: textBox)
+        let textView = CommandComposerTextView()
+        textView.setMarkedText(
+            "한",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        XCTAssertTrue(textView.hasMarkedText())
+        XCTAssertFalse(composer.updateTextView(textView))
+        XCTAssertEqual(textView.string, "한")
+        XCTAssertTrue(
+            textView.hasMarkedText(),
+            "SwiftUI의 이전 draft가 한글 조합을 취소하면 안 됩니다."
+        )
+    }
+
+    func testReturnSubmitsWithoutInsertingNewline() throws {
+        let textView = CommandComposerTextView()
+        textView.string = "업무"
+        var submittedText: String?
+        textView.onSubmit = { submittedText = $0 }
+
+        textView.keyDown(with: try makeReturnEvent())
+
+        XCTAssertEqual(submittedText, "업무")
+        XCTAssertEqual(textView.string, "업무")
+    }
+
+    func testReturnCommitsMarkedKoreanTextAndSubmits() throws {
+        let textView = CommandComposerTextView()
+        textView.setMarkedText(
+            "한글",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        var submittedText: String?
+        textView.onSubmit = { submittedText = $0 }
+
+        textView.keyDown(with: try makeReturnEvent())
+
+        XCTAssertFalse(textView.hasMarkedText())
+        XCTAssertEqual(submittedText, "한글")
+        XCTAssertEqual(textView.string, "한글")
+    }
+
+    func testShiftReturnIsTheOnlyReturnThatInsertsNewline() throws {
+        let textView = CommandComposerTextView()
+        textView.string = "업무"
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+        var submittedText: String?
+        textView.onSubmit = { submittedText = $0 }
+
+        textView.keyDown(with: try makeReturnEvent(modifiers: [.shift]))
+
+        XCTAssertNil(submittedText)
+        XCTAssertEqual(textView.string, "업무\n")
+    }
+
     func testComposerHeightGrowsAfterTrailingNewlineAndCapsAtMaximum() {
         let textView = makeComposerTextView()
 
@@ -222,7 +283,15 @@ final class CommandEntryDraftTests: XCTestCase {
         initialText: String
     ) -> (CommandComposerView.Coordinator, TextBox) {
         let textBox = TextBox(value: initialText)
-        let composer = CommandComposerView(
+        let composer = makeComposer(textBox: textBox)
+        return (composer.makeCoordinator(), textBox)
+    }
+
+    private func makeComposer(
+        textBox: TextBox,
+        onSubmit: @escaping () -> Void = {}
+    ) -> CommandComposerView {
+        CommandComposerView(
             text: Binding(
                 get: { textBox.value },
                 set: { textBox.value = $0 }
@@ -230,9 +299,27 @@ final class CommandEntryDraftTests: XCTestCase {
             measuredHeight: .constant(CommandComposerLayout.minimumHeight),
             placeholder: "업무를 입력하세요",
             isEnabled: true,
-            onSubmit: {}
+            onSubmit: onSubmit
         )
-        return (composer.makeCoordinator(), textBox)
+    }
+
+    private func makeReturnEvent(
+        modifiers: NSEvent.ModifierFlags = []
+    ) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: 36
+            )
+        )
     }
 
     private func makeComposerTextView() -> NSTextView {

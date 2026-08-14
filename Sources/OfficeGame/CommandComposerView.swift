@@ -437,8 +437,14 @@ struct CommandComposerView: NSViewRepresentable {
     }
 
     @discardableResult
-    private func updateTextView(_ textView: CommandComposerTextView) -> Bool {
-        textView.onSubmit = onSubmit
+    func updateTextView(_ textView: CommandComposerTextView) -> Bool {
+        let textBinding = _text
+        textView.onSubmit = { submittedText in
+            if textBinding.wrappedValue != submittedText {
+                textBinding.wrappedValue = submittedText
+            }
+            onSubmit()
+        }
         if textView.placeholder != placeholder {
             textView.placeholder = placeholder
         }
@@ -452,7 +458,10 @@ struct CommandComposerView: NSViewRepresentable {
             textView.textColor = desiredTextColor
         }
 
-        guard textView.string != text else {
+        // SwiftUI 갱신이 한글 입력기의 조합 문자열보다 먼저 도착할 수
+        // 있다. 조합 중 NSTextView.string을 다시 쓰면 marked range가
+        // 취소되어 초성이나 마지막 글자가 Backspace처럼 사라진다.
+        guard !textView.hasMarkedText(), textView.string != text else {
             return false
         }
         let previousLocation = textView.selectedRange().location
@@ -502,7 +511,7 @@ struct CommandComposerView: NSViewRepresentable {
     }
 }
 
-private final class CommandComposerTextView: NSTextView {
+final class CommandComposerTextView: NSTextView {
     var placeholder = "" {
         didSet {
             if placeholder != oldValue {
@@ -510,7 +519,7 @@ private final class CommandComposerTextView: NSTextView {
             }
         }
     }
-    var onSubmit: (() -> Void)?
+    var onSubmit: ((String) -> Void)?
     var onMeasuredHeightChange: ((CGFloat) -> Void)?
 
     func reportMeasuredHeight() {
@@ -526,15 +535,16 @@ private final class CommandComposerTextView: NSTextView {
             return
         }
 
+        // Return을 AppKit에 넘기면 한글 조합 중에는 줄바꿈 명령까지
+        // 함께 처리될 수 있다. 조합을 먼저 확정한 뒤 일반 Return은
+        // 전송하고, Shift+Return만 명시적으로 줄바꿈한다.
         if hasMarkedText() {
-            super.keyDown(with: event)
-            return
+            unmarkText()
         }
-
         if event.modifierFlags.contains(.shift) {
             insertNewline(nil)
         } else {
-            onSubmit?()
+            onSubmit?(string)
         }
     }
 
