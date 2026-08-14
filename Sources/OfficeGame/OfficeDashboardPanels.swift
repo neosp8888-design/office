@@ -1518,6 +1518,10 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        // NSView는 하위 뷰를 기본적으로 잘라내지 않는다. 전환 차폐와
+        // 대화 host가 대화 영역 밖으로 그려져 좌측 사무실 화면이나
+        // 아래 입력·직원 선택 영역까지 덮지 않도록 경계를 고정한다.
+        clipsToBounds = true
     }
 
     @available(*, unavailable)
