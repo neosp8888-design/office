@@ -1865,10 +1865,25 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             return
         }
         let elapsed = Date().timeIntervalSince(gateInstalledAt)
-        guard gatePolicy.shouldReport(elapsed: elapsed) else {
+
+        // 준비 확인은 재시도 횟수에 기대지 않는다. 덮고 있는 동안에는
+        // 계속 확인한다.
+        if let pendingEntry {
+            _ = completePendingTransition(
+                transitionID: pendingEntry.transitionID,
+                generation: selectionGeneration,
+                readinessRevision:
+                    pendingEntry.characterFeedStore.mountReadinessRevision
+            )
+        }
+        guard transitionLoadingGateView?.superview === self else {
             return
         }
-        recordGateCoverage(kind: "gate-covering", elapsed: elapsed)
+
+        if gatePolicy.shouldReport(elapsed: elapsed) {
+            recordGateCoverage(kind: "gate-covering", elapsed: elapsed)
+        }
+
     }
 
     private func recordGateCoverage(kind: String, elapsed: TimeInterval) {
