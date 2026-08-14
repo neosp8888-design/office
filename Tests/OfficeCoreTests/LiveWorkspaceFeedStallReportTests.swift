@@ -52,6 +52,42 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
         )
     }
 
+    func testBlankIsCaughtWhenGeometryLooksFineButNoCardIsDrawn() {
+        // 실제 증상은 문서 높이와 스크롤 위치가 정상인데도 카드가 하나도
+        // 그려지지 않는 구간이었다. 기하만 보는 판정으로는 놓친다.
+        XCTAssertTrue(
+            LiveWorkspaceFeedBlankDetector.isBlank(
+                turnCount: 12,
+                documentHeight: 4_000,
+                viewportHeight: 600,
+                visibleIntersectionHeight: 600,
+                visibleCardCount: 0
+            ),
+            "카드가 하나도 없으면 사용자 눈에는 빈 화면입니다."
+        )
+        XCTAssertFalse(
+            LiveWorkspaceFeedBlankDetector.isBlank(
+                turnCount: 12,
+                documentHeight: 4_000,
+                viewportHeight: 600,
+                visibleIntersectionHeight: 600,
+                visibleCardCount: 3
+            )
+        )
+    }
+
+    func testTestRunsNeverWriteIntoTheRealLog() {
+        XCTAssertNil(
+            LiveWorkspaceFeedStallRecorder.live(
+                environment: ["XCTestConfigurationFilePath": "/tmp/x.plist"]
+            ),
+            "테스트 값이 실제 사용 기록에 섞이면 증거를 믿을 수 없습니다."
+        )
+        XCTAssertNotNil(
+            LiveWorkspaceFeedStallRecorder.live(environment: [:])
+        )
+    }
+
     func testDocumentHeightTraceKeepsShapeWithoutGrowingForever() {
         var detector = LiveWorkspaceFeedBlankDetector()
         for height in [3_200.0, 3_200.0, 0.0, 0.0, 480.0, 3_200.0] {
