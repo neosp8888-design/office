@@ -1517,6 +1517,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var gateInstalledAt: Date?
     private var gateWatchdog: Timer?
     private var gatePolicy = LiveWorkspaceFeedStallPolicy()
+    /// 이 시간을 넘기면 정착을 더 기다리지 않고 대화를 드러낸다.
+    static let maximumGateCoverage = TimeInterval(0.8)
     private static let resizeBottomTolerance = CGFloat(20)
 
     var activeCharacterIDForTesting: OfficeCharacter? {
@@ -1774,7 +1776,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         transitionLoadingGateView = gate
         addSubview(gate)
         transitionLoadingGateInstallCount &+= 1
-        startGateWatchdog()
+        gateInstalledAt = Date()
+        gatePolicy.reset()
     }
 
     private func mountSelectedCharacter(
@@ -1802,6 +1805,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         entry.hostingView.frame = bounds
         entry.hostingView.autoresizingMask = [.width, .height]
         pendingEntry = entry
+        startTransitionWatchdog()
         if let transitionLoadingGateView {
             addSubview(
                 entry.hostingView,
@@ -1820,10 +1824,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         finishGateWatchdog()
     }
 
-    private func startGateWatchdog() {
+    /// 전환이 대기 중인 동안 준비 확인과 차폐 수명을 함께 본다. 준비
+    /// 콜백은 3초 뒤 멈추므로 콜백에만 기대면 정착 보정과 차폐 해제가
+    /// 모두 멈춘다.
+    private func startTransitionWatchdog() {
         gateWatchdog?.invalidate()
-        gateInstalledAt = Date()
-        gatePolicy.reset()
         let timer = Timer.scheduledTimer(
             withTimeInterval: 0.25,
             repeats: true
@@ -1858,16 +1863,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     /// 차폐가 계속 덮고 있는 동안 무엇이 준비되지 않았는지 남긴다.
     private func checkGateCoverage() {
-        guard
-            transitionLoadingGateView?.superview === self,
-            let gateInstalledAt
-        else {
-            return
-        }
-        let elapsed = Date().timeIntervalSince(gateInstalledAt)
-
-        // 준비 확인은 재시도 횟수에 기대지 않는다. 덮고 있는 동안에는
-        // 계속 확인한다.
+        // 준비 확인은 재시도 횟수에 기대지 않는다. 전환이 대기 중인
+        // 동안에는 계속 확인한다.
         if let pendingEntry {
             _ = completePendingTransition(
                 transitionID: pendingEntry.transitionID,
@@ -1876,14 +1873,30 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
                     pendingEntry.characterFeedStore.mountReadinessRevision
             )
         }
-        guard transitionLoadingGateView?.superview === self else {
+        if pendingEntry == nil, transitionLoadingGateView == nil {
+            gateWatchdog?.invalidate()
+            gateWatchdog = nil
             return
         }
+        guard
+            transitionLoadingGateView?.superview === self,
+            let gateInstalledAt
+        else {
+            return
+        }
+        let elapsed = Date().timeIntervalSince(gateInstalledAt)
 
         if gatePolicy.shouldReport(elapsed: elapsed) {
             recordGateCoverage(kind: "gate-covering", elapsed: elapsed)
         }
 
+        // 정착이 끝나지 않아도 상한을 넘기면 덮는 것을 멈춘다. 전환 완료
+        // 처리와 분리했으므로 정착 보정은 그대로 이어진다.
+        guard elapsed >= Self.maximumGateCoverage else {
+            return
+        }
+        recordGateCoverage(kind: "gate-cap-reached", elapsed: elapsed)
+        removeTransitionLoadingGate()
     }
 
     private func recordGateCoverage(kind: String, elapsed: TimeInterval) {
