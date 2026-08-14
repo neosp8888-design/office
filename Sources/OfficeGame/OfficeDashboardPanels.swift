@@ -1511,6 +1511,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var blankObservers: [NSObjectProtocol] = []
     private var blankDeadline: DispatchWorkItem?
     private var didReportCurrentBlank = false
+    private var sessionReportCount = 0
     private static let resizeBottomTolerance = CGFloat(20)
 
     var activeCharacterIDForTesting: OfficeCharacter? {
@@ -2099,7 +2100,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             turnCount: sample.turnCount,
             documentHeight: sample.documentHeight,
             viewportHeight: sample.viewportHeight,
-            visibleIntersectionHeight: sample.visibleIntersectionHeight
+            visibleIntersectionHeight: sample.visibleIntersectionHeight,
+            visibleCardCount: sample.visibleCardCount
         )
         guard isBlank else {
             if let blankStartedAt {
@@ -2167,6 +2169,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     }
 
     private struct BlankSample {
+        let visibleCardCount: Int
         let documentHeight: Double
         let viewportHeight: Double
         let visibleIntersectionHeight: Double
@@ -2180,6 +2183,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let host = entry.hostingView
         guard let scrollView = primaryScrollView(in: host) else {
             return BlankSample(
+                visibleCardCount: 0,
                 documentHeight: 0,
                 viewportHeight: 0,
                 visibleIntersectionHeight: 0,
@@ -2193,6 +2197,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let documentBounds = scrollView.documentView?.bounds ?? .zero
         let visible = scrollView.documentVisibleRect
         return BlankSample(
+            visibleCardCount: Self.visibleCardCount(
+                in: scrollView,
+                documentBounds: documentBounds,
+                visibleRect: visible
+            ),
             documentHeight: documentBounds.height,
             viewportHeight: scrollView.contentView.bounds.height,
             visibleIntersectionHeight:
@@ -2237,9 +2246,50 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             postClampPassCount: entry.stablePostClampPassCount,
             viewportClampCount: entry.viewportClampCount,
             hasLoadingGate: transitionLoadingGateView?.superview === self,
+            visibleCardCount: resolved?.visibleCardCount ?? 0,
             documentHeightTrace: trace
         )
+        guard
+            sessionReportCount
+                < LiveWorkspaceFeedStallPolicy.maximumReportsPerSession
+        else {
+            return
+        }
+        sessionReportCount += 1
         stallRecorder.record(report, at: Date())
+    }
+
+    /// 보이는 영역과 겹치는 대화 카드 수를 센다. SwiftUI가 만든 중첩
+    /// 계층을 전부 세지 않도록 문서 바로 아래 세대까지만 본다.
+    private static func visibleCardCount(
+        in scrollView: NSScrollView,
+        documentBounds: CGRect,
+        visibleRect: CGRect
+    ) -> Int {
+        guard let documentView = scrollView.documentView else {
+            return 0
+        }
+        var candidates = documentView.subviews
+        var counted = 0
+        var depth = 0
+        while depth < 4 {
+            counted = candidates.count { view in
+                let frame = documentView.convert(view.bounds, from: view)
+                guard frame.height >= 24 else {
+                    return false
+                }
+                return frame.intersects(visibleRect)
+            }
+            if counted > 0 {
+                return counted
+            }
+            candidates = candidates.flatMap(\.subviews)
+            if candidates.isEmpty {
+                return 0
+            }
+            depth += 1
+        }
+        return counted
     }
 
     private func primaryScrollView(in root: NSView) -> NSScrollView? {

@@ -23,6 +23,9 @@ struct LiveWorkspaceFeedStallReport: Equatable, Codable {
     let postClampPassCount: Int
     let viewportClampCount: Int
     let hasLoadingGate: Bool
+    /// 보이는 영역에 실제로 그려진 카드 수다. 문서 높이는 그대로인데
+    /// 이 값이 0이면 화면만 빈 상태다.
+    var visibleCardCount: Int = 0
     /// 증상 동안 문서 높이가 어떻게 흔들렸는지 순서대로 담는다.
     var documentHeightTrace: [Int] = []
 
@@ -37,6 +40,7 @@ struct LiveWorkspaceFeedStallReport: Equatable, Codable {
             + " scroll=\(hasScrollView)"
             + " doc=\(Int(documentHeight)) viewport=\(Int(viewportHeight))"
             + " overlap=\(Int(visibleIntersectionHeight))"
+            + " cards=\(visibleCardCount)"
             + " turns=\(turnCount) loading=\(isLoadingInitialFeed)"
             + " revision=\(readinessRevision)"
             + " pass=\(preClampPassCount)/\(postClampPassCount)"
@@ -58,7 +62,8 @@ struct LiveWorkspaceFeedBlankDetector: Equatable {
         turnCount: Int,
         documentHeight: Double,
         viewportHeight: Double,
-        visibleIntersectionHeight: Double
+        visibleIntersectionHeight: Double,
+        visibleCardCount: Int = 1
     ) -> Bool {
         guard turnCount > 0, viewportHeight > 1 else {
             return false
@@ -66,7 +71,12 @@ struct LiveWorkspaceFeedBlankDetector: Equatable {
         if documentHeight <= 1 {
             return true
         }
-        return visibleIntersectionHeight <= 1
+        if visibleIntersectionHeight <= 1 {
+            return true
+        }
+        // 문서 높이와 스크롤 위치가 정상인데도 카드가 하나도 그려지지
+        // 않는 구간이 실제 증상이다. 기하만 보면 이 상태를 놓친다.
+        return visibleCardCount <= 0
     }
 
     private(set) var documentHeightTrace: [Int] = []
@@ -99,8 +109,10 @@ struct LiveWorkspaceFeedStallPolicy: Equatable {
     /// 다만 무한정 쌓지 않는다.
     static let repeatReportInterval = TimeInterval(5)
     static let maximumReportsPerTransition = 4
-    /// 눈에 띄지 않는 짧은 깜빡임까지 남기면 기록이 잡음이 된다.
-    static let recoveredThreshold = TimeInterval(0.6)
+    /// 깜빡임을 전부 잡는 것이 목적이므로 짧은 구간도 남긴다. 대신 한
+    /// 실행에서 남기는 총량에 상한을 둔다.
+    static let recoveredThreshold = TimeInterval(0.1)
+    static let maximumReportsPerSession = 60
 
     private(set) var reportCount = 0
     private(set) var lastReportedElapsed = TimeInterval(0)
@@ -144,8 +156,14 @@ struct LiveWorkspaceFeedStallRecorder {
     }
 
     static func live(
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> LiveWorkspaceFeedStallRecorder? {
+        // 테스트 하네스도 같은 컨테이너를 만든다. 실제 사용 기록에
+        // 테스트 값이 섞이면 증거를 신뢰할 수 없다.
+        guard environment["XCTestConfigurationFilePath"] == nil else {
+            return nil
+        }
         guard
             let support = fileManager.urls(
                 for: .applicationSupportDirectory,
