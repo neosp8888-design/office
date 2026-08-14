@@ -198,7 +198,7 @@ struct CommandEntryRow: View {
                     director.isCancellingSelectedCharacter ? 0.42 : 1
                 )
 
-                Button(action: submitDraft) {
+                Button(action: { _ = submitDraft() }) {
                     Image(systemName: "clock.badge.checkmark.fill")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.white)
@@ -223,7 +223,7 @@ struct CommandEntryRow: View {
                 .disabled(!canSubmit)
                 .opacity(canSubmit ? 1 : 0.42)
             } else {
-                Button(action: submitDraft) {
+                Button(action: { _ = submitDraft() }) {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white)
@@ -256,12 +256,14 @@ struct CommandEntryRow: View {
         }
     }
 
-    private func submitDraft() {
+    @discardableResult
+    private func submitDraft() -> Bool {
         guard let submissionPrompt else {
-            return
+            return false
         }
         let accepted = onSubmit(submissionPrompt)
         draft.clearAfterSubmission(accepted: accepted)
+        return accepted
     }
 }
 
@@ -365,7 +367,7 @@ struct CommandComposerView: NSViewRepresentable {
     @Binding var measuredHeight: CGFloat
     let placeholder: String
     let isEnabled: Bool
-    let onSubmit: () -> Void
+    let onSubmit: () -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -443,7 +445,7 @@ struct CommandComposerView: NSViewRepresentable {
             if textBinding.wrappedValue != submittedText {
                 textBinding.wrappedValue = submittedText
             }
-            onSubmit()
+            return onSubmit()
         }
         if textView.placeholder != placeholder {
             textView.placeholder = placeholder
@@ -490,6 +492,15 @@ struct CommandComposerView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else {
                 return
             }
+            if let composerTextView = textView as? CommandComposerTextView,
+                composerTextView.discardPostSubmissionTextChangeIfNeeded()
+            {
+                if !parent.text.isEmpty {
+                    parent.text = ""
+                }
+                composerTextView.reportMeasuredHeight()
+                return
+            }
             (textView as? CommandComposerTextView)?.reportMeasuredHeight()
             guard parent.text != textView.string else {
                 return
@@ -519,8 +530,9 @@ final class CommandComposerTextView: NSTextView {
             }
         }
     }
-    var onSubmit: ((String) -> Void)?
+    var onSubmit: ((String) -> Bool)?
     var onMeasuredHeightChange: ((CGFloat) -> Void)?
+    private var discardsTextChangesUntilNextUserEdit = false
 
     func reportMeasuredHeight() {
         onMeasuredHeightChange?(
@@ -531,6 +543,7 @@ final class CommandComposerTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76
         guard isReturn else {
+            beginNextUserEdit()
             super.keyDown(with: event)
             return
         }
@@ -539,6 +552,7 @@ final class CommandComposerTextView: NSTextView {
         // 함께 처리될 수 있다. 조합을 먼저 확정한 뒤 일반 Return은
         // 전송하고, Shift+Return만 명시적으로 줄바꿈한다.
         if event.modifierFlags.contains(.shift) {
+            beginNextUserEdit()
             if hasMarkedText() {
                 unmarkText()
             }
@@ -547,7 +561,9 @@ final class CommandComposerTextView: NSTextView {
         }
 
         guard hasMarkedText() else {
-            onSubmit?(string)
+            if onSubmit?(string) == true {
+                completeAcceptedSubmission()
+            }
             return
         }
 
@@ -560,8 +576,51 @@ final class CommandComposerTextView: NSTextView {
             guard let self else {
                 return
             }
-            self.onSubmit?(self.string)
+            if self.onSubmit?(self.string) == true {
+                self.completeAcceptedSubmission()
+            }
         }
+    }
+
+    /// 전송 성공 뒤 원격 입력기가 이전 조합의 마지막 음절을 다시 보내는
+    /// 경우가 있다. 다음 실제 keyDown 전까지 도착한 텍스트 변경은 이전
+    /// 조합의 잔여 이벤트로 보고 버린다.
+    private func completeAcceptedSubmission() {
+        discardsTextChangesUntilNextUserEdit = true
+        // 원격 입력기는 화면의 marked range가 끝난 뒤에도 내부 조합을
+        // 보존할 수 있다. 다음 키에서 재확정되지 않도록 입력기 문맥도
+        // 함께 폐기한다. 이 호출 중 발생하는 변경은 위 플래그가 막는다.
+        inputContext?.discardMarkedText()
+        replaceTextAfterAcceptedSubmissionIfNeeded()
+    }
+
+    private func beginNextUserEdit() {
+        guard discardsTextChangesUntilNextUserEdit else {
+            return
+        }
+        // 다음 키를 처리하기 직전에도 남은 원격 IME 조합을 한 번 더
+        // 비운 뒤 차단을 해제한다. 실제 새 키는 이후 super.keyDown에서
+        // 정상 처리된다.
+        inputContext?.discardMarkedText()
+        discardsTextChangesUntilNextUserEdit = false
+    }
+
+    func discardPostSubmissionTextChangeIfNeeded() -> Bool {
+        guard discardsTextChangesUntilNextUserEdit else {
+            return false
+        }
+        replaceTextAfterAcceptedSubmissionIfNeeded()
+        return true
+    }
+
+    private func replaceTextAfterAcceptedSubmissionIfNeeded() {
+        guard !string.isEmpty else {
+            return
+        }
+        string = ""
+        setSelectedRange(NSRange(location: 0, length: 0))
+        needsDisplay = true
+        scrollToBeginningOfDocument(nil)
     }
 
     override func draw(_ dirtyRect: NSRect) {
