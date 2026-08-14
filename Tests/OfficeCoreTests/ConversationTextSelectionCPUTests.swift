@@ -1,4 +1,4 @@
-// 이 파일은 드래그 선택을 켠 대화 화면이 유휴 상태에서 CPU를 계속 태우지 않는지 검증한다.
+// 이 파일은 직원 전환과 스크롤 뒤 대화 화면이 유휴 상태로 돌아오는지 검증한다.
 
 import AppKit
 import Darwin
@@ -9,12 +9,10 @@ import XCTest
 
 @MainActor
 final class ConversationTextSelectionCPUTests: XCTestCase {
-    // 2026-08-09 846cfe1은 `.textSelection(.enabled)`가 직원 전환 직후
-    // 스크롤과 겹치면 AttributeGraph 갱신을 끝없이 재촉발한다는 이유로
-    // 선택을 전면 제거했다. 소스에서 문자열을 금지하는 방식은 선택
-    // 기능을 영구히 막을 뿐 실제 위험을 재지 않는다. 여기서는 그
-    // 위험 자체(유휴 CPU 점유)를 직접 측정해 회귀를 잡는다.
-    func testSelectableConversationStaysIdleAfterSelectionAndScroll()
+    // 긴 Markdown의 SelectionOverlay가 직원 전환 직후 스크롤과 겹치면
+    // AttributeGraph 갱신이 끝나지 않는다. 실제 전환·스트리밍·스크롤
+    // 조합 뒤 CPU가 자연스럽게 유휴 상태로 돌아오는지 함께 확인한다.
+    func testConversationStaysIdleAfterTransitionAndScroll()
         async throws
     {
         let director = AgentDirector(startBackgroundTasks: false)
@@ -49,10 +47,8 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
             window.contentView = nil
         }
 
-        // 과거 CPU 루프의 방아쇠였던 조합. 직원 전환 직후 곧바로
-        // 스크롤하고, 그 위에서 실제 드래그 선택까지 얹는다. 타이핑
-        // 중인 턴도 함께 자라게 해 16ms 주기로 다시 만들어지는 트리
-        // 위에서 선택 오버레이가 생기는 경로까지 포함한다.
+        // 사용자 재현과 같은 조합이다. 직원 전환 직후 곧바로 스크롤하고
+        // 타이핑 중인 턴도 함께 자라게 한다.
         let busyCPU = try await measureCPUUtilization {
             for index in 0..<12 {
                 director.selectedCharacterID = OfficeCharacter.allCases[
@@ -75,7 +71,6 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
                     scrollView,
                     delta: index.isMultiple(of: 2) ? 12 : -12
                 )
-                performTextDrag(in: rootHost)
             }
         }
 
@@ -100,7 +95,7 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
         XCTAssertLessThan(
             idleCPU,
             0.35,
-            "선택·전환·스크롤 뒤 유휴 구간에서 CPU를 "
+            "전환·스크롤 뒤 유휴 구간에서 CPU를 "
                 + "\(Int(idleCPU * 100))% 계속 사용합니다. 선택 오버레이가 "
                 + "갱신 루프에 빠졌을 때의 증상입니다. (스트레스 구간 "
                 + "\(Int(busyCPU * 100))%)"
@@ -117,31 +112,68 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
         XCTAssertEqual(container.subviews.count, 1)
     }
 
-    // 대화 카드는 앱 루트와 분리된 NSHostingView 안에서 그려지므로
-    // 루트에서 켠 환경 값이 넘어오지 않는다. 두 경계 중 하나라도
-    // 빠지면 화면 절반이 다시 선택 불가가 되므로 함께 확인한다.
-    func testSelectionIsEnabledAtBothSwiftUIHostingBoundaries() throws {
+    // 앱 루트에서 선택을 켜면 입력창을 포함한 전체 화면에 오버레이가
+    // 생긴다. 실시간 피드는 분리된 NSHostingView에서도 선택을 명시적으로
+    // 꺼야 상위 환경 변경으로 같은 문제가 되살아나지 않는다.
+    func testLiveConversationDoesNotInstallBroadSelectionOverlays() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
 
-        for (fileName, description) in [
-            ("OfficeGameApp.swift", "앱 루트"),
-            ("OfficeDashboardPanels.swift", "대화 카드 호스팅 경계"),
-        ] {
-            let source = try String(
-                contentsOf: sourceRoot.appending(path: fileName),
-                encoding: .utf8
+        let appSource = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeGameApp.swift"),
+            encoding: .utf8
+        )
+        let appRoot = try XCTUnwrap(
+            sourceSection(
+                in: appSource,
+                from: "@main\nstruct OfficeGameApp",
+                to: "private struct OfficeLaunchRootView"
             )
-            XCTAssertTrue(
-                source.filter { !$0.isWhitespace }
-                    .contains(".textSelection(.enabled)"),
-                "\(description)(\(fileName))에서 드래그 선택이 꺼졌습니다. "
-                    + "이 경계가 빠지면 해당 트리 전체를 복사할 수 없습니다."
+        )
+        XCTAssertFalse(
+            appRoot.filter { !$0.isWhitespace }
+                .contains(".textSelection(.enabled)"),
+            "앱 루트 전체에 텍스트 선택을 켜면 입력과 스크롤까지 "
+                + "SelectionOverlay 갱신 대상이 됩니다."
+        )
+
+        let dashboardSource = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeDashboardPanels.swift"),
+            encoding: .utf8
+        )
+        let hostedFeed = try XCTUnwrap(
+            sourceSection(
+                in: dashboardSource,
+                from: "private struct HostedLiveWorkspaceFeed",
+                to: "private enum LiveWorkspaceFeedMountReadiness"
             )
+        )
+        let compactFeed = hostedFeed.filter { !$0.isWhitespace }
+        XCTAssertFalse(compactFeed.contains(".textSelection(.enabled)"))
+        XCTAssertTrue(
+            compactFeed.contains(".textSelection(.disabled)"),
+            "분리된 대화 NSHostingView에서 선택을 명시적으로 꺼야 합니다."
+        )
+    }
+
+    private func sourceSection(
+        in source: String,
+        from startMarker: String,
+        to endMarker: String
+    ) -> String? {
+        guard
+            let start = source.range(of: startMarker)?.lowerBound,
+            let end = source.range(
+                of: endMarker,
+                range: start..<source.endIndex
+            )?.lowerBound
+        else {
+            return nil
         }
+        return String(source[start..<end])
     }
 
     /// 블록이 실행되는 동안 이 프로세스가 쓴 CPU 시간을 벽시계 시간으로
@@ -172,50 +204,6 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
             Double(value.tv_sec) + Double(value.tv_usec) / 1_000_000
         }
         return seconds(usage.ru_utime) + seconds(usage.ru_stime)
-    }
-
-    /// 실제 사용자가 본문 위에서 드래그해 텍스트를 선택하는 동작.
-    private func performTextDrag(in root: NSView) {
-        guard
-            let window = root.window,
-            let scrollView = primaryScrollView(in: root),
-            let documentView = scrollView.documentView
-        else {
-            return
-        }
-        let visible = scrollView.documentVisibleRect
-        guard visible.height > 40 else {
-            return
-        }
-        let start = documentView.convert(
-            NSPoint(x: visible.minX + 40, y: visible.midY - 12),
-            to: nil
-        )
-        let end = documentView.convert(
-            NSPoint(x: visible.maxX - 40, y: visible.midY + 12),
-            to: nil
-        )
-        let events = [
-            (NSEvent.EventType.leftMouseDown, start),
-            (NSEvent.EventType.leftMouseDragged, end),
-            (NSEvent.EventType.leftMouseUp, end),
-        ]
-        for (type, location) in events {
-            guard let event = NSEvent.mouseEvent(
-                with: type,
-                location: location,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber,
-                context: nil,
-                eventNumber: 0,
-                clickCount: 1,
-                pressure: type == .leftMouseUp ? 0 : 1
-            ) else {
-                continue
-            }
-            window.sendEvent(event)
-        }
     }
 
     private func makeMarkdownHeavyTurns(

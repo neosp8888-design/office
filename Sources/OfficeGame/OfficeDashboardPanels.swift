@@ -1187,10 +1187,11 @@ private struct HostedLiveWorkspaceFeed: View {
             presentationStore
         )
         .environment(\.locale, OfficeLocalization.locale)
-        // 이 NSHostingView는 앱 루트와 분리된 SwiftUI 트리라 루트에서
-        // 켠 환경 값이 넘어오지 않는다. 대화 카드 전체를 드래그로
-        // 선택해 복사할 수 있도록 여기서 다시 켠다.
-        .textSelection(.enabled)
+        // 긴 대화의 각 Text에 SelectionOverlay가 붙으면 스크롤 중
+        // AttributeGraph 레이아웃이 끝나지 않을 수 있다. 응답·코드는
+        // 각자의 복사 버튼을 사용하고, 실시간 피드는 선택을 명시적으로
+        // 꺼서 상위 환경에서 다시 켜지는 회귀도 막는다.
+        .textSelection(.disabled)
         .overlay {
             LiveWorkspaceFeedMountReadyReporter(
                 readinessRevision:
