@@ -168,6 +168,14 @@ test("conversation web 자산은 외부 CDN 없이 독립 실행된다", async (
     javascript,
     /if \(!next && state\.transport === "direct"\) disconnectWebSocket\(\)/,
   );
+  assert.doesNotMatch(javascript, /document\.addEventListener\("visibilitychange"/);
+
+  const readyIndex = javascript.indexOf("    signalReady();\n    requestAnimationFrame");
+  assert.notEqual(
+    readyIndex,
+    -1,
+    "초기 ready는 숨은 WKWebView에서도 실행되도록 animation frame보다 먼저 보내야 한다",
+  );
 });
 
 test("완료 상태의 현재 확인 질문만 답변 입력을 표시한다", () => {

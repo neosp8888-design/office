@@ -448,6 +448,10 @@
 
     reconcileKeyedChildren(ui.feed, desiredNodes);
     updateOlderButton();
+    // Native는 이 신호를 받은 뒤 로딩 placeholder를 걷는다. 숨겨진
+    // WKWebView에서는 requestAnimationFrame이 멈출 수 있으므로 준비
+    // 신호를 프레임 콜백 안에 두면 서로 영원히 기다리게 된다.
+    signalReady();
     requestAnimationFrame(() => {
       if (wasFollowing) scrollToBottom(false);
       else restoreAnchor(anchor);
@@ -458,7 +462,6 @@
         turnCount: turns.length,
         reason: options.reason || "update",
       });
-      signalReady();
     });
   }
 
@@ -1542,9 +1545,6 @@
     global.addEventListener("officestra:visibility", (event) => {
       setVisibility(event.detail?.visible !== false);
     });
-    document.addEventListener("visibilitychange", () => {
-      setVisibility(!document.hidden);
-    });
   }
 
   function setVisibility(visible) {
@@ -1580,7 +1580,7 @@
   }
 
   function signalReady() {
-    if (state.readySent || !state.visible) return;
+    if (state.readySent) return;
     state.readySent = true;
     postBridge({ type: "ready" });
   }

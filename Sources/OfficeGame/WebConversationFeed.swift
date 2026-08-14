@@ -648,6 +648,12 @@ final class WebConversationFeedsNSView: NSView {
         entries[characterID]?.pageView.isShowingPlaceholder
     }
 
+    func isWebContentHiddenForTesting(
+        characterID: OfficeCharacter
+    ) -> Bool? {
+        entries[characterID]?.pageView.webView.isHidden
+    }
+
     func isShowingRetryForTesting(
         characterID: OfficeCharacter
     ) -> Bool? {
@@ -1061,7 +1067,10 @@ private final class WebConversationPageView: NSView {
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
         webView.translatesAutoresizingMaskIntoConstraints = false
-        webView.isHidden = true
+        // WKWebView가 숨겨지면 requestAnimationFrame이 중단될 수 있다.
+        // 준비 신호를 기다리는 동안에도 웹 문서는 계속 렌더링하게 두고,
+        // 작은 placeholder만 그 위에 표시한다.
+        webView.isHidden = false
         addSubview(webView)
 
         placeholder.translatesAutoresizingMaskIntoConstraints = false
@@ -1089,7 +1098,7 @@ private final class WebConversationPageView: NSView {
     }
 
     func showLoading() {
-        webView.isHidden = true
+        webView.isHidden = false
         placeholder.showLoading()
         placeholder.isHidden = false
     }
