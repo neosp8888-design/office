@@ -850,7 +850,15 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
         try await settle(for: .milliseconds(3_200))
-        XCTAssertTrue(container.hasTransitionLoadingGateForTesting)
+        // 첫 피드가 늦어도 차폐로 계속 덮지 않는다. 덮은 채 몇 초를
+        // 보내면 사용자는 흰 화면만 본다. 상한을 넘기면 걷고, 정착
+        // 보정과 활성 전환은 그대로 이어 간다.
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "차폐 상한("
+                + "\(CachedLiveWorkspaceFeedsNSView.maximumGateCoverage)초"
+                + ")을 넘겨 계속 덮고 있습니다."
+        )
         XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
 
         director.liveFeedStore.replace(
