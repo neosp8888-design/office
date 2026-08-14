@@ -1258,7 +1258,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         }
     }
 
-    func testLoadingGateShowsOnlyAnimatedTransitionIcon() async throws {
+    func testLoadingGateShowsCenteredSystemSpinner() async throws {
         let director = AgentDirector(startBackgroundTasks: false)
         director.liveFeedStore.replace(with: makeTurns())
         director.liveFeedStore.finishInitialLoading()
@@ -1311,34 +1311,34 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
 
         guard
-            let icon = gate.subviews.compactMap({ $0 as? NSImageView }).first
+            let spinner = gate.subviews
+                .compactMap({ $0 as? NSProgressIndicator })
+                .first
         else {
-            XCTFail("전환 아이콘이 없습니다.")
+            XCTFail("전환 스피너가 없습니다.")
             return
         }
         XCTAssertGreaterThanOrEqual(
-            min(icon.frame.width, icon.frame.height),
+            min(spinner.frame.width, spinner.frame.height),
             28,
-            "전환 아이콘이 눈에 띄게 커야 합니다."
+            "전환 스피너가 눈에 띄게 커야 합니다."
         )
         XCTAssertEqual(
-            icon.frame.midX,
+            spinner.frame.midX,
             gate.bounds.midX,
-            accuracy: 1,
-            "전환 아이콘은 대화 영역 한가운데에 있어야 합니다."
+            accuracy: 0.01,
+            "전환 스피너는 대화 영역 한가운데에 있어야 합니다."
         )
         XCTAssertEqual(
-            icon.frame.midY,
+            spinner.frame.midY,
             gate.bounds.midY,
-            accuracy: 1,
-            "전환 아이콘은 대화 영역 한가운데에 있어야 합니다."
+            accuracy: 0.01,
+            "전환 스피너는 대화 영역 한가운데에 있어야 합니다."
         )
-        XCTAssertNotNil(
-            icon.layer?.animation(
-                forKey: "live-workspace-feed-gate-rotation"
-            ),
-            "전환 아이콘은 회전 애니메이션으로 진행 중임을 알려야 합니다."
-        )
+        XCTAssertEqual(spinner.style, .spinning)
+        XCTAssertTrue(spinner.isIndeterminate)
+        XCTAssertEqual(spinner.controlSize, .large)
+        XCTAssertFalse(spinner.isDisplayedWhenStopped)
     }
 
     func testLoadingGateDoesNotBleedBackgroundOutsideItsBounds() async throws {
