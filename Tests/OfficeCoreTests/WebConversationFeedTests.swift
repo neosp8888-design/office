@@ -99,6 +99,14 @@ final class WebConversationFeedTests: XCTestCase {
                 )
             )
         )
+        XCTAssertFalse(
+            try XCTUnwrap(
+                container.isWebContentHiddenForTesting(
+                    characterID: .rightMan
+                )
+            ),
+            "로딩 placeholder가 WKWebView 렌더링까지 막으면 ready 교착이 재발한다"
+        )
         container.receiveBridgeMessageForTesting(
             ["type": "ready"],
             characterID: .rightMan
