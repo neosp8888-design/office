@@ -32,7 +32,10 @@ for required_path in \
     "$CORE_RESOURCE_BUNDLE/profiles" \
     "$GAME_RESOURCE_BUNDLE/Info.plist" \
     "$GAME_RESOURCE_BUNDLE/en.lproj/Localizable.strings" \
-    "$GAME_RESOURCE_BUNDLE/ko.lproj/Localizable.strings"; do
+    "$GAME_RESOURCE_BUNDLE/ko.lproj/Localizable.strings" \
+    "$GAME_RESOURCE_BUNDLE/index.html" \
+    "$GAME_RESOURCE_BUNDLE/app.js" \
+    "$GAME_RESOURCE_BUNDLE/app.css"; do
     if [[ ! -e "$required_path" ]]; then
         print -u2 "필수 빌드 결과가 없습니다. $required_path"
         exit 1
@@ -185,7 +188,10 @@ for packaged_runtime_path in \
     "$NODE_RUNTIME_DIR/VERSION" \
     "$NODE_RUNTIME_DIR/ENTITLEMENTS.plist" \
     "$RUNTIME_DIR/licenses/Node-LICENSE" \
-    "$RUNTIME_DIR/licenses/THIRD-PARTY-NOTICES.md"; do
+    "$RUNTIME_DIR/licenses/THIRD-PARTY-NOTICES.md" \
+    "$RESOURCES_DIR/conversation-web/index.html" \
+    "$RESOURCES_DIR/conversation-web/app.js" \
+    "$RESOURCES_DIR/conversation-web/app.css"; do
     if [[ ! -e "$packaged_runtime_path" ]]; then
         print -u2 "필수 백엔드 런타임이 없습니다. $packaged_runtime_path"
         exit 1
