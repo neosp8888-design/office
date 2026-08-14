@@ -1179,6 +1179,85 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
+    func testLoadingGateNeverPaintsOutsideConversationArea() async throws {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.liveFeedStore.replace(with: makeTurns())
+        director.liveFeedStore.finishInitialLoading()
+
+        // 실제 배치처럼 대화 영역을 창보다 작게 잡는다. 좌측 사무실
+        // 화면과 아래 입력·직원 선택 영역에 해당하는 여백을 남긴다.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 800),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let root = NSView(frame: window.contentLayoutRect)
+        let conversationFrame = NSRect(x: 420, y: 120, width: 700, height: 560)
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: conversationFrame
+        )
+        root.addSubview(container)
+        window.contentView = root
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        XCTAssertTrue(
+            container.clipsToBounds,
+            "대화 영역 밖으로 그려지지 않도록 경계를 잘라야 합니다."
+        )
+
+        func assertSubviewsStayInsideConversationArea(_ step: String) {
+            for subview in container.subviews {
+                let inRoot = container.convert(subview.frame, to: root)
+                XCTAssertTrue(
+                    conversationFrame.contains(inRoot)
+                        || conversationFrame.intersection(inRoot) == inRoot,
+                    "\(step): \(subview.identifier?.rawValue ?? "하위 뷰")가 "
+                        + "대화 영역(\(conversationFrame)) 밖 \(inRoot)까지 "
+                        + "그려집니다."
+                )
+            }
+        }
+
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        assertSubviewsStayInsideConversationArea("최초 mount")
+        _ = try await waitNaturallyUntil(timeout: .seconds(4)) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+
+        // 전환 차폐가 떠 있는 동안이 가장 위험한 구간이다.
+        director.selectedCharacterID = .leftWoman
+        container.configure(
+            director: director,
+            selectedCharacterID: .leftWoman
+        )
+        container.layoutSubtreeIfNeeded()
+        XCTAssertTrue(
+            container.hasTransitionLoadingGateForTesting,
+            "전환 직후 차폐가 없으면 이 회귀를 검증할 수 없습니다."
+        )
+        assertSubviewsStayInsideConversationArea("전환 차폐 중")
+
+        // 창 크기가 바뀌어 대화 영역이 줄어드는 동안에도 유지돼야 한다.
+        container.setFrameSize(NSSize(width: 700, height: 420))
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(60))
+        for subview in container.subviews {
+            XCTAssertTrue(
+                container.bounds.contains(subview.frame)
+                    || container.bounds.intersection(subview.frame)
+                        == subview.frame,
+                "대화 영역 축소 후 \(subview.identifier?.rawValue ?? "하위 뷰")가 "
+                    + "\(subview.frame)로 경계를 넘습니다."
+            )
+        }
+    }
+
     func testClaudeTranscriptTransitionsStayCoveredUntilViewportIsReady()
         async throws
     {
