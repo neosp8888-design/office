@@ -1015,6 +1015,170 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
+    func testGrowingCommandComposerKeepsConversationVisible() async throws {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let characterID = OfficeCharacter.boss
+        let turns = Array(
+            makeTurns()
+                .filter { $0.characterId == characterID.rawValue }
+                .prefix(10)
+        )
+        director.liveFeedStore.replace(with: turns)
+        director.liveFeedStore.finishInitialLoading()
+
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(
+            director: director,
+            selectedCharacterID: characterID
+        )
+        container.layoutSubtreeIfNeeded()
+        let didMount = try await waitNaturallyUntil(timeout: .seconds(4)) {
+            container.activeCharacterIDForTesting == characterID
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didMount, "대화 화면이 준비되지 않았습니다.")
+
+        guard
+            let scrollView = try await waitForPrimaryScrollView(in: container),
+            let documentView = scrollView.documentView
+        else {
+            XCTFail("대화 NSScrollView를 찾지 못했습니다.")
+            return
+        }
+
+        func assertViewportInsideDocument(_ step: String) {
+            guard let currentDocument = scrollView.documentView else {
+                XCTFail("\(step): 대화 문서가 사라졌습니다.")
+                return
+            }
+            let visible = scrollView.documentVisibleRect
+            let overlap = visible.intersection(currentDocument.bounds).height
+            let expected = min(visible.height, currentDocument.bounds.height)
+            XCTAssertGreaterThan(
+                overlap,
+                0,
+                "\(step): viewport가 문서 밖으로 나가 대화가 사라졌습니다."
+            )
+            XCTAssertGreaterThanOrEqual(
+                overlap,
+                expected - 1,
+                "\(step): viewport(\(visible))가 문서"
+                    + "(\(currentDocument.bounds))를 부분적으로만 덮어 "
+                    + "빈 영역이 노출됩니다."
+            )
+        }
+
+        func distanceFromBottom() -> CGFloat {
+            guard let currentDocument = scrollView.documentView else {
+                return .greatestFiniteMagnitude
+            }
+            return LiveWorkspaceFeedScrollGeometry.snapshot(
+                documentBounds: currentDocument.bounds,
+                visibleRect: scrollView.documentVisibleRect,
+                isFlipped: currentDocument.isFlipped
+            ).distanceFromBottom
+        }
+
+        assertViewportInsideDocument("입력창 확대 전")
+        XCTAssertGreaterThan(
+            documentView.bounds.height,
+            scrollView.contentView.bounds.height,
+            "재현하려면 대화가 화면보다 길어야 합니다."
+        )
+        XCTAssertLessThanOrEqual(
+            distanceFromBottom(),
+            20,
+            "재현하려면 최신 대화를 보고 있는 상태여야 합니다."
+        )
+
+        // 입력창이 여러 줄로 커지면서 대화 영역 높이가 단계적으로 줄어드는
+        // 상황을 그대로 만든다.
+        var height = container.bounds.height
+        for _ in 0..<6 {
+            height -= 48
+            container.setFrameSize(
+                NSSize(width: container.bounds.width, height: height)
+            )
+            container.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(40))
+            assertViewportInsideDocument("입력창 확대 중(높이 \(Int(height)))")
+            // 입력창이 커져 대화 영역이 줄어도 보고 있던 최신 대화가
+            // 화면 밖으로 밀려나면 안 된다.
+            XCTAssertLessThanOrEqual(
+                distanceFromBottom(),
+                20,
+                "입력창 확대(높이 \(Int(height)))로 최신 대화가 "
+                    + "\(Int(distanceFromBottom()))pt 위로 밀려 사라졌습니다."
+            )
+        }
+
+        // 입력을 지워 입력창이 다시 줄어들 때도 대화가 유지돼야 한다.
+        for _ in 0..<6 {
+            height += 48
+            container.setFrameSize(
+                NSSize(width: container.bounds.width, height: height)
+            )
+            container.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(40))
+            assertViewportInsideDocument("입력창 축소 중(높이 \(Int(height)))")
+        }
+
+        try await settle(for: .milliseconds(200))
+        assertViewportInsideDocument("정착 후")
+        XCTAssertEqual(
+            container.activeCharacterIDForTesting,
+            characterID,
+            "입력창 크기 변화가 대화 화면을 다시 만들면 안 됩니다."
+        )
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "입력창 크기 변화로 로딩 차폐가 다시 나타나면 안 됩니다."
+        )
+    }
+
+    func testInitialLoadingPlaceholderAppearsOnlyBeforeFirstFeedLoad() {
+        let store = LiveFeedStore()
+        XCTAssertFalse(
+            store.didCompleteFirstFeedLoad,
+            "첫 적재 전에는 로딩 자리표시자를 쓸 수 있어야 합니다."
+        )
+
+        store.finishInitialLoading()
+        XCTAssertTrue(store.didCompleteFirstFeedLoad)
+
+        // 이후 갱신이나 직원 전환이 이어져도 첫 적재 완료 기록은
+        // 되돌아가지 않는다. 로딩 자리표시자로 대화 영역을 통째로
+        // 바꾸는 일이 다시 생기면 화면이 비어 보인다.
+        store.replace(with: [
+            makeTurn(
+                id: "after-first-load",
+                characterID: OfficeCharacter.boss.rawValue,
+                prompt: "이후 업무",
+                status: .completed,
+                startedAt: Date(timeIntervalSinceReferenceDate: 200_000)
+            ),
+        ])
+        store.selectCharacterFeed(OfficeCharacter.leftWoman.rawValue)
+        XCTAssertTrue(
+            store.didCompleteFirstFeedLoad,
+            "갱신과 직원 전환은 최초 로딩 표시 조건을 되살리면 안 됩니다."
+        )
+    }
+
     func testClaudeTranscriptTransitionsStayCoveredUntilViewportIsReady()
         async throws
     {

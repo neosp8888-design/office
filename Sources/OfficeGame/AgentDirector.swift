@@ -153,6 +153,10 @@ final class LiveFeedStore: ObservableObject {
 
     @Published private(set) var turns: [LiveFeedTurn] = []
     @Published private(set) var isLoadingInitialFeed = true
+    // 실행 후 첫 대화 적재가 끝났는지만 기록한다. 로딩 표시는 이
+    // 시점까지 한 번만 쓰고, 이후 직원 전환이나 재조회에서는 이미
+    // 받아 둔 대화를 그대로 두어 화면이 비지 않게 한다.
+    private(set) var didCompleteFirstFeedLoad = false
     private(set) var persistedTurns: [LiveFeedTurn] = []
     private var optimisticTurns: [String: LiveFeedTurn] = [:]
     private var presentationIDsByTurnID: [String: String] = [:]
@@ -382,6 +386,7 @@ final class LiveFeedStore: ObservableObject {
             return
         }
         isLoadingInitialFeed = false
+        didCompleteFirstFeedLoad = true
         for (characterID, store) in characterStores {
             store.stage(
                 turns: turnsByCharacterID[characterID] ?? [],
