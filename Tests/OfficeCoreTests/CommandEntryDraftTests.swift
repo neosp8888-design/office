@@ -216,6 +216,12 @@ final class CommandEntryDraftTests: XCTestCase {
         )
         XCTAssertGreaterThan(twoLineHeight, singleLineHeight)
         XCTAssertEqual(cappedHeight, CommandComposerLayout.maximumHeight)
+        XCTAssertEqual(
+            CommandComposerLayout.fixedEditorHeight,
+            72,
+            "줄바꿈으로 내부 문서 높이가 달라져도 외부 대화 viewport는 "
+                + "고정 높이 입력창을 사용해야 합니다."
+        )
     }
 
     private func makeCoordinator(
