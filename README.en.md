@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
+  <a href="https://github.com/neosp8888-design/office/releases/tag/v1.3.2"><img src="https://img.shields.io/badge/Release-v1.3.2-4C78A8" alt="Release v1.3.2"></a>
 </p>
 
 OFFICESTRA replaces a collection of separate terminal sessions with one interactive office. Select an AI coworker, assign a task, and watch their user-visible progress and final response in real time. Every coworker has an independent role, CLI provider, model, reasoning effort, speed tier, permission level, and persistent conversation session. The backend keeps work running even when the app window is closed.
@@ -142,7 +143,7 @@ existing backend continue to work normally.
 
 When `workdir` is a Git repository, OFFICESTRA creates a dedicated branch and worktree for each reviewable task workspace. Worktrees isolate file changes and have a lifecycle independent from Codex threads and Claude sessions. Approving, merging, or rejecting a workspace does not replace the coworker's active CLI session.
 
-After a successful task creates changes, the live task card shows the changed files and the diff against the base commit, then blocks additional work for that coworker. Nothing reaches the recorded source branch until the user selects **Approve and merge**. Rejected branches and worktrees are retained for recovery.
+After a successful task creates changes, the live task card keeps the status, result commit, and changed-file list compact. With **Automatically approve and merge completed work** enabled (the default), OFFICESTRA revalidates the review tree and source worktree, merges automatically, and blocks the coworker's next task until post-merge processing finishes. If the setting is disabled or automatic recovery retries are exhausted, the card remains in manual review so the user can approve or reject it. Rejected branches and worktrees are retained for recovery.
 
 When a Codex-to-Claude or Claude-to-Codex switch would end an active session, unreviewed changes move to review and the settings request stops with `409`. An unchanged worktree is cleaned up automatically before the new provider session starts. Workspace approval, merge, and rejection do not end a provider session by themselves.
 
@@ -171,6 +172,9 @@ Available models still depend on the installed CLI version and account
 entitlements.
 
 ### Easiest path
+
+`v1.3.2` does not publish a DMG. Its only official binary artifacts are the
+Apple silicon ZIP and `SHA256SUMS`.
 
 1. Download the `arm64` `adhoc` ZIP for Apple silicon from
    [Releases](https://github.com/neosp8888-design/office/releases). The

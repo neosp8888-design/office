@@ -9,6 +9,9 @@ before download. Users may either allow the single app through macOS **Open
 Anyway** or build the tagged source themselves. Never recommend globally
 disabling Gatekeeper or applying broad `xattr` commands.
 
+Community Preview publishes exactly one Apple silicon ad-hoc ZIP plus
+`SHA256SUMS`. It must not publish a DMG.
+
 Starting with `v1.3.2`, OFFICESTRA releases support Apple silicon (`arm64`, M1
 or later) only. Intel Macs are not supported. The historical `v1.3.0` and
 `v1.3.1` artifacts and incident report remain unchanged records of the earlier
