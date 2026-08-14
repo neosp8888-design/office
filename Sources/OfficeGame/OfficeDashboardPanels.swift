@@ -834,6 +834,17 @@ struct LiveWorkspaceFeedContentRevisionPolicy: Equatable {
     }
 }
 
+struct LiveWorkspaceFeedSubmissionScrollPolicy: Equatable {
+    static func shouldRevealSubmittedTurn(
+        isFollowingLatest: Bool
+    ) -> Bool {
+        // 사용자가 과거 대화를 읽는 중에는 새 optimistic 카드가 들어와도
+        // 기존 viewport를 유지한다. 이때 하단 scrollTo를 강제하면 문서
+        // 높이 변경과 충돌해 빈 영역·스크롤바 튐·레이아웃 폭주를 만든다.
+        isFollowingLatest
+    }
+}
+
 struct LiveWorkspaceFeedPagingPolicy: Equatable {
     // 직원 전환 때 NSHostingView를 새로 만드는 CPU 방어는 유지한다.
     // 다만 첫 화면을 두 건으로 좁히면 스냅샷이 보유한 최근 10턴이
@@ -1508,6 +1519,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         pendingEntry?.viewportClampCount
             ?? activeEntry?.viewportClampCount
             ?? 0
+    }
+
+    func updateMetadataForTesting(_ metadata: LiveWorkspaceFeedMetadata) {
+        activeEntry?.updateMetadata(metadata)
+        pendingEntry?.updateMetadata(metadata)
     }
 
     override init(frame frameRect: NSRect) {
@@ -2192,7 +2208,14 @@ struct LiveWorkspaceFeed: View, Equatable {
                     // 깜빡임을 만들므로 두지 않는다.
                     .onChange(of: latestSubmittedCommandID) {
                         _, commandID in
-                        guard commandID != nil else {
+                        guard
+                            commandID != nil,
+                            LiveWorkspaceFeedSubmissionScrollPolicy
+                                .shouldRevealSubmittedTurn(
+                                    isFollowingLatest:
+                                        followState.isFollowingLatest
+                                )
+                        else {
                             return
                         }
                         revealSubmittedTurn(proxy: proxy)

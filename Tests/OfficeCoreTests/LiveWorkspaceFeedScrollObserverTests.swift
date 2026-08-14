@@ -190,6 +190,17 @@ final class LiveWorkspaceFeedScrollObserverTests: XCTestCase {
         )
     }
 
+    func testSubmissionScrollPolicyOnlyRevealsWhileFollowingLatest() {
+        XCTAssertTrue(
+            LiveWorkspaceFeedSubmissionScrollPolicy
+                .shouldRevealSubmittedTurn(isFollowingLatest: true)
+        )
+        XCTAssertFalse(
+            LiveWorkspaceFeedSubmissionScrollPolicy
+                .shouldRevealSubmittedTurn(isFollowingLatest: false)
+        )
+    }
+
     private func settleForObserverFrame() async throws {
         try await Task.sleep(for: .milliseconds(40))
         await Task.yield()
