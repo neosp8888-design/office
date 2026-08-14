@@ -1331,8 +1331,9 @@ private struct LiveWorkspaceFeedMountReadyReporter: NSViewRepresentable {
 // layout/draw하며 수 초간 멈출 수 있다. 전환 차폐는 캡처나 SwiftUI graph가
 // 없는 가벼운 AppKit 뷰로 고정한다.
 private final class LiveWorkspaceFeedLoadingGateView: NSView {
+    private static let iconSize = CGFloat(34)
+    private static let rotationKey = "live-workspace-feed-gate-rotation"
     private let iconView: NSImageView
-    private let label: NSTextField
 
     // isOpaque를 선언하고 상위 레이어에 직접 그리면 AppKit이 뒤쪽
     // 그리기를 건너뛰어 배경 채움이 대화 영역 밖까지 번진다. 자기
@@ -1343,19 +1344,19 @@ private final class LiveWorkspaceFeedLoadingGateView: NSView {
 
     override init(frame frameRect: NSRect) {
         iconView = NSImageView()
+        // 대화를 갈아 끼우는 중이라는 뜻이 드러나는 순환 화살표를 쓴다.
         iconView.image = NSImage(
-            systemSymbolName: "hourglass",
+            systemSymbolName: "arrow.triangle.2.circlepath",
             accessibilityDescription: nil
-        )
-        iconView.contentTintColor = .secondaryLabelColor
-        label = NSTextField(
-            labelWithString: OfficeLocalization.string(
-                "대화를 불러오는 중"
+        )?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(
+                    pointSize: Self.iconSize,
+                    weight: .medium
+                )
             )
-        )
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = .secondaryLabelColor
-        label.alignment = .center
+        iconView.contentTintColor = .secondaryLabelColor
+        iconView.wantsLayer = true
         super.init(frame: frameRect)
         identifier = NSUserInterfaceItemIdentifier(
             "live-workspace-feed-loading-gate"
@@ -1364,7 +1365,6 @@ private final class LiveWorkspaceFeedLoadingGateView: NSView {
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         autoresizingMask = [.width, .height]
         addSubview(iconView)
-        addSubview(label)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(
@@ -1383,24 +1383,44 @@ private final class LiveWorkspaceFeedLoadingGateView: NSView {
 
     override func layout() {
         super.layout()
-        let iconSize = CGFloat(18)
-        let labelSize = label.intrinsicContentSize
-        let spacing = CGFloat(8)
-        let totalWidth = iconSize + spacing + labelSize.width
-        let originX = max(0, (bounds.width - totalWidth) / 2)
-        let centerY = bounds.midY
+        let side = Self.iconSize
         iconView.frame = NSRect(
-            x: originX,
-            y: centerY - iconSize / 2,
-            width: iconSize,
-            height: iconSize
+            x: (bounds.width - side) / 2,
+            y: bounds.midY - side / 2,
+            width: side,
+            height: side
         )
-        label.frame = NSRect(
-            x: originX + iconSize + spacing,
-            y: centerY - labelSize.height / 2,
-            width: labelSize.width,
-            height: labelSize.height
-        )
+        startRotationIfNeeded()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            iconView.layer?.removeAnimation(forKey: Self.rotationKey)
+        } else {
+            startRotationIfNeeded()
+        }
+    }
+
+    // 전환 중이라는 것만 아이콘 회전으로 알린다. 창에서 빠지면 애니메이션이
+    // 제거되므로 다시 붙을 때 복구한다.
+    private func startRotationIfNeeded() {
+        guard
+            window != nil,
+            let layer = iconView.layer,
+            layer.animation(forKey: Self.rotationKey) == nil
+        else {
+            return
+        }
+        // layer-backed NSView의 anchorPoint는 이미 중앙이고 position은
+        // AppKit이 관리한다. 직접 바꾸면 아이콘이 모서리로 밀린다.
+        let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
+        rotation.fromValue = 0
+        rotation.toValue = -Double.pi * 2
+        rotation.duration = 1.1
+        rotation.repeatCount = .greatestFiniteMagnitude
+        rotation.isRemovedOnCompletion = false
+        layer.add(rotation, forKey: Self.rotationKey)
     }
 
     override func viewDidChangeEffectiveAppearance() {

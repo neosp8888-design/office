@@ -1258,6 +1258,89 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         }
     }
 
+    func testLoadingGateShowsOnlyAnimatedTransitionIcon() async throws {
+        let director = AgentDirector(startBackgroundTasks: false)
+        director.liveFeedStore.replace(with: makeTurns())
+        director.liveFeedStore.finishInitialLoading()
+
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 700, height: 560)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(director: director, selectedCharacterID: .boss)
+        container.layoutSubtreeIfNeeded()
+        _ = try await waitNaturallyUntil(timeout: .seconds(4)) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+
+        director.selectedCharacterID = .leftWoman
+        container.configure(
+            director: director,
+            selectedCharacterID: .leftWoman
+        )
+        container.layoutSubtreeIfNeeded()
+
+        guard
+            let gate = container.subviews.first(where: {
+                $0.identifier?.rawValue == "live-workspace-feed-loading-gate"
+            })
+        else {
+            XCTFail("전환 차폐 뷰를 찾지 못했습니다.")
+            return
+        }
+
+        XCTAssertTrue(
+            gate.subviews.allSatisfy { !($0 is NSTextField) },
+            "전환 차폐에는 안내 문구를 두지 않는다."
+        )
+        XCTAssertFalse(
+            gate.accessibilityLabel()?.isEmpty ?? true,
+            "화면에 문구가 없어도 접근성 레이블은 남겨야 합니다."
+        )
+
+        guard
+            let icon = gate.subviews.compactMap({ $0 as? NSImageView }).first
+        else {
+            XCTFail("전환 아이콘이 없습니다.")
+            return
+        }
+        XCTAssertGreaterThanOrEqual(
+            min(icon.frame.width, icon.frame.height),
+            28,
+            "전환 아이콘이 눈에 띄게 커야 합니다."
+        )
+        XCTAssertEqual(
+            icon.frame.midX,
+            gate.bounds.midX,
+            accuracy: 1,
+            "전환 아이콘은 대화 영역 한가운데에 있어야 합니다."
+        )
+        XCTAssertEqual(
+            icon.frame.midY,
+            gate.bounds.midY,
+            accuracy: 1,
+            "전환 아이콘은 대화 영역 한가운데에 있어야 합니다."
+        )
+        XCTAssertNotNil(
+            icon.layer?.animation(
+                forKey: "live-workspace-feed-gate-rotation"
+            ),
+            "전환 아이콘은 회전 애니메이션으로 진행 중임을 알려야 합니다."
+        )
+    }
+
     func testLoadingGateDoesNotBleedBackgroundOutsideItsBounds() async throws {
         let director = AgentDirector(startBackgroundTasks: false)
         director.liveFeedStore.replace(with: makeTurns())
