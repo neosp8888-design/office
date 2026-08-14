@@ -1703,7 +1703,16 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
         selectionGeneration &+= 1
         let generation = selectionGeneration
-        installTransitionLoadingGate()
+        // 차폐는 이미 보고 있던 직원에서 다른 직원으로 이동할 때만
+        // 필요하다. 최초 진입(nil -> 직원), 선택 해제(직원 -> nil),
+        // 같은 직원의 컨테이너 재생성에는 전환 아이콘을 만들지 않는다.
+        let isEmployeeToEmployeeTransition =
+            previousCharacterID != nil && selectedCharacterID != nil
+        if isEmployeeToEmployeeTransition {
+            installTransitionLoadingGate()
+        } else {
+            removeTransitionLoadingGate()
+        }
 
         guard let selectedCharacterID else {
             releasePendingEntry()
@@ -1711,9 +1720,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             removeTransitionLoadingGate()
             return
         }
-        // 이 configure 차례에서는 가벼운 AppKit 차폐만 실제로 그린다.
-        // 긴 Claude transcript의 새 NSHostingView 생성은 다음 main-queue
-        // 차례로 넘겨 차폐가 먼저 표시될 기회를 보장한다.
+        // 실제 직원 전환에서는 이 configure 차례에 가벼운 AppKit 차폐만
+        // 그린다. 긴 Claude transcript의 새 NSHostingView 생성은 다음
+        // main-queue 차례로 넘겨 차폐가 먼저 표시될 기회를 보장한다.
         transitionLoadingGateView?.needsDisplay = true
         transitionLoadingGateView?.displayIfNeeded()
         DispatchQueue.main.async { [weak self, weak director] in

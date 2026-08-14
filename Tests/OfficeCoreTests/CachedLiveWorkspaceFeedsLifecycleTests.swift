@@ -694,6 +694,8 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         }
 
         director.selectedCharacterID = nil
+        let gateInstallCountBeforeDeselection =
+            container.transitionLoadingGateInstallCountForTesting
         container.configure(
             director: director,
             selectedCharacterID: nil
@@ -703,11 +705,25 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertNil(container.activeCharacterIDForTesting)
         XCTAssertNil(container.pendingCharacterIDForTesting)
         XCTAssertFalse(container.hasTransitionLoadingGateForTesting)
+        XCTAssertEqual(
+            container.transitionLoadingGateInstallCountForTesting,
+            gateInstallCountBeforeDeselection,
+            "직원 선택 해제에는 전환 차폐를 새로 만들면 안 됩니다."
+        )
 
         director.selectedCharacterID = .boss
         container.configure(
             director: director,
             selectedCharacterID: .boss
+        )
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "선택 해제 뒤 첫 직원 진입에는 전환 차폐가 없어야 합니다."
+        )
+        XCTAssertEqual(
+            container.transitionLoadingGateInstallCountForTesting,
+            gateInstallCountBeforeDeselection,
+            "선택 해제 뒤 첫 직원 진입이 전환 차폐를 만들었습니다."
         )
         let didRestoreBoss = try await waitUntil(
             in: container,
@@ -719,7 +735,7 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         XCTAssertTrue(didRestoreBoss)
     }
 
-    func testInitialLoadingGateHoldsBossToRightManUntilFeedIsReady()
+    func testInitialMountSkipsGateButEmployeeSwitchWaitsForFeed()
         async throws
     {
         let director = AgentDirector(startBackgroundTasks: false)
@@ -745,7 +761,11 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             selectedCharacterID: .boss
         )
         container.layoutSubtreeIfNeeded()
-        XCTAssertTrue(container.hasTransitionLoadingGateForTesting)
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "최초 직원 진입에 전환 차폐가 나타났습니다."
+        )
+        XCTAssertEqual(container.transitionLoadingGateInstallCountForTesting, 0)
         XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
         XCTAssertLessThanOrEqual(container.liveHostingViewCountForTesting, 1)
         XCTAssertNil(container.activeCharacterIDForTesting)
@@ -849,16 +869,19 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
 
         container.configure(director: director, selectedCharacterID: .boss)
         container.layoutSubtreeIfNeeded()
-        try await settle(for: .milliseconds(3_200))
-        // 첫 피드가 늦어도 차폐로 계속 덮지 않는다. 덮은 채 몇 초를
-        // 보내면 사용자는 흰 화면만 본다. 상한을 넘기면 걷고, 정착
-        // 보정과 활성 전환은 그대로 이어 간다.
         XCTAssertFalse(
             container.hasTransitionLoadingGateForTesting,
-            "차폐 상한("
-                + "\(CachedLiveWorkspaceFeedsNSView.maximumGateCoverage)초"
-                + ")을 넘겨 계속 덮고 있습니다."
+            "최초 직원 진입에 전환 차폐가 나타났습니다."
         )
+        XCTAssertEqual(container.transitionLoadingGateInstallCountForTesting, 0)
+        try await settle(for: .milliseconds(3_200))
+        // 최초 피드가 늦어도 차폐는 처음부터 만들지 않는다. 준비 확인은
+        // 차폐와 독립적으로 계속되어 뒤늦게 온 피드를 활성화해야 한다.
+        XCTAssertFalse(
+            container.hasTransitionLoadingGateForTesting,
+            "최초 피드를 기다리는 동안 전환 차폐가 생겼습니다."
+        )
+        XCTAssertEqual(container.transitionLoadingGateInstallCountForTesting, 0)
         XCTAssertTrue(director.characterSelectionStore.isConversationLoading)
 
         director.liveFeedStore.replace(
@@ -986,6 +1009,20 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
             container.tearDown()
             window.contentView = nil
         }
+
+        // 이 테스트는 전환 차폐 아래의 pending viewport 보정을 검증한다.
+        // 먼저 실제 백부장 화면을 활성화한 뒤 직원 간 전환을 만든다.
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss
+        )
+        let didMountBoss = try await waitNaturallyUntil(
+            timeout: .seconds(3)
+        ) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didMountBoss, "전환 전 백부장 화면이 준비되지 않았습니다.")
 
         director.selectedCharacterID = .leftWoman
         container.configure(
