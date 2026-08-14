@@ -884,6 +884,10 @@ private struct LiveWorkspaceCommandBar: View {
 
     var body: some View {
         commandBar
+            .disabled(characterSelectionStore.isConversationLoading)
+            .opacity(
+                characterSelectionStore.isConversationLoading ? 0.52 : 1
+            )
             .task {
                 await Task.detached(priority: .utility) {
                     guard let inbox = try? AttachmentInbox.live() else {
