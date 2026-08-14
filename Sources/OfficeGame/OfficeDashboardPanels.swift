@@ -1437,6 +1437,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let metadataStore: LiveWorkspaceFeedMetadataStore
         let presentationStore: LiveWorkspaceFeedPresentationStore
         let transitionID: UUID
+        // 전환이 오래 안 풀리는 드문 증상의 증거를 남기기 위한 값이다.
+        let startedAt = Date()
+        var stallPolicy = LiveWorkspaceFeedStallPolicy()
         // 리사이즈 직전에 하단을 보고 있었는지 기억한다. 크기가 바뀐
         // 뒤에는 이전 상태를 알 수 없어 미리 담아 둔다.
         var wasAtBottomBeforeResize = true
@@ -1500,6 +1503,14 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var selectedCharacterID: OfficeCharacter?
     private var selectionGeneration = 0
     private var lastLaidOutBounds = CGRect.zero
+    // 드물게 나타나는 백화 증상의 증거를 남기는 함정이다. 증상이
+    // 없으면 알림 관찰만 하고 아무것도 기록하지 않는다.
+    private let stallRecorder = LiveWorkspaceFeedStallRecorder.live()
+    private var blankDetector = LiveWorkspaceFeedBlankDetector()
+    private var blankStartedAt: Date?
+    private var blankObservers: [NSObjectProtocol] = []
+    private var blankDeadline: DispatchWorkItem?
+    private var didReportCurrentBlank = false
     private static let resizeBottomTolerance = CGFloat(20)
 
     var activeCharacterIDForTesting: OfficeCharacter? {
@@ -1727,6 +1738,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     }
 
     private func releaseActiveEntry() {
+        stopObservingBlankScreen()
         guard let activeEntry else {
             return
         }
@@ -1833,11 +1845,17 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             if readiness == .confirmValidLayout {
                 pendingEntry.hostingView.needsLayout = true
             }
+            recordStallIfNeeded(
+                for: pendingEntry,
+                readiness: readiness,
+                readinessRevision: readinessRevision
+            )
             return readiness
         }
 
         self.pendingEntry = nil
         activeEntry = pendingEntry
+        observeBlankScreen(for: pendingEntry)
         removeTransitionLoadingGate()
         director.characterSelectionStore.completeConversationLoading(
             for: characterID
@@ -2005,6 +2023,223 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             return .confirmValidLayout
         }
         return .ready
+    }
+
+    // MARK: - 백화 증상 함정
+
+    private func recordStallIfNeeded(
+        for entry: Entry,
+        readiness: LiveWorkspaceFeedMountReadiness,
+        readinessRevision: Int
+    ) {
+        let elapsed = Date().timeIntervalSince(entry.startedAt)
+        guard entry.stallPolicy.shouldReport(elapsed: elapsed) else {
+            return
+        }
+        record(
+            kind: "transition-stall",
+            entry: entry,
+            elapsed: elapsed,
+            readiness: "\(readiness)",
+            readinessRevision: readinessRevision,
+            trace: []
+        )
+    }
+
+    /// 활성 대화의 문서·보기 영역 변화를 관찰한다. 스크롤바가 움찔거리는
+    /// 구간이 곧 문서 높이가 흔들리는 구간이라 같은 알림으로 잡힌다.
+    private func observeBlankScreen(for entry: Entry) {
+        stopObservingBlankScreen()
+        guard
+            let scrollView = primaryScrollView(in: entry.hostingView),
+            let documentView = scrollView.documentView
+        else {
+            return
+        }
+        documentView.postsFrameChangedNotifications = true
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        for (name, object) in [
+            (NSView.frameDidChangeNotification, documentView),
+            (NSView.boundsDidChangeNotification, scrollView.contentView),
+        ] {
+            let observer = NotificationCenter.default.addObserver(
+                forName: name,
+                object: object,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.evaluateBlankScreen()
+                }
+            }
+            blankObservers.append(observer)
+        }
+    }
+
+    private func stopObservingBlankScreen() {
+        for observer in blankObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        blankObservers.removeAll()
+        blankDeadline?.cancel()
+        blankDeadline = nil
+        blankStartedAt = nil
+        didReportCurrentBlank = false
+        blankDetector.reset()
+    }
+
+    private func evaluateBlankScreen() {
+        guard
+            let activeEntry,
+            let sample = blankSample(for: activeEntry)
+        else {
+            return
+        }
+        blankDetector.appendTrace(documentHeight: sample.documentHeight)
+        let isBlank = LiveWorkspaceFeedBlankDetector.isBlank(
+            turnCount: sample.turnCount,
+            documentHeight: sample.documentHeight,
+            viewportHeight: sample.viewportHeight,
+            visibleIntersectionHeight: sample.visibleIntersectionHeight
+        )
+        guard isBlank else {
+            if let blankStartedAt {
+                // 증상이 스스로 풀렸다. 얼마나 오래 비어 있었는지가
+                // 사용자가 체감한 시간이다.
+                let elapsed = Date().timeIntervalSince(blankStartedAt)
+                if elapsed >= LiveWorkspaceFeedStallPolicy.recoveredThreshold {
+                    record(
+                        kind: "active-blank-recovered",
+                        entry: activeEntry,
+                        elapsed: elapsed,
+                        readiness: "recovered",
+                        readinessRevision:
+                            activeEntry.characterFeedStore
+                            .mountReadinessRevision,
+                        trace: blankDetector.documentHeightTrace,
+                        sample: sample
+                    )
+                }
+            }
+            blankDeadline?.cancel()
+            blankDeadline = nil
+            blankStartedAt = nil
+            didReportCurrentBlank = false
+            blankDetector.reset()
+            return
+        }
+        guard blankStartedAt == nil else {
+            return
+        }
+        blankStartedAt = Date()
+        // 스스로 풀리지 않는 경우에도 남기도록 마감을 건다.
+        let deadline = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.reportPersistingBlankScreen()
+            }
+        }
+        blankDeadline = deadline
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + LiveWorkspaceFeedStallPolicy.firstReportDelay,
+            execute: deadline
+        )
+    }
+
+    private func reportPersistingBlankScreen() {
+        guard
+            !didReportCurrentBlank,
+            let activeEntry,
+            let blankStartedAt,
+            let sample = blankSample(for: activeEntry)
+        else {
+            return
+        }
+        didReportCurrentBlank = true
+        record(
+            kind: "active-blank-persisting",
+            entry: activeEntry,
+            elapsed: Date().timeIntervalSince(blankStartedAt),
+            readiness: "blank",
+            readinessRevision:
+                activeEntry.characterFeedStore.mountReadinessRevision,
+            trace: blankDetector.documentHeightTrace,
+            sample: sample
+        )
+    }
+
+    private struct BlankSample {
+        let documentHeight: Double
+        let viewportHeight: Double
+        let visibleIntersectionHeight: Double
+        let turnCount: Int
+        let isLoadingInitialFeed: Bool
+        let hasScrollView: Bool
+        let hostSize: CGSize
+    }
+
+    private func blankSample(for entry: Entry) -> BlankSample? {
+        let host = entry.hostingView
+        guard let scrollView = primaryScrollView(in: host) else {
+            return BlankSample(
+                documentHeight: 0,
+                viewportHeight: 0,
+                visibleIntersectionHeight: 0,
+                turnCount: entry.characterFeedStore.turns.count,
+                isLoadingInitialFeed:
+                    entry.characterFeedStore.isLoadingInitialFeed,
+                hasScrollView: false,
+                hostSize: host.bounds.size
+            )
+        }
+        let documentBounds = scrollView.documentView?.bounds ?? .zero
+        let visible = scrollView.documentVisibleRect
+        return BlankSample(
+            documentHeight: documentBounds.height,
+            viewportHeight: scrollView.contentView.bounds.height,
+            visibleIntersectionHeight:
+                documentBounds.intersection(visible).height,
+            turnCount: entry.characterFeedStore.turns.count,
+            isLoadingInitialFeed:
+                entry.characterFeedStore.isLoadingInitialFeed,
+            hasScrollView: true,
+            hostSize: host.bounds.size
+        )
+    }
+
+    private func record(
+        kind: String,
+        entry: Entry,
+        elapsed: TimeInterval,
+        readiness: String,
+        readinessRevision: Int,
+        trace: [Int],
+        sample: BlankSample? = nil
+    ) {
+        guard let stallRecorder else {
+            return
+        }
+        let resolved = sample ?? blankSample(for: entry)
+        let report = LiveWorkspaceFeedStallReport(
+            kind: kind,
+            characterID: entry.characterID.rawValue,
+            elapsedSeconds: elapsed,
+            readiness: readiness,
+            hostWidth: Double(resolved?.hostSize.width ?? 0),
+            hostHeight: Double(resolved?.hostSize.height ?? 0),
+            hasScrollView: resolved?.hasScrollView ?? false,
+            documentHeight: resolved?.documentHeight ?? 0,
+            viewportHeight: resolved?.viewportHeight ?? 0,
+            visibleIntersectionHeight:
+                resolved?.visibleIntersectionHeight ?? 0,
+            turnCount: resolved?.turnCount ?? 0,
+            isLoadingInitialFeed: resolved?.isLoadingInitialFeed ?? false,
+            readinessRevision: readinessRevision,
+            preClampPassCount: entry.stablePreClampPassCount,
+            postClampPassCount: entry.stablePostClampPassCount,
+            viewportClampCount: entry.viewportClampCount,
+            hasLoadingGate: transitionLoadingGateView?.superview === self,
+            documentHeightTrace: trace
+        )
+        stallRecorder.record(report, at: Date())
     }
 
     private func primaryScrollView(in root: NSView) -> NSScrollView? {
