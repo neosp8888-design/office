@@ -1,6 +1,7 @@
 // 이 파일은 모던 대시보드의 좌측 정보 패널과 우측 실시간 업무 피드를 구성한다.
 
 import AppKit
+import Combine
 import OfficeCore
 import SwiftUI
 
@@ -1490,6 +1491,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     }
 
     private weak var director: AgentDirector?
+    private var selectionWillChangeCancellable: AnyCancellable?
     private var activeEntry: Entry?
     private var pendingEntry: Entry?
     private var transitionLoadingGateView: LiveWorkspaceFeedLoadingGateView?
@@ -1643,6 +1645,25 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         if self.director !== director {
             tearDown()
             self.director = director
+            selectionWillChangeCancellable = director
+                .characterSelectionStore
+                .selectionWillChange
+                .sink { [weak self, weak director] characterID in
+                    guard
+                        let self,
+                        let director,
+                        self.director === director
+                    else {
+                        return
+                    }
+                    // CharacterSelectionStore의 @Published 상태보다 먼저
+                    // 차폐를 설치해 선택 헤더와 대화 화면이 서로 다른
+                    // snapshot을 한 프레임이라도 그리지 않게 한다.
+                    self.configure(
+                        director: director,
+                        selectedCharacterID: characterID
+                    )
+                }
         }
 
         let previousCharacterID = self.selectedCharacterID
@@ -1695,6 +1716,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     func tearDown() {
         selectionGeneration &+= 1
+        selectionWillChangeCancellable?.cancel()
+        selectionWillChangeCancellable = nil
         releasePendingEntry()
         releaseActiveEntry()
         removeTransitionLoadingGate()

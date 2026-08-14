@@ -18,6 +18,7 @@ final class CharacterSelectionStore: ObservableObject {
     }
 
     @Published private var state: State
+    let selectionWillChange = PassthroughSubject<OfficeCharacter?, Never>()
 
     var selectedCharacterID: OfficeCharacter? {
         state.selectedCharacterID
@@ -40,6 +41,11 @@ final class CharacterSelectionStore: ObservableObject {
         guard state.selectedCharacterID != characterID else {
             return
         }
+        // SwiftUI가 새 선택을 발행한 뒤에야 대화 호스트를 교체하면
+        // 헤더와 선택 버튼만 먼저 바뀌고 이전 대화가 잠깐 노출된다.
+        // AppKit 호스트가 전환 차폐를 동기로 설치할 수 있도록 새 상태를
+        // 발행하기 직전에 목표 직원을 알린다.
+        selectionWillChange.send(characterID)
         state = State(
             selectedCharacterID: characterID,
             isConversationLoading: characterID != nil
