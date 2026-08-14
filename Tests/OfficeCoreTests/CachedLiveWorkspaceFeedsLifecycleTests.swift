@@ -1937,6 +1937,196 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         assertViewportInBounds("정착 후")
     }
 
+    func testScrolledConversationDoesNotJumpOrLoopOnComposerResizeAndSubmit()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let characterID = OfficeCharacter.boss.rawValue
+        let response = (0..<80)
+            .map { "완료 응답 \($0)번째 줄입니다. 스크롤 상태를 재현합니다." }
+            .joined(separator: "\n")
+        let baseDate = Date(timeIntervalSinceReferenceDate: 240_000)
+        director.liveFeedStore.replace(with: (0..<4).reversed().map { index in
+            makeTurn(
+                id: "resize-submit-\(index)",
+                characterID: characterID,
+                prompt: "기존 질문 \(index)",
+                response: response,
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(TimeInterval(index))
+            )
+        })
+        director.liveFeedStore.finishInitialLoading()
+
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(
+            director: director,
+            selectedCharacterID: .boss
+        )
+        container.layoutSubtreeIfNeeded()
+        let didMount = try await waitNaturallyUntil(timeout: .seconds(4)) {
+            container.activeCharacterIDForTesting == .boss
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        XCTAssertTrue(didMount)
+
+        guard
+            let scrollView = try await waitForPrimaryScrollView(in: container),
+            let documentView = scrollView.documentView
+        else {
+            XCTFail("실제 대화 NSScrollView 계층이 없습니다.")
+            return
+        }
+        XCTAssertGreaterThan(
+            documentView.bounds.height,
+            scrollView.contentView.bounds.height * 2
+        )
+
+        let clipView = scrollView.contentView
+        let scrollableHeight = max(
+            0,
+            documentView.bounds.height - clipView.bounds.height
+        )
+        NotificationCenter.default.post(
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        clipView.scroll(
+            to: NSPoint(
+                x: clipView.bounds.minX,
+                y: documentView.isFlipped
+                    ? scrollableHeight / 2
+                    : documentView.bounds.minY + scrollableHeight / 2
+            )
+        )
+        scrollView.reflectScrolledClipView(clipView)
+        NotificationCenter.default.post(
+            name: NSScrollView.didLiveScrollNotification,
+            object: scrollView
+        )
+        NotificationCenter.default.post(
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+        try await settle(for: .milliseconds(120))
+
+        let readingOrigin = clipView.bounds.origin
+        let readingSnapshot = LiveWorkspaceFeedScrollGeometry.snapshot(
+            documentBounds: documentView.bounds,
+            visibleRect: scrollView.documentVisibleRect,
+            isFlipped: documentView.isFlipped
+        )
+        XCTAssertGreaterThan(readingSnapshot.distanceFromBottom, 20)
+
+        // Shift+Enter로 입력창이 커졌다 줄어드는 것과 같은 대화 영역
+        // 높이 변화를 만든다. 읽던 위치가 문서 밖이나 하단으로 튀면 안 된다.
+        container.setFrameSize(NSSize(width: 900, height: 580))
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(80))
+        container.setFrameSize(NSSize(width: 900, height: 700))
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(80))
+
+        XCTAssertEqual(
+            clipView.bounds.origin.y,
+            readingOrigin.y,
+            accuracy: 2,
+            "입력창 높이 변경만으로 읽던 스크롤 위치가 바뀌었습니다."
+        )
+        XCTAssertGreaterThan(
+            scrollView.documentVisibleRect.intersection(documentView.bounds).height,
+            0,
+            "입력창 높이 변경 뒤 viewport가 문서 밖 흰 영역을 봅니다."
+        )
+
+        // 실제 submit 순서: optimistic 턴을 넣고 command metadata를 발행한다.
+        director.liveFeedStore.insertOptimisticTurn(
+            makeTurn(
+                id: "local-short-submit",
+                characterID: characterID,
+                prompt: "짧게 답변바람",
+                status: .running,
+                startedAt: baseDate.addingTimeInterval(10)
+            )
+        )
+        container.updateMetadataForTesting(
+            LiveWorkspaceFeedMetadata(
+                latestTerminalTurnID: nil,
+                latestSubmittedCommandID: UUID(
+                    uuidString: "88888888-8888-8888-8888-888888888888"
+                ),
+                latestStartedCommandID: nil
+            )
+        )
+        try await settle(for: .milliseconds(300))
+
+        let afterSubmitSnapshot = LiveWorkspaceFeedScrollGeometry.snapshot(
+            documentBounds: documentView.bounds,
+            visibleRect: scrollView.documentVisibleRect,
+            isFlipped: documentView.isFlipped
+        )
+        XCTAssertGreaterThan(
+            afterSubmitSnapshot.distanceFromBottom,
+            20,
+            "과거 대화를 읽는 중의 짧은 제출이 viewport를 강제로 하단으로 "
+                + "이동했습니다."
+        )
+        XCTAssertEqual(
+            clipView.bounds.origin.x,
+            readingOrigin.x,
+            accuracy: 1
+        )
+        XCTAssertEqual(
+            clipView.bounds.origin.y,
+            readingOrigin.y,
+            accuracy: 2,
+            "입력창 높이 변경과 짧은 제출 뒤 읽던 스크롤 위치가 바뀌었습니다."
+        )
+
+        var geometryNotificationCount = 0
+        let notificationCenter = NotificationCenter.default
+        let registrations = [
+            notificationCenter.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { _ in
+                geometryNotificationCount += 1
+            },
+            notificationCenter.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: documentView,
+                queue: .main
+            ) { _ in
+                geometryNotificationCount += 1
+            },
+        ]
+        defer {
+            registrations.forEach(notificationCenter.removeObserver)
+        }
+        try await settle(for: .seconds(1))
+        XCTAssertLessThanOrEqual(
+            geometryNotificationCount,
+            12,
+            "제출이 끝난 뒤에도 scroll/layout이 "
+                + "\(geometryNotificationCount)회 계속 반복됩니다."
+        )
+    }
+
     func testScrollGeometryReportsFlippedTopAndBottomWithoutPreferenceKeys() {
         let documentBounds = CGRect(x: 0, y: 0, width: 500, height: 1_000)
 
