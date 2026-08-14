@@ -23,6 +23,32 @@ final class LiveFeedStoreTests: XCTestCase {
         withExtendedLifetime(cancellable) {}
     }
 
+    func testCharacterSelectionWillChangePrecedesPublishedSnapshot() {
+        let store = CharacterSelectionStore()
+        store.completeConversationLoading(for: .boss)
+        var targetCharacterID: OfficeCharacter?
+        var observedCharacterID: OfficeCharacter?
+        var observedLoading = true
+        let cancellable = store.selectionWillChange.sink { characterID in
+            targetCharacterID = characterID
+            observedCharacterID = store.selectedCharacterID
+            observedLoading = store.isConversationLoading
+        }
+
+        store.select(.leftMan)
+
+        XCTAssertEqual(targetCharacterID, .leftMan)
+        XCTAssertEqual(
+            observedCharacterID,
+            .boss,
+            "전환 차폐가 이전 snapshot을 보는 동안 먼저 설치되어야 합니다."
+        )
+        XCTAssertFalse(observedLoading)
+        XCTAssertEqual(store.selectedCharacterID, .leftMan)
+        XCTAssertTrue(store.isConversationLoading)
+        withExtendedLifetime(cancellable) {}
+    }
+
     func testCharacterTurnIndexTracksMergedAndReconciledTurns() {
         let store = LiveFeedStore()
         let submittedAt = Date(timeIntervalSinceReferenceDate: 900)

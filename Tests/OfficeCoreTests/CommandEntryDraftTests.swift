@@ -224,7 +224,7 @@ final class CommandEntryDraftTests: XCTestCase {
         XCTAssertEqual(textView.string, "업무")
     }
 
-    func testReturnCommitsMarkedKoreanTextAndSubmits() throws {
+    func testReturnCommitsMarkedKoreanTextAndSubmits() async throws {
         let textView = CommandComposerTextView()
         textView.setMarkedText(
             "한글",
@@ -232,13 +232,60 @@ final class CommandEntryDraftTests: XCTestCase {
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
         var submittedText: String?
-        textView.onSubmit = { submittedText = $0 }
+        let didSubmit = expectation(description: "조합 완료 뒤 전송")
+        textView.onSubmit = {
+            submittedText = $0
+            didSubmit.fulfill()
+        }
 
         textView.keyDown(with: try makeReturnEvent())
 
         XCTAssertFalse(textView.hasMarkedText())
+        XCTAssertNil(
+            submittedText,
+            "한글 조합 완료 이벤트보다 전송이 먼저 실행되면 안 됩니다."
+        )
+        await fulfillment(of: [didSubmit], timeout: 1)
         XCTAssertEqual(submittedText, "한글")
         XCTAssertEqual(textView.string, "한글")
+    }
+
+    func testLateKoreanCompositionChangeCannotRestoreSubmittedFinalSyllable()
+        async throws
+    {
+        let textBox = TextBox(value: "요청")
+        let didSubmit = expectation(description: "마지막 음절 확정 뒤 전송")
+        let composer = makeComposer(textBox: textBox) {
+            textBox.value = ""
+            didSubmit.fulfill()
+        }
+        let coordinator = composer.makeCoordinator()
+        let textView = CommandComposerTextView()
+        textView.delegate = coordinator
+        textView.string = "요청"
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+        textView.setMarkedText(
+            "됨",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        _ = composer.updateTextView(textView)
+
+        textView.keyDown(with: try makeReturnEvent())
+        coordinator.textDidChange(
+            Notification(
+                name: NSText.didChangeNotification,
+                object: textView
+            )
+        )
+
+        XCTAssertEqual(textBox.value, "요청됨")
+        await fulfillment(of: [didSubmit], timeout: 1)
+        XCTAssertEqual(
+            textBox.value,
+            "",
+            "늦은 IME 변경이 전송 뒤 마지막 음절을 초안에 복원했습니다."
+        )
     }
 
     func testShiftReturnIsTheOnlyReturnThatInsertsNewline() throws {

@@ -538,13 +538,29 @@ final class CommandComposerTextView: NSTextView {
         // Return을 AppKit에 넘기면 한글 조합 중에는 줄바꿈 명령까지
         // 함께 처리될 수 있다. 조합을 먼저 확정한 뒤 일반 Return은
         // 전송하고, Shift+Return만 명시적으로 줄바꿈한다.
-        if hasMarkedText() {
-            unmarkText()
-        }
         if event.modifierFlags.contains(.shift) {
+            if hasMarkedText() {
+                unmarkText()
+            }
             insertNewline(nil)
-        } else {
+            return
+        }
+
+        guard hasMarkedText() else {
             onSubmit?(string)
+            return
+        }
+
+        // unmarkText 직후에는 macOS 입력기가 마지막 한글 음절의
+        // textDidChange를 뒤늦게 보낼 수 있다. 같은 호출 스택에서 초안을
+        // 지우면 그 이벤트가 빈 초안 위에 마지막 음절 하나를 되살린다.
+        // 조합 완료 이벤트를 먼저 소진한 다음 확정 문자열을 전송한다.
+        unmarkText()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.onSubmit?(self.string)
         }
     }
 

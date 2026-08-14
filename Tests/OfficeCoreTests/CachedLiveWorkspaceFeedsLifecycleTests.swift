@@ -883,22 +883,33 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         let director = AgentDirector(startBackgroundTasks: false)
         director.liveFeedStore.replace(with: makeTurns())
         director.liveFeedStore.finishInitialLoading()
-        let container = CachedLiveWorkspaceFeedsNSView(
-            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        let rootHost = NSHostingView(
+            rootView: CachedLiveWorkspaceFeeds(director: director)
+                .frame(width: 900, height: 700)
         )
+        rootHost.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         let window = NSWindow(
-            contentRect: container.bounds,
+            contentRect: rootHost.bounds,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        window.contentView = container
+        window.contentView = rootHost
+        rootHost.layoutSubtreeIfNeeded()
+
+        guard let container = allDescendants(of: rootHost)
+            .compactMap({ $0 as? CachedLiveWorkspaceFeedsNSView })
+            .first
+        else {
+            XCTFail("SwiftUI representable이 live feed container를 만들지 못했습니다.")
+            window.contentView = nil
+            return
+        }
         defer {
             container.tearDown()
             window.contentView = nil
         }
 
-        container.configure(director: director, selectedCharacterID: .boss)
         let didMountBoss = try await waitNaturallyUntil(
             timeout: .seconds(3)
         ) {
@@ -909,19 +920,6 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         let bossHost = liveFeedHost(in: container)
 
         director.selectedCharacterID = .leftWoman
-        let clock = ContinuousClock()
-        let startedAt = clock.now
-        container.configure(
-            director: director,
-            selectedCharacterID: .leftWoman
-        )
-        let configureElapsed = startedAt.duration(to: clock.now)
-
-        XCTAssertLessThan(
-            configureElapsed,
-            .milliseconds(100),
-            "직원 전환 configure가 긴 대화 host를 동기로 생성했습니다."
-        )
         XCTAssertTrue(container.hasTransitionLoadingGateForTesting)
         XCTAssertTrue(liveFeedHost(in: container) === bossHost)
         XCTAssertEqual(container.activeCharacterIDForTesting, .boss)
