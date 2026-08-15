@@ -39,6 +39,20 @@ final class OfficeLocalizationTests: XCTestCase {
         )
         XCTAssertEqual(
             OfficeLocalization.string(
+                "직원 업무 기록",
+                languages: ["en-US"]
+            ),
+            "Team work records"
+        )
+        XCTAssertEqual(
+            OfficeLocalization.string(
+                "현재 사용 가능량",
+                languages: ["en-US"]
+            ),
+            "Current availability"
+        )
+        XCTAssertEqual(
+            OfficeLocalization.string(
                 "번역에 없는 동적 명령",
                 languages: ["en-US"]
             ),

@@ -2,7 +2,8 @@
 
 "대화 보관함" = "Conversation Archive";
 "화이트보드" = "Whiteboard";
-"검색하고 빠르게 여는 직원 업무 기록" = "Search and quickly open team work records";
+"직원 업무 기록" = "Team work records";
+"현재 사용 가능량" = "Current availability";
 "실시간 대화" = "Live Conversation";
 "대화와 진행 기록" = "Conversation and progress";
 "%@의 대화와 진행 기록" = "%@ conversation and progress";
@@ -107,7 +108,6 @@
 "5시간" = "5 hours";
 "7일" = "7 days";
 "30일 비용" = "30-day cost";
-"30일 토큰" = "30-day tokens";
 "응답 준비 중, 맨 아래로 이동" = "Preparing response, jump to bottom";
 "위로 더 올리면 이전 %@건 추가" = "Scroll up to load %@ earlier records";
 "이전 %@건은 대화 책꽂이에서 확인" = "%@ earlier records are in the conversation bookshelf";
