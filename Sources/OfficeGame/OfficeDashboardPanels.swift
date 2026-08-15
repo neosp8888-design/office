@@ -1515,6 +1515,14 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var jitterDetector = LiveWorkspaceFeedJitterDetector()
     private var lastJitterReportAt: Date?
     private var lastResizeSampleAt: Date?
+    private var blankRecoveryAttempts = 0
+    private var isRecoveringBlankViewport = false
+    /// 자극이 통하지 않는 상황에서 무한히 흔들지 않는다.
+    private static let maximumBlankRecoveryAttempts = 3
+
+    static var maximumBlankRecoveryAttemptsForTesting: Int {
+        maximumBlankRecoveryAttempts
+    }
     private var blankStartedAt: Date?
     private var blankObservers: [NSObjectProtocol] = []
     private var blankDeadline: DispatchWorkItem?
@@ -2276,6 +2284,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         blankDeadline = nil
         blankStartedAt = nil
         didReportCurrentBlank = false
+        blankRecoveryAttempts = 0
         blankDetector.reset()
     }
 
@@ -2310,6 +2319,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             visibleIntersectionHeight: sample.visibleIntersectionHeight,
             visibleCardCount: sample.visibleCardCount
         )
+        if isBlank {
+            recoverBlankViewportIfNeeded(for: activeEntry, sample: sample)
+        } else {
+            blankRecoveryAttempts = 0
+        }
         guard isBlank else {
             if let blankStartedAt {
                 // 증상이 스스로 풀렸다. 얼마나 오래 비어 있었는지가
@@ -2355,6 +2369,57 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     /// 화면이 비지는 않아도 눈에 띄게 흔들리면 남긴다. 사용자가 깜빡임으로
     /// 느끼는 구간이 여기다.
+    /// 기하는 멀쩡한데 보이는 영역에 그려진 것이 없으면 SwiftUI가 그
+    /// 구간의 카드를 아직 실체화하지 않은 것이다. 사용자가 창을 살짝
+    /// 흔들어 복구시키던 자극을 눈에 띄지 않게 대신 준다.
+    private func recoverBlankViewportIfNeeded(
+        for entry: Entry,
+        sample: BlankSample
+    ) {
+        guard
+            sample.visibleCardCount <= 0,
+            sample.documentHeight > 1,
+            !isRecoveringBlankViewport,
+            blankRecoveryAttempts < Self.maximumBlankRecoveryAttempts,
+            let scrollView = primaryScrollView(in: entry.hostingView)
+        else {
+            return
+        }
+        blankRecoveryAttempts += 1
+        isRecoveringBlankViewport = true
+        defer {
+            isRecoveringBlankViewport = false
+        }
+
+        let host = entry.hostingView
+        let clipView = scrollView.contentView
+        let origin = clipView.bounds.origin
+        // 1pt만 움직였다 되돌린다. 화면상 위치는 그대로지만 스크롤
+        // 갱신이 일어나 LazyVStack이 보이는 구간을 다시 그린다.
+        clipView.scroll(
+            to: CGPoint(x: origin.x, y: origin.y + 1)
+        )
+        scrollView.reflectScrolledClipView(clipView)
+        host.layoutSubtreeIfNeeded()
+        clipView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clipView)
+        host.needsLayout = true
+        host.needsDisplay = true
+        host.layoutSubtreeIfNeeded()
+
+        record(
+            kind: "blank-recovery-nudge",
+            entry: entry,
+            elapsed: 0,
+            readiness: "attempt=\(blankRecoveryAttempts)"
+                + " offset=\(Int(sample.offsetY))",
+            readinessRevision:
+                entry.characterFeedStore.mountReadinessRevision,
+            trace: blankDetector.documentHeightTrace,
+            sample: sample
+        )
+    }
+
     private func recordResizeSettleIfNeeded(for entry: Entry) {
         let now = Date()
         if let lastResizeSampleAt,
