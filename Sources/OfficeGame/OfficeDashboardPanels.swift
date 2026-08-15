@@ -436,6 +436,9 @@ private struct UsageBoardContent: View {
     let databaseBaseURL: URL
     @State private var snapshot: AIUsageSnapshot?
     @State private var errorMessage: String?
+    @State private var updateStatus = CLIUpdateStatus.empty
+    @State private var updatingPackageID: String?
+    @State private var updateErrorMessage: String?
 
     var body: some View {
         Group {
@@ -483,6 +486,53 @@ private struct UsageBoardContent: View {
         }
         .task(id: refreshRequestID) {
             await refresh(force: snapshot != nil)
+            await refreshUpdateStatus(force: false)
+        }
+        .overlay(alignment: .bottom) {
+            if let updateErrorMessage {
+                Text(updateErrorMessage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.bottom, 8)
+                    .accessibilityLabel("업데이트 실패 \(updateErrorMessage)")
+            }
+        }
+    }
+
+    private func refreshUpdateStatus(force: Bool) async {
+        guard
+            let status = try? await OfficeDatabaseClient(
+                baseURL: databaseBaseURL
+            ).fetchCLIUpdateStatus(force: force)
+        else {
+            return
+        }
+        updateStatus = status
+    }
+
+    /// 갱신은 npm 설치라 오래 걸린다. 진행 중 업무가 있으면 백엔드가
+    /// 막고 그 사유를 그대로 보여 준다.
+    private func applyUpdate(packageID: String) {
+        guard updatingPackageID == nil else {
+            return
+        }
+        updatingPackageID = packageID
+        updateErrorMessage = nil
+        Task {
+            defer {
+                updatingPackageID = nil
+            }
+            do {
+                updateStatus = try await OfficeDatabaseClient(
+                    baseURL: databaseBaseURL
+                ).applyCLIUpdates()
+            } catch {
+                updateErrorMessage = error.localizedDescription
+                await refreshUpdateStatus(force: true)
+            }
         }
     }
 
@@ -493,6 +543,9 @@ private struct UsageBoardContent: View {
         UsageProviderColumn(
             name: "Claude",
             icon: "sparkles",
+            update: updateStatus.package(id: "claude"),
+            isUpdating: updatingPackageID != nil,
+            applyUpdate: { applyUpdate(packageID: "claude") },
             fiveHour: snapshot.claudeFiveHour,
             fiveHourResetAt: snapshot.claudeFiveHourResetAt,
             weekly: snapshot.claudeWeekly,
@@ -508,6 +561,9 @@ private struct UsageBoardContent: View {
         UsageProviderColumn(
             name: "Codex",
             icon: "terminal.fill",
+            update: updateStatus.package(id: "codex"),
+            isUpdating: updatingPackageID != nil,
+            applyUpdate: { applyUpdate(packageID: "codex") },
             fiveHour: snapshot.codexFiveHour,
             fiveHourResetAt: snapshot.codexFiveHourResetAt,
             weekly: snapshot.codexWeekly,
@@ -544,6 +600,9 @@ private struct UsageBoardContent: View {
 private struct UsageProviderColumn: View {
     let name: String
     let icon: String
+    let update: CLIUpdateStatus.Package?
+    let isUpdating: Bool
+    let applyUpdate: () -> Void
     let fiveHour: Int?
     let fiveHourResetAt: Date?
     let weekly: Int?
@@ -557,6 +616,9 @@ private struct UsageProviderColumn: View {
             UsageProviderCard(
                 name: name,
                 icon: icon,
+                update: update,
+                isUpdating: isUpdating,
+                applyUpdate: applyUpdate,
                 fiveHour: fiveHour,
                 fiveHourResetAt: fiveHourResetAt,
                 weekly: weekly,
@@ -576,6 +638,9 @@ private struct UsageProviderColumn: View {
 private struct UsageProviderCard: View {
     let name: String
     let icon: String
+    let update: CLIUpdateStatus.Package?
+    let isUpdating: Bool
+    let applyUpdate: () -> Void
     let fiveHour: Int?
     let fiveHourResetAt: Date?
     let weekly: Int?
@@ -598,6 +663,41 @@ private struct UsageProviderCard: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(tint.opacity(0.10), in: Capsule())
+                }
+
+                if let update, update.updateAvailable {
+                    Button(action: applyUpdate) {
+                        HStack(spacing: 4) {
+                            if isUpdating {
+                                ProgressView()
+                                    .controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            Text(
+                                isUpdating
+                                    ? "갱신 중"
+                                    : (update.latestVersion.map { "v\($0)" }
+                                        ?? "업데이트")
+                            )
+                            .font(.system(size: 8.5, weight: .bold))
+                        }
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            Color(red: 0.10, green: 0.48, blue: 0.30),
+                            in: Capsule()
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isUpdating)
+                    .help(
+                        "설치본 \(update.installedVersion ?? "?") → "
+                            + "\(update.latestVersion ?? "?")"
+                    )
+                    .accessibilityLabel("\(update.label) 업데이트")
                 }
 
                 Spacer()

@@ -75,6 +75,11 @@ import {
   verifyWikiProposal,
 } from "./wiki-knowledge.mjs";
 import { createUsageSummaryReader } from "./usage-summary.mjs";
+import {
+  CLIUpdateBusyError,
+  applyCLIUpdates,
+  createCLIUpdateChecker,
+} from "./cli-updates.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const automaticWorkspaceApprovalRetryIntervalMs = 10_000;
@@ -84,6 +89,14 @@ const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
 let automaticWorkspaceApprovalRetryInFlight = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
+const cliUpdateChecker = createCLIUpdateChecker();
+
+async function hasRunningWork() {
+  const result = await pool.query(
+    "SELECT 1 FROM turns WHERE status IN ('pending','running') LIMIT 1",
+  );
+  return result.rows.length > 0;
+}
 
 function startAutomaticWorkspaceApprovalRetryLoop() {
   const timer = setInterval(() => {
@@ -283,6 +296,36 @@ async function usageSummary(response, url) {
     String(url.searchParams.get("force") ?? "").toLowerCase(),
   );
   send(response, 200, await readUsageSummary({ force }));
+}
+
+async function cliUpdates(response, url) {
+  const force = ["1", "true"].includes(
+    String(url.searchParams.get("force") ?? "").toLowerCase(),
+  );
+  send(response, 200, await cliUpdateChecker.read({ force }));
+}
+
+async function applyCLIUpdatesEndpoint(response, request) {
+  if (!trustedJSONMutation(request, response)) {
+    return;
+  }
+  await readJSON(request);
+  try {
+    const result = await applyCLIUpdates({ hasRunningWork });
+    cliUpdateChecker.invalidate();
+    send(response, 200, {
+      ...result,
+      status: await cliUpdateChecker.read({ force: true }),
+    });
+  } catch (error) {
+    if (error instanceof CLIUpdateBusyError) {
+      send(response, 409, { error: error.message });
+      return;
+    }
+    send(response, 500, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function updateAutomationSettings(response, body) {
@@ -2031,6 +2074,16 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/usage-summary"
     ) {
       await usageSummary(response, url);
+    } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/cli-updates"
+    ) {
+      await cliUpdates(response, url);
+    } else if (
+      request.method === "POST" &&
+      url.pathname === "/api/cli-updates/apply"
+    ) {
+      await applyCLIUpdatesEndpoint(response, request);
     } else if (
       request.method === "PUT" &&
       url.pathname === "/api/automation-settings"

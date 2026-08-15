@@ -14,8 +14,12 @@ struct WhiteboardUsageLayer: View {
     }
 
     @State private var snapshot: AIUsageSnapshot?
+    @State private var updateStatus = CLIUpdateStatus.empty
     @State private var isLoading = true
     @State private var refreshFailed = false
+
+    /// 화이트보드 갱신 주기다. 한도와 CLI 갱신 여부를 같은 주기에 본다.
+    static let refreshInterval = TimeInterval(600)
 
     var body: some View {
         GeometryReader { geometry in
@@ -38,11 +42,25 @@ struct WhiteboardUsageLayer: View {
             while !Task.isCancelled {
                 await refresh()
                 do {
-                    try await Task.sleep(for: .seconds(300))
+                    try await Task.sleep(for: .seconds(Self.refreshInterval))
                 } catch {
                     return
                 }
             }
+        }
+    }
+
+    /// CLI 갱신 여부는 실패해도 한도 표시를 막지 않는다.
+    private func refreshUpdateStatus() async {
+        guard
+            let status = try? await OfficeDatabaseClient(
+                baseURL: databaseBaseURL
+            ).fetchCLIUpdateStatus()
+        else {
+            return
+        }
+        if updateStatus != status {
+            updateStatus = status
         }
     }
 
@@ -82,6 +100,7 @@ struct WhiteboardUsageLayer: View {
 
     @MainActor
     private func refresh() async {
+        await refreshUpdateStatus()
         isLoading = snapshot == nil
         do {
             let refreshed = try await OfficeDatabaseClient(
@@ -129,6 +148,8 @@ struct WhiteboardUsageLayer: View {
         if let snapshot {
             drawUsageGroup(
                 provider: "CODEX",
+                hasUpdate: updateStatus
+                    .package(id: "codex")?.updateAvailable == true,
                 fiveHour: snapshot.codexFiveHour,
                 fiveHourResetAt: snapshot.codexFiveHourResetAt,
                 weekly: snapshot.codexWeekly,
@@ -140,6 +161,8 @@ struct WhiteboardUsageLayer: View {
             )
             drawUsageGroup(
                 provider: "CLAUDE",
+                hasUpdate: updateStatus
+                    .package(id: "claude")?.updateAvailable == true,
                 fiveHour: snapshot.claudeFiveHour,
                 fiveHourResetAt: snapshot.claudeFiveHourResetAt,
                 weekly: snapshot.claudeWeekly,
@@ -183,6 +206,7 @@ struct WhiteboardUsageLayer: View {
 
     private func drawUsageGroup(
         provider: String,
+        hasUpdate: Bool,
         fiveHour: Int?,
         fiveHourResetAt: Date?,
         weekly: Int?,
@@ -200,6 +224,18 @@ struct WhiteboardUsageLayer: View {
             weight: .bold,
             color: ink
         )
+        if hasUpdate {
+            // 새 버전이 있으면 제공자 이름 옆에 표시한다. 자리가 좁아
+            // 문구 대신 짧은 표식만 둔다.
+            drawText(
+                "UP",
+                in: &context,
+                at: CGPoint(x: CGFloat(provider.count) * 6.6 + 5, y: providerY + 1),
+                size: 7.5,
+                weight: .black,
+                color: Color(red: 0.10, green: 0.48, blue: 0.30)
+            )
+        }
         drawText(
             compactLimitText(
                 label: "5H",
@@ -338,6 +374,37 @@ func usageResetTimeText(
         return clock
     }
     return "\(month)/\(day) \(clock)"
+}
+
+/// 직원이 쓰는 CLI의 설치본과 배포 최신본 비교 결과다.
+struct CLIUpdateStatus: Decodable, Equatable, Sendable {
+    struct Package: Decodable, Equatable, Sendable, Identifiable {
+        let id: String
+        let label: String
+        let packageName: String
+        let installedVersion: String?
+        let latestVersion: String?
+        let updateAvailable: Bool
+    }
+
+    let checkedAt: Date?
+    let updateAvailable: Bool
+    let packages: [Package]
+
+    static let empty = CLIUpdateStatus(
+        checkedAt: nil,
+        updateAvailable: false,
+        packages: []
+    )
+
+    func package(id: String) -> Package? {
+        packages.first { $0.id == id }
+    }
+}
+
+struct CLIUpdateApplyResponse: Decodable, Equatable, Sendable {
+    let ok: Bool
+    let status: CLIUpdateStatus
 }
 
 struct AIUsageSnapshot: Decodable, Equatable, Sendable {
