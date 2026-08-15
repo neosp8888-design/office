@@ -82,6 +82,7 @@ import {
   createCLIUpdateChecker,
   backendsForIdentifier,
   packageNamesForIdentifier,
+  sharedInstallPrefix,
 } from "./cli-updates.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
@@ -323,10 +324,12 @@ async function applyCLIUpdatesEndpoint(response, request) {
   }
   const body = await readJSON(request);
   try {
+    const current = await cliUpdateChecker.read();
     const result = await applyCLIUpdates({
       hasRunningWork,
       packageNames: packageNamesForIdentifier(body.id),
       backends: backendsForIdentifier(body.id),
+      prefix: sharedInstallPrefix(current, body.id),
     });
     cliUpdateChecker.invalidate();
     send(response, 200, {

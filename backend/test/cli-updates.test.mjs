@@ -8,7 +8,9 @@ import {
   CLIUpdateUnknownPackageError,
   applyCLIUpdates,
   backendsForIdentifier,
+  npmPrefixForExecutable,
   packageNamesForIdentifier,
+  sharedInstallPrefix,
   createCLIUpdateChecker,
   isUpdateAvailable,
   parseInstalledVersion,
@@ -215,4 +217,60 @@ test("갱신을 막는 판정은 그 CLI를 쓰는 직원만 본다", async () =
     }),
     CLIUpdateBusyError,
   );
+});
+
+test("실행 파일 경로에서 설치 위치를 뽑는다", () => {
+  assert.equal(
+    npmPrefixForExecutable(
+      "/Users/neo/.nvm/versions/node/v24.14.0/lib/node_modules"
+        + "/@anthropic-ai/claude-code/bin/claude.exe",
+    ),
+    "/Users/neo/.nvm/versions/node/v24.14.0",
+  );
+  assert.equal(npmPrefixForExecutable("/opt/homebrew/bin/codex"), null);
+  assert.equal(npmPrefixForExecutable(null), null);
+});
+
+test("대상들이 같은 곳에 있을 때만 그 위치로 설치한다", () => {
+  const status = {
+    packages: [
+      { id: "claude", installPrefix: "/nvm/v24" },
+      { id: "codex", installPrefix: "/nvm/v24" },
+    ],
+  };
+  assert.equal(sharedInstallPrefix(status, "claude"), "/nvm/v24");
+  assert.equal(sharedInstallPrefix(status, null), "/nvm/v24");
+
+  const mixed = {
+    packages: [
+      { id: "claude", installPrefix: "/nvm/v24" },
+      { id: "codex", installPrefix: "/opt/homebrew" },
+    ],
+  };
+  assert.equal(sharedInstallPrefix(mixed, null), null);
+  assert.equal(sharedInstallPrefix(mixed, "codex"), "/opt/homebrew");
+  assert.equal(sharedInstallPrefix({ packages: [] }, null), null);
+});
+
+test("설치 위치를 알면 npm에 그 위치를 명시한다", async () => {
+  // PATH 앞에 앱 번들 Node가 있으면 npm이 자기 자리를 앱 안으로 판단해
+  // 갱신이 엉뚱한 곳으로 들어간다. 위치를 명시해 이를 막는다.
+  const commands = [];
+  await applyCLIUpdates({
+    runCommand: async (command, args) => {
+      commands.push([command, ...args]);
+      return { stdout: "" };
+    },
+    packageNames: ["@openai/codex"],
+    prefix: "/Users/neo/.nvm/versions/node/v24.14.0",
+    hasRunningWork: async () => false,
+  });
+  assert.deepEqual(commands[0], [
+    "npm",
+    "install",
+    "-g",
+    "--prefix",
+    "/Users/neo/.nvm/versions/node/v24.14.0",
+    "@openai/codex",
+  ]);
 });
