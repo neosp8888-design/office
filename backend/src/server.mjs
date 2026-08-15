@@ -80,6 +80,7 @@ import {
   CLIUpdateUnknownPackageError,
   applyCLIUpdates,
   createCLIUpdateChecker,
+  backendsForIdentifier,
   packageNamesForIdentifier,
 } from "./cli-updates.mjs";
 
@@ -93,9 +94,18 @@ let automaticWorkspaceApprovalRetryInFlight = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
 const cliUpdateChecker = createCLIUpdateChecker();
 
-async function hasRunningWork() {
+async function hasRunningWork(backends) {
   const result = await pool.query(
-    "SELECT 1 FROM turns WHERE status IN ('pending','running') LIMIT 1",
+    `
+      SELECT 1
+      FROM turns AS turn
+      JOIN cli_sessions AS session ON session.id = turn.cli_session_id
+      JOIN characters AS character ON character.id = session.character_id
+      WHERE turn.status IN ('pending', 'running')
+        AND ($1::text[] IS NULL OR character.backend = ANY($1))
+      LIMIT 1
+    `,
+    [backends ?? null],
   );
   return result.rows.length > 0;
 }
@@ -316,6 +326,7 @@ async function applyCLIUpdatesEndpoint(response, request) {
     const result = await applyCLIUpdates({
       hasRunningWork,
       packageNames: packageNamesForIdentifier(body.id),
+      backends: backendsForIdentifier(body.id),
     });
     cliUpdateChecker.invalidate();
     send(response, 200, {

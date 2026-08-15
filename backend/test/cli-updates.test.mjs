@@ -7,6 +7,7 @@ import {
   CLIUpdateBusyError,
   CLIUpdateUnknownPackageError,
   applyCLIUpdates,
+  backendsForIdentifier,
   packageNamesForIdentifier,
   createCLIUpdateChecker,
   isUpdateAvailable,
@@ -180,5 +181,38 @@ test("진행 중 업무 거부 문구는 업데이트라는 말을 쓴다", asyn
     (error) =>
       error instanceof CLIUpdateBusyError &&
       error.message === "진행 중인 업무가 끝난 뒤에 업데이트할 수 있습니다.",
+  );
+});
+
+test("갱신을 막는 판정은 그 CLI를 쓰는 직원만 본다", async () => {
+  assert.deepEqual(backendsForIdentifier("claude"), ["claude"]);
+  assert.deepEqual(backendsForIdentifier("codex"), ["codex"]);
+  assert.deepEqual(backendsForIdentifier(null), ["claude", "codex"]);
+
+  // 클로드 직원이 일하는 중이어도 코덱스는 갱신할 수 있어야 한다.
+  const asked = [];
+  const runningBackends = new Set(["claude"]);
+  const result = await applyCLIUpdates({
+    runCommand: async () => ({ stdout: "" }),
+    packageNames: packageNamesForIdentifier("codex"),
+    backends: backendsForIdentifier("codex"),
+    hasRunningWork: async (backends) => {
+      asked.push(backends);
+      return backends.some((backend) => runningBackends.has(backend));
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(asked, [["codex"]]);
+
+  // 같은 CLI를 쓰는 직원이 일하는 중이면 막는다.
+  await assert.rejects(
+    applyCLIUpdates({
+      runCommand: async () => ({ stdout: "" }),
+      packageNames: packageNamesForIdentifier("claude"),
+      backends: backendsForIdentifier("claude"),
+      hasRunningWork: async (backends) =>
+        backends.some((backend) => runningBackends.has(backend)),
+    }),
+    CLIUpdateBusyError,
   );
 });

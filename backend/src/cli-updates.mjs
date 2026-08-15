@@ -10,6 +10,7 @@ export const CLI_PACKAGES = Object.freeze([
     id: "claude",
     label: "Claude Code",
     packageName: "@anthropic-ai/claude-code",
+    backend: "claude",
     executable: "claude",
     versionArguments: ["--version"],
   }),
@@ -17,6 +18,7 @@ export const CLI_PACKAGES = Object.freeze([
     id: "codex",
     label: "Codex",
     packageName: "@openai/codex",
+    backend: "codex",
     executable: "codex",
     versionArguments: ["--version"],
   }),
@@ -142,8 +144,12 @@ export class CLIUpdateUnknownPackageError extends Error {}
 /// 하나만 고를 수 있어야 한다. 한쪽만 새 버전이 나왔는데 둘 다 건드릴
 /// 이유가 없다.
 export function packageNamesForIdentifier(identifier) {
+  return packagesForIdentifier(identifier).map((entry) => entry.packageName);
+}
+
+export function packagesForIdentifier(identifier) {
   if (identifier == null || identifier === "") {
-    return CLI_PACKAGES.map((entry) => entry.packageName);
+    return [...CLI_PACKAGES];
   }
   const entry = CLI_PACKAGES.find((item) => item.id === identifier);
   if (!entry) {
@@ -151,15 +157,25 @@ export function packageNamesForIdentifier(identifier) {
       `알 수 없는 CLI입니다. ${identifier}`,
     );
   }
-  return [entry.packageName];
+  return [entry];
+}
+
+/// 갱신을 막아야 하는 것은 그 CLI를 쓰는 직원뿐이다. 클로드 직원이
+/// 일하는 중이라고 코덱스 갱신까지 막을 이유가 없다.
+export function backendsForIdentifier(identifier) {
+  return packagesForIdentifier(identifier).map((entry) => entry.backend);
 }
 
 export async function applyCLIUpdates({
   runCommand = execFileAsync,
   packageNames = CLI_PACKAGES.map((entry) => entry.packageName),
+  backends = CLI_PACKAGES.map((entry) => entry.backend),
   hasRunningWork,
 } = {}) {
-  if (typeof hasRunningWork === "function" && (await hasRunningWork())) {
+  if (
+    typeof hasRunningWork === "function" &&
+    (await hasRunningWork(backends))
+  ) {
     throw new CLIUpdateBusyError(
       "진행 중인 업무가 끝난 뒤에 업데이트할 수 있습니다.",
     );
