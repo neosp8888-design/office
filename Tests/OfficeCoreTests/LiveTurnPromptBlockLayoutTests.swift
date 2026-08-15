@@ -77,7 +77,7 @@ final class LiveTurnPromptBlockLayoutTests: XCTestCase {
         let widest = texts.map { $0.frame.width }.max() ?? 0
         XCTAssertLessThanOrEqual(
             widest,
-            560,
+            host.bounds.width - 80,
             "질문 말풍선이 화면 폭을 그대로 차지하면 답변과 구분되지 않습니다."
         )
         let rightmost = texts
@@ -85,8 +85,40 @@ final class LiveTurnPromptBlockLayoutTests: XCTestCase {
             .max() ?? 0
         XCTAssertGreaterThan(
             rightmost,
-            host.bounds.midX,
-            "사용자 질문은 오른쪽에 정렬돼야 합니다."
+            host.bounds.width - 40,
+            "질문 말풍선은 오른쪽 끝에 붙어야 합니다."
+        )
+    }
+
+    func testShortPromptBubbleShrinksToItsContent() {
+        let host = NSHostingView(
+            rootView: LiveTurnPromptBlock(
+                presentation: TaskPromptPresentation(prompt: "넵"),
+                sentAt: Date(timeIntervalSinceReferenceDate: 60_000)
+            )
+            .frame(width: 900)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 200)
+        host.layoutSubtreeIfNeeded()
+
+        let texts = allDescendants(of: host)
+            .compactMap { $0 as? NSTextField }
+            .filter { !($0.stringValue.isEmpty) }
+        guard let prompt = texts.first(where: { $0.stringValue == "넵" })
+        else {
+            XCTFail("질문 텍스트를 찾지 못했습니다.")
+            return
+        }
+        // 짧은 질문에 넓은 말풍선을 주면 오른쪽이 허전해 보인다.
+        XCTAssertLessThan(
+            prompt.frame.width,
+            200,
+            "짧은 질문은 내용 크기로 줄어야 합니다."
+        )
+        XCTAssertGreaterThan(
+            host.convert(prompt.bounds, from: prompt).maxX,
+            host.bounds.width - 60,
+            "짧은 질문도 오른쪽 끝에 붙어야 합니다."
         )
     }
 

@@ -3554,13 +3554,20 @@ struct LiveTurnPromptBlock: View {
 
     @State private var didCopy = false
 
-    /// 질문이 짧아도 화면 폭을 다 쓰지 않게 막고, 길면 접힌다.
-    private static let maximumBubbleWidth = CGFloat(520)
+    /// 질문이 길어도 왼쪽에 이만큼은 남겨 답변과 시선이 갈린다.
+    private static let minimumLeadingGap = CGFloat(96)
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            bubble
-            footer
+        // Text는 유연한 뷰라 maxWidth를 주면 그 폭을 그대로 채운다.
+        // Spacer와 같은 HStack에 두면 Text가 자기 크기를 먼저 가져가고
+        // 남는 폭은 Spacer가 흡수해, 말풍선이 내용만큼만 차지한다.
+        HStack(spacing: 0) {
+            Spacer(minLength: Self.minimumLeadingGap)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                bubble
+                footer
+            }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .fixedSize(horizontal: false, vertical: true)
@@ -3569,10 +3576,12 @@ struct LiveTurnPromptBlock: View {
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 7) {
             if !presentation.text.isEmpty {
+                // maxWidth를 주면 짧은 질문에도 말풍선이 최대 폭까지
+                // 벌어져 오른쪽이 허전해 보인다. 내용 크기로 둔다.
                 Text(presentation.text)
                     .font(.system(size: 13, weight: .semibold))
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.leading)
             }
 
             if !presentation.attachments.isEmpty {
@@ -3581,10 +3590,10 @@ struct LiveTurnPromptBlock: View {
                 )
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
+        // 여기서 fixedSize(horizontal:false)를 주면 제안된 폭을 그대로
+        // 채워 짧은 질문에도 말풍선이 최대 폭까지 벌어진다.
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .frame(maxWidth: Self.maximumBubbleWidth, alignment: .leading)
         .background(
             DashboardPalette.accent.opacity(0.12),
             in: RoundedRectangle(cornerRadius: 13, style: .continuous)
@@ -3619,7 +3628,6 @@ struct LiveTurnPromptBlock: View {
             .accessibilityLabel("질문 복사")
             .help("질문 복사")
         }
-        .padding(.trailing, 2)
     }
 
     private func copyPrompt() {
