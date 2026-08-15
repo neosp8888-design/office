@@ -3216,6 +3216,76 @@ test("새 Git 업무는 provisioning을 먼저 기록한 뒤 계획한 worktree�
   ]);
 });
 
+test("동시 workspace 준비 경합은 PostgreSQL 제약 문구 대신 재시도 안내를 반환한다", async () => {
+  const plan = {
+    repositoryRoot: "/repo",
+    sourceWorkdir: "/repo",
+    worktreePath: "/worktrees/workspace-2",
+    executionWorkdir: "/worktrees/workspace-2",
+    branchName: "officestra/boss/workspace-2",
+    baseBranch: "main",
+    baseCommit: "base-commit",
+  };
+  let provisionCalled = false;
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => {
+        const error = new Error("duplicate key value violates unique constraint");
+        error.code = "23505";
+        error.constraint = "task_workspaces_one_open_per_session_idx";
+        throw error;
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    workspaceManager: {
+      planProvision: async () => plan,
+      provisionPlanned: async () => {
+        provisionCalled = true;
+        return plan;
+      },
+    },
+    broadcast: () => {},
+  });
+
+  await assert.rejects(
+    runtime.ensureWorkspace({
+      turnID: "turn-2",
+      sessionID: "session-1",
+      workspaceID: "workspace-2",
+      isolateGitWorkdir: true,
+      workspace: null,
+      character: { id: "boss" },
+    }),
+    (error) =>
+      error instanceof AgentBusyError &&
+      /다른 업무가 작업 공간을 준비 중/.test(error.message),
+  );
+  assert.equal(provisionCalled, false);
+});
+
+test("workspace 인덱스는 검토본과 별개로 실제 실행 workspace만 하나로 제한한다", () => {
+  const migrationSource = readFileSync(
+    new URL(
+      "../../database/migrations/023_allow_pending_review_workspaces_per_session.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const predicate = migrationSource.slice(migrationSource.indexOf("WHERE"));
+
+  assert.match(
+    migrationSource,
+    /DROP INDEX IF EXISTS task_workspaces_one_open_per_session_idx/,
+  );
+  assert.match(predicate, /status = 'provisioning'/);
+  assert.match(predicate, /status = 'active'/);
+  assert.match(predicate, /auto_repair_paused = false/);
+  assert.doesNotMatch(predicate, /'awaiting_approval'/);
+  assert.doesNotMatch(predicate, /'conflict'/);
+  assert.doesNotMatch(predicate, /'merging'/);
+});
+
 test("Git 저장소 확인 뒤 provisioning 계획이 사라지면 공유 폴더로 후퇴하지 않는다", async () => {
   const events = [];
   const runtime = new AgentRuntime({
