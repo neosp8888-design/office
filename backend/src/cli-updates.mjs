@@ -137,6 +137,23 @@ export class CLIUpdateBusyError extends Error {}
 
 /// 실행 중인 업무가 있으면 갱신하지 않는다. 세션이 쓰는 실행 파일을
 /// 도중에 갈아 끼우면 그 대화가 깨진다.
+export class CLIUpdateUnknownPackageError extends Error {}
+
+/// 하나만 고를 수 있어야 한다. 한쪽만 새 버전이 나왔는데 둘 다 건드릴
+/// 이유가 없다.
+export function packageNamesForIdentifier(identifier) {
+  if (identifier == null || identifier === "") {
+    return CLI_PACKAGES.map((entry) => entry.packageName);
+  }
+  const entry = CLI_PACKAGES.find((item) => item.id === identifier);
+  if (!entry) {
+    throw new CLIUpdateUnknownPackageError(
+      `알 수 없는 CLI입니다. ${identifier}`,
+    );
+  }
+  return [entry.packageName];
+}
+
 export async function applyCLIUpdates({
   runCommand = execFileAsync,
   packageNames = CLI_PACKAGES.map((entry) => entry.packageName),
@@ -144,7 +161,7 @@ export async function applyCLIUpdates({
 } = {}) {
   if (typeof hasRunningWork === "function" && (await hasRunningWork())) {
     throw new CLIUpdateBusyError(
-      "진행 중인 업무가 끝난 뒤에 갱신할 수 있습니다.",
+      "진행 중인 업무가 끝난 뒤에 업데이트할 수 있습니다.",
     );
   }
   const { stdout, stderr } = await runCommand(

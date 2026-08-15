@@ -439,6 +439,7 @@ private struct UsageBoardContent: View {
     @State private var updateStatus = CLIUpdateStatus.empty
     @State private var updatingPackageID: String?
     @State private var updateErrorMessage: String?
+    @State private var updateErrorDismissTask: Task<Void, Never>?
 
     var body: some View {
         Group {
@@ -490,14 +491,41 @@ private struct UsageBoardContent: View {
         }
         .overlay(alignment: .bottom) {
             if let updateErrorMessage {
-                Text(updateErrorMessage)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 8)
+                // 눌렀는데 아무 일도 안 일어난 것처럼 보이면 안 된다.
+                // 눈에 띄게 띄우되 잠시 뒤 스스로 사라진다.
+                Label(updateErrorMessage, systemImage: "exclamationmark.circle.fill")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(
+                        Color(red: 0.80, green: 0.36, blue: 0.10),
+                        in: Capsule()
+                    )
+                    .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
+                    .padding(.bottom, 12)
+                    .transition(
+                        .move(edge: .bottom).combined(with: .opacity)
+                    )
                     .accessibilityLabel("업데이트 실패 \(updateErrorMessage)")
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: updateErrorMessage)
+    }
+
+    /// 알림은 5초만 띄운다. 새 알림이 오면 이전 예약은 취소한다.
+    private func showUpdateError(_ message: String) {
+        updateErrorMessage = message
+        updateErrorDismissTask?.cancel()
+        updateErrorDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else {
+                return
+            }
+            if updateErrorMessage == message {
+                updateErrorMessage = nil
             }
         }
     }
@@ -528,9 +556,9 @@ private struct UsageBoardContent: View {
             do {
                 updateStatus = try await OfficeDatabaseClient(
                     baseURL: databaseBaseURL
-                ).applyCLIUpdates()
+                ).applyCLIUpdates(packageID: packageID)
             } catch {
-                updateErrorMessage = error.localizedDescription
+                showUpdateError(error.localizedDescription)
                 await refreshUpdateStatus(force: true)
             }
         }
@@ -544,7 +572,7 @@ private struct UsageBoardContent: View {
             name: "Claude",
             icon: "sparkles",
             update: updateStatus.package(id: "claude"),
-            isUpdating: updatingPackageID != nil,
+            isUpdating: updatingPackageID == "claude",
             applyUpdate: { applyUpdate(packageID: "claude") },
             fiveHour: snapshot.claudeFiveHour,
             fiveHourResetAt: snapshot.claudeFiveHourResetAt,
@@ -562,7 +590,7 @@ private struct UsageBoardContent: View {
             name: "Codex",
             icon: "terminal.fill",
             update: updateStatus.package(id: "codex"),
-            isUpdating: updatingPackageID != nil,
+            isUpdating: updatingPackageID == "codex",
             applyUpdate: { applyUpdate(packageID: "codex") },
             fiveHour: snapshot.codexFiveHour,
             fiveHourResetAt: snapshot.codexFiveHourResetAt,
@@ -666,30 +694,18 @@ private struct UsageProviderCard: View {
                 }
 
                 if let update, update.updateAvailable {
+                    // 옆의 구독 배지와 같은 모양으로 둔다. 버전을 적으면
+                    // 길어져 줄이 접히므로 문구는 고정하고 자세한 값은
+                    // 도움말로 옮긴다.
                     Button(action: applyUpdate) {
-                        HStack(spacing: 4) {
-                            if isUpdating {
-                                ProgressView()
-                                    .controlSize(.mini)
-                            } else {
-                                Image(systemName: "arrow.down.circle.fill")
-                                    .font(.system(size: 9, weight: .bold))
-                            }
-                            Text(
-                                isUpdating
-                                    ? "갱신 중"
-                                    : (update.latestVersion.map { "v\($0)" }
-                                        ?? "업데이트")
-                            )
+                        Text(isUpdating ? "갱신 중" : "Update")
                             .font(.system(size: 8.5, weight: .bold))
-                        }
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            Color(red: 0.10, green: 0.48, blue: 0.30),
-                            in: Capsule()
-                        )
+                            .foregroundStyle(tint)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(tint.opacity(0.10), in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .disabled(isUpdating)
