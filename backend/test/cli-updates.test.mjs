@@ -274,3 +274,52 @@ test("설치 위치를 알면 npm에 그 위치를 명시한다", async () => {
     "@openai/codex",
   ]);
 });
+
+test("조회 실패는 최신 상태와 구분해 표시한다", async () => {
+  // 백엔드가 삭제된 임시 폴더를 붙들면 npm view가 죽는다. 그때 조용히
+  // 최신인 척하면 사용자가 오래된 버전을 계속 쓴다.
+  const checker = createCLIUpdateChecker({
+    runCommand: async (command) => {
+      if (command === "npm") {
+        throw new Error("spawn npm ENOENT");
+      }
+      return { stdout: "2.1.233 (Claude Code)\n" };
+    },
+    now: () => 0,
+  });
+  const status = await checker.read();
+  assert.equal(status.checkFailed, true);
+  assert.equal(status.updateAvailable, false);
+  for (const entry of status.packages) {
+    assert.equal(entry.checkFailed, true);
+  }
+});
+
+test("정상 조회는 실패로 표시하지 않는다", async () => {
+  const checker = createCLIUpdateChecker({
+    runCommand: async (command) => ({
+      stdout: command === "npm" ? "2.1.233\n" : "2.1.220 (Claude Code)\n",
+    }),
+    now: () => 0,
+  });
+  const status = await checker.read();
+  assert.equal(status.checkFailed, false);
+  assert.equal(status.updateAvailable, true);
+});
+
+test("하위 명령은 홈 디렉터리에서 실행한다", async () => {
+  const seen = [];
+  const checker = createCLIUpdateChecker({
+    runCommand: async (command, args, options) => {
+      seen.push(options?.cwd);
+      return { stdout: command === "npm" ? "1.0.0\n" : "1.0.0\n" };
+    },
+    now: () => 0,
+  });
+  await checker.read();
+  assert.ok(seen.length > 0);
+  assert.ok(
+    seen.every((cwd) => typeof cwd === "string" && cwd.length > 0),
+    "삭제된 작업 폴더에서도 죽지 않도록 cwd를 지정해야 합니다.",
+  );
+});

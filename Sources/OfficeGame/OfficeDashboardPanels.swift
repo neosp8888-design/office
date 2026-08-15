@@ -693,7 +693,20 @@ private struct UsageProviderCard: View {
                         .background(tint.opacity(0.10), in: Capsule())
                 }
 
-                if let update, update.updateAvailable {
+                if let update, update.checkFailed == true {
+                    // 조회 실패를 최신처럼 보이게 두면 사용자가 오래된
+                    // 버전을 계속 쓰게 된다.
+                    Text("확인 실패")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                        .help("설치본이나 최신 버전을 확인하지 못했습니다.")
+                        .accessibilityLabel("\(update.label) 버전 확인 실패")
+                } else if let update, update.updateAvailable {
                     // 옆의 구독 배지와 같은 모양으로 둔다. 버전을 적으면
                     // 길어져 줄이 접히므로 문구는 고정하고 자세한 값은
                     // 도움말로 옮긴다.

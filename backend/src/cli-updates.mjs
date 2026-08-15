@@ -1,6 +1,7 @@
 // 이 파일은 직원이 쓰는 CLI의 설치본과 배포 최신본을 비교하고 갱신한다.
 
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -27,6 +28,13 @@ export const CLI_PACKAGES = Object.freeze([
 /// 조회는 네트워크를 타므로 화이트보드 주기보다 짧게 다시 묻지 않는다.
 export const UPDATE_CACHE_MILLISECONDS = 9 * 60 * 1000;
 const COMMAND_TIMEOUT_MILLISECONDS = 20_000;
+
+/// 백엔드가 삭제된 임시 빌드 폴더를 작업 디렉터리로 붙들고 있으면
+/// 하위 명령이 process.cwd ENOENT로 죽는다. 항상 존재하는 곳에서 돌린다.
+const COMMAND_OPTIONS = Object.freeze({
+  timeout: COMMAND_TIMEOUT_MILLISECONDS,
+  cwd: homedir(),
+});
 
 /// 설치는 실제로 쓰는 실행 파일이 있는 곳에 해야 한다. 앱 번들 Node가
 /// PATH 앞에 있으면 npm이 자기 자리를 앱 안으로 판단해, 갱신이 번들
@@ -80,17 +88,21 @@ export function isUpdateAvailable(installed, latest) {
 
 async function readExecutablePath(entry, runCommand) {
   try {
-    const { stdout } = await runCommand("which", [entry.executable], {
-      timeout: COMMAND_TIMEOUT_MILLISECONDS,
-    });
+    const { stdout } = await runCommand(
+      "which",
+      [entry.executable],
+      COMMAND_OPTIONS,
+    );
     const path = String(stdout ?? "").trim().split("\n")[0];
     if (!path) {
       return null;
     }
     // 심볼릭 링크를 따라가야 실제 설치 위치가 나온다.
-    const { stdout: resolved } = await runCommand("readlink", ["-f", path], {
-      timeout: COMMAND_TIMEOUT_MILLISECONDS,
-    });
+    const { stdout: resolved } = await runCommand(
+      "readlink",
+      ["-f", path],
+      COMMAND_OPTIONS,
+    );
     return String(resolved ?? "").trim() || path;
   } catch {
     return null;
@@ -102,7 +114,7 @@ async function readInstalledVersion(entry, runCommand) {
     const { stdout } = await runCommand(
       entry.executable,
       entry.versionArguments,
-      { timeout: COMMAND_TIMEOUT_MILLISECONDS },
+      COMMAND_OPTIONS,
     );
     return parseInstalledVersion(stdout);
   } catch {
@@ -115,7 +127,7 @@ async function readLatestVersion(entry, runCommand) {
     const { stdout } = await runCommand(
       "npm",
       ["view", entry.packageName, "version"],
-      { timeout: COMMAND_TIMEOUT_MILLISECONDS },
+      COMMAND_OPTIONS,
     );
     return parseInstalledVersion(stdout);
   } catch {
@@ -148,6 +160,9 @@ export function createCLIUpdateChecker({
           installedVersion: installed,
           latestVersion: latest,
           installPrefix: npmPrefixForExecutable(executablePath),
+          // 조회에 실패한 것과 최신인 것은 다르다. 둘 다 배지를 감추면
+          // 사용자는 구분할 수 없다.
+          checkFailed: installed == null || latest == null,
           updateAvailable: isUpdateAvailable(installed, latest),
         };
       }),
@@ -155,6 +170,7 @@ export function createCLIUpdateChecker({
     const payload = {
       checkedAt: new Date(now()).toISOString(),
       updateAvailable: packages.some((entry) => entry.updateAvailable),
+      checkFailed: packages.some((entry) => entry.checkFailed),
       packages,
     };
     cached = { checkedAtMilliseconds: now(), payload };
@@ -235,7 +251,7 @@ export async function applyCLIUpdates({
   const { stdout, stderr } = await runCommand(
     "npm",
     installArguments,
-    { timeout: INSTALL_TIMEOUT_MILLISECONDS },
+    { timeout: INSTALL_TIMEOUT_MILLISECONDS, cwd: homedir() },
   );
   return {
     ok: true,
