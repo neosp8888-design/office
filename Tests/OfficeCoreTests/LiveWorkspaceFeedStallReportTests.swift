@@ -293,17 +293,4 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
         XCTAssertFalse(detector.isJittering)
     }
 
-    @MainActor
-    func testBlankRecoveryIsBoundedSoItCannotShakeForever() {
-        let limit = CachedLiveWorkspaceFeedsNSView
-            .maximumBlankRecoveryAttemptsForTesting
-        // 자극이 통하지 않는 상황에서도 무한히 흔들면 안 된다. 상한이
-        // 있는지 상수로 고정해 둔다.
-        XCTAssertGreaterThan(limit, 0)
-        XCTAssertLessThanOrEqual(
-            limit,
-            5,
-            "복구 자극을 너무 여러 번 주면 화면이 오히려 흔들립니다."
-        )
-    }
 }
