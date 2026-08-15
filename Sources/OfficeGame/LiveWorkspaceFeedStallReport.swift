@@ -206,6 +206,8 @@ struct LiveWorkspaceFeedStallPolicy: Equatable {
 /// 두지 않는다.
 struct LiveWorkspaceFeedStallRecorder {
     static let fileName = "live-feed-stalls.jsonl"
+    /// 이 환경변수를 1로 두고 실행하면 기록이 다시 쌓인다.
+    static let enableVariableName = "OFFICESTRA_FEED_TRAP"
 
     let directoryURL: URL
     private let fileManager: FileManager
@@ -225,6 +227,10 @@ struct LiveWorkspaceFeedStallRecorder {
         // 테스트 하네스도 같은 컨테이너를 만든다. 실제 사용 기록에
         // 테스트 값이 섞이면 증거를 신뢰할 수 없다.
         guard environment["XCTestConfigurationFilePath"] == nil else {
+            return nil
+        }
+        // 평소에는 끈다. 증상을 다시 쫓을 때만 환경변수로 켠다.
+        guard environment[Self.enableVariableName] == "1" else {
             return nil
         }
         guard
