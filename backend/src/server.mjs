@@ -77,8 +77,10 @@ import {
 import { createUsageSummaryReader } from "./usage-summary.mjs";
 import {
   CLIUpdateBusyError,
+  CLIUpdateUnknownPackageError,
   applyCLIUpdates,
   createCLIUpdateChecker,
+  packageNamesForIdentifier,
 } from "./cli-updates.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
@@ -309,9 +311,12 @@ async function applyCLIUpdatesEndpoint(response, request) {
   if (!trustedJSONMutation(request, response)) {
     return;
   }
-  await readJSON(request);
+  const body = await readJSON(request);
   try {
-    const result = await applyCLIUpdates({ hasRunningWork });
+    const result = await applyCLIUpdates({
+      hasRunningWork,
+      packageNames: packageNamesForIdentifier(body.id),
+    });
     cliUpdateChecker.invalidate();
     send(response, 200, {
       ...result,
@@ -320,6 +325,10 @@ async function applyCLIUpdatesEndpoint(response, request) {
   } catch (error) {
     if (error instanceof CLIUpdateBusyError) {
       send(response, 409, { error: error.message });
+      return;
+    }
+    if (error instanceof CLIUpdateUnknownPackageError) {
+      send(response, 400, { error: error.message });
       return;
     }
     send(response, 500, {

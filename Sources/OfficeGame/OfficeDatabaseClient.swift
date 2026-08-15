@@ -78,7 +78,7 @@ struct OfficeDatabaseClient: Sendable {
         return try historyDecoder().decode(CLIUpdateStatus.self, from: data)
     }
 
-    func cliUpdateApplyRequest() -> URLRequest {
+    func cliUpdateApplyRequest(packageID: String?) -> URLRequest {
         var request = URLRequest(
             url: baseURL.appending(path: "api/cli-updates/apply")
         )
@@ -87,16 +87,21 @@ struct OfficeDatabaseClient: Sendable {
             "application/json",
             forHTTPHeaderField: "content-type"
         )
-        request.httpBody = Data("{}".utf8)
+        let payload = packageID.map { ["id": $0] } ?? [:]
+        request.httpBody =
+            (try? JSONSerialization.data(withJSONObject: payload))
+            ?? Data("{}".utf8)
         return request
     }
 
     /// 갱신은 npm 설치라 오래 걸린다. 진행 중 업무가 있으면 백엔드가
     /// 409로 막고, 그 사유를 그대로 보여 준다.
     @discardableResult
-    func applyCLIUpdates() async throws -> CLIUpdateStatus {
+    func applyCLIUpdates(
+        packageID: String? = nil
+    ) async throws -> CLIUpdateStatus {
         let (data, response) = try await URLSession.shared.data(
-            for: cliUpdateApplyRequest()
+            for: cliUpdateApplyRequest(packageID: packageID)
         )
         try validate(response, data: data)
         return try historyDecoder()

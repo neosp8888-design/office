@@ -5,7 +5,9 @@ import test from "node:test";
 
 import {
   CLIUpdateBusyError,
+  CLIUpdateUnknownPackageError,
   applyCLIUpdates,
+  packageNamesForIdentifier,
   createCLIUpdateChecker,
   isUpdateAvailable,
   parseInstalledVersion,
@@ -132,4 +134,51 @@ test("업무가 없으면 두 패키지를 한 번에 전역 설치한다", asyn
     "@anthropic-ai/claude-code",
     "@openai/codex",
   ]);
+});
+
+test("업데이트는 CLI별로 따로 고를 수 있다", () => {
+  assert.deepEqual(
+    packageNamesForIdentifier("claude"),
+    ["@anthropic-ai/claude-code"],
+  );
+  assert.deepEqual(packageNamesForIdentifier("codex"), ["@openai/codex"]);
+  // 지정이 없으면 둘 다 갱신한다.
+  assert.deepEqual(packageNamesForIdentifier(null), [
+    "@anthropic-ai/claude-code",
+    "@openai/codex",
+  ]);
+  assert.throws(
+    () => packageNamesForIdentifier("gemini"),
+    CLIUpdateUnknownPackageError,
+  );
+});
+
+test("한쪽만 고르면 그 패키지만 설치한다", async () => {
+  const commands = [];
+  await applyCLIUpdates({
+    runCommand: async (command, args) => {
+      commands.push([command, ...args]);
+      return { stdout: "" };
+    },
+    packageNames: packageNamesForIdentifier("codex"),
+    hasRunningWork: async () => false,
+  });
+  assert.deepEqual(commands[0], [
+    "npm",
+    "install",
+    "-g",
+    "@openai/codex",
+  ]);
+});
+
+test("진행 중 업무 거부 문구는 업데이트라는 말을 쓴다", async () => {
+  await assert.rejects(
+    applyCLIUpdates({
+      runCommand: async () => ({ stdout: "" }),
+      hasRunningWork: async () => true,
+    }),
+    (error) =>
+      error instanceof CLIUpdateBusyError &&
+      error.message === "진행 중인 업무가 끝난 뒤에 업데이트할 수 있습니다.",
+  );
 });
