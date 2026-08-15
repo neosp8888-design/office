@@ -3546,14 +3546,32 @@ private struct EquatableLiveTurnCard: View, Equatable {
     }
 }
 
+/// 사용자 질문은 오른쪽 말풍선으로 따로 세운다. 직원 답변과 시선이
+/// 갈려야 누가 한 말인지 한눈에 들어온다.
 struct LiveTurnPromptBlock: View {
     let presentation: TaskPromptPresentation
+    var sentAt: Date?
+
+    @State private var didCopy = false
+
+    /// 질문이 짧아도 화면 폭을 다 쓰지 않게 막고, 길면 접힌다.
+    private static let maximumBubbleWidth = CGFloat(520)
 
     var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            bubble
+            footer
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var bubble: some View {
         VStack(alignment: .leading, spacing: 7) {
             if !presentation.text.isEmpty {
                 Text(presentation.text)
                     .font(.system(size: 13, weight: .semibold))
+                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -3563,19 +3581,55 @@ struct LiveTurnPromptBlock: View {
                 )
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
-        .padding(.leading, 11)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(DashboardPalette.accent.opacity(0.75))
-                .frame(width: 3)
-        }
-        .padding(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: Self.maximumBubbleWidth, alignment: .leading)
         .background(
-            DashboardPalette.accent.opacity(0.055),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            DashboardPalette.accent.opacity(0.12),
+            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(DashboardPalette.accent.opacity(0.28), lineWidth: 1)
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if let sentAt {
+                Text(
+                    sentAt.formatted(date: .omitted, time: .shortened)
+                )
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.tertiary)
+            }
+
+            Button(action: copyPrompt) {
+                Label(
+                    didCopy ? "복사함" : "복사",
+                    systemImage: didCopy ? "checkmark" : "doc.on.doc"
+                )
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(
+                    didCopy ? DashboardPalette.accent : Color.secondary
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("질문 복사")
+            .help("질문 복사")
+        }
+        .padding(.trailing, 2)
+    }
+
+    private func copyPrompt() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(presentation.text, forType: .string)
+        didCopy = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))
+            didCopy = false
+        }
     }
 }
 
@@ -3739,19 +3793,14 @@ private struct LiveTurnCard: View {
                 statusBadge
             }
 
-            Text(
-                turn.startedAt.formatted(
-                    date: .omitted,
-                    time: .shortened
-                )
-            )
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.tertiary)
         }
     }
 
     private var promptBlock: some View {
-        LiveTurnPromptBlock(presentation: promptPresentation)
+        LiveTurnPromptBlock(
+            presentation: promptPresentation,
+            sentAt: turn.startedAt
+        )
     }
 
     private var claudeTranscript: some View {

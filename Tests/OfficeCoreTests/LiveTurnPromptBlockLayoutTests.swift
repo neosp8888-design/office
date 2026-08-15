@@ -44,11 +44,53 @@ final class LiveTurnPromptBlockLayoutTests: XCTestCase {
         proposedHeight: CGFloat
     ) -> CGFloat {
         let controller = NSHostingController(
-            rootView: LiveTurnPromptBlock(presentation: presentation)
+            rootView: LiveTurnPromptBlock(
+                presentation: presentation,
+                sentAt: Date(timeIntervalSinceReferenceDate: 60_000)
+            )
                 .frame(width: 520)
         )
         return controller.sizeThatFits(
             in: NSSize(width: 520, height: proposedHeight)
         ).height
+    }
+
+    func testPromptBubbleStaysRightAlignedWithinMaximumWidth() {
+        let presentation = TaskPromptPresentation(
+            prompt: String(repeating: "질문이 아주 깁니다. ", count: 40)
+        )
+        let host = NSHostingView(
+            rootView: LiveTurnPromptBlock(
+                presentation: presentation,
+                sentAt: Date(timeIntervalSinceReferenceDate: 60_000)
+            )
+            .frame(width: 900)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        host.layoutSubtreeIfNeeded()
+
+        let texts = allDescendants(of: host)
+            .compactMap { $0 as? NSTextField }
+        XCTAssertFalse(texts.isEmpty, "질문 텍스트가 렌더링되지 않았습니다.")
+
+        // 말풍선은 화면 폭을 다 쓰지 않고, 오른쪽으로 붙어야 한다.
+        let widest = texts.map { $0.frame.width }.max() ?? 0
+        XCTAssertLessThanOrEqual(
+            widest,
+            560,
+            "질문 말풍선이 화면 폭을 그대로 차지하면 답변과 구분되지 않습니다."
+        )
+        let rightmost = texts
+            .map { host.convert($0.bounds, from: $0).maxX }
+            .max() ?? 0
+        XCTAssertGreaterThan(
+            rightmost,
+            host.bounds.midX,
+            "사용자 질문은 오른쪽에 정렬돼야 합니다."
+        )
+    }
+
+    private func allDescendants(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + allDescendants(of: $0) }
     }
 }
