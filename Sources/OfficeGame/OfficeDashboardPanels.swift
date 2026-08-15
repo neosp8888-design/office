@@ -1517,6 +1517,11 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var gateInstalledAt: Date?
     private var gateWatchdog: Timer?
     private var gatePolicy = LiveWorkspaceFeedStallPolicy()
+    /// 차폐 없이 쓰면 어떤 증상이 생기는지 실측하기 위한 실험 스위치다.
+    /// 기본값은 꺼짐이며 환경변수를 준 빌드에서만 켜진다.
+    static let isTransitionGateDisabled =
+        ProcessInfo.processInfo
+            .environment["OFFICESTRA_DISABLE_TRANSITION_GATE"] == "1"
     /// 이 시간을 넘기면 정착을 더 기다리지 않고 대화를 드러낸다.
     static let maximumGateCoverage = TimeInterval(0.8)
     private static let resizeBottomTolerance = CGFloat(20)
@@ -1709,7 +1714,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let isEmployeeToEmployeeTransition =
             previousCharacterID != nil && selectedCharacterID != nil
         if isEmployeeToEmployeeTransition {
+            if !Self.isTransitionGateDisabled {
             installTransitionLoadingGate()
+        }
         } else {
             removeTransitionLoadingGate()
         }
@@ -2417,6 +2424,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             viewportClampCount: entry.viewportClampCount,
             hasLoadingGate: transitionLoadingGateView?.superview === self,
             visibleCardCount: resolved?.visibleCardCount ?? 0,
+            gateDisabled: Self.isTransitionGateDisabled,
             documentHeightTrace: trace
         )
         guard
