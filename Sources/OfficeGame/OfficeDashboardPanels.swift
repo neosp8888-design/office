@@ -698,7 +698,7 @@ private struct UsageProviderCard: View {
                     // 길어져 줄이 접히므로 문구는 고정하고 자세한 값은
                     // 도움말로 옮긴다.
                     Button(action: applyUpdate) {
-                        Text(isUpdating ? "갱신 중" : "Update")
+                        Text(isUpdating ? "업데이트 중" : "Update")
                             .font(.system(size: 8.5, weight: .bold))
                             .foregroundStyle(tint)
                             .lineLimit(1)
