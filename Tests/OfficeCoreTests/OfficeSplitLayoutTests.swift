@@ -4,25 +4,40 @@ import XCTest
 @testable import OfficeGame
 
 final class OfficeSplitLayoutTests: XCTestCase {
-    func testColumnWidthsFixLeftPanelAtMinimumWidth() {
+    func testColumnWidthsKeepLeftPanelAboveMinimumWidth() {
         let widths = OfficeSplitLayout.columnWidths(
-            availableWidth: 1_000
+            availableWidth: 1_000,
+            fraction: 0.1,
+            minimumColumnWidth: OfficeSplitLayout.minimumLeftColumnWidth
         )
 
         XCTAssertEqual(
             widths.left,
-            OfficeSplitLayout.fixedLeftColumnWidth
+            OfficeSplitLayout.minimumLeftColumnWidth
         )
-        XCTAssertEqual(widths.right, 790)
+        XCTAssertEqual(widths.right, 700)
     }
 
-    func testColumnWidthsSplitSpaceEvenlyWhenNarrowerThanFixedWidth() {
+    func testColumnWidthsPreserveSavedWidthAboveMinimum() {
         let widths = OfficeSplitLayout.columnWidths(
-            availableWidth: 300
+            availableWidth: 1_512,
+            fraction: 0.2026977270534981,
+            minimumColumnWidth: OfficeSplitLayout.minimumLeftColumnWidth
         )
 
-        XCTAssertEqual(widths.left, 150)
-        XCTAssertEqual(widths.right, 150)
+        XCTAssertEqual(widths.left, 306.479, accuracy: 0.001)
+        XCTAssertEqual(widths.right, 1_205.521, accuracy: 0.001)
+    }
+
+    func testColumnWidthsSplitNarrowSpaceEvenlyAtMinimum() {
+        let widths = OfficeSplitLayout.columnWidths(
+            availableWidth: 500,
+            fraction: 0.9,
+            minimumColumnWidth: OfficeSplitLayout.minimumLeftColumnWidth
+        )
+
+        XCTAssertEqual(widths.left, 250)
+        XCTAssertEqual(widths.right, 250)
     }
 
     func testRowHeightsKeepBothPanelsAboveOneThird() {

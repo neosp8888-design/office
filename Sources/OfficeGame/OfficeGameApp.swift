@@ -127,16 +127,36 @@ private struct OfficeBackendCompatibilityBanner: View {
 }
 
 enum OfficeSplitLayout {
-    static let fixedLeftColumnWidth: CGFloat = 210
+    static let minimumLeftColumnWidth: CGFloat = 300
 
     static func columnWidths(
-        availableWidth: CGFloat
+        availableWidth: CGFloat,
+        fraction: Double,
+        minimumColumnWidth: CGFloat
     ) -> (left: CGFloat, right: CGFloat) {
         guard availableWidth > 0 else {
             return (.zero, .zero)
         }
-        let left = min(fixedLeftColumnWidth, availableWidth / 2)
-        return (left, max(0, availableWidth - left))
+        let requestedLeftWidth = availableWidth
+            * CGFloat(min(max(fraction, 0), 1))
+        let left = clampedLeftWidth(
+            requestedLeftWidth,
+            availableWidth: availableWidth,
+            minimumColumnWidth: minimumColumnWidth
+        )
+        return (left, availableWidth - left)
+    }
+
+    static func clampedLeftWidth(
+        _ width: CGFloat,
+        availableWidth: CGFloat,
+        minimumColumnWidth: CGFloat
+    ) -> CGFloat {
+        guard availableWidth > 0 else {
+            return .zero
+        }
+        let minimum = min(max(0, minimumColumnWidth), availableWidth / 2)
+        return min(max(width, minimum), availableWidth - minimum)
     }
 
     static func rowHeights(
@@ -201,11 +221,14 @@ private struct OfficeGameView: View {
     @State private var detailSelection = OfficeDetailSelection.archive
     @State private var outgoingArtStyle: OfficeArtStyle?
     @State private var artStyleRevealProgress: CGFloat = 1
+    @State private var splitDragStartLeftWidth: CGFloat?
     @State private var splitDragStartTopHeight: CGFloat?
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
     @AppStorage("officeArtStyle") private var selectedArtStyleRawValue =
         OfficeArtStyle.twoD.rawValue
+    @AppStorage("officeLeftColumnFraction") private var leftColumnFraction =
+        0.5
     @AppStorage("officeTopRowFraction") private var topRowFraction = 0.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -220,7 +243,9 @@ private struct OfficeGameView: View {
                 geometry.size.width - outerPadding * 2 - columnDividerWidth
             )
             let columns = OfficeSplitLayout.columnWidths(
-                availableWidth: availableColumnWidth
+                availableWidth: availableColumnWidth,
+                fraction: leftColumnFraction,
+                minimumColumnWidth: OfficeSplitLayout.minimumLeftColumnWidth
             )
             let availableRowHeight = max(
                 0,
@@ -258,7 +283,18 @@ private struct OfficeGameView: View {
                 }
                 .frame(width: columns.left)
 
-                OfficeColumnDivider()
+                OfficeColumnResizeHandle(
+                    onDragChanged: { translation in
+                        updateLeftColumnFraction(
+                            translation: translation,
+                            leftColumnWidth: columns.left,
+                            availableColumnWidth: availableColumnWidth
+                        )
+                    },
+                    onDragEnded: {
+                        splitDragStartLeftWidth = nil
+                    }
+                )
                 .frame(width: columnDividerWidth)
 
                 liveWorkspacePanel
@@ -326,6 +362,26 @@ private struct OfficeGameView: View {
             }
             bubbleDetail = nil
         }
+    }
+
+    private func updateLeftColumnFraction(
+        translation: CGFloat,
+        leftColumnWidth: CGFloat,
+        availableColumnWidth: CGFloat
+    ) {
+        guard availableColumnWidth > 0 else {
+            return
+        }
+        let start = splitDragStartLeftWidth ?? leftColumnWidth
+        if splitDragStartLeftWidth == nil {
+            splitDragStartLeftWidth = start
+        }
+        let updatedWidth = OfficeSplitLayout.clampedLeftWidth(
+            start + translation,
+            availableWidth: availableColumnWidth,
+            minimumColumnWidth: OfficeSplitLayout.minimumLeftColumnWidth
+        )
+        leftColumnFraction = Double(updatedWidth / availableColumnWidth)
     }
 
     private func updateTopRowFraction(
@@ -1361,7 +1417,10 @@ private struct CharacterTaskStatusIndicator: View {
     }
 }
 
-private struct OfficeColumnDivider: View {
+private struct OfficeColumnResizeHandle: View {
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: () -> Void
+
     var body: some View {
         ZStack {
             Capsule()
@@ -1369,7 +1428,19 @@ private struct OfficeColumnDivider: View {
                 .frame(width: 2, height: 46)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityHidden(true)
+        .contentShape(Rectangle())
+        .officeColumnResizeCursor()
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    onDragChanged(value.translation.width)
+                }
+                .onEnded { _ in
+                    onDragEnded()
+                }
+        )
+        .accessibilityLabel("좌우 화면 폭 조절")
+        .accessibilityHint("드래그해서 사무실과 실시간 대화 영역의 폭을 조절합니다")
     }
 }
 
