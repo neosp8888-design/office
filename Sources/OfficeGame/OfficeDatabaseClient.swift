@@ -55,6 +55,55 @@ struct OfficeDatabaseClient: Sendable {
         return try decodeUsageSummary(data)
     }
 
+    func cliUpdatesURL(force: Bool) -> URL {
+        let endpoint = baseURL.appending(path: "api/cli-updates")
+        guard force else {
+            return endpoint
+        }
+        var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "force", value: "1")]
+        return components?.url ?? endpoint
+    }
+
+    func fetchCLIUpdateStatus(
+        force: Bool = false
+    ) async throws -> CLIUpdateStatus {
+        let (data, response) = try await URLSession.shared.data(
+            from: cliUpdatesURL(force: force)
+        )
+        try validate(response, data: data)
+        return try historyDecoder().decode(CLIUpdateStatus.self, from: data)
+    }
+
+    func cliUpdateApplyRequest() -> URLRequest {
+        var request = URLRequest(
+            url: baseURL.appending(path: "api/cli-updates/apply")
+        )
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = Data("{}".utf8)
+        return request
+    }
+
+    /// 갱신은 npm 설치라 오래 걸린다. 진행 중 업무가 있으면 백엔드가
+    /// 409로 막고, 그 사유를 그대로 보여 준다.
+    @discardableResult
+    func applyCLIUpdates() async throws -> CLIUpdateStatus {
+        let (data, response) = try await URLSession.shared.data(
+            for: cliUpdateApplyRequest()
+        )
+        try validate(response, data: data)
+        return try historyDecoder()
+            .decode(CLIUpdateApplyResponse.self, from: data)
+            .status
+    }
+
     func decodeUsageSummary(_ data: Data) throws -> AIUsageSnapshot {
         try historyDecoder().decode(AIUsageSnapshot.self, from: data)
     }
