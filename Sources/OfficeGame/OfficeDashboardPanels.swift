@@ -2264,28 +2264,40 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     }
 
     private func evaluateBlankScreen() {
+        guard let activeEntry else {
+            return
+        }
+
+        // 리사이즈 정착 보정은 계측이 아니라 실제 동작이다. 함정을 꺼도
+        // 계속 돌아야 한다.
+        let isSettlingAfterResize: Bool
+        if let resizeSettleUntil {
+            if Date() >= resizeSettleUntil {
+                self.resizeSettleUntil = nil
+                isSettlingAfterResize = false
+            } else {
+                restoreViewportAfterResize(
+                    for: activeEntry,
+                    constrainOnly: true
+                )
+                isSettlingAfterResize = true
+            }
+        } else {
+            isSettlingAfterResize = false
+        }
+
+        // 함정이 꺼져 있으면 표본 수집을 하지 않는다. 잎 뷰 계수가
+        // 스크롤마다 도는 비용을 없앤다.
         guard
-            let activeEntry,
+            stallRecorder != nil,
             let sample = blankSample(for: activeEntry)
         else {
             return
         }
         blankDetector.appendTrace(documentHeight: sample.documentHeight)
         recordJitterIfNeeded(for: activeEntry, sample: sample)
-
-        // 리사이즈 정착 구간에서는 문서가 바뀔 때마다 다시 맞추고,
-        // 그 순간의 상태를 남긴다. 창 크기를 건드리면 흰 화면이 나고
-        // 다시 건드리면 복구된다는 재현이 이 구간을 가리킨다.
-        if let resizeSettleUntil {
-            if Date() >= resizeSettleUntil {
-                self.resizeSettleUntil = nil
-            } else {
-                restoreViewportAfterResize(
-                    for: activeEntry,
-                    constrainOnly: true
-                )
-                recordResizeSettleIfNeeded(for: activeEntry)
-            }
+        if isSettlingAfterResize {
+            recordResizeSettleIfNeeded(for: activeEntry)
         }
         let isBlank = LiveWorkspaceFeedBlankDetector.isBlank(
             turnCount: sample.turnCount,

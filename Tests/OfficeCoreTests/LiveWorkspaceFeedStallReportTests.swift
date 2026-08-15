@@ -76,6 +76,22 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
         )
     }
 
+    func testTrapStaysOffUnlessExplicitlyEnabled() {
+        // 평소에는 기록이 쌓이지 않아야 한다. 증상을 쫓을 때만 켠다.
+        XCTAssertNil(
+            LiveWorkspaceFeedStallRecorder.live(environment: [:]),
+            "환경변수 없이 기록이 쌓이면 로그가 계속 자란다."
+        )
+        XCTAssertNotNil(
+            LiveWorkspaceFeedStallRecorder.live(
+                environment: [
+                    LiveWorkspaceFeedStallRecorder.enableVariableName: "1",
+                ]
+            ),
+            "환경변수를 켜면 다시 기록해야 합니다."
+        )
+    }
+
     func testTestRunsNeverWriteIntoTheRealLog() {
         XCTAssertNil(
             LiveWorkspaceFeedStallRecorder.live(
@@ -84,7 +100,11 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
             "테스트 값이 실제 사용 기록에 섞이면 증거를 믿을 수 없습니다."
         )
         XCTAssertNotNil(
-            LiveWorkspaceFeedStallRecorder.live(environment: [:])
+            LiveWorkspaceFeedStallRecorder.live(
+                environment: [
+                    LiveWorkspaceFeedStallRecorder.enableVariableName: "1",
+                ]
+            )
         )
     }
 
