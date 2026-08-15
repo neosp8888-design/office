@@ -1507,6 +1507,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     // 없으면 알림 관찰만 하고 아무것도 기록하지 않는다.
     private let stallRecorder = LiveWorkspaceFeedStallRecorder.live()
     private var blankDetector = LiveWorkspaceFeedBlankDetector()
+    private var jitterDetector = LiveWorkspaceFeedJitterDetector()
+    private var lastJitterReportAt: Date?
     private var blankStartedAt: Date?
     private var blankObservers: [NSObjectProtocol] = []
     private var blankDeadline: DispatchWorkItem?
@@ -2273,6 +2275,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             return
         }
         blankDetector.appendTrace(documentHeight: sample.documentHeight)
+        recordJitterIfNeeded(for: activeEntry, sample: sample)
         let isBlank = LiveWorkspaceFeedBlankDetector.isBlank(
             turnCount: sample.turnCount,
             documentHeight: sample.documentHeight,
@@ -2323,6 +2326,40 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         )
     }
 
+    /// 화면이 비지는 않아도 눈에 띄게 흔들리면 남긴다. 사용자가 깜빡임으로
+    /// 느끼는 구간이 여기다.
+    private func recordJitterIfNeeded(for entry: Entry, sample: BlankSample) {
+        let now = Date()
+        jitterDetector.append(
+            at: now.timeIntervalSinceReferenceDate,
+            documentHeight: sample.documentHeight,
+            offsetY: sample.offsetY
+        )
+        guard jitterDetector.isJittering else {
+            return
+        }
+        if let lastJitterReportAt,
+            now.timeIntervalSince(lastJitterReportAt) < 2
+        {
+            return
+        }
+        lastJitterReportAt = now
+        let span = jitterDetector.samples
+        let elapsed = (span.last?.at ?? 0) - (span.first?.at ?? 0)
+        record(
+            kind: "active-jitter",
+            entry: entry,
+            elapsed: elapsed,
+            readiness: "offsets="
+                + span.map { String(Int($0.offsetY)) }.joined(separator: ">"),
+            readinessRevision:
+                entry.characterFeedStore.mountReadinessRevision,
+            trace: span.map { Int($0.documentHeight.rounded()) },
+            sample: sample
+        )
+        jitterDetector.reset()
+    }
+
     private func reportPersistingBlankScreen() {
         guard
             !didReportCurrentBlank,
@@ -2346,6 +2383,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     }
 
     private struct BlankSample {
+        let offsetY: Double
         let visibleCardCount: Int
         let documentHeight: Double
         let viewportHeight: Double
@@ -2360,6 +2398,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let host = entry.hostingView
         guard let scrollView = primaryScrollView(in: host) else {
             return BlankSample(
+                offsetY: 0,
                 visibleCardCount: 0,
                 documentHeight: 0,
                 viewportHeight: 0,
@@ -2374,6 +2413,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         let documentBounds = scrollView.documentView?.bounds ?? .zero
         let visible = scrollView.documentVisibleRect
         return BlankSample(
+            offsetY: Double(visible.minY),
             visibleCardCount: Self.visibleCardCount(
                 in: scrollView,
                 documentBounds: documentBounds,

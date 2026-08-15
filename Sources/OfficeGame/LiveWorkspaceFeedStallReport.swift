@@ -1,5 +1,6 @@
 // 이 파일은 대화 화면이 오래 비어 있는 드문 증상의 증거를 남긴다.
 
+import CoreGraphics
 import Foundation
 
 /// 증상이 발생한 순간의 판정값을 그대로 담는 한 줄 기록이다. 재현이
@@ -99,6 +100,63 @@ struct LiveWorkspaceFeedBlankDetector: Equatable {
 
     mutating func reset() {
         documentHeightTrace.removeAll(keepingCapacity: true)
+    }
+}
+
+/// 화면이 비지는 않는데 눈에 띄게 흔들리는 구간을 잡는다. 문서 높이나
+/// 보기 위치가 짧은 시간에 여러 번 바뀌면 사용자는 깜빡임으로 느낀다.
+struct LiveWorkspaceFeedJitterDetector: Equatable {
+    /// 이 시간 안에 일어난 변화만 한 덩어리로 본다.
+    static let window = TimeInterval(0.6)
+    /// 스크롤 위치가 이만큼 움직이면 눈에 띈다.
+    static let significantOffsetShift = CGFloat(80)
+    /// 문서 높이가 이 비율 이상 바뀌면 재배치로 본다.
+    static let significantHeightRatio = 0.2
+    /// 흔들림으로 판정할 최소 변화 횟수다.
+    static let minimumChangeCount = 3
+
+    struct Sample: Equatable {
+        let at: TimeInterval
+        let documentHeight: Double
+        let offsetY: Double
+    }
+
+    private(set) var samples: [Sample] = []
+
+    mutating func append(
+        at: TimeInterval,
+        documentHeight: Double,
+        offsetY: Double
+    ) {
+        samples.append(
+            Sample(at: at, documentHeight: documentHeight, offsetY: offsetY)
+        )
+        samples.removeAll { at - $0.at > Self.window }
+    }
+
+    /// 창 안에서 의미 있는 변화가 여러 번이면 흔들림이다.
+    var isJittering: Bool {
+        guard samples.count >= Self.minimumChangeCount else {
+            return false
+        }
+        var significantChanges = 0
+        for (previous, current) in zip(samples, samples.dropFirst()) {
+            let heightBase = max(previous.documentHeight, 1)
+            let heightRatio =
+                abs(current.documentHeight - previous.documentHeight)
+                / heightBase
+            let offsetShift = abs(current.offsetY - previous.offsetY)
+            if heightRatio >= Self.significantHeightRatio
+                || offsetShift >= Double(Self.significantOffsetShift)
+            {
+                significantChanges += 1
+            }
+        }
+        return significantChanges >= Self.minimumChangeCount - 1
+    }
+
+    mutating func reset() {
+        samples.removeAll(keepingCapacity: true)
     }
 }
 
