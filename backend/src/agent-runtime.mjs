@@ -102,6 +102,8 @@ const BLOCKED_WORKSPACE_STATUSES = new Set([
   "merging",
   "conflict",
 ]);
+const TASK_WORKSPACE_EXECUTION_CONSTRAINT =
+  "task_workspaces_one_open_per_session_idx";
 export class AgentBusyError extends Error {}
 export class AgentDrainingError extends Error {}
 export class AgentJobNotFoundError extends Error {}
@@ -792,53 +794,62 @@ export class AgentRuntime {
         "Git 저장소 확인 뒤 작업 공간을 준비할 수 없게 됐습니다.",
       );
     }
-    await this.pool.query(
-      `
-        WITH inserted_workspace AS (
-          INSERT INTO task_workspaces (
-            id,
-            cli_session_id,
-            status,
-            repository_root,
-            source_workdir,
-            worktree_path,
-            execution_workdir,
-            branch_name,
-            base_branch,
-            base_commit
+    try {
+      await this.pool.query(
+        `
+          WITH inserted_workspace AS (
+            INSERT INTO task_workspaces (
+              id,
+              cli_session_id,
+              status,
+              repository_root,
+              source_workdir,
+              worktree_path,
+              execution_workdir,
+              branch_name,
+              base_branch,
+              base_commit
+            )
+            VALUES (
+              $1,
+              $2,
+              'provisioning',
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9
+            )
+            RETURNING id
           )
-          VALUES (
-            $1,
-            $2,
-            'provisioning',
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            $8,
-            $9
-          )
-          RETURNING id
-        )
-        UPDATE turns AS turn
-        SET task_workspace_id = inserted_workspace.id
-        FROM inserted_workspace
-        WHERE turn.id = $10
-      `,
-      [
-        workspaceID,
-        prepared.sessionID,
-        plan.repositoryRoot,
-        plan.sourceWorkdir,
-        plan.worktreePath,
-        plan.executionWorkdir,
-        plan.branchName,
-        plan.baseBranch,
-        plan.baseCommit,
-        prepared.turnID,
-      ],
-    );
+          UPDATE turns AS turn
+          SET task_workspace_id = inserted_workspace.id
+          FROM inserted_workspace
+          WHERE turn.id = $10
+        `,
+        [
+          workspaceID,
+          prepared.sessionID,
+          plan.repositoryRoot,
+          plan.sourceWorkdir,
+          plan.worktreePath,
+          plan.executionWorkdir,
+          plan.branchName,
+          plan.baseBranch,
+          plan.baseCommit,
+          prepared.turnID,
+        ],
+      );
+    } catch (error) {
+      if (isTaskWorkspaceExecutionConflict(error)) {
+        throw new AgentBusyError(
+          "이 직원의 다른 업무가 작업 공간을 준비 중입니다. 잠시 뒤 다시 시도하세요.",
+        );
+      }
+      throw error;
+    }
 
     let provisioned;
     try {
@@ -980,6 +991,11 @@ export class AgentRuntime {
         await this.workspaceManager.cleanup(provisioned);
       } catch {
         // DB 기록에 실패한 작업 공간은 가능한 범위에서만 정리한다.
+      }
+      if (isTaskWorkspaceExecutionConflict(error)) {
+        throw new AgentBusyError(
+          "이 직원의 다른 업무가 작업 공간을 준비 중입니다. 잠시 뒤 다시 시도하세요.",
+        );
       }
       throw error;
     }
@@ -4059,6 +4075,15 @@ function automaticApprovalErrorCode(error) {
   ]).has(code)
     ? code
     : "approval-failed";
+}
+
+function isTaskWorkspaceExecutionConflict(error) {
+  return (
+    error != null &&
+    typeof error === "object" &&
+    error.code === "23505" &&
+    error.constraint === TASK_WORKSPACE_EXECUTION_CONSTRAINT
+  );
 }
 
 function automaticApprovalErrorMessage(code) {
