@@ -1244,6 +1244,118 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
+    func testDocumentShrinkAfterResizeKeepsViewportInsideDocument()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let characterID = OfficeCharacter.boss
+        let tall = Array(
+            makeTurns(completedResponse: String(
+                repeating: "긴 응답 줄입니다.\n",
+                count: 60
+            ))
+            .filter { $0.characterId == characterID.rawValue }
+            .prefix(10)
+        )
+        director.liveFeedStore.replace(with: tall)
+        director.liveFeedStore.finishInitialLoading()
+
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(
+            director: director,
+            selectedCharacterID: characterID
+        )
+        container.layoutSubtreeIfNeeded()
+        _ = try await waitNaturallyUntil(timeout: .seconds(4)) {
+            container.activeCharacterIDForTesting == characterID
+                && !container.hasTransitionLoadingGateForTesting
+        }
+        guard
+            let scrollView = try await waitForPrimaryScrollView(in: container)
+        else {
+            XCTFail("대화 NSScrollView를 찾지 못했습니다.")
+            return
+        }
+        performLiveScroll(scrollView, toTop: false)
+        try await settle(for: .milliseconds(80))
+
+        // 창 크기를 바꾼 뒤, SwiftUI가 카드를 다시 실체화하며 문서
+        // 높이를 늦게 줄이는 실제 순서를 재현한다. 이 급락이 흰 화면의
+        // 방아쇠였다.
+        container.setFrameSize(NSSize(width: 760, height: 520))
+        container.layoutSubtreeIfNeeded()
+        director.liveFeedStore.replace(
+            with: Array(
+                makeTurns(completedResponse: "짧은 응답")
+                    .filter { $0.characterId == characterID.rawValue }
+                    .prefix(10)
+            )
+        )
+        container.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(250))
+
+        guard let documentView = scrollView.documentView else {
+            XCTFail("문서가 사라졌습니다.")
+            return
+        }
+        let visible = scrollView.documentVisibleRect
+        let overlap = visible.intersection(documentView.bounds).height
+        XCTAssertGreaterThanOrEqual(
+            overlap,
+            min(visible.height, documentView.bounds.height) - 1,
+            "리사이즈 뒤 문서가 줄자 viewport(\(visible))가 문서"
+                + "(\(documentView.bounds)) 밖에 남아 흰 화면이 됐습니다."
+        )
+
+        // 기하가 멀쩡해도 그려진 것이 없으면 사용자 눈에는 흰 화면이다.
+        // 계수기가 컨테이너를 세면 항상 1이 나와 신호가 되지 않는다.
+        let drawn = leafViewCount(
+            in: documentView,
+            intersecting: scrollView.documentVisibleRect
+        )
+        XCTAssertGreaterThan(
+            drawn,
+            1,
+            "리사이즈 정착 뒤 보이는 영역에 그려진 뷰가 없습니다."
+        )
+    }
+
+    private func leafViewCount(
+        in documentView: NSView,
+        intersecting rect: NSRect
+    ) -> Int {
+        var counted = 0
+        var stack = documentView.subviews
+        while let view = stack.popLast() {
+            let frame = documentView.convert(view.bounds, from: view)
+            guard frame.intersects(rect) else {
+                continue
+            }
+            if view.subviews.isEmpty {
+                if frame.height >= 8, frame.width >= 8 {
+                    counted += 1
+                }
+            } else {
+                stack.append(contentsOf: view.subviews)
+            }
+        }
+        return counted
+    }
+
     func testLoadingGateNeverPaintsOutsideConversationArea() async throws {
         let director = AgentDirector(startBackgroundTasks: false)
         director.liveFeedStore.replace(with: makeTurns())

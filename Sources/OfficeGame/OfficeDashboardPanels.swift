@@ -1503,12 +1503,18 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var selectedCharacterID: OfficeCharacter?
     private var selectionGeneration = 0
     private var lastLaidOutBounds = CGRect.zero
+    /// 리사이즈 직후에는 SwiftUI가 카드를 다시 실체화하며 문서 높이를
+    /// 늦게 바꾼다. 그동안은 문서 변화가 올 때마다 보기 위치를 다시
+    /// 맞춘다. 한 번만 맞추면 그 뒤 급락에서 문서 밖에 남는다.
+    private var resizeSettleUntil: Date?
+    private static let resizeSettleWindow = TimeInterval(1.2)
     // 드물게 나타나는 백화 증상의 증거를 남기는 함정이다. 증상이
     // 없으면 알림 관찰만 하고 아무것도 기록하지 않는다.
     private let stallRecorder = LiveWorkspaceFeedStallRecorder.live()
     private var blankDetector = LiveWorkspaceFeedBlankDetector()
     private var jitterDetector = LiveWorkspaceFeedJitterDetector()
     private var lastJitterReportAt: Date?
+    private var lastResizeSampleAt: Date?
     private var blankStartedAt: Date?
     private var blankObservers: [NSObjectProtocol] = []
     private var blankDeadline: DispatchWorkItem?
@@ -1610,6 +1616,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             return
         }
         lastLaidOutBounds = bounds
+        resizeSettleUntil = Date().addingTimeInterval(Self.resizeSettleWindow)
         // 입력창이 여러 줄로 커지면 대화 영역 높이가 줄어든다. 이때
         // clip view가 이전 높이 기준 좌표에 남으면 문서 밖을 보게 되어
         // 대화가 사라진 것처럼 보인다. 활성 대화의 보기 위치를 문서
@@ -1622,7 +1629,10 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     // 리사이즈 직전 하단에 있었으면 하단을, 아니면 보던 위치를 문서
     // 범위 안으로 제한해 유지한다. 사용자가 과거를 읽는 중에 임의로
     // 하단으로 끌어내리지 않는다.
-    private func restoreViewportAfterResize(for entry: Entry) {
+    private func restoreViewportAfterResize(
+        for entry: Entry,
+        constrainOnly: Bool = false
+    ) {
         let host = entry.hostingView
         guard
             host.bounds.width > 0,
@@ -1649,7 +1659,9 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         }
 
         var proposedBounds = clipView.bounds
-        if entry.wasAtBottomBeforeResize {
+        // 정착 구간의 재보정은 문서 범위 안으로 되돌리기만 한다. 여기서
+        // 하단으로 끌면 과거를 읽는 중에 화면이 끌려 내려간다.
+        if entry.wasAtBottomBeforeResize, !constrainOnly {
             proposedBounds.origin.y = documentView.isFlipped
                 ? max(
                     documentBounds.minY,
@@ -2276,6 +2288,21 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         }
         blankDetector.appendTrace(documentHeight: sample.documentHeight)
         recordJitterIfNeeded(for: activeEntry, sample: sample)
+
+        // 리사이즈 정착 구간에서는 문서가 바뀔 때마다 다시 맞추고,
+        // 그 순간의 상태를 남긴다. 창 크기를 건드리면 흰 화면이 나고
+        // 다시 건드리면 복구된다는 재현이 이 구간을 가리킨다.
+        if let resizeSettleUntil {
+            if Date() >= resizeSettleUntil {
+                self.resizeSettleUntil = nil
+            } else {
+                restoreViewportAfterResize(
+                    for: activeEntry,
+                    constrainOnly: true
+                )
+                recordResizeSettleIfNeeded(for: activeEntry)
+            }
+        }
         let isBlank = LiveWorkspaceFeedBlankDetector.isBlank(
             turnCount: sample.turnCount,
             documentHeight: sample.documentHeight,
@@ -2328,6 +2355,30 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     /// 화면이 비지는 않아도 눈에 띄게 흔들리면 남긴다. 사용자가 깜빡임으로
     /// 느끼는 구간이 여기다.
+    private func recordResizeSettleIfNeeded(for entry: Entry) {
+        let now = Date()
+        if let lastResizeSampleAt,
+            now.timeIntervalSince(lastResizeSampleAt) < 0.12
+        {
+            return
+        }
+        lastResizeSampleAt = now
+        guard let sample = blankSample(for: entry) else {
+            return
+        }
+        record(
+            kind: "resize-settle",
+            entry: entry,
+            elapsed: 0,
+            readiness: "offset=\(Int(sample.offsetY))"
+                + " cards=\(sample.visibleCardCount)",
+            readinessRevision:
+                entry.characterFeedStore.mountReadinessRevision,
+            trace: blankDetector.documentHeightTrace,
+            sample: sample
+        )
+    }
+
     private func recordJitterIfNeeded(for entry: Entry, sample: BlankSample) {
         let now = Date()
         jitterDetector.append(
@@ -2479,6 +2530,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     /// 보이는 영역과 겹치는 대화 카드 수를 센다. SwiftUI가 만든 중첩
     /// 계층을 전부 세지 않도록 문서 바로 아래 세대까지만 본다.
+    /// 보이는 영역에 실제로 그려진 잎 뷰 수를 센다. 컨테이너를 세면
+    /// 문서 전체를 덮는 뷰 하나 때문에 항상 1이 나와 신호가 되지 않는다.
     private static func visibleCardCount(
         in scrollView: NSScrollView,
         documentBounds: CGRect,
@@ -2487,25 +2540,23 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         guard let documentView = scrollView.documentView else {
             return 0
         }
-        var candidates = documentView.subviews
         var counted = 0
-        var depth = 0
-        while depth < 4 {
-            counted = candidates.count { view in
-                let frame = documentView.convert(view.bounds, from: view)
-                guard frame.height >= 24 else {
-                    return false
+        var stack = documentView.subviews
+        var visited = 0
+        while let view = stack.popLast(), visited < 4_000 {
+            visited += 1
+            let frame = documentView.convert(view.bounds, from: view)
+            guard frame.intersects(visibleRect) else {
+                continue
+            }
+            if view.subviews.isEmpty {
+                // 잎 뷰 중 눈에 보일 크기만 센다.
+                if frame.height >= 8, frame.width >= 8 {
+                    counted += 1
                 }
-                return frame.intersects(visibleRect)
+            } else {
+                stack.append(contentsOf: view.subviews)
             }
-            if counted > 0 {
-                return counted
-            }
-            candidates = candidates.flatMap(\.subviews)
-            if candidates.isEmpty {
-                return 0
-            }
-            depth += 1
         }
         return counted
     }
