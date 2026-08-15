@@ -244,4 +244,52 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
             "증상이 다시 나면 덮어쓰지 말고 이어 붙여야 합니다."
         )
     }
+
+    func testJitterIsDetectedWhenLayoutKeepsMovingWithoutGoingBlank() {
+        var detector = LiveWorkspaceFeedJitterDetector()
+        // 화면은 비지 않지만 문서 높이와 스크롤 위치가 짧은 시간에
+        // 여러 번 튀는 구간이 사용자가 말한 깜빡임이다.
+        detector.append(at: 0, documentHeight: 4_000, offsetY: 3_400)
+        XCTAssertFalse(detector.isJittering, "변화 한 번은 깜빡임이 아닙니다.")
+        detector.append(at: 0.1, documentHeight: 2_600, offsetY: 3_400)
+        detector.append(at: 0.2, documentHeight: 4_000, offsetY: 3_200)
+        detector.append(at: 0.3, documentHeight: 3_000, offsetY: 3_400)
+        XCTAssertTrue(
+            detector.isJittering,
+            "문서 높이와 위치가 연달아 크게 바뀌면 깜빡임으로 잡아야 합니다."
+        )
+
+        detector.reset()
+        XCTAssertTrue(detector.samples.isEmpty)
+    }
+
+    func testSteadyScrollingIsNotReportedAsJitter() {
+        var detector = LiveWorkspaceFeedJitterDetector()
+        // 사용자가 천천히 읽어 내려가는 것은 깜빡임이 아니다.
+        for step in 0..<6 {
+            detector.append(
+                at: Double(step) * 0.1,
+                documentHeight: 4_000,
+                offsetY: 3_000 + Double(step) * 20
+            )
+        }
+        XCTAssertFalse(
+            detector.isJittering,
+            "완만한 스크롤까지 남기면 기록이 잡음이 됩니다."
+        )
+    }
+
+    func testJitterWindowDropsOldSamples() {
+        var detector = LiveWorkspaceFeedJitterDetector()
+        detector.append(at: 0, documentHeight: 4_000, offsetY: 0)
+        detector.append(at: 0.1, documentHeight: 1_000, offsetY: 400)
+        // 창을 벗어난 과거 변화는 현재 흔들림 판정에 쓰지 않는다.
+        detector.append(
+            at: LiveWorkspaceFeedJitterDetector.window + 1,
+            documentHeight: 4_000,
+            offsetY: 0
+        )
+        XCTAssertEqual(detector.samples.count, 1)
+        XCTAssertFalse(detector.isJittering)
+    }
 }
