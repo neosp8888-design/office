@@ -293,4 +293,29 @@ final class LiveWorkspaceFeedStallReportTests: XCTestCase {
         XCTAssertFalse(detector.isJittering)
     }
 
+    func testReportDistinguishesMountedAndVisibleCardMarkers() {
+        var report = LiveWorkspaceFeedStallReport(
+            kind: "active-blank-persisting",
+            characterID: "left-woman",
+            elapsedSeconds: 2,
+            readiness: "blank",
+            hostWidth: 1_100,
+            hostHeight: 640,
+            hasScrollView: true,
+            documentHeight: 11_000,
+            viewportHeight: 640,
+            visibleIntersectionHeight: 640,
+            turnCount: 44,
+            isLoadingInitialFeed: false,
+            readinessRevision: 7,
+            preClampPassCount: 2,
+            postClampPassCount: 3,
+            viewportClampCount: 1,
+            hasLoadingGate: false
+        )
+        report.mountedCardCount = 10
+        report.visibleCardCount = 0
+
+        XCTAssertTrue(report.summary.contains("cards=0/10"))
+    }
 }

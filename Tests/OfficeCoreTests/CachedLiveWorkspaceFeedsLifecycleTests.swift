@@ -2458,6 +2458,111 @@ final class CachedLiveWorkspaceFeedsLifecycleTests: XCTestCase {
         )
     }
 
+    func testResizeKeepsEveryBoundedConversationCardMaterialized()
+        async throws
+    {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let characterID = OfficeCharacter.leftWoman.rawValue
+        let baseDate = Date(timeIntervalSinceReferenceDate: 260_000)
+        let response = (0..<45)
+            .map { "리사이즈 실체화 검증용 응답 \($0)번째 줄입니다." }
+            .joined(separator: "\n")
+        director.liveFeedStore.replace(with: (0..<10).reversed().map { index in
+            makeTurn(
+                id: "resize-materialization-\(index)",
+                characterID: characterID,
+                prompt: "기존 질문 \(index)",
+                response: response,
+                status: .completed,
+                startedAt: baseDate.addingTimeInterval(TimeInterval(index)),
+                backend: .claude
+            )
+        })
+        director.liveFeedStore.finishInitialLoading()
+
+        let container = CachedLiveWorkspaceFeedsNSView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 700)
+        )
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = container
+        defer {
+            container.tearDown()
+            window.contentView = nil
+        }
+
+        container.configure(
+            director: director,
+            selectedCharacterID: .leftWoman
+        )
+        container.layoutSubtreeIfNeeded()
+        let didMaterializeInitialWindow = try await waitNaturallyUntil(
+            timeout: .seconds(4)
+        ) {
+            container.activeCharacterIDForTesting == .leftWoman
+                && container.mountedCardCountForTesting == 10
+                && container.visibleCardCountForTesting > 0
+        }
+        XCTAssertTrue(
+            didMaterializeInitialWindow,
+            "표시 창 10건이 모두 실체화되지 않았습니다: mounted="
+                + "\(container.mountedCardCountForTesting), visible="
+                + "\(container.visibleCardCountForTesting)"
+        )
+
+        guard let scrollView = try await waitForPrimaryScrollView(in: container)
+        else {
+            XCTFail("리사이즈 검증용 NSScrollView가 없습니다.")
+            return
+        }
+        performLiveScroll(scrollView, toTop: false)
+        try await settle(for: .milliseconds(80))
+
+        // 실제 함정 기록에서 문제가 난 1,100~1,170pt 폭을 왕복한다.
+        // LazyVStack은 이때 추정 문서 높이만 남기고 보이는 카드를 0개로
+        // 만들었지만, 제한된 eager 창은 모든 카드 표식을 계속 보유해야 한다.
+        let sizes = [
+            NSSize(width: 1_102, height: 609),
+            NSSize(width: 1_107, height: 613),
+            NSSize(width: 1_121, height: 620),
+            NSSize(width: 1_146, height: 628),
+            NSSize(width: 1_163.5, height: 633),
+            NSSize(width: 1_151.5, height: 643),
+            NSSize(width: 900, height: 700),
+        ]
+        for size in sizes {
+            container.setFrameSize(size)
+            container.layoutSubtreeIfNeeded()
+            let stayedMaterialized = try await waitNaturallyUntil(
+                timeout: .milliseconds(500)
+            ) {
+                container.mountedCardCountForTesting == 10
+                    && container.visibleCardCountForTesting > 0
+            }
+            XCTAssertTrue(
+                stayedMaterialized,
+                "\(Int(size.width))x\(Int(size.height)) 리사이즈 뒤 카드가 "
+                    + "미실체화됐습니다: mounted="
+                    + "\(container.mountedCardCountForTesting), visible="
+                    + "\(container.visibleCardCountForTesting)"
+            )
+            guard let documentView = scrollView.documentView else {
+                XCTFail("리사이즈 중 대화 문서가 사라졌습니다.")
+                return
+            }
+            XCTAssertGreaterThan(
+                scrollView.documentVisibleRect.intersection(documentView.bounds)
+                    .height,
+                0,
+                "리사이즈 뒤 viewport가 대화 문서를 벗어났습니다."
+            )
+        }
+    }
+
     func testScrollGeometryReportsFlippedTopAndBottomWithoutPreferenceKeys() {
         let documentBounds = CGRect(x: 0, y: 0, width: 500, height: 1_000)
 

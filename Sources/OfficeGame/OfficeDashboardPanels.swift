@@ -1532,6 +1532,20 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             ?? 0
     }
 
+    var mountedCardCountForTesting: Int {
+        guard let activeEntry else {
+            return 0
+        }
+        return blankSample(for: activeEntry)?.mountedCardCount ?? 0
+    }
+
+    var visibleCardCountForTesting: Int {
+        guard let activeEntry else {
+            return 0
+        }
+        return blankSample(for: activeEntry)?.visibleCardCount ?? 0
+    }
+
     func updateMetadataForTesting(_ metadata: LiveWorkspaceFeedMetadata) {
         activeEntry?.updateMetadata(metadata)
         pendingEntry?.updateMetadata(metadata)
@@ -2339,7 +2353,8 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             entry: entry,
             elapsed: 0,
             readiness: "offset=\(Int(sample.offsetY))"
-                + " cards=\(sample.visibleCardCount)",
+                + " cards=\(sample.visibleCardCount)"
+                + "/\(sample.mountedCardCount)",
             readinessRevision:
                 entry.characterFeedStore.mountReadinessRevision,
             trace: blankDetector.documentHeightTrace,
@@ -2388,6 +2403,23 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         else {
             return
         }
+        let isStillBlank = LiveWorkspaceFeedBlankDetector.isBlank(
+            turnCount: sample.turnCount,
+            documentHeight: sample.documentHeight,
+            viewportHeight: sample.viewportHeight,
+            visibleIntersectionHeight: sample.visibleIntersectionHeight,
+            visibleCardCount: sample.visibleCardCount
+        )
+        guard isStillBlank else {
+            // frame/bounds 알림 없이 SwiftUI가 스스로 실체화한 경우에도
+            // 오래된 deadline이 정상 화면을 "persisting"으로 기록하지 않게
+            // 마지막 순간의 표식을 다시 확인한다.
+            self.blankDeadline = nil
+            self.blankStartedAt = nil
+            didReportCurrentBlank = false
+            blankDetector.reset()
+            return
+        }
         didReportCurrentBlank = true
         record(
             kind: "active-blank-persisting",
@@ -2403,6 +2435,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
 
     private struct BlankSample {
         let offsetY: Double
+        let mountedCardCount: Int
         let visibleCardCount: Int
         let documentHeight: Double
         let viewportHeight: Double
@@ -2418,6 +2451,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         guard let scrollView = primaryScrollView(in: host) else {
             return BlankSample(
                 offsetY: 0,
+                mountedCardCount: 0,
                 visibleCardCount: 0,
                 documentHeight: 0,
                 viewportHeight: 0,
@@ -2431,13 +2465,14 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         }
         let documentBounds = scrollView.documentView?.bounds ?? .zero
         let visible = scrollView.documentVisibleRect
+        let cardCounts = Self.cardMarkerCounts(
+            documentView: scrollView.documentView,
+            visibleRect: visible
+        )
         return BlankSample(
             offsetY: Double(visible.minY),
-            visibleCardCount: Self.visibleCardCount(
-                in: scrollView,
-                documentBounds: documentBounds,
-                visibleRect: visible
-            ),
+            mountedCardCount: cardCounts.mounted,
+            visibleCardCount: cardCounts.visible,
             documentHeight: documentBounds.height,
             viewportHeight: scrollView.contentView.bounds.height,
             visibleIntersectionHeight:
@@ -2482,6 +2517,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             postClampPassCount: entry.stablePostClampPassCount,
             viewportClampCount: entry.viewportClampCount,
             hasLoadingGate: transitionLoadingGateView?.superview === self,
+            mountedCardCount: resolved?.mountedCardCount ?? 0,
             visibleCardCount: resolved?.visibleCardCount ?? 0,
             gateDisabled: Self.isTransitionGateDisabled,
             documentHeightTrace: trace
@@ -2496,37 +2532,35 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         stallRecorder.record(report, at: Date())
     }
 
-    /// 보이는 영역과 겹치는 대화 카드 수를 센다. SwiftUI가 만든 중첩
-    /// 계층을 전부 세지 않도록 문서 바로 아래 세대까지만 본다.
-    /// 보이는 영역에 실제로 그려진 잎 뷰 수를 센다. 컨테이너를 세면
-    /// 문서 전체를 덮는 뷰 하나 때문에 항상 1이 나와 신호가 되지 않는다.
-    private static func visibleCardCount(
-        in scrollView: NSScrollView,
-        documentBounds: CGRect,
+    /// 각 대화 묶음에 심은 AppKit 표식만 센다. 임의의 잎 NSView를 세면
+    /// SwiftUI 내부 계층 변화에 따라 같은 카드도 0개 또는 여러 개로 보여
+    /// 실체화 신호로 쓸 수 없다.
+    private static func cardMarkerCounts(
+        documentView: NSView?,
         visibleRect: CGRect
-    ) -> Int {
-        guard let documentView = scrollView.documentView else {
-            return 0
+    ) -> (mounted: Int, visible: Int) {
+        guard let documentView else {
+            return (0, 0)
         }
-        var counted = 0
+        var mounted = 0
+        var visible = 0
         var stack = documentView.subviews
         var visited = 0
         while let view = stack.popLast(), visited < 4_000 {
             visited += 1
-            let frame = documentView.convert(view.bounds, from: view)
-            guard frame.intersects(visibleRect) else {
-                continue
-            }
-            if view.subviews.isEmpty {
-                // 잎 뷰 중 눈에 보일 크기만 센다.
-                if frame.height >= 8, frame.width >= 8 {
-                    counted += 1
+            if view is LiveWorkspaceFeedCardMarkerView {
+                mounted += 1
+                let frame = documentView.convert(view.bounds, from: view)
+                if frame.height >= 1,
+                    frame.width >= 1,
+                    frame.intersects(visibleRect)
+                {
+                    visible += 1
                 }
-            } else {
-                stack.append(contentsOf: view.subviews)
             }
+            stack.append(contentsOf: view.subviews)
         }
-        return counted
+        return (mounted, visible)
     }
 
     private func primaryScrollView(in root: NSView) -> NSScrollView? {
@@ -2774,7 +2808,13 @@ struct LiveWorkspaceFeed: View, Equatable {
                             )
                             .frame(height: 1)
 
-                            LazyVStack(spacing: 14) {
+                            // 화면에 올리는 턴은 이미 10건, 사용자가 과거를
+                            // 펼쳐도 최대 30건으로 제한된다. 여기서 다시
+                            // LazyVStack을 쓰면 리사이즈 때 보이는 구간의
+                            // 추정 높이만 남고 카드가 실체화되지 않는 macOS
+                            // SwiftUI 경로가 생긴다. 바깥 목록은 eager로 두고
+                            // 카드 안의 접힌 긴 이력만 lazy 렌더링한다.
+                            VStack(spacing: 14) {
                                 if hiddenTurnCount > 0 {
                                     archivedTurnsNotice
                                 }
@@ -2818,6 +2858,11 @@ struct LiveWorkspaceFeed: View, Equatable {
                                         .equatable()
                                     }
                                     .id(item.id)
+                                    .background {
+                                        LiveWorkspaceFeedCardMarker()
+                                            .allowsHitTesting(false)
+                                            .accessibilityHidden(true)
+                                    }
                                 }
                             }
 
@@ -3585,6 +3630,25 @@ struct LiveWorkspaceFeedScrollObserver: NSViewRepresentable {
             super.viewDidMoveToWindow()
             onHierarchyChange?()
         }
+    }
+}
+
+/// SwiftUI의 비공개 NSView 잎 개수와 무관하게 대화 묶음 하나의 실체화를
+/// 계측하는 표식이다. 배경 전체 크기를 받아 viewport 교차 여부도 잴 수 있다.
+private struct LiveWorkspaceFeedCardMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> LiveWorkspaceFeedCardMarkerView {
+        LiveWorkspaceFeedCardMarkerView()
+    }
+
+    func updateNSView(
+        _ nsView: LiveWorkspaceFeedCardMarkerView,
+        context: Context
+    ) {}
+}
+
+private final class LiveWorkspaceFeedCardMarkerView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 

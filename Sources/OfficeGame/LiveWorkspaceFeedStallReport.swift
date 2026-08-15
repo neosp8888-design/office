@@ -24,8 +24,10 @@ struct LiveWorkspaceFeedStallReport: Equatable, Codable {
     let postClampPassCount: Int
     let viewportClampCount: Int
     let hasLoadingGate: Bool
-    /// 보이는 영역에 실제로 그려진 카드 수다. 문서 높이는 그대로인데
-    /// 이 값이 0이면 화면만 빈 상태다.
+    /// SwiftUI가 현재 문서에 실제로 만든 카드 표식 수다.
+    var mountedCardCount: Int = 0
+    /// 보이는 영역과 겹치는 카드 표식 수다. 문서 높이는 그대로인데
+    /// 이 값이 0이면 해당 구간이 실체화되지 않은 상태다.
     var visibleCardCount: Int = 0
     /// 차폐를 끈 실험 빌드의 기록인지 구분한다. 두 앱을 함께 띄우면
     /// 같은 파일에 섞여 쌓인다.
@@ -44,7 +46,7 @@ struct LiveWorkspaceFeedStallReport: Equatable, Codable {
             + " scroll=\(hasScrollView)"
             + " doc=\(Int(documentHeight)) viewport=\(Int(viewportHeight))"
             + " overlap=\(Int(visibleIntersectionHeight))"
-            + " cards=\(visibleCardCount)"
+            + " cards=\(visibleCardCount)/\(mountedCardCount)"
             + " turns=\(turnCount) loading=\(isLoadingInitialFeed)"
             + " revision=\(readinessRevision)"
             + " pass=\(preClampPassCount)/\(postClampPassCount)"
