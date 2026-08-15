@@ -28,11 +28,11 @@ enum OfficeDetailSelection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .archive:
-            OfficeLocalization.string("검색하고 빠르게 여는 직원 업무 기록")
+            OfficeLocalization.string("직원 업무 기록")
         case .usage:
-            OfficeLocalization.string("Codex와 Claude의 현재 사용 가능량")
+            OfficeLocalization.string("현재 사용 가능량")
         case .wiki:
-            "승인된 지식과 확인이 필요한 제안"
+            "승인된 지식과 확인"
         }
     }
 
@@ -665,18 +665,6 @@ private struct UsageActivityCard: View {
                         tint: tint
                     )
                 }
-                GridRow {
-                    UsageMetricCell(
-                        label: "오늘 토큰",
-                        value: tokenText(activity?.recentTokens),
-                        tint: tint
-                    )
-                    UsageMetricCell(
-                        label: "30일 토큰",
-                        value: tokenText(activity?.last30DaysTokens),
-                        tint: tint
-                    )
-                }
             }
         }
         .padding(12)
@@ -697,24 +685,6 @@ private struct UsageActivityCard: View {
         return String(format: "$%.2f", value)
     }
 
-    private func tokenText(_ value: Int64?) -> String {
-        guard let value else {
-            return "–"
-        }
-
-        let count = Double(value)
-        if value >= 1_000_000_000 {
-            return String(format: "%.1fB", count / 1_000_000_000)
-        }
-        if value >= 1_000_000 {
-            let format = value >= 100_000_000 ? "%.0fM" : "%.1fM"
-            return String(format: format, count / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.0fK", count / 1_000)
-        }
-        return "\(value)"
-    }
 }
 
 private struct UsageMetricCell: View {

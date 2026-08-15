@@ -204,6 +204,18 @@ final class WikiKnowledgeTests: XCTestCase {
         )
         XCTAssertEqual(OfficeDetailSelection.wiki.title, "사내 위키")
         XCTAssertEqual(
+            OfficeDetailSelection.archive.subtitle,
+            "직원 업무 기록"
+        )
+        XCTAssertEqual(
+            OfficeDetailSelection.usage.subtitle,
+            "현재 사용 가능량"
+        )
+        XCTAssertEqual(
+            OfficeDetailSelection.wiki.subtitle,
+            "승인된 지식과 확인"
+        )
+        XCTAssertEqual(
             OfficeDetailSelection.wiki.icon,
             "text.book.closed.fill"
         )

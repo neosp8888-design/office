@@ -4,26 +4,25 @@ import XCTest
 @testable import OfficeGame
 
 final class OfficeSplitLayoutTests: XCTestCase {
-    func testColumnWidthsKeepBothPanelsAboveMinimumWidth() {
+    func testColumnWidthsFixLeftPanelAtMinimumWidth() {
         let widths = OfficeSplitLayout.columnWidths(
-            availableWidth: 1_000,
-            fraction: 0.1,
-            minimumColumnWidth: 210
+            availableWidth: 1_000
         )
 
-        XCTAssertEqual(widths.left, 210)
+        XCTAssertEqual(
+            widths.left,
+            OfficeSplitLayout.fixedLeftColumnWidth
+        )
         XCTAssertEqual(widths.right, 790)
     }
 
-    func testColumnWidthsSplitNarrowSpaceEvenlyAtMinimum() {
+    func testColumnWidthsSplitSpaceEvenlyWhenNarrowerThanFixedWidth() {
         let widths = OfficeSplitLayout.columnWidths(
-            availableWidth: 600,
-            fraction: 0.9,
-            minimumColumnWidth: 420
+            availableWidth: 300
         )
 
-        XCTAssertEqual(widths.left, 300)
-        XCTAssertEqual(widths.right, 300)
+        XCTAssertEqual(widths.left, 150)
+        XCTAssertEqual(widths.right, 150)
     }
 
     func testRowHeightsKeepBothPanelsAboveOneThird() {
