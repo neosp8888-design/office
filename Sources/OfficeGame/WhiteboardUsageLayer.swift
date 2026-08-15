@@ -384,16 +384,19 @@ struct CLIUpdateStatus: Decodable, Equatable, Sendable {
         let packageName: String
         let installedVersion: String?
         let latestVersion: String?
+        let checkFailed: Bool?
         let updateAvailable: Bool
     }
 
     let checkedAt: Date?
     let updateAvailable: Bool
+    let checkFailed: Bool?
     let packages: [Package]
 
     static let empty = CLIUpdateStatus(
         checkedAt: nil,
         updateAvailable: false,
+        checkFailed: nil,
         packages: []
     )
 
