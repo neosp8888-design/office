@@ -27,6 +27,18 @@ export const CLI_PACKAGES = Object.freeze([
 /// 조회는 네트워크를 타므로 화이트보드 주기보다 짧게 다시 묻지 않는다.
 export const UPDATE_CACHE_MILLISECONDS = 9 * 60 * 1000;
 const COMMAND_TIMEOUT_MILLISECONDS = 20_000;
+
+/// 설치는 실제로 쓰는 실행 파일이 있는 곳에 해야 한다. 앱 번들 Node가
+/// PATH 앞에 있으면 npm이 자기 자리를 앱 안으로 판단해, 갱신이 번들
+/// 안으로 들어가고 정작 직원이 쓰는 CLI는 예전 버전으로 남는다.
+export function npmPrefixForExecutable(executablePath) {
+  const marker = "/lib/node_modules/";
+  const index = String(executablePath ?? "").indexOf(marker);
+  if (index < 0) {
+    return null;
+  }
+  return String(executablePath).slice(0, index);
+}
 const INSTALL_TIMEOUT_MILLISECONDS = 5 * 60 * 1000;
 
 /// `claude 2.1.220 (Claude Code)`나 `codex-cli 0.146.0`처럼 서로 다른
@@ -64,6 +76,25 @@ export function isUpdateAvailable(installed, latest) {
   }
   // 숫자가 같으면 사전 배포보다 정식 배포가 새것이다.
   return current.hasPrerelease && !candidate.hasPrerelease;
+}
+
+async function readExecutablePath(entry, runCommand) {
+  try {
+    const { stdout } = await runCommand("which", [entry.executable], {
+      timeout: COMMAND_TIMEOUT_MILLISECONDS,
+    });
+    const path = String(stdout ?? "").trim().split("\n")[0];
+    if (!path) {
+      return null;
+    }
+    // 심볼릭 링크를 따라가야 실제 설치 위치가 나온다.
+    const { stdout: resolved } = await runCommand("readlink", ["-f", path], {
+      timeout: COMMAND_TIMEOUT_MILLISECONDS,
+    });
+    return String(resolved ?? "").trim() || path;
+  } catch {
+    return null;
+  }
 }
 
 async function readInstalledVersion(entry, runCommand) {
@@ -105,9 +136,10 @@ export function createCLIUpdateChecker({
     }
     const packages = await Promise.all(
       CLI_PACKAGES.map(async (entry) => {
-        const [installed, latest] = await Promise.all([
+        const [installed, latest, executablePath] = await Promise.all([
           readInstalledVersion(entry, runCommand),
           readLatestVersion(entry, runCommand),
+          readExecutablePath(entry, runCommand),
         ]);
         return {
           id: entry.id,
@@ -115,6 +147,7 @@ export function createCLIUpdateChecker({
           packageName: entry.packageName,
           installedVersion: installed,
           latestVersion: latest,
+          installPrefix: npmPrefixForExecutable(executablePath),
           updateAvailable: isUpdateAvailable(installed, latest),
         };
       }),
@@ -166,10 +199,26 @@ export function backendsForIdentifier(identifier) {
   return packagesForIdentifier(identifier).map((entry) => entry.backend);
 }
 
+/// 대상 CLI들이 같은 곳에 설치돼 있을 때만 그 위치를 쓴다. 서로 다르면
+/// 한 번의 설치로 둘 다 맞출 수 없으므로 npm 기본 판단에 맡긴다.
+export function sharedInstallPrefix(status, identifier) {
+  const wanted = new Set(
+    packagesForIdentifier(identifier).map((entry) => entry.id),
+  );
+  const prefixes = new Set(
+    (status?.packages ?? [])
+      .filter((entry) => wanted.has(entry.id))
+      .map((entry) => entry.installPrefix)
+      .filter((value) => typeof value === "string" && value.length > 0),
+  );
+  return prefixes.size === 1 ? [...prefixes][0] : null;
+}
+
 export async function applyCLIUpdates({
   runCommand = execFileAsync,
   packageNames = CLI_PACKAGES.map((entry) => entry.packageName),
   backends = CLI_PACKAGES.map((entry) => entry.backend),
+  prefix = null,
   hasRunningWork,
 } = {}) {
   if (
@@ -180,9 +229,12 @@ export async function applyCLIUpdates({
       "진행 중인 업무가 끝난 뒤에 업데이트할 수 있습니다.",
     );
   }
+  const installArguments = prefix
+    ? ["install", "-g", "--prefix", prefix, ...packageNames]
+    : ["install", "-g", ...packageNames];
   const { stdout, stderr } = await runCommand(
     "npm",
-    ["install", "-g", ...packageNames],
+    installArguments,
     { timeout: INSTALL_TIMEOUT_MILLISECONDS },
   );
   return {
