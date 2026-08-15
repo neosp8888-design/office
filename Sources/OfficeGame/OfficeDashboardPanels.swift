@@ -1486,6 +1486,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
     private var lastJitterReportAt: Date?
     private var lastResizeSampleAt: Date?
     private var blankRecoveryAttempts = 0
+    private var didRemountForCurrentBlank = false
     private var isRecoveringBlankViewport = false
     /// 자극이 통하지 않는 상황에서 무한히 흔들지 않는다.
     private static let maximumBlankRecoveryAttempts = 3
@@ -2293,6 +2294,7 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
             recoverBlankViewportIfNeeded(for: activeEntry, sample: sample)
         } else {
             blankRecoveryAttempts = 0
+            didRemountForCurrentBlank = false
         }
         guard isBlank else {
             if let blankStartedAt {
@@ -2349,10 +2351,18 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
         guard
             sample.visibleCardCount <= 0,
             sample.documentHeight > 1,
-            !isRecoveringBlankViewport,
-            blankRecoveryAttempts < Self.maximumBlankRecoveryAttempts,
-            let scrollView = primaryScrollView(in: entry.hostingView)
+            !isRecoveringBlankViewport
         else {
+            return
+        }
+        // 가벼운 자극이 통하지 않으면 직원을 다시 고른 것과 같은 경로로
+        // 화면을 새로 만든다. 실측에서 3회를 다 써도 안 살아나는 구간이
+        // 있었고, 그때 사용자는 십수 초를 빈 화면으로 보냈다.
+        guard blankRecoveryAttempts < Self.maximumBlankRecoveryAttempts else {
+            remountForBlankRecovery(sample: sample)
+            return
+        }
+        guard let scrollView = primaryScrollView(in: entry.hostingView) else {
             return
         }
         blankRecoveryAttempts += 1
@@ -2387,6 +2397,38 @@ final class CachedLiveWorkspaceFeedsNSView: NSView {
                 entry.characterFeedStore.mountReadinessRevision,
             trace: blankDetector.documentHeightTrace,
             sample: sample
+        )
+    }
+
+    /// 빈 화면이 자극으로 안 풀리면 대화 화면을 통째로 다시 만든다.
+    /// 직원을 다시 고르는 것과 같은 경로라 실체화가 확실히 일어난다.
+    private func remountForBlankRecovery(sample: BlankSample) {
+        guard
+            !didRemountForCurrentBlank,
+            let director,
+            let characterID = selectedCharacterID,
+            let entry = activeEntry
+        else {
+            return
+        }
+        didRemountForCurrentBlank = true
+        record(
+            kind: "blank-recovery-remount",
+            entry: entry,
+            elapsed: 0,
+            readiness: "offset=\(Int(sample.offsetY))",
+            readinessRevision:
+                entry.characterFeedStore.mountReadinessRevision,
+            trace: blankDetector.documentHeightTrace,
+            sample: sample
+        )
+        stopObservingBlankScreen()
+        selectionGeneration &+= 1
+        installTransitionLoadingGate()
+        mountSelectedCharacter(
+            director: director,
+            characterID: characterID,
+            generation: selectionGeneration
         )
     }
 
