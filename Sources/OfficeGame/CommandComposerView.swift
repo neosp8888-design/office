@@ -582,6 +582,17 @@ final class CommandComposerTextView: NSTextView {
         }
     }
 
+    override func readSelection(
+        from pasteboard: NSPasteboard,
+        type: NSPasteboard.PasteboardType
+    ) -> Bool {
+        // 우클릭 메뉴 붙여넣기는 keyDown을 거치지 않는다. 전송 직후의
+        // IME 잔여 변경 차단을 먼저 해제하지 않으면 붙인 문장 전체를
+        // 이전 조합의 늦은 변경으로 오인해 즉시 지우게 된다.
+        beginNextUserEdit()
+        return super.readSelection(from: pasteboard, type: type)
+    }
+
     /// 전송 성공 뒤 원격 입력기가 이전 조합의 마지막 음절을 다시 보내는
     /// 경우가 있다. 다음 실제 keyDown 전까지 도착한 텍스트 변경은 이전
     /// 조합의 잔여 이벤트로 보고 버린다.

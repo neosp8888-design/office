@@ -319,6 +319,46 @@ final class CommandEntryDraftTests: XCTestCase {
         )
     }
 
+    func testMousePasteStartsNextEditAfterAcceptedSubmission() throws {
+        let textBox = TextBox(value: "이전 요청")
+        let composer = makeComposer(textBox: textBox) {
+            textBox.value = ""
+            return true
+        }
+        let coordinator = composer.makeCoordinator()
+        let textView = CommandComposerTextView()
+        textView.delegate = coordinator
+        textView.string = textBox.value
+        textView.setSelectedRange(NSRange(location: 5, length: 0))
+        _ = composer.updateTextView(textView)
+
+        textView.keyDown(with: try makeReturnEvent())
+        XCTAssertEqual(textBox.value, "")
+        XCTAssertEqual(textView.string, "")
+
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(
+            pasteboard.setString("마우스로 붙인 다음 요청", forType: .string)
+        )
+
+        XCTAssertTrue(textView.readSelection(from: pasteboard, type: .string))
+        coordinator.textDidChange(
+            Notification(
+                name: NSText.didChangeNotification,
+                object: textView
+            )
+        )
+
+        XCTAssertEqual(textView.string, "마우스로 붙인 다음 요청")
+        XCTAssertEqual(
+            textBox.value,
+            "마우스로 붙인 다음 요청",
+            "우클릭 붙여넣기를 IME 잔여 변경으로 오인하면 안 됩니다."
+        )
+    }
+
     func testRejectedSubmissionKeepsCommittedKoreanText() async throws {
         let textView = CommandComposerTextView()
         textView.setMarkedText(
