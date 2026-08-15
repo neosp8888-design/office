@@ -2714,6 +2714,18 @@ struct LiveWorkspaceFeed: View, Equatable {
 
                                 ForEach(displayItems) { item in
                                     let turn = item.turn
+                                    // 질문은 직원 카드 밖에 세운다. 카드
+                                    // 안에 있으면 직원이 한 말처럼 보인다.
+                                    // 한 턴의 질문과 답변은 한 묶음으로
+                                    // 남겨 스크롤 대상 식별자를 유지한다.
+                                    VStack(alignment: .leading, spacing: 8) {
+                                    LiveTurnPromptBlock(
+                                        presentation: TaskPromptPresentation(
+                                            prompt: turn.prompt
+                                        ),
+                                        sentAt: turn.startedAt
+                                    )
+
                                     EquatableLiveTurnCard(
                                         director: director,
                                         turn: turn,
@@ -2737,7 +2749,8 @@ struct LiveWorkspaceFeed: View, Equatable {
                                             )
                                     }
                                         .equatable()
-                                        .id(item.id)
+                                    }
+                                    .id(item.id)
                                 }
                             }
 
@@ -3661,7 +3674,6 @@ private struct LiveTurnCard: View {
 
             VStack(alignment: .leading, spacing: 11) {
                 metadata
-                promptBlock
 
                 if
                     turn.status.isRunning
@@ -3804,13 +3816,6 @@ private struct LiveTurnCard: View {
         }
     }
 
-    private var promptBlock: some View {
-        LiveTurnPromptBlock(
-            presentation: promptPresentation,
-            sentAt: turn.startedAt
-        )
-    }
-
     private var claudeTranscript: some View {
         ClaudeTranscriptView(
             turnID: turn.id,
@@ -3853,10 +3858,6 @@ private struct LiveTurnCard: View {
 
     private var effectiveBackend: AgentBackend {
         turn.backend ?? turn.characterBackend
-    }
-
-    private var promptPresentation: TaskPromptPresentation {
-        TaskPromptPresentation(prompt: turn.prompt)
     }
 
     private var effectiveWorkspaceDirectory: String {
