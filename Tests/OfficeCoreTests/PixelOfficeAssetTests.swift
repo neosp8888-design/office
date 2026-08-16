@@ -102,6 +102,7 @@ final class PixelOfficeAssetTests: XCTestCase {
             ],
             .leftWoman: [
                 "profile-left-woman-loop.mp4",
+                "profile-left-woman-stretch-loop-20s-silent.mp4",
                 "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent.mp4",
             ],
             .rightWoman: [

@@ -234,6 +234,7 @@ public enum PixelOfficeAsset {
         case .leftWoman:
             filenames = [
                 "profile-left-woman-loop",
+                "profile-left-woman-stretch-loop-20s-silent",
                 "exec-17b7e176-palmier-klingv3-photoreal-starfall-loop-v1-silent",
             ]
         case .rightWoman:
