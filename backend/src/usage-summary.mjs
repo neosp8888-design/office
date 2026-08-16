@@ -31,6 +31,23 @@ function normalizedPlan(value) {
     .join(" ");
 }
 
+function normalizedCodexPlan(value) {
+  const key = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  if (key === "pro") return "Pro 20x";
+  if (key === "prolite") return "Pro 5x";
+  return normalizedPlan(value);
+}
+
+function normalizedClaudePlan(value) {
+  const key = String(value ?? "").trim().toLowerCase();
+  if (/max[\s_-]*5x/.test(key)) return "Max 5x";
+  if (/max[\s_-]*20x/.test(key)) return "Max 20x";
+  return normalizedPlan(value);
+}
+
 function isoDate(value) {
   if (value == null) return null;
   const date = typeof value === "number"
@@ -59,7 +76,7 @@ export function parseCodexRateLimits(result) {
   return {
     fiveHour: window(fiveHourMinutes),
     weekly: window(sevenDayMinutes),
-    plan: normalizedPlan(rateLimits.planType),
+    plan: normalizedCodexPlan(rateLimits.planType),
   };
 }
 
@@ -75,7 +92,7 @@ export function parseClaudeRateLimits(payload, plan) {
   return {
     fiveHour: claudeWindow(payload?.five_hour),
     weekly: claudeWindow(payload?.seven_day),
-    plan: normalizedPlan(plan),
+    plan: normalizedClaudePlan(plan),
   };
 }
 
@@ -202,7 +219,9 @@ function parsedClaudeCredential(raw) {
   }
   return {
     accessToken,
-    plan: oauth.subscriptionType ?? oauth.rateLimitTier ?? null,
+    // subscriptionType은 "max"까지만 알려 주지만 rateLimitTier에는
+    // default_claude_max_5x처럼 실제 배수가 들어 있다.
+    plan: oauth.rateLimitTier ?? oauth.subscriptionType ?? null,
   };
 }
 
