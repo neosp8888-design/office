@@ -42,7 +42,6 @@ enum CharacterFullBodyProfilePresentationMetrics {
 
 enum CharacterFullBodyProfileSelection {
     static let dragThreshold: CGFloat = 36
-    static let loopsBeforeAutomaticAdvance = 2
     static let crossfadeDuration: TimeInterval = 1.2
 
     static func previousIndex(from index: Int, count: Int) -> Int {
@@ -73,11 +72,6 @@ enum CharacterFullBodyProfileSelection {
         return index
     }
 
-    static func shouldAutomaticallyAdvance(
-        afterCompletedLoops completedLoops: Int
-    ) -> Bool {
-        completedLoops >= loopsBeforeAutomaticAdvance
-    }
 }
 
 struct CharacterFullBodyProfileView: View {
@@ -87,7 +81,6 @@ struct CharacterFullBodyProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedVideoIndex = 0
-    @State private var completedLoopCount = 0
     @State private var outgoingVideoURL: URL?
     @State private var crossfadeProgress = 1.0
     @State private var isPresented = false
@@ -136,9 +129,9 @@ struct CharacterFullBodyProfileView: View {
                     ForEach(visibleVideoURLs, id: \.self) { videoURL in
                         CharacterFullBodyProfileVideo(
                             url: videoURL,
-                            onLoopCompleted: {
-                                handleLoopCompleted(for: videoURL)
-                            }
+                            // 반복이 끝나도 다음 영상으로 넘기지 않는다.
+                            // 전환은 사용자의 스와이프만 담당한다.
+                            onLoopCompleted: {}
                         )
                         .id(videoURL)
                         .opacity(opacity(for: videoURL))
@@ -232,30 +225,7 @@ struct CharacterFullBodyProfileView: View {
 
         outgoingVideoURL = selectedVideoURL
         crossfadeProgress = 0
-        completedLoopCount = 0
         selectedVideoIndex = index
-    }
-
-    private func handleLoopCompleted(for videoURL: URL) {
-        guard
-            outgoingVideoURL == nil,
-            videoURL == selectedVideoURL,
-            videoURLs.count > 1
-        else {
-            return
-        }
-
-        completedLoopCount += 1
-        if CharacterFullBodyProfileSelection.shouldAutomaticallyAdvance(
-            afterCompletedLoops: completedLoopCount
-        ) {
-            selectVideo(
-                CharacterFullBodyProfileSelection.nextIndex(
-                    from: selectedVideoIndex,
-                    count: videoURLs.count
-                )
-            )
-        }
     }
 
     private func completeCrossfadeIfNeeded() async {

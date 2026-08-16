@@ -69,20 +69,35 @@ final class CharacterFullBodyProfileLayoutTests: XCTestCase {
         )
     }
 
-    func testProfileAdvancesAfterExactlyTwoCompletedLoops() {
-        XCTAssertFalse(
-            CharacterFullBodyProfileSelection.shouldAutomaticallyAdvance(
-                afterCompletedLoops: 1
-            )
-        )
-        XCTAssertTrue(
-            CharacterFullBodyProfileSelection.shouldAutomaticallyAdvance(
-                afterCompletedLoops: 2
-            )
+    func testProfileVideoAdvancesOnlyBySwipe() {
+        // 반복이 끝나도 자동으로 넘어가지 않는다. 전환은 사용자의
+        // 스와이프만 담당한다.
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.index(
+                afterHorizontalDrag: -40,
+                from: 0,
+                count: 3
+            ),
+            1,
+            "왼쪽으로 밀면 다음 영상으로 넘어가야 합니다."
         )
         XCTAssertEqual(
-            CharacterFullBodyProfileSelection.crossfadeDuration,
-            1.2
+            CharacterFullBodyProfileSelection.index(
+                afterHorizontalDrag: 40,
+                from: 0,
+                count: 3
+            ),
+            2,
+            "오른쪽으로 밀면 이전 영상으로 돌아가야 합니다."
+        )
+        XCTAssertEqual(
+            CharacterFullBodyProfileSelection.index(
+                afterHorizontalDrag: -4,
+                from: 1,
+                count: 3
+            ),
+            1,
+            "짧은 움직임은 전환으로 보지 않습니다."
         )
     }
 
