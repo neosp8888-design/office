@@ -42,7 +42,7 @@ test("Codex app-server 한도는 창 길이로 5시간과 7일을 구분한다",
         remaining: 59,
         resetAt: "2027-01-22T06:40:00.000Z",
       },
-      plan: "Pro",
+      plan: "Pro 20x",
     },
   );
 });
@@ -89,7 +89,7 @@ test("Codex 직접 조회는 백엔드 작업 폴더와 무관한 홈에서 실�
   assert.deepEqual(invocation.arguments_, ["app-server", "--stdio"]);
   assert.equal(invocation.options.cwd, homedir());
   assert.equal(result.weekly.remaining, 66);
-  assert.equal(result.plan, "Pro");
+  assert.equal(result.plan, "Pro 20x");
 });
 
 test("Claude OAuth 사용률은 남은 비율로 변환한다", () => {
@@ -119,6 +119,18 @@ test("Claude OAuth 사용률은 남은 비율로 변환한다", () => {
       plan: "Max",
     },
   );
+});
+
+test("Claude의 구체 한도 등급은 Max 배수를 보존한다", () => {
+  const parsed = parseClaudeRateLimits(
+    {
+      five_hour: null,
+      seven_day: null,
+    },
+    "default_claude_max_5x",
+  );
+
+  assert.equal(parsed.plan, "Max 5x");
 });
 
 test("Claude 직접 조회는 기존 OAuth 토큰을 읽기 전용으로 전달한다", async () => {
