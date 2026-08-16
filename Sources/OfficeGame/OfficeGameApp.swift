@@ -1180,16 +1180,28 @@ private struct LiveWorkspaceCommandBar: View {
                 )
             }
             if director.runningCharacters.contains(selectedCharacterID) {
-                if director.canQueueForSelectedCharacter {
+                switch director.selectedCharacterQueueAvailability {
+                case .available:
                     return OfficeLocalization.format(
                         "%@의 다음 턴에 예약할 업무를 입력하세요",
                         selectedName
                     )
+                case .awaitingWorkspaceReview:
+                    return OfficeLocalization.format(
+                        "%@의 변경사항 검토를 마치면 예약할 수 있습니다",
+                        selectedName
+                    )
+                case .full:
+                    return OfficeLocalization.format(
+                        "%@의 예약이 가득 찼습니다",
+                        selectedName
+                    )
+                case .unavailable:
+                    return OfficeLocalization.format(
+                        "%@의 다음 업무 예약을 준비하는 중입니다",
+                        selectedName
+                    )
                 }
-                return OfficeLocalization.format(
-                    "%@의 예약이 가득 찼습니다",
-                    selectedName
-                )
             }
             return OfficeLocalization.format(
                 "%@에게 업무를 입력하세요",
@@ -1762,12 +1774,39 @@ private struct BubbleDetailView: View {
     }
 }
 
+struct AgentQuickSettingsAvailability: Equatable {
+    let isReady: Bool
+    let isUpdatingConfiguration: Bool
+    let isRunning: Bool
+    let needsWorkspaceReview: Bool
+
+    var canChangeCurrentBackendSettings: Bool {
+        isReady && !isUpdatingConfiguration && !isRunning
+    }
+
+    var canChangeBackend: Bool {
+        canChangeCurrentBackendSettings && !needsWorkspaceReview
+    }
+}
+
 private struct AgentQuickSettingsView: View {
     @ObservedObject var director: AgentDirector
     let character: CharacterConfiguration
 
     private var settings: CharacterAgentSettings {
         director.agentSettings(for: character.id)
+    }
+
+    private var availability: AgentQuickSettingsAvailability {
+        AgentQuickSettingsAvailability(
+            isReady: director.isReadyForSubmissions,
+            isUpdatingConfiguration: director.isUpdatingConfiguration,
+            isRunning: director.runningCharacters.contains(character.id),
+            needsWorkspaceReview:
+                director.pendingWorkspaceReviewCharacters.contains(
+                    character.id
+                )
+        )
     }
 
     var body: some View {
@@ -1798,6 +1837,14 @@ private struct AgentQuickSettingsView: View {
                     systemImage: "terminal"
                 )
             }
+            .disabled(!availability.canChangeBackend)
+            .help(
+                availability.needsWorkspaceReview
+                    ? OfficeLocalization.string(
+                        "변경사항 검토를 마친 뒤 CLI를 전환할 수 있습니다"
+                    )
+                    : OfficeLocalization.string("직원 CLI 선택")
+            )
 
             Menu {
                 ForEach(settings.backend.modelOptions, id: \.self) { model in
@@ -1824,6 +1871,7 @@ private struct AgentQuickSettingsView: View {
                     systemImage: "cpu"
                 )
             }
+            .disabled(!availability.canChangeCurrentBackendSettings)
 
             Button {
                 var updated = settings
@@ -1837,6 +1885,7 @@ private struct AgentQuickSettingsView: View {
             }
             .buttonStyle(.plain)
             .help(settings.fastMode ? "Fast 모드 끄기" : "Fast 모드 켜기")
+            .disabled(!availability.canChangeCurrentBackendSettings)
 
             Menu {
                 ForEach(settings.backend.effortOptions, id: \.self) { effort in
@@ -1858,6 +1907,7 @@ private struct AgentQuickSettingsView: View {
                     systemImage: "brain"
                 )
             }
+            .disabled(!availability.canChangeCurrentBackendSettings)
 
             Menu {
                 ForEach(AgentPermission.allCases) { permission in
@@ -1882,18 +1932,26 @@ private struct AgentQuickSettingsView: View {
                     systemImage: "shield"
                 )
             }
+            .disabled(!availability.canChangeCurrentBackendSettings)
+
+            if availability.needsWorkspaceReview {
+                Image(systemName: "checklist")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel(
+                        OfficeLocalization.string("변경사항 검토 대기")
+                    )
+                    .help(
+                        OfficeLocalization.string(
+                            "검토 대기 중 · 현재 CLI의 모델 설정은 바꿀 수 있고 "
+                                + "CLI 전환만 잠깁니다"
+                        )
+                    )
+            }
         }
         .menuStyle(.borderlessButton)
         // Menu는 남는 가로 폭을 나눠 가지므로 내용 폭으로 고정해 좌측에 붙인다.
         .fixedSize(horizontal: true, vertical: false)
-        .disabled(
-            !director.isReadyForSubmissions
-                || director.isUpdatingConfiguration
-                || director.runningCharacters.contains(character.id)
-                || director.pendingWorkspaceReviewCharacters.contains(
-                    character.id
-                )
-        )
     }
 
     private func apply(_ settings: CharacterAgentSettings) {

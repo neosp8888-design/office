@@ -64,6 +64,35 @@ struct CommandEntryAvailability: Equatable {
     }
 }
 
+enum SelectedCharacterQueueAvailability: Equatable {
+    case unavailable
+    case available
+    case awaitingWorkspaceReview
+    case full
+
+    static func resolve(
+        isReady: Bool,
+        isUpdatingConfiguration: Bool,
+        hasSelectedCharacter: Bool,
+        isSelectedCharacterRunning: Bool,
+        needsWorkspaceReview: Bool,
+        isFull: Bool
+    ) -> Self {
+        guard
+            isReady,
+            !isUpdatingConfiguration,
+            hasSelectedCharacter,
+            isSelectedCharacterRunning
+        else {
+            return .unavailable
+        }
+        if needsWorkspaceReview {
+            return .awaitingWorkspaceReview
+        }
+        return isFull ? .full : .available
+    }
+}
+
 enum CommandComposerLayout {
     static let minimumHeight: CGFloat = 40
     static let maximumHeight: CGFloat = 160
@@ -140,6 +169,25 @@ struct CommandEntryRow: View {
             )
     }
 
+    private var queueHelp: String {
+        switch director.selectedCharacterQueueAvailability {
+        case .available:
+            return "지금 응답이 끝나면 이어서 보냅니다 · 최대 "
+                + "\(QueuedCommandQueue.maximumCount)개"
+        case .awaitingWorkspaceReview:
+            return OfficeLocalization.string(
+                "변경사항 검토를 마친 뒤 다음 업무를 예약할 수 있습니다"
+            )
+        case .full:
+            return "예약이 가득 찼습니다 · 최대 "
+                + "\(QueuedCommandQueue.maximumCount)개"
+        case .unavailable:
+            return OfficeLocalization.string(
+                "현재는 다음 업무를 예약할 수 없습니다"
+            )
+        }
+    }
+
     var body: some View {
         let canSubmit = submissionPrompt != nil
 
@@ -213,13 +261,7 @@ struct CommandEntryRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("다음 턴에 예약")
-                .help(
-                    availability.canQueue
-                        ? "지금 응답이 끝나면 이어서 보냅니다 · 최대 "
-                            + "\(QueuedCommandQueue.maximumCount)개"
-                        : "예약이 가득 찼습니다 · 최대 "
-                            + "\(QueuedCommandQueue.maximumCount)개"
-                )
+                .help(queueHelp)
                 .disabled(!canSubmit)
                 .opacity(canSubmit ? 1 : 0.42)
             } else {

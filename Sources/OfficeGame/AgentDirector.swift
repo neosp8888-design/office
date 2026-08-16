@@ -1011,17 +1011,28 @@ final class AgentDirector: ObservableObject {
     }
 
     /// 실행 중인 직원에게만 예약을 받는다. 놀고 있으면 바로 제출하면 된다.
+    var selectedCharacterQueueAvailability:
+        SelectedCharacterQueueAvailability
+    {
+        let selectedCharacterID = selectedCharacterID
+        return SelectedCharacterQueueAvailability.resolve(
+            isReady: isReadyForSubmissions,
+            isUpdatingConfiguration: isUpdatingConfiguration,
+            hasSelectedCharacter: selectedCharacterID != nil,
+            isSelectedCharacterRunning: selectedCharacterID.map {
+                runningCharacters.contains($0)
+            } ?? false,
+            needsWorkspaceReview: selectedCharacterID.map {
+                pendingWorkspaceReviewCharacters.contains($0)
+            } ?? false,
+            isFull: selectedCharacterID.map {
+                queuedCommands[$0]?.isFull == true
+            } ?? false
+        )
+    }
+
     var canQueueForSelectedCharacter: Bool {
-        guard
-            let selectedCharacterID,
-            isReadyForSubmissions,
-            !isUpdatingConfiguration,
-            !pendingWorkspaceReviewCharacters.contains(selectedCharacterID),
-            runningCharacters.contains(selectedCharacterID)
-        else {
-            return false
-        }
-        return queuedCommands[selectedCharacterID]?.isFull != true
+        selectedCharacterQueueAvailability == .available
     }
 
     var selectedCharacterNeedsWorkspaceReview: Bool {
@@ -1645,8 +1656,14 @@ final class AgentDirector: ObservableObject {
             settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
             return
         }
-        guard !pendingWorkspaceReviewCharacters.contains(character) else {
-            settingsStatus = "변경사항 검토를 마친 뒤 설정할 수 있습니다."
+        let changesBackend = agentSettings(for: character).backend
+            != settings.backend
+        guard
+            !changesBackend
+                || !pendingWorkspaceReviewCharacters.contains(character)
+        else {
+            settingsStatus =
+                "CLI 변경은 변경사항 검토를 마친 뒤 할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
