@@ -1264,7 +1264,7 @@ private extension OfficeGameView {
                 )
         }
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
-        .popover(isPresented: $showsCharacterSettings) {
+        .sheet(isPresented: $showsCharacterSettings) {
             CharacterSettingsView(director: director)
         }
         .disabled(
@@ -1979,6 +1979,12 @@ private struct QuickSettingLabel: View {
     }
 }
 
+enum CharacterSettingsLayout {
+    static let width: CGFloat = 960
+    static let height: CGFloat = 700
+    static let identityPromptHeight: CGFloat = 220
+}
+
 private struct CharacterSettingsView: View {
     @ObservedObject var director: AgentDirector
     @Environment(\.dismiss) private var dismiss
@@ -2058,7 +2064,7 @@ private struct CharacterSettingsView: View {
                     .frame(maxWidth: .infinity, minHeight: 180)
                 }
             }
-            .frame(maxHeight: 560)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let status = director.settingsStatus {
                 Text(OfficeLocalization.string(status))
@@ -2096,7 +2102,10 @@ private struct CharacterSettingsView: View {
             }
         }
         .padding(18)
-        .frame(width: 620)
+        .frame(
+            width: CharacterSettingsLayout.width,
+            height: CharacterSettingsLayout.height
+        )
         .task {
             await loadDrafts()
         }
@@ -2176,7 +2185,7 @@ private struct CharacterSettingsEditor: View {
                     .foregroundStyle(.secondary)
                 TextEditor(text: $identityPrompt)
                     .font(.system(size: 12))
-                    .frame(height: 62)
+                    .frame(height: CharacterSettingsLayout.identityPromptHeight)
                     .padding(4)
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
