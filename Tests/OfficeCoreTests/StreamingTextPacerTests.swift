@@ -238,6 +238,27 @@ final class StreamingTextPacerTests: XCTestCase {
         XCTAssertEqual(completionCount, 1)
     }
 
+    /// 코드 펜스 안의 빈 줄은 원문이 ""이라 초기 targetText와 같다.
+    /// 이때도 완료가 통보돼야 줄 단위 타자가 다음 줄로 넘어간다.
+    func testEmptySourceStillReportsCompletion() async {
+        let view = IncrementalStreamingTextView(
+            fontSize: 14,
+            lineSpacing: 3
+        )
+        let completion = expectation(description: "빈 줄 완료")
+        view.onFinishedTyping = {
+            completion.fulfill()
+        }
+
+        view.apply(
+            source: "",
+            animates: false,
+            revealMode: .fullLine
+        )
+
+        await fulfillment(of: [completion], timeout: 1)
+    }
+
     func testReplacedImmediateRevisionIgnoresStaleCompletion() async {
         let view = IncrementalStreamingTextView(
             fontSize: 14,
