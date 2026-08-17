@@ -3,6 +3,12 @@ import XCTest
 @testable import OfficeGame
 
 final class CharacterSettingsDraftsTests: XCTestCase {
+    func testSettingsWindowAndInstructionEditorUseExpandedLayout() {
+        XCTAssertEqual(CharacterSettingsLayout.width, 960)
+        XCTAssertEqual(CharacterSettingsLayout.height, 700)
+        XCTAssertEqual(CharacterSettingsLayout.identityPromptHeight, 220)
+    }
+
     func testBuildsEveryVisibleDraftFromDatabaseProfiles() {
         let drafts = CharacterSettingsDrafts(
             storedCharacters: [
