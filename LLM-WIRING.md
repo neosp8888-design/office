@@ -25,20 +25,23 @@
 ```
 # codex 첫 턴
 codex exec --json --skip-git-repo-check \
-  -c model="…" -c model_reasoning_effort="…" -s <sandbox> "<프롬프트>"
+  -c model="…" -c model_reasoning_effort="…" \
+  -c developer_instructions="<DB 업무 지침>" -s <sandbox> "<프롬프트>"
 
 # codex 이어가기
 codex exec resume <thread_id> --json \
-  -c model="…" -c model_reasoning_effort="…" "<프롬프트>"
+  -c model="…" -c model_reasoning_effort="…" \
+  -c developer_instructions="<DB 업무 지침>" "<프롬프트>"
 
 # claude 첫 턴
 claude -p "<프롬프트>" --output-format stream-json --verbose \
   --model … --effort … --permission-mode … \
-  --append-system-prompt "<정체성>" --fallback-model <백업>
+  --append-system-prompt "<DB 업무 지침>" --fallback-model <백업>
 
 # claude 이어가기
 claude -p "<프롬프트>" --resume <session_id> \
-  --output-format stream-json --verbose --model … --effort …
+  --output-format stream-json --verbose --model … --effort … \
+  --append-system-prompt "<DB 업무 지침>"
 ```
 
 `codex exec resume` 는 `-c key=value` 오버라이드를 받는다. **세션을 유지한 채 모델·추론을 턴마다 바꿀 수 있다.**
@@ -104,26 +107,24 @@ CLIRunner (actor) × N      Process + JSONL 파싱
 | `backend` (codex / claude) | 캐릭터 생성 시 고정 |
 | `sessionID` | 첫 턴 응답에서 획득 |
 | `model` · `effort` · `permission` | **턴마다 변경 가능** |
-| 정체성 프롬프트 | 첫 턴에 1회만 |
+| 업무 지침 | DB에서 매 턴 조회해 전달 |
 | 직전 `input_tokens` | 매 턴 갱신 — 압축 판단에 쓴다 |
 
 캐릭터 5명 전부 에이전트로 둔다. 보통 둘만 쓰더라도 나머지가 놀 뿐 구조는 같다.
 
 ---
 
-## 5. 정체성 — 두 층으로 나눈다
+## 5. 업무 지침 — DB 단일 원본
 
-### 고정 정체성 (첫 턴 1회)
+직원 설정의 PostgreSQL `characters.identity_prompt`를 수정 없이
+그대로 전달한다. 소스에서 이름·좌석·공통 응답 규칙을 더하지 않는다.
 
 ```
-너는 이 사무실의 <이름>이다. <자리>에 앉아 있다.
-동료: <나머지 캐릭터 이름 전원>.
-사용자는 사장이며, 사무실 화면에서 너를 지목해 말을 건다.
+Codex: -c developer_instructions=<characters.identity_prompt>
+Claude: --append-system-prompt <characters.identity_prompt>
 ```
 
-세션이 유지되므로 **매 턴 붙이면 안 된다.** 낭비이고 프롬프트 캐시도 깨진다.
-
-동료 명단은 **5명 전원**을 넣는다. 나중에 세 번째를 불렀을 때 서로 처음 보는 사이가 되지 않는다.
+신규 세션과 재개 세션 모두 턴 시작 시점의 DB 최신값을 사용한다.
 
 ### 턴 맥락 (동시 발송일 때만)
 
@@ -165,7 +166,7 @@ CLIRunner (actor) × N      Process + JSONL 파싱
 1. 현재 세션에 인수인계 메모를 요청한다 (한 턴)
 2. 메모를 받아 저장한다
 3. 세션을 버리고 새 세션을 시작한다
-4. 새 세션 첫 프롬프트 = 정체성 + 인수인계 메모
+4. 새 세션 = DB 업무 지침 + 인수인계 메모
 
 캐릭터는 그동안 `organizing` 상태로 둔다.
 
