@@ -141,6 +141,17 @@ final class IncrementalStreamingTextView: NSView {
         revealMode: StreamingPlainTextRevealMode = .trailingCharacters
     ) {
         guard source != targetText else {
+            // 원문이 그대로여도 아직 이번 revision의 완료를 알리지 않았다면
+            // 여기서 알린다. 코드 펜스 안의 빈 줄은 원문이 ""이라 초기
+            // targetText와 같아 이 경로로 들어오고, 통보가 없으면 줄 단위
+            // 타자가 그 줄에서 영영 멈춘다.
+            if finishedGeneration != updateGeneration,
+               pendingCharacters.isEmpty {
+                scheduleImmediateCompletion(
+                    generation: updateGeneration,
+                    target: targetText
+                )
+            }
             return
         }
 
