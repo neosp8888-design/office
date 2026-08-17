@@ -15,13 +15,6 @@ public struct AgentResponseEnvelope: Equatable, Sendable {
 public enum AgentResponseProtocol {
     public static let inputMarker = "[NEED_INPUT]"
 
-    public static let instruction = """
-    사용자 판단이 반드시 필요해 더 진행할 수 없을 때만 최종 응답을 정확히 다음 형식으로 작성한다.
-    [NEED_INPUT]
-    사용자에게 보여줄 질문 원문
-    표식 다음에는 질문과 판단에 필요한 선택지만 작성한다. 사용자 확인 없이 할 수 있는 작업은 먼저 진행한다.
-    """
-
     public static func decode(_ text: String) -> AgentResponseEnvelope {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.split(

@@ -85,22 +85,11 @@ actor AgentCLIRunner {
         previousSessionID: String?
     ) -> [String] {
         var arguments = ["exec"]
-        var effectivePrompt = prompt
 
         if let previousSessionID {
             arguments += ["resume", previousSessionID, "--json"]
         } else {
             arguments += ["--json", "--skip-git-repo-check"]
-            effectivePrompt = """
-            너는 이 사무실의 \(character.name)이다. \(character.seat)에 앉아 있다.
-            \(character.identityPrompt)
-
-            응답 규칙
-            \(AgentResponseProtocol.instruction)
-
-            사용자 업무
-            \(prompt)
-            """
         }
 
         if let model = character.model, !model.isEmpty {
@@ -115,11 +104,13 @@ actor AgentCLIRunner {
             "model_reasoning_summary=\"detailed\"",
             "-c",
             "show_raw_agent_reasoning=true",
+            "-c",
+            "developer_instructions=\(jsonString(character.identityPrompt))",
         ]
         if previousSessionID == nil {
             arguments += ["-s", character.permission]
         }
-        arguments.append(effectivePrompt)
+        arguments.append(prompt)
         return arguments
     }
 
@@ -144,19 +135,21 @@ actor AgentCLIRunner {
         if let model = character.model, !model.isEmpty {
             arguments += ["--model", model]
         }
+        arguments += ["--append-system-prompt", character.identityPrompt]
         if let previousSessionID {
             arguments += ["--resume", previousSessionID]
-        } else {
-            let identity = """
-            너는 이 사무실의 \(character.name)이다. \(character.seat)에 앉아 있다.
-            \(character.identityPrompt)
-
-            응답 규칙
-            \(AgentResponseProtocol.instruction)
-            """
-            arguments += ["--append-system-prompt", identity]
         }
         return arguments
+    }
+
+    private func jsonString(_ value: String) -> String {
+        guard
+            let data = try? JSONEncoder().encode(value),
+            let encoded = String(data: data, encoding: .utf8)
+        else {
+            return "\"\""
+        }
+        return encoded
     }
 
     private func launch(

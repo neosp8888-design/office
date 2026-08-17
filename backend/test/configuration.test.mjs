@@ -165,6 +165,12 @@ test("기존 직원은 같은 provider의 검증된 최신 CLI 경로만 갱신�
     queries[0].text,
     /characters\.backend = EXCLUDED\.backend[\s\S]*EXCLUDED\.config \? 'executablePath'/,
   );
+  const conflictUpdate = queries[0].text.split("ON CONFLICT (id) DO UPDATE")[1];
+  assert.doesNotMatch(
+    conflictUpdate,
+    /identity_prompt\s*=/,
+    "기동 동기화는 DB에서 관리하는 업무 지침을 덮어쓰지 않아야 합니다.",
+  );
   assert.equal(
     "executablePath" in JSON.parse(queries[0].values[9]),
     false,
