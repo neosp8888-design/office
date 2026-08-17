@@ -243,8 +243,14 @@ public enum PixelOfficeAsset {
                 "profile-right-woman-loop",
                 "kodaeri-fantasy-palmier-loop-10s",
             ]
-        case .leftMan, .rightMan:
-            return []
+        case .leftMan:
+            filenames = [
+                "profile-left-man-photoreal-loop-silent",
+            ]
+        case .rightMan:
+            filenames = [
+                "profile-right-man-photoreal-loop-silent",
+            ]
         }
 
         return filenames.compactMap { filename in
