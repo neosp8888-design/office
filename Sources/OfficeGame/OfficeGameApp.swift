@@ -1987,6 +1987,8 @@ private struct CharacterSettingsView: View {
         [OfficeCharacter: CharacterAgentSettings] = [:]
     @State private var identityPromptDrafts: [OfficeCharacter: String] = [:]
     @State private var autoApproveAndMergeDraft = true
+    @State private var isLoadingDrafts = true
+    @State private var hasLoadedDatabaseDrafts = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -2022,18 +2024,38 @@ private struct CharacterSettingsView: View {
                     .fill(Color.primary.opacity(0.045))
             )
 
-            ScrollView {
-                VStack(spacing: 10) {
-                    ForEach(director.characters) { character in
-                        CharacterSettingsEditor(
-                            seat: character.seat,
-                            name: nameBinding(for: character.id),
-                            identityPrompt: identityPromptBinding(
-                                for: character.id
-                            ),
-                            settings: settingsBinding(for: character.id)
-                        )
+            Group {
+                if isLoadingDrafts {
+                    ProgressView("최신 설정을 불러오는 중입니다.")
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                } else if hasLoadedDatabaseDrafts {
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            ForEach(director.characters) { character in
+                                CharacterSettingsEditor(
+                                    seat: character.seat,
+                                    name: nameBinding(for: character.id),
+                                    identityPrompt: identityPromptBinding(
+                                        for: character.id
+                                    ),
+                                    settings: settingsBinding(
+                                        for: character.id
+                                    )
+                                )
+                            }
+                        }
                     }
+                } else {
+                    VStack(spacing: 10) {
+                        Text("최신 설정을 불러오지 못했습니다.")
+                            .font(.system(size: 12, weight: .semibold))
+                        Button("다시 시도") {
+                            Task {
+                                await loadDrafts()
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 180)
                 }
             }
             .frame(maxHeight: 560)
@@ -2070,33 +2092,33 @@ private struct CharacterSettingsView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(!hasLoadedDatabaseDrafts || isLoadingDrafts)
             }
         }
         .padding(18)
         .frame(width: 620)
-        .onAppear {
-            nameDrafts = Dictionary(
-                uniqueKeysWithValues: director.characters.map {
-                    ($0.id, director.displayName(for: $0.id))
-                }
-            )
-            settingsDrafts = Dictionary(
-                uniqueKeysWithValues: director.characters.map {
-                    ($0.id, director.agentSettings(for: $0.id))
-                }
-            )
-            identityPromptDrafts = Dictionary(
-                uniqueKeysWithValues: director.characters.map {
-                    (
-                        $0.id,
-                        OfficeLocalization.displayIdentityPrompt(
-                            director.identityPrompt(for: $0.id)
-                        )
-                    )
-                }
-            )
-            autoApproveAndMergeDraft = director.autoApproveAndMerge
+        .task {
+            await loadDrafts()
         }
+    }
+
+    private func loadDrafts() async {
+        isLoadingDrafts = true
+        hasLoadedDatabaseDrafts = false
+        defer {
+            isLoadingDrafts = false
+        }
+        guard let drafts = await director.fetchCharacterSettingsDrafts()
+        else {
+            return
+        }
+        nameDrafts = drafts.names
+        settingsDrafts = drafts.settings
+        identityPromptDrafts = drafts.identityPrompts.mapValues {
+            OfficeLocalization.displayIdentityPrompt($0)
+        }
+        autoApproveAndMergeDraft = drafts.autoApproveAndMerge
+        hasLoadedDatabaseDrafts = true
     }
 
     private func nameBinding(

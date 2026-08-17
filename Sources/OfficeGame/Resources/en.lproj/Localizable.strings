@@ -86,6 +86,8 @@
 "Fast 모드 켜기" = "Turn on Fast mode";
 "직원별 설정" = "Teammate Settings";
 "이름, 역할·업무 지침, CLI 실행 방식을 직원마다 설정합니다." = "Configure each teammate's name, role, work instructions, and CLI behavior.";
+"최신 설정을 불러오는 중입니다." = "Loading the latest settings.";
+"최신 설정을 불러오지 못했습니다." = "Couldn't load the latest settings.";
 "작업 완료 후 자동 승인·병합" = "Automatically approve and merge completed work";
 "기존 안전 검사 후 자동 병합합니다. 동료 충돌은 완료까지 기다렸다 재개하고, 해결 실패는 최대 3회 재질의합니다." = "Merge automatically after existing safety checks. Conflicts with teammates wait for their work to finish, then resume; unresolved failures are retried up to three times.";
 "이름" = "Name";

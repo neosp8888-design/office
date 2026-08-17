@@ -641,6 +641,42 @@ enum SpeechBubbleIdleChatterPolicy {
     }
 }
 
+struct CharacterSettingsDrafts: Equatable, Sendable {
+    let names: [OfficeCharacter: String]
+    let settings: [OfficeCharacter: CharacterAgentSettings]
+    let identityPrompts: [OfficeCharacter: String]
+    let autoApproveAndMerge: Bool
+
+    init(
+        storedCharacters: [StoredCharacterProfile],
+        automationSettings: AutomationSettings
+    ) {
+        var names: [OfficeCharacter: String] = [:]
+        var settings: [OfficeCharacter: CharacterAgentSettings] = [:]
+        var identityPrompts: [OfficeCharacter: String] = [:]
+
+        for stored in storedCharacters {
+            guard let character = OfficeCharacter(rawValue: stored.id) else {
+                continue
+            }
+            names[character] = stored.name
+            settings[character] = CharacterAgentSettings(
+                backend: stored.backend,
+                model: stored.model,
+                effort: stored.effort,
+                fastMode: stored.fastMode,
+                permission: AgentPermission(cliValue: stored.permission)
+            )
+            identityPrompts[character] = stored.identityPrompt
+        }
+
+        self.names = names
+        self.settings = settings
+        self.identityPrompts = identityPrompts
+        autoApproveAndMerge = automationSettings.autoApproveAndMerge
+    }
+}
+
 @MainActor
 final class AgentDirector: ObservableObject {
     @Published private(set) var characters: [CharacterConfiguration]
@@ -1549,6 +1585,26 @@ final class AgentDirector: ObservableObject {
                 fastMode: true,
                 permission: .workspaceWrite
             )
+    }
+
+    func fetchCharacterSettingsDrafts() async -> CharacterSettingsDrafts? {
+        settingsStatus = nil
+        do {
+            async let storedCharacters = database.fetchCharacters()
+            async let automationSettings =
+                database.fetchAutomationSettings()
+            let (characters, automation) = try await (
+                storedCharacters,
+                automationSettings
+            )
+            return CharacterSettingsDrafts(
+                storedCharacters: characters,
+                automationSettings: automation
+            )
+        } catch {
+            settingsStatus = error.localizedDescription
+            return nil
+        }
     }
 
     func saveConfiguration(
