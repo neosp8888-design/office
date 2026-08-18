@@ -8,6 +8,8 @@ import {
   constants,
   copyFileSync,
   existsSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -17,6 +19,8 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -1225,7 +1229,8 @@ export class AgentRuntime {
             workspace.rejected_at AS "workspaceRejectedAt",
             workspace.auto_retry_count AS "workspaceAutoRetryCount",
             workspace.auto_repair_paused AS "workspaceAutoRepairPaused",
-            workspace.auto_waiting_for_peer AS "workspaceAutoWaitingForPeer"
+            workspace.auto_waiting_for_peer AS "workspaceAutoWaitingForPeer",
+            resume_workspace.execution_workdir AS "resumeExecutionWorkdir"
           FROM active_cli_sessions AS active
           JOIN cli_sessions AS session
             ON session.id = active.cli_session_id
@@ -1260,6 +1265,20 @@ export class AgentRuntime {
             ORDER BY candidate.updated_at DESC
             LIMIT 1
           ) AS workspace ON true
+          LEFT JOIN LATERAL (
+            SELECT candidate.execution_workdir
+            FROM turns AS completed_turn
+            JOIN task_workspaces AS candidate
+              ON candidate.id = completed_turn.task_workspace_id
+            WHERE completed_turn.cli_session_id = session.id
+              AND completed_turn.status = 'completed'
+              AND candidate.execution_workdir IS NOT NULL
+            ORDER BY
+              completed_turn.ended_at DESC NULLS LAST,
+              completed_turn.started_at DESC,
+              completed_turn.id DESC
+            LIMIT 1
+          ) AS resume_workspace ON true
           WHERE active.character_id = $1
             AND session.ended_at IS NULL
           LIMIT 1
@@ -1374,6 +1393,8 @@ export class AgentRuntime {
         sessionID,
         conversationID: effectiveConversationID,
         externalSessionID,
+        resumeExecutionWorkdir:
+          active?.resumeExecutionWorkdir ?? null,
         character,
         prompt,
         workspace,
@@ -1385,6 +1406,16 @@ export class AgentRuntime {
   }
 
   async execute(state) {
+    if (
+      state.character.backend === "claude" &&
+      state.externalSessionID
+    ) {
+      prepareClaudeSessionResume({
+        sessionID: state.externalSessionID,
+        workdir: state.workdir,
+        previousWorkdir: state.resumeExecutionWorkdir,
+      });
+    }
     const executable = locateExecutable(state.character);
     const cliArguments = buildArguments({
       character: state.character,
@@ -4372,10 +4403,19 @@ export function recoverInterruptedUsage(state) {
   if (state.usage || !state.externalSessionID) {
     return null;
   }
+  const currentClaudePath = claudeSessionPath(
+    state.workdir,
+    state.externalSessionID,
+  );
   const recorded = state.character?.backend === "codex"
     ? latestCodexUsageFromRollout(findRolloutPath(state.externalSessionID))
     : latestClaudeUsageFromSession(
-      claudeSessionPath(state.workdir, state.externalSessionID),
+      claudeSessionFileMatches(
+          currentClaudePath,
+          state.externalSessionID,
+        )
+        ? currentClaudePath
+        : findClaudeSessionPath(state.externalSessionID),
     );
   if (!recorded) {
     return null;
@@ -4669,23 +4709,26 @@ export function claudeSessionResumable(workdir, sessionID) {
   return path === null ? false : existsSync(path);
 }
 
-function findClaudeSessionFile(sessionID) {
+export function findClaudeSessionPath(sessionID) {
+  return claudeSessionCandidates(sessionID).at(0)?.path ?? null;
+}
+
+function claudeSessionCandidates(sessionID) {
   const id = String(sessionID ?? "").trim();
   if (!id) {
-    return null;
+    return [];
   }
   const root = join(homedir(), ".claude", "projects");
   if (!existsSync(root)) {
-    return null;
+    return [];
   }
   let directories;
   try {
     directories = readdirSync(root);
   } catch {
-    return null;
+    return [];
   }
-  let latest = null;
-  let latestModifiedAt = Number.NEGATIVE_INFINITY;
+  const candidates = [];
   for (const directory of directories) {
     const candidate = join(root, String(directory), `${id}.jsonl`);
     try {
@@ -4693,44 +4736,215 @@ function findClaudeSessionFile(sessionID) {
       if (!metadata.isFile()) {
         continue;
       }
-      if (
-        metadata.mtimeMs > latestModifiedAt ||
-        (
-          metadata.mtimeMs === latestModifiedAt &&
-          (latest === null || candidate.localeCompare(latest) < 0)
-        )
-      ) {
-        latest = candidate;
-        latestModifiedAt = metadata.mtimeMs;
-      }
+      candidates.push({
+        path: candidate,
+        size: metadata.size,
+        modifiedAt: metadata.mtimeMs,
+        messageAt: latestClaudeMessageTimestamp(candidate),
+      });
     } catch {
       // 다른 작업 공간이 동시에 정리한 후보는 건너뛴다.
     }
   }
-  return latest;
+  return candidates.sort((left, right) =>
+    (right.messageAt ?? -Infinity) - (left.messageAt ?? -Infinity) ||
+    right.modifiedAt - left.modifiedAt ||
+    right.size - left.size ||
+    left.path.localeCompare(right.path)
+  );
 }
 
-// Claude Code는 세션을 실행 디렉토리 단위로 찾으므로 병합 뒤 작업 공간이
-// 바뀌면 이전 세션을 잃는다. 기록을 새 작업 공간으로 옮겨 대화를 잇는다.
-export function adoptClaudeSession(workdir, sessionID) {
+export function prepareClaudeSessionResume({
+  sessionID,
+  workdir,
+  previousWorkdir = null,
+}) {
   const target = claudeSessionPath(workdir, sessionID);
-  if (target === null) {
-    return false;
+  if (!target) {
+    return null;
   }
-  if (existsSync(target)) {
-    return true;
-  }
-  const source = findClaudeSessionFile(sessionID);
+  const preferred = claudeSessionPath(previousWorkdir, sessionID);
+  const source = claudeSessionFileMatches(preferred, sessionID)
+    ? preferred
+    : findClaudeSessionPath(sessionID);
   if (!source) {
-    return false;
+    throw new Error(
+      "저장된 Claude 세션 기록을 찾을 수 없습니다. " +
+      "대화 이력을 버리고 새 세션으로 바꾸지 않았습니다.",
+    );
   }
+  if (source === target) {
+    return source;
+  }
+
+  if (existsSync(target)) {
+    if (!sameFileIdentity(source, target)) {
+      throw new Error(
+        "현재 작업 공간에 서로 다른 Claude 세션 기록이 이미 있습니다. " +
+        "기존 기록을 덮어쓰거나 숨기지 않았습니다.",
+      );
+    }
+  }
+
+  const sidecar = prepareClaudeSessionSidecar(source, target, sessionID);
+  if (existsSync(target)) {
+    return target;
+  }
+  mkdirSync(dirname(target), { recursive: true });
   try {
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(source, target);
+    linkSync(source, target);
+  } catch (error) {
+    if (error?.code === "EEXIST" && sameFileIdentity(source, target)) {
+      return target;
+    }
+    if (sidecar.created) {
+      try {
+        unlinkSync(sidecar.path);
+      } catch {
+        // 생성한 alias만 최선으로 되돌리고 원래 파일은 건드리지 않는다.
+      }
+    }
+    throw error;
+  }
+  return target;
+}
+
+function prepareClaudeSessionSidecar(source, target, sessionID) {
+  const sourcePath = join(dirname(source), sessionID);
+  if (!pathEntryExists(sourcePath)) {
+    return { created: false, path: null };
+  }
+  const sourceMetadata = statSync(sourcePath);
+  if (!sourceMetadata.isDirectory()) {
+    throw new Error("Claude 세션 부속 기록 경로가 디렉토리가 아닙니다.");
+  }
+
+  const targetPath = join(dirname(target), sessionID);
+  if (pathEntryExists(targetPath)) {
+    if (sameRealPath(targetPath, sourcePath)) {
+      return { created: false, path: targetPath };
+    }
+    throw new Error(
+      "현재 작업 공간에 서로 다른 Claude 세션 부속 기록이 있습니다. " +
+      "기존 기록을 덮어쓰거나 숨기지 않았습니다.",
+    );
+  }
+
+  mkdirSync(dirname(targetPath), { recursive: true });
+  const resolvedSource = realpathSync(sourcePath);
+  try {
+    symlinkSync(resolvedSource, targetPath, "dir");
+  } catch (error) {
+    if (
+      error?.code === "EEXIST" &&
+      sameRealPath(targetPath, resolvedSource)
+    ) {
+      return { created: false, path: targetPath };
+    }
+    throw error;
+  }
+  return { created: true, path: targetPath };
+}
+
+function pathEntryExists(path) {
+  try {
+    lstatSync(path);
+    return true;
   } catch {
     return false;
   }
-  return true;
+}
+
+function sameRealPath(left, right) {
+  try {
+    return realpathSync(left) === realpathSync(right);
+  } catch {
+    return false;
+  }
+}
+
+function latestClaudeMessageTimestamp(path) {
+  const maxBytes = 4 * 1024 * 1024;
+  let descriptor;
+  try {
+    const size = statSync(path).size;
+    const offset = Math.max(0, size - maxBytes);
+    const length = size - offset;
+    descriptor = openSync(path, "r");
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(descriptor, buffer, 0, length, offset);
+    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    if (offset > 0) {
+      lines.shift();
+    }
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (
+        !line.includes('"timestamp"') ||
+        (!line.includes('"type":"assistant"') &&
+          !line.includes('"type":"user"'))
+      ) {
+        continue;
+      }
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.isSidechain === true) {
+        continue;
+      }
+      const at = Date.parse(event.timestamp);
+      if (Number.isFinite(at)) {
+        return at;
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+  return null;
+}
+
+function claudeSessionFileMatches(path, sessionID) {
+  if (!path) {
+    return false;
+  }
+  let descriptor;
+  try {
+    const metadata = statSync(path);
+    if (!metadata.isFile()) {
+      return false;
+    }
+    const length = Math.min(metadata.size, 64 * 1024);
+    descriptor = openSync(path, "r");
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(descriptor, buffer, 0, length, 0);
+    const prefix = buffer.subarray(0, bytesRead).toString("utf8");
+    return prefix.includes(`"sessionId":"${sessionID}"`) ||
+      prefix.includes(`"session_id":"${sessionID}"`);
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
+
+function sameFileIdentity(left, right) {
+  try {
+    const leftMetadata = statSync(left);
+    const rightMetadata = statSync(right);
+    return leftMetadata.dev === rightMetadata.dev &&
+      leftMetadata.ino === rightMetadata.ino;
+  } catch {
+    return false;
+  }
 }
 
 export function buildArguments({
@@ -4751,7 +4965,6 @@ export function buildArguments({
       character,
       prompt,
       previousSessionID,
-      workdir,
     );
 }
 
@@ -4765,6 +4978,10 @@ export function executionEnvironment(
   const environment = { ...baseEnvironment };
   delete environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   delete environment.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  // CLI 갱신은 OFFICESTRA의 명시적 업데이트 화면에서만 수행한다.
+  // 업무 사이에 Claude가 바뀌면 긴 재개 세션의 프롬프트 캐시가 한 번
+  // 전부 무효화될 수 있으므로 자식 프로세스의 자동 갱신은 끈다.
+  environment.DISABLE_AUTOUPDATER = "1";
   return environment;
 }
 
@@ -4865,7 +5082,6 @@ function claudeArguments(
   character,
   prompt,
   previousSessionID,
-  workdir = null,
 ) {
   if (character.fastMode && character.model !== "claude-opus-5") {
     throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
@@ -4877,6 +5093,9 @@ function claudeArguments(
     "stream-json",
     "--verbose",
     "--include-partial-messages",
+    "--exclude-dynamic-system-prompt-sections",
+    "--prompt-suggestions",
+    "true",
     "--settings",
     JSON.stringify({ fastMode: character.fastMode === true }),
     "--effort",
@@ -4891,10 +5110,9 @@ function claudeArguments(
     "--append-system-prompt",
     configuredIdentityPrompt(character),
   );
-  if (
-    previousSessionID &&
-    (workdir === null || adoptClaudeSession(workdir, previousSessionID))
-  ) {
+  // 실행 전에 같은 transcript inode를 현재 worktree에 연결한다. 과거처럼
+  // JSONL을 복제하지 않으므로 세션 분기와 캐시 접두부 재생성을 막는다.
+  if (previousSessionID) {
     argumentsList.push("--resume", previousSessionID);
   }
   return argumentsList;

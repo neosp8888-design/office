@@ -38,6 +38,19 @@ export function parseAgentEvent(line, backend, workdir = null) {
     return null;
   }
 
+  if (backend === "claude" && object.type === "prompt_suggestion") {
+    const suggestion = cleanText(object.suggestion);
+    return suggestion
+      ? {
+          activity: activity("suggestion", suggestion, {
+            eventKey: cleanText(object.uuid)
+              ? `suggestion:${cleanText(object.uuid)}`
+              : null,
+          }),
+        }
+      : null;
+  }
+
   return backend === "codex"
     ? parseCodexEvent(object, workdir)
     : parseClaudeEvent(object, workdir);
@@ -490,9 +503,7 @@ function parseClaudeEvent(object, workdir) {
 
   if (object.type === "result") {
     const sessionID = cleanText(object.session_id);
-    const usage = normalizedUsage(object.usage, "claude", {
-      reportedCostUsd: object.total_cost_usd,
-    });
+    const usage = normalizedClaudeResultUsage(object);
     if (object.is_error === true) {
       return {
         sessionID,
@@ -510,6 +521,83 @@ function parseClaudeEvent(object, workdir) {
   }
 
   return null;
+}
+
+function normalizedClaudeResultUsage(result) {
+  const mainLoopUsage = normalizedUsage(result.usage, "claude", {
+    reportedCostUsd: result.total_cost_usd,
+  });
+  const perModel = result.modelUsage ?? result.model_usage;
+  if (
+    !perModel ||
+    typeof perModel !== "object" ||
+    Array.isArray(perModel)
+  ) {
+    return mainLoopUsage;
+  }
+
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+  };
+  let hasUsage = false;
+  let reportedCostUsd = nonnegativeNumber(result.total_cost_usd);
+  let summedCostUsd = 0;
+  let hasSummedCost = false;
+  for (const usage of Object.values(perModel)) {
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+      continue;
+    }
+    const fields = {
+      inputTokens: usage.inputTokens ?? usage.input_tokens,
+      outputTokens: usage.outputTokens ?? usage.output_tokens,
+      cachedInputTokens:
+        usage.cacheReadInputTokens ?? usage.cache_read_input_tokens,
+      cacheWriteInputTokens:
+        usage.cacheCreationInputTokens ??
+        usage.cache_creation_input_tokens,
+    };
+    for (const [field, value] of Object.entries(fields)) {
+      const count = tokenCount(value);
+      if (count !== null) {
+        totals[field] += count;
+        hasUsage = true;
+      }
+    }
+    const modelCost = nonnegativeNumber(
+      usage.costUSD ?? usage.cost_usd,
+    );
+    if (modelCost !== null) {
+      summedCostUsd += modelCost;
+      hasSummedCost = true;
+    }
+  }
+  if (reportedCostUsd === null && hasSummedCost) {
+    reportedCostUsd = summedCostUsd;
+  }
+  if (!hasUsage && reportedCostUsd === null) {
+    return mainLoopUsage;
+  }
+
+  return {
+    inputTokens: hasUsage ? totals.inputTokens : null,
+    outputTokens: hasUsage ? totals.outputTokens : null,
+    cachedInputTokens: hasUsage ? totals.cachedInputTokens : null,
+    cacheWriteInputTokens: hasUsage
+      ? totals.cacheWriteInputTokens
+      : null,
+    // modelUsage는 캐시 생성 총량만 제공하므로 5분/1시간 세부값을
+    // 본체 루프 값으로 채워 전체 사용량처럼 보이게 하지 않는다.
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: mainLoopUsage?.reasoningOutputTokens ?? null,
+    serviceTier: mainLoopUsage?.serviceTier ?? null,
+    speed: mainLoopUsage?.speed ?? null,
+    inferenceGeo: mainLoopUsage?.inferenceGeo ?? null,
+    reportedCostUsd,
+  };
 }
 
 function activity(kind, text, options = {}) {

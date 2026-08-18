@@ -48,6 +48,24 @@ test("Claude CLI가 보고한 누적 비용을 그대로 보존한다", () => {
   );
 });
 
+test("Claude 전체 pipeline 비용은 본체 토큰 재계산보다 우선한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "claude",
+      model: "claude-opus-5",
+      fastMode: false,
+      usage: {
+        inputTokens: 2,
+        outputTokens: 4,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 10,
+        reportedCostUsd: 0.42,
+      },
+    }),
+    0.42,
+  );
+});
+
 test("Claude Opus 5 토큰 비용은 캐시 생성과 읽기를 분리한다", () => {
   assert.equal(
     estimateTokenCost({

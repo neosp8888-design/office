@@ -86,7 +86,7 @@ test("Codex 완료 이벤트에서 토큰 사용량을 추출한다", () => {
   });
 });
 
-test("Claude 결과에서 누적 토큰과 공급자 비용을 추출한다", () => {
+test("Claude 결과에서 전체 query pipeline 사용량과 비용을 추출한다", () => {
   const event = parseAgentEvent(
     JSON.stringify({
       type: "result",
@@ -107,6 +107,22 @@ test("Claude 결과에서 누적 토큰과 공급자 비용을 추출한다", ()
           ephemeral_1h_input_tokens: 10,
         },
       },
+      modelUsage: {
+        "claude-opus-5": {
+          inputTokens: 2,
+          outputTokens: 4,
+          cacheReadInputTokens: 100,
+          cacheCreationInputTokens: 30,
+          costUSD: 0.001,
+        },
+        "claude-haiku-4-5": {
+          inputTokens: 3,
+          outputTokens: 5,
+          cacheReadInputTokens: 200,
+          cacheCreationInputTokens: 40,
+          costUSD: 0.00023,
+        },
+      },
     }),
     "claude",
   );
@@ -114,12 +130,12 @@ test("Claude 결과에서 누적 토큰과 공급자 비용을 추출한다", ()
   assert.equal(event.sessionID, "session-1");
   assert.equal(event.responseText, "완료했습니다.");
   assert.deepEqual(event.usage, {
-    inputTokens: 2,
-    outputTokens: 4,
-    cachedInputTokens: 100,
-    cacheWriteInputTokens: 30,
-    cacheWrite5mInputTokens: 20,
-    cacheWrite1hInputTokens: 10,
+    inputTokens: 5,
+    outputTokens: 9,
+    cachedInputTokens: 300,
+    cacheWriteInputTokens: 70,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
     reasoningOutputTokens: null,
     serviceTier: "standard",
     speed: "fast",
@@ -286,6 +302,40 @@ test("Codex 협업 대기는 완료된 검토 결과만 공개한다", () => {
   assert.equal(
     event.activities[0].collaboration.message,
     "스크롤 위치 보존에 회귀 위험이 있습니다.",
+  );
+});
+
+test("Claude의 네이티브 다음 질문 추천을 공개 활동으로 변환한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      type: "prompt_suggestion",
+      suggestion: "이 변경의 테스트 결과도 확인할까요?",
+      uuid: "suggestion-1",
+      session_id: "session-1",
+    }),
+    "claude",
+  );
+
+  assert.deepEqual(event.activity, {
+    kind: "suggestion",
+    text: "이 변경의 테스트 결과도 확인할까요?",
+    eventKey: "suggestion:suggestion-1",
+    status: "completed",
+    preserveText: false,
+    messageScoped: false,
+  });
+});
+
+test("Codex에는 존재하지 않는 다음 질문 이벤트를 만들어내지 않는다", () => {
+  assert.equal(
+    parseAgentEvent(
+      JSON.stringify({
+        type: "prompt_suggestion",
+        suggestion: "가짜 추천",
+      }),
+      "codex",
+    ),
+    null,
   );
 });
 
