@@ -84,8 +84,22 @@ function estimateClaudeCost({ model, fastMode, usage, pricedAt }) {
   // Claude result.total_cost_usd는 서브에이전트·압축·내부 호출까지 같은
   // query pipeline 전체를 포함한다. 토큰으로 본체 모델만 다시 계산하면
   // 실제 업무 비용을 과소계상할 수 있으므로 공급자 합계를 우선한다.
+  // 다만 CLI 합계는 표준 정가로 계산되어 기간 한정 Sonnet 5 가격을
+  // 반영하지 않으므로, modelUsage에서 확인된 Sonnet 5 몫만 보정한다.
   const reportedCost = nonnegativeNumber(usage.reportedCostUsd);
   if (reportedCost !== null) {
+    const timestamp = priceTimestamp(pricedAt);
+    const reportedSonnet5Cost = nonnegativeNumber(
+      usage.reportedSonnet5CostUsd,
+    );
+    if (
+      timestamp < SONNET_FIVE_STANDARD_PRICE_CHANGE &&
+      reportedSonnet5Cost !== null
+    ) {
+      return roundedCost(
+        reportedCost - reportedSonnet5Cost / 3,
+      );
+    }
     return roundedCost(reportedCost);
   }
   const usesFastPricing = usage.speed === "fast" ||
@@ -131,12 +145,17 @@ function claudeStandardPrices(model, pricedAt) {
   if (model !== "claude-sonnet-5") {
     return CLAUDE_STANDARD_PRICES_PER_MILLION[model];
   }
-  const timestamp = pricedAt instanceof Date
-    ? pricedAt.getTime()
-    : Number(pricedAt);
+  const timestamp = priceTimestamp(pricedAt);
   return timestamp >= SONNET_FIVE_STANDARD_PRICE_CHANGE
     ? { input: 3, output: 15 }
     : { input: 2, output: 10 };
+}
+
+function priceTimestamp(pricedAt) {
+  const timestamp = pricedAt instanceof Date
+    ? pricedAt.getTime()
+    : Number(pricedAt);
+  return Number.isFinite(timestamp) ? timestamp : Date.now();
 }
 
 function nonnegativeNumber(value) {
