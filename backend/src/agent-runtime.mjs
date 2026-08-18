@@ -5093,7 +5093,6 @@ function claudeArguments(
     "stream-json",
     "--verbose",
     "--include-partial-messages",
-    "--exclude-dynamic-system-prompt-sections",
     "--prompt-suggestions",
     "true",
     "--settings",

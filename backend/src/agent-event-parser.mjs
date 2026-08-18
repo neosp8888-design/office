@@ -545,8 +545,10 @@ function normalizedClaudeResultUsage(result) {
   let hasUsage = false;
   let reportedCostUsd = nonnegativeNumber(result.total_cost_usd);
   let summedCostUsd = 0;
+  let reportedSonnet5CostUsd = 0;
+  let hasReportedSonnet5Cost = false;
   let hasSummedCost = false;
-  for (const usage of Object.values(perModel)) {
+  for (const [model, usage] of Object.entries(perModel)) {
     if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
       continue;
     }
@@ -572,6 +574,10 @@ function normalizedClaudeResultUsage(result) {
     if (modelCost !== null) {
       summedCostUsd += modelCost;
       hasSummedCost = true;
+      if (String(model).startsWith("claude-sonnet-5")) {
+        reportedSonnet5CostUsd += modelCost;
+        hasReportedSonnet5Cost = true;
+      }
     }
   }
   if (reportedCostUsd === null && hasSummedCost) {
@@ -597,6 +603,9 @@ function normalizedClaudeResultUsage(result) {
     speed: mainLoopUsage?.speed ?? null,
     inferenceGeo: mainLoopUsage?.inferenceGeo ?? null,
     reportedCostUsd,
+    reportedSonnet5CostUsd: hasReportedSonnet5Cost
+      ? reportedSonnet5CostUsd
+      : null,
   };
 }
 

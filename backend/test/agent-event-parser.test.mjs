@@ -108,7 +108,7 @@ test("Claude 결과에서 전체 query pipeline 사용량과 비용을 추출한
         },
       },
       modelUsage: {
-        "claude-opus-5": {
+        "claude-sonnet-5": {
           inputTokens: 2,
           outputTokens: 4,
           cacheReadInputTokens: 100,
@@ -141,6 +141,7 @@ test("Claude 결과에서 전체 query pipeline 사용량과 비용을 추출한
     speed: "fast",
     inferenceGeo: "global",
     reportedCostUsd: 0.00123,
+    reportedSonnet5CostUsd: 0.001,
   });
 });
 

@@ -66,6 +66,60 @@ test("Claude 전체 pipeline 비용은 본체 토큰 재계산보다 우선한�
   );
 });
 
+test("Claude Sonnet 5 공급자 비용은 프로모션 기간만 해당 모델 몫을 보정한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "claude",
+      model: "claude-sonnet-5",
+      fastMode: false,
+      pricedAt: new Date("2026-08-19T00:00:00Z"),
+      usage: {
+        reportedCostUsd: 1.4559903,
+        reportedSonnet5CostUsd: 1.1559903,
+      },
+    }),
+    1.0706602,
+  );
+});
+
+test("Claude Sonnet 5 공급자 비용은 정가 전환일부터 그대로 보존한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "claude",
+      model: "claude-sonnet-5",
+      fastMode: false,
+      pricedAt: new Date("2026-09-01T00:00:00Z"),
+      usage: {
+        reportedCostUsd: 1.1559903,
+        reportedSonnet5CostUsd: 1.1559903,
+      },
+    }),
+    1.1559903,
+  );
+});
+
+test("Claude Sonnet 5 프로모션 비용은 실제 캐시 미스 토큰으로도 계산한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "claude",
+      model: "claude-sonnet-5",
+      fastMode: false,
+      pricedAt: new Date("2026-08-19T00:00:00Z"),
+      usage: {
+        inputTokens: 2,
+        outputTokens: 30,
+        cachedInputTokens: 28_601,
+        cacheWriteInputTokens: 191_159,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 191_159,
+        speed: "standard",
+        inferenceGeo: "global",
+      },
+    }),
+    0.7706602,
+  );
+});
+
 test("Claude Opus 5 토큰 비용은 캐시 생성과 읽기를 분리한다", () => {
   assert.equal(
     estimateTokenCost({

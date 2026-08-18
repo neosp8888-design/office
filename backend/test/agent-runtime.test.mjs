@@ -585,11 +585,8 @@ test("Claude 신규와 재개도 DB 업무 지침만 그대로 전달한다", ()
       previousSessionID !== null,
     );
     assert.equal(
-      argumentsList.filter(
-        (argument) =>
-          argument === "--exclude-dynamic-system-prompt-sections",
-      ).length,
-      1,
+      argumentsList.includes("--exclude-dynamic-system-prompt-sections"),
+      false,
     );
     const suggestionsIndex = argumentsList.indexOf("--prompt-suggestions");
     assert.notEqual(suggestionsIndex, -1);
