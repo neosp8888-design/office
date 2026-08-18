@@ -81,6 +81,13 @@ export function estimateTokenCost({
 }
 
 function estimateClaudeCost({ model, fastMode, usage, pricedAt }) {
+  // Claude result.total_cost_usd는 서브에이전트·압축·내부 호출까지 같은
+  // query pipeline 전체를 포함한다. 토큰으로 본체 모델만 다시 계산하면
+  // 실제 업무 비용을 과소계상할 수 있으므로 공급자 합계를 우선한다.
+  const reportedCost = nonnegativeNumber(usage.reportedCostUsd);
+  if (reportedCost !== null) {
+    return roundedCost(reportedCost);
+  }
   const usesFastPricing = usage.speed === "fast" ||
     (usage.speed == null && fastMode === true);
   const prices = usesFastPricing
@@ -117,8 +124,7 @@ function estimateClaudeCost({ model, fastMode, usage, pricedAt }) {
     return roundedCost(cost);
   }
 
-  const reportedCost = nonnegativeNumber(usage.reportedCostUsd);
-  return reportedCost === null ? null : roundedCost(reportedCost);
+  return null;
 }
 
 function claudeStandardPrices(model, pricedAt) {

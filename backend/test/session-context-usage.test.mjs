@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -164,6 +165,105 @@ test("Claude 세션은 모델 기본 컨텍스트 한도를 사용한다", () =>
         claudeRoot: root,
       }),
       { usedTokens: 268_544, limitTokens: 1_000_000 },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude 세션은 중복 기록 중 마지막으로 쓰인 경로를 다시 고른다", () => {
+  const root = mkdtempSync(join(tmpdir(), "officellm-claude-duplicates-"));
+  try {
+    const staleProject = join(root, "a-stale");
+    const activeProject = join(root, "z-active");
+    mkdirSync(staleProject);
+    mkdirSync(activeProject);
+    const sessionID = "2206f58e-0bd8-43dd-8068-780090adbaa8";
+    const stalePath = join(staleProject, `${sessionID}.jsonl`);
+    const activePath = join(activeProject, `${sessionID}.jsonl`);
+    writeFileSync(
+      stalePath,
+      claudeAssistantLine({
+        timestamp: "2026-07-31T19:30:00.000Z",
+        input: 2,
+        cacheRead: 100,
+        cacheWrite: 0,
+      }) + "\n" + "x".repeat(4_000) + "\n",
+    );
+    utimesSync(stalePath, new Date(1_000), new Date(1_000));
+
+    assert.deepEqual(
+      sessionContextUsage({
+        backend: "claude",
+        sessionID,
+        model: "claude-opus-5",
+        at: "2026-07-31T20:00:00.000Z",
+        claudeRoot: root,
+      }),
+      { usedTokens: 102, limitTokens: 1_000_000 },
+    );
+
+    writeFileSync(
+      activePath,
+      [
+        claudeAssistantLine({
+          timestamp: "2026-07-31T19:30:00.000Z",
+          input: 2,
+          cacheRead: 100,
+          cacheWrite: 0,
+        }),
+        claudeAssistantLine({
+          timestamp: "2026-07-31T19:40:00.000Z",
+          input: 3,
+          cacheRead: 700,
+          cacheWrite: 11,
+        }),
+      ].join("\n") + "\n",
+    );
+    utimesSync(activePath, new Date(2_000), new Date(2_000));
+
+    assert.deepEqual(
+      sessionContextUsage({
+        backend: "claude",
+        sessionID,
+        model: "claude-opus-5",
+        at: "2026-07-31T20:00:00.000Z",
+        claudeRoot: root,
+      }),
+      { usedTokens: 714, limitTokens: 1_000_000 },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("큰 Claude 기록은 마지막 구간을 읽어 최신 점유를 유지한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "officellm-claude-large-"));
+  try {
+    const project = join(root, "project");
+    mkdirSync(project);
+    const sessionID = "2206f58e-0bd8-43dd-8068-780090adbaa8";
+    writeFileSync(
+      join(project, `${sessionID}.jsonl`),
+      `${"x".repeat(2_000)}\n` +
+        claudeAssistantLine({
+          timestamp: "2026-07-31T19:40:00.000Z",
+          input: 4,
+          cacheRead: 800,
+          cacheWrite: 20,
+        }) + "\n",
+    );
+
+    assert.deepEqual(
+      sessionContextUsage({
+        backend: "claude",
+        sessionID,
+        model: "claude-opus-5",
+        at: "2026-07-31T20:00:00.000Z",
+        claudeRoot: root,
+        maxReadBytes: 1_024,
+      }),
+      { usedTokens: 824, limitTokens: 1_000_000 },
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

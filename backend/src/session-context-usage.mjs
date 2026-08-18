@@ -49,6 +49,7 @@ export function sessionContextUsage({
   at,
   claudeRoot = join(homedir(), ".claude", "projects"),
   codexRoot = join(homedir(), ".codex", "sessions"),
+  maxReadBytes = MAX_READ_BYTES,
 }) {
   const kind = String(backend ?? "").trim();
   if (kind !== "claude" && kind !== "codex") {
@@ -70,7 +71,10 @@ export function sessionContextUsage({
     return null;
   }
 
-  const entry = latestEntry(transcriptEntries(kind, path), boundary);
+  const entry = latestEntry(
+    transcriptEntries(kind, path, maxReadBytes),
+    boundary,
+  );
   if (!entry) {
     return null;
   }
@@ -95,7 +99,7 @@ function latestEntry(entries, boundary) {
   return match;
 }
 
-function transcriptEntries(kind, path) {
+function transcriptEntries(kind, path, maxReadBytes) {
   let reader = transcriptReaders.get(path);
   let size;
   try {
@@ -108,14 +112,17 @@ function transcriptEntries(kind, path) {
     reader = { offset: 0, remainder: "", entries: [] };
     transcriptReaders.set(path, reader);
   }
-  const length = size - reader.offset;
+  let length = size - reader.offset;
   if (length <= 0) {
     return reader.entries;
   }
-  if (length > MAX_READ_BYTES) {
-    reader.offset = size;
-    reader.remainder = "";
-    return reader.entries;
+  let discardsLeadingFragment = false;
+  if (length > maxReadBytes) {
+    const offset = Math.max(0, size - maxReadBytes);
+    reader = { offset, remainder: "", entries: [] };
+    transcriptReaders.set(path, reader);
+    length = size - offset;
+    discardsLeadingFragment = offset > 0;
   }
 
   let descriptor;
@@ -128,6 +135,9 @@ function transcriptEntries(kind, path) {
       reader.remainder + buffer.subarray(0, read).toString("utf8")
     ).split("\n");
     reader.remainder = lines.pop() ?? "";
+    if (discardsLeadingFragment) {
+      lines.shift();
+    }
     for (const line of lines) {
       const entry = kind === "claude"
         ? claudeContextEntry(line)
@@ -207,27 +217,40 @@ function tokenCount(value) {
 }
 
 function claudeTranscriptPath(sessionID, root) {
-  return cachedPath(`claude:${sessionID}:${root}`, () => {
-    if (!existsSync(root)) {
-      return null;
-    }
-    let projects;
-    try {
-      projects = readdirSync(root, { withFileTypes: true });
-    } catch {
-      return null;
-    }
-    for (const project of projects) {
-      if (!project.isDirectory()) {
-        continue;
-      }
-      const path = join(root, project.name, `${sessionID}.jsonl`);
-      if (existsSync(path)) {
-        return path;
-      }
-    }
+  if (!existsSync(root)) {
     return null;
-  });
+  }
+  let projects;
+  try {
+    projects = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const candidates = [];
+  for (const project of projects) {
+    if (!project.isDirectory()) {
+      continue;
+    }
+    const path = join(root, project.name, `${sessionID}.jsonl`);
+    try {
+      const metadata = statSync(path);
+      if (metadata.isFile()) {
+        candidates.push({
+          path,
+          size: metadata.size,
+          modifiedAt: metadata.mtimeMs,
+        });
+      }
+    } catch {
+      // 동시에 정리된 과거 worktree 기록은 건너뛴다.
+    }
+  }
+  candidates.sort((left, right) =>
+    right.modifiedAt - left.modifiedAt ||
+    right.size - left.size ||
+    left.path.localeCompare(right.path)
+  );
+  return candidates.at(0)?.path ?? null;
 }
 
 function codexRolloutPath(sessionID, root) {

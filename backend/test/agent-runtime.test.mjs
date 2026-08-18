@@ -8,14 +8,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -24,16 +24,17 @@ import {
   AgentDrainingError,
   AgentJobNotFoundError,
   AgentRuntime,
-  adoptClaudeSession,
   buildArguments,
   claudeSessionPath,
   claudeSessionResumable,
   codexUsageDelta,
   configuredExecutableForCharacter,
   executionEnvironment,
+  findClaudeSessionPath,
   latestClaudeUsageFromSession,
   latestCodexUsageFromRollout,
   persistTurnWikiProposals,
+  prepareClaudeSessionResume,
   recoverInterruptedUsage,
   promptWithAttachments,
   stageAttachments,
@@ -583,10 +584,20 @@ test("Claude 신규와 재개도 DB 업무 지침만 그대로 전달한다", ()
       argumentsList.includes("--resume"),
       previousSessionID !== null,
     );
+    assert.equal(
+      argumentsList.filter(
+        (argument) =>
+          argument === "--exclude-dynamic-system-prompt-sections",
+      ).length,
+      1,
+    );
+    const suggestionsIndex = argumentsList.indexOf("--prompt-suggestions");
+    assert.notEqual(suggestionsIndex, -1);
+    assert.equal(argumentsList[suggestionsIndex + 1], "true");
   }
 });
 
-test("Claude 실행은 자동 압축 오버라이드 없이 기본 환경을 사용한다", () => {
+test("Claude 실행은 기본 압축과 OFFICESTRA 명시적 업데이트를 사용한다", () => {
   const baseEnvironment = {
     PATH: "/tmp/bin",
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: "250000",
@@ -613,6 +624,7 @@ test("Claude 실행은 자동 압축 오버라이드 없이 기본 환경을 사
     ),
     false,
   );
+  assert.equal(claudeEnvironment.DISABLE_AUTOUPDATER, "1");
 
   const codexEnvironment = { PATH: "/tmp/bin" };
   assert.equal(
@@ -828,34 +840,48 @@ test("Claude 세션 경로는 실행 디렉토리를 그대로 반영한다", ()
   });
 });
 
-test("Claude는 어디에도 세션이 없으면 재개하지 않는다", () => {
+test("Claude 저장 ID는 유지하되 로컬 기록이 없으면 실행 전에 실패한다", () => {
   withClaudeSessionHome(({ workdir }) => {
+    assert.throws(
+      () => prepareClaudeSessionResume({
+        sessionID: "session-1",
+        workdir,
+      }),
+      /저장된 Claude 세션 기록을 찾을 수 없습니다/,
+    );
     const argumentsList = buildArguments({
       character: claudeResumeCharacter,
       prompt: "계속해줘.",
       previousSessionID: "session-1",
       workdir,
     });
+    const resumeIndex = argumentsList.indexOf("--resume");
 
-    assert.equal(argumentsList.includes("--resume"), false);
+    assert.notEqual(resumeIndex, -1);
+    assert.equal(argumentsList[resumeIndex + 1], "session-1");
+    assert.equal(claudeSessionResumable(workdir, "session-1"), false);
   });
 });
 
-test("Claude는 병합으로 작업 공간이 바뀌어도 이전 세션을 이어받는다", () => {
+test("Claude는 작업 공간이 바뀌면 같은 transcript inode로 재개한다", () => {
   withClaudeSessionHome(({ workdir }) => {
     const previousWorkdir = mkdtempSync(join(tmpdir(), "office-claude-old-"));
     try {
       const source = writeClaudeSession(previousWorkdir, "session-1");
+      const sourceSidecar = join(dirname(source), "session-1");
+      mkdirSync(join(sourceSidecar, "subagents"), { recursive: true });
+      mkdirSync(join(sourceSidecar, "tool-results"), { recursive: true });
+      writeFileSync(
+        join(sourceSidecar, "subagents", "agent-1.jsonl"),
+        '{"message":"검토 완료"}\n',
+      );
       assert.equal(claudeSessionResumable(workdir, "session-1"), false);
 
-      const adopted = adoptClaudeSession(workdir, "session-1");
-
-      assert.equal(adopted, true);
-      assert.equal(claudeSessionResumable(workdir, "session-1"), true);
-      assert.equal(
-        readFileSync(claudeSessionPath(workdir, "session-1"), "utf8"),
-        readFileSync(source, "utf8"),
-      );
+      const target = prepareClaudeSessionResume({
+        sessionID: "session-1",
+        workdir,
+        previousWorkdir,
+      });
 
       const argumentsList = buildArguments({
         character: claudeResumeCharacter,
@@ -867,51 +893,136 @@ test("Claude는 병합으로 작업 공간이 바뀌어도 이전 세션을 이�
 
       assert.notEqual(resumeIndex, -1);
       assert.equal(argumentsList[resumeIndex + 1], "session-1");
+      assert.equal(claudeSessionResumable(workdir, "session-1"), true);
+      assert.equal(existsSync(source), true);
+      assert.equal(statSync(target).dev, statSync(source).dev);
+      assert.equal(statSync(target).ino, statSync(source).ino);
+      appendFileSync(target, '{"continued":true}\n');
+      assert.equal(readFileSync(source, "utf8").includes("continued"), true);
+      const targetSidecar = join(dirname(target), "session-1");
+      assert.equal(realpathSync(targetSidecar), realpathSync(sourceSidecar));
+      writeFileSync(
+        join(targetSidecar, "tool-results", "result.txt"),
+        "같은 부속 기록",
+      );
+      assert.equal(
+        readFileSync(
+          join(sourceSidecar, "tool-results", "result.txt"),
+          "utf8",
+        ),
+        "같은 부속 기록",
+      );
     } finally {
       rmSync(previousWorkdir, { recursive: true, force: true });
     }
   });
 });
 
-test("Claude는 여러 작업 공간의 같은 세션 중 가장 최신 기록을 이어받는다", () => {
+test("Claude 사용량 복구는 마지막 실제 메시지가 최신인 기록을 찾는다", () => {
   withClaudeSessionHome(({ workdir }) => {
     const firstWorkdir = mkdtempSync(join(tmpdir(), "office-claude-first-"));
     const secondWorkdir = mkdtempSync(join(tmpdir(), "office-claude-second-"));
     try {
       const firstPath = writeClaudeSession(firstWorkdir, "session-1");
       const secondPath = writeClaudeSession(secondWorkdir, "session-1");
-      const projectsRoot = dirname(dirname(firstPath));
-      const candidatesByDirectory = new Map([
-        [basename(dirname(firstPath)), firstPath],
-        [basename(dirname(secondPath)), secondPath],
-      ]);
-      const listed = readdirSync(projectsRoot)
-        .map((directory) => candidatesByDirectory.get(directory))
-        .filter(Boolean);
-      assert.equal(listed.length, 2);
-
-      const stalePath = listed[0];
-      const latestPath = listed[1];
-      writeFileSync(stalePath, '{"context":"stale"}\n');
-      writeFileSync(latestPath, '{"context":"latest"}\n');
-      assert.equal(
-        readdirSync(projectsRoot).find((directory) =>
-          candidatesByDirectory.has(directory)
-        ),
-        basename(dirname(stalePath)),
-        "디렉터리 순서의 첫 후보가 실제로 과거 기록이어야 합니다.",
+      writeFileSync(
+        firstPath,
+        '{"type":"assistant","timestamp":"2026-08-18T00:00:00Z"}\n' +
+          "x".repeat(2_000),
       );
-      utimesSync(stalePath, new Date(1_000), new Date(1_000));
-      utimesSync(latestPath, new Date(2_000), new Date(2_000));
-
-      assert.equal(adoptClaudeSession(workdir, "session-1"), true);
-      assert.equal(
-        readFileSync(claudeSessionPath(workdir, "session-1"), "utf8"),
-        '{"context":"latest"}\n',
+      writeFileSync(
+        secondPath,
+        '{"type":"assistant","timestamp":"2026-08-19T00:00:00Z"}\n',
       );
+      utimesSync(firstPath, new Date(3_000), new Date(3_000));
+      utimesSync(secondPath, new Date(2_000), new Date(2_000));
+
+      assert.equal(findClaudeSessionPath("session-1"), secondPath);
     } finally {
       rmSync(firstWorkdir, { recursive: true, force: true });
       rmSync(secondWorkdir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("Claude 재개는 기준 분기를 연결하고 다른 분기는 그대로 보존한다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const previousWorkdir = mkdtempSync(join(tmpdir(), "office-claude-first-"));
+    const divergentWorkdir = mkdtempSync(join(tmpdir(), "office-claude-second-"));
+    try {
+      const source = writeClaudeSession(previousWorkdir, "session-1");
+      const divergent = writeClaudeSession(divergentWorkdir, "session-1");
+      writeFileSync(
+        divergent,
+        '{"sessionId":"session-1","branch":"divergent"}\n',
+      );
+
+      const target = prepareClaudeSessionResume({
+        sessionID: "session-1",
+        workdir,
+        previousWorkdir,
+      });
+
+      assert.equal(existsSync(source), true);
+      assert.equal(existsSync(divergent), true);
+      assert.equal(statSync(target).ino, statSync(source).ino);
+      assert.notEqual(statSync(target).ino, statSync(divergent).ino);
+    } finally {
+      rmSync(previousWorkdir, { recursive: true, force: true });
+      rmSync(divergentWorkdir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("Claude 재개는 현재 작업 공간의 다른 분기를 덮어쓰지 않는다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const previousWorkdir = mkdtempSync(join(tmpdir(), "office-claude-old-"));
+    try {
+      const source = writeClaudeSession(previousWorkdir, "session-1");
+      const target = writeClaudeSession(workdir, "session-1");
+      writeFileSync(target, '{"sessionId":"session-1","branch":"other"}\n');
+
+      assert.throws(
+        () => prepareClaudeSessionResume({
+          sessionID: "session-1",
+          workdir,
+          previousWorkdir,
+        }),
+        /서로 다른 Claude 세션 기록/,
+      );
+      assert.equal(existsSync(source), true);
+      assert.equal(readFileSync(target, "utf8").includes("other"), true);
+    } finally {
+      rmSync(previousWorkdir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("Claude 재개는 현재 작업 공간의 다른 부속 기록도 보존한다", () => {
+  withClaudeSessionHome(({ workdir }) => {
+    const previousWorkdir = mkdtempSync(join(tmpdir(), "office-claude-old-"));
+    try {
+      const source = writeClaudeSession(previousWorkdir, "session-1");
+      mkdirSync(join(dirname(source), "session-1", "subagents"), {
+        recursive: true,
+      });
+      const target = claudeSessionPath(workdir, "session-1");
+      const targetSidecar = join(dirname(target), "session-1");
+      mkdirSync(targetSidecar, { recursive: true });
+      writeFileSync(join(targetSidecar, "keep.txt"), "보존");
+
+      assert.throws(
+        () => prepareClaudeSessionResume({
+          sessionID: "session-1",
+          workdir,
+          previousWorkdir,
+        }),
+        /서로 다른 Claude 세션 부속 기록/,
+      );
+      assert.equal(existsSync(target), false);
+      assert.equal(readFileSync(join(targetSidecar, "keep.txt"), "utf8"), "보존");
+    } finally {
+      rmSync(previousWorkdir, { recursive: true, force: true });
     }
   });
 });
@@ -1202,6 +1313,19 @@ test("협업 활동 스키마와 실시간 API가 구조화 내용을 함께 제
     serverSource,
     /'collaboration', activity\.collaboration/,
   );
+});
+
+test("다음 질문 추천 활동은 DB 허용 종류에 포함된다", () => {
+  const migrationSource = readFileSync(
+    new URL(
+      "../../database/migrations/024_prompt_suggestion_activities.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(migrationSource, /'suggestion'/);
+  assert.match(migrationSource, /turn_activities_kind_check/);
 });
 
 test("같은 활동 상태가 반복되면 저장과 방송을 반복하지 않는다", async () => {
@@ -2838,21 +2962,29 @@ test("Claude 세션 기록 끝에서 마지막 사용량을 읽는다", () => {
 
 test("중단된 Claude 턴의 사용량을 세션 기록에서 되살린다", () => {
   withClaudeSessionHome(({ workdir }) => {
-    const path = writeClaudeSession(workdir, "session-1");
-    writeFileSync(path, `${JSON.stringify({
-      type: "assistant",
-      message: { usage: { input_tokens: 5, output_tokens: 7 } },
-    })}\n`);
-    const state = {
-      character: { backend: "claude", model: "claude-sonnet-5" },
-      workdir,
-      externalSessionID: "session-1",
-    };
+    const previousWorkdir = mkdtempSync(
+      join(tmpdir(), "office-claude-previous-"),
+    );
+    try {
+      const path = writeClaudeSession(previousWorkdir, "session-1");
+      writeFileSync(path, `${JSON.stringify({
+        type: "assistant",
+        message: { usage: { input_tokens: 5, output_tokens: 7 } },
+      })}\n`);
+      const state = {
+        character: { backend: "claude", model: "claude-sonnet-5" },
+        workdir,
+        externalSessionID: "session-1",
+      };
 
-    const usage = recoverInterruptedUsage(state);
+      const usage = recoverInterruptedUsage(state);
 
-    assert.equal(usage.inputTokens, 5);
-    assert.equal(state.usage.outputTokens, 7);
+      assert.equal(usage.inputTokens, 5);
+      assert.equal(state.usage.outputTokens, 7);
+      assert.equal(claudeSessionResumable(workdir, "session-1"), false);
+    } finally {
+      rmSync(previousWorkdir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -5421,6 +5553,7 @@ test("worktree가 없는 활성 CLI 세션은 종료하지 않고 다음 업무�
           sessionRepositoryRoot: null,
           workspaceID: null,
           workspaceStatus: null,
+          resumeExecutionWorkdir: "/old-worktree",
         }],
       };
     }
@@ -5444,6 +5577,14 @@ test("worktree가 없는 활성 CLI 세션은 종료하지 않고 다음 업무�
   assert.equal(prepared.externalSessionID, "external-1");
   assert.equal(prepared.reusedSession, true);
   assert.equal(prepared.workspace, null);
+  assert.equal(prepared.resumeExecutionWorkdir, "/old-worktree");
+  assert.equal(
+    queries.some(({ text }) =>
+      /completed_turn\.status = 'completed'/.test(text) &&
+      /resume_workspace/.test(text)
+    ),
+    true,
+  );
   assert.equal(
     queries.some(({ text }) => /DELETE FROM active_cli_sessions/.test(text)),
     false,

@@ -3949,7 +3949,7 @@ private struct LiveTurnCard: View {
 
                 if
                     turn.status.isRunning
-                        || !turn.activities.isEmpty
+                        || !transcriptActivities.isEmpty
                         || !turn.response.isEmpty
                 {
                     switch effectiveBackend {
@@ -3958,6 +3958,12 @@ private struct LiveTurnCard: View {
                     case .claude:
                         claudeTranscript
                     }
+                }
+
+                if !promptSuggestions.isEmpty {
+                    AgentPromptSuggestionList(
+                        suggestions: promptSuggestions
+                    )
                 }
 
                 if let warning = turn.responseSourceWarning, !warning.isEmpty {
@@ -4092,7 +4098,7 @@ private struct LiveTurnCard: View {
         ClaudeTranscriptView(
             turnID: turn.id,
             workspaceDirectory: effectiveWorkspaceDirectory,
-            activities: turn.activities,
+            activities: transcriptActivities,
             response: turn.response,
             responseUpdatedAt: turn.updatedAt,
             isRunning: turn.status.isRunning,
@@ -4112,7 +4118,7 @@ private struct LiveTurnCard: View {
         CodexTranscriptView(
             turnID: turn.id,
             workspaceDirectory: effectiveWorkspaceDirectory,
-            activities: turn.activities,
+            activities: transcriptActivities,
             response: turn.response,
             responseUpdatedAt: turn.updatedAt,
             isRunning: turn.status.isRunning,
@@ -4130,6 +4136,26 @@ private struct LiveTurnCard: View {
 
     private var effectiveBackend: AgentBackend {
         turn.backend ?? turn.characterBackend
+    }
+
+    private var transcriptActivities: [LiveFeedActivity] {
+        turn.activities.filter { $0.kind != "suggestion" }
+    }
+
+    private var promptSuggestions: [String] {
+        var seen = Set<String>()
+        return Array(turn.activities.compactMap { activity in
+            guard activity.kind == "suggestion" else {
+                return nil
+            }
+            let suggestion = activity.text.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            guard !suggestion.isEmpty, seen.insert(suggestion).inserted else {
+                return nil
+            }
+            return suggestion
+        }.prefix(3))
     }
 
     private var effectiveWorkspaceDirectory: String {
@@ -4191,6 +4217,44 @@ private struct LiveTurnCard: View {
         }
     }
 
+}
+
+private struct AgentPromptSuggestionList: View {
+    let suggestions: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("다음 질문 추천", systemImage: "sparkles")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(DashboardPalette.accent)
+
+            ForEach(Array(suggestions.enumerated()), id: \.offset) { _, text in
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 3)
+
+                    Text(text)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 10)
+        .background(
+            DashboardPalette.accent.opacity(0.055),
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(DashboardPalette.accent.opacity(0.16))
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 private struct LiveTurnElapsedStatusView: View {
