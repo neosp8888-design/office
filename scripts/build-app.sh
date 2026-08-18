@@ -16,6 +16,44 @@ if [[ "$HOST_ARCHITECTURE" != "arm64" ]]; then
         "OFFICESTRA v1.3.2부터 Apple Silicon arm64에서만 빌드합니다. 현재: $HOST_ARCHITECTURE"
     exit 1
 fi
+
+NODE_EXECUTABLE="${OFFICESTRA_NODE_EXECUTABLE:-$(command -v node || true)}"
+if [[ ! -x "$NODE_EXECUTABLE" ]]; then
+    print -u2 "배포 앱에 포함할 Node 실행 파일을 찾을 수 없습니다."
+    exit 1
+fi
+NODE_EXECUTABLE="$(realpath "$NODE_EXECUTABLE")"
+# 앱에는 Node 실행 파일 하나만 넣으므로 Homebrew처럼 별도 dylib에 의존하는
+# 빌드는 원래 설치 경로에서만 실행되고 번들 안에서는 시작할 수 없다. 긴 Swift
+# 빌드에 들어가기 전에 이를 거부해 깨진 배포본과 불필요한 빌드 시간을 막는다.
+EXTERNAL_NODE_DEPENDENCIES="$(
+    /usr/bin/otool -L "$NODE_EXECUTABLE" \
+        | /usr/bin/awk '
+            NR > 1 && $1 !~ "^/System/Library/" && $1 !~ "^/usr/lib/" {
+                print $1
+            }
+        '
+)"
+if [[ -n "$EXTERNAL_NODE_DEPENDENCIES" ]]; then
+    print -u2 \
+        "선택한 Node는 앱에 포함되지 않는 동적 라이브러리에 의존합니다. $NODE_EXECUTABLE"
+    print -u2 "$EXTERNAL_NODE_DEPENDENCIES"
+    print -u2 \
+        "공식 독립형 Node 배포본을 OFFICESTRA_NODE_EXECUTABLE로 지정하세요."
+    exit 1
+fi
+NODE_VERSION="$($NODE_EXECUTABLE -p 'process.versions.node')"
+NODE_MAJOR="${NODE_VERSION%%.*}"
+if (( NODE_MAJOR < 20 )); then
+    print -u2 "OFFICESTRA 백엔드는 Node 20 이상이 필요합니다. 현재: $NODE_VERSION"
+    exit 1
+fi
+NODE_PREFIX="$(cd "$(dirname "$NODE_EXECUTABLE")/.." && pwd)"
+if [[ ! -f "$NODE_PREFIX/LICENSE" ]]; then
+    print -u2 "Node 라이선스 파일을 찾을 수 없습니다. $NODE_PREFIX/LICENSE"
+    exit 1
+fi
+
 # 병합으로 제거된 프레임워크 참조가 증분 산출물에 남지 않도록 배포 빌드를 깨끗하게 시작한다.
 swift package clean
 swift build -c release --product OfficeLLM
@@ -116,23 +154,6 @@ cp "$PROJECT_DIR/backend/package-lock.json" \
     "$RUNTIME_DIR/database/migrations/"
 cp "$PROJECT_DIR/infra/compose.yaml" "$RUNTIME_DIR/infra/compose.yaml"
 
-NODE_EXECUTABLE="${OFFICESTRA_NODE_EXECUTABLE:-$(command -v node || true)}"
-if [[ ! -x "$NODE_EXECUTABLE" ]]; then
-    print -u2 "배포 앱에 포함할 Node 실행 파일을 찾을 수 없습니다."
-    exit 1
-fi
-NODE_EXECUTABLE="$(realpath "$NODE_EXECUTABLE")"
-NODE_VERSION="$($NODE_EXECUTABLE -p 'process.versions.node')"
-NODE_MAJOR="${NODE_VERSION%%.*}"
-if (( NODE_MAJOR < 20 )); then
-    print -u2 "OFFICESTRA 백엔드는 Node 20 이상이 필요합니다. 현재: $NODE_VERSION"
-    exit 1
-fi
-NODE_PREFIX="$(cd "$(dirname "$NODE_EXECUTABLE")/.." && pwd)"
-if [[ ! -f "$NODE_PREFIX/LICENSE" ]]; then
-    print -u2 "Node 라이선스 파일을 찾을 수 없습니다. $NODE_PREFIX/LICENSE"
-    exit 1
-fi
 cp "$NODE_EXECUTABLE" "$NODE_RUNTIME_DIR/bin/node"
 /usr/bin/shasum -a 256 "$NODE_RUNTIME_DIR/bin/node" \
     | /usr/bin/awk '{print $1}' \
