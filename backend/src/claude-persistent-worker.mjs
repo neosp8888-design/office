@@ -3,6 +3,10 @@ import { createInterface } from "node:readline";
 
 const DEFAULT_SUGGESTION_GRACE_MS = 3_000;
 const FORCE_KILL_DELAY_MS = 5_000;
+const COMPACT_PROMPT =
+  "/compact OFFICESTRA 직원 이름과 직급 호칭을 쓰지 말고, " +
+  "사용자는 '사용자'로 표현하며 요청·결정·진행 상태만 " +
+  "내용 중심으로 요약해 주세요.";
 
 export class ClaudePersistentWorker {
   constructor({
@@ -116,7 +120,7 @@ export class ClaudePersistentWorker {
     let boundary = null;
     let resultError = null;
     await this.runTurn({
-      prompt: "/compact",
+      prompt: COMPACT_PROMPT,
       onLine: async (line) => {
         let event;
         try {

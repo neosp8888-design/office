@@ -242,7 +242,14 @@ test("Claude 수동 압축은 /compact와 완료 경계의 토큰을 사용한�
   });
 
   const submitted = await submittedMessage(child, () => worker.compact());
-  assert.equal(submitted.message.message.content, "/compact");
+  assert.match(
+    submitted.message.message.content,
+    /^\/compact OFFICESTRA 직원 이름과 직급 호칭을 쓰지 말고/,
+  );
+  assert.equal(
+    /백부장|클대리/.test(submitted.message.message.content),
+    false,
+  );
   emit(child, {
     type: "system",
     subtype: "compact_boundary",
