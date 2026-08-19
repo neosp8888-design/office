@@ -92,6 +92,8 @@ const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
 let automaticWorkspaceApprovalRetryInFlight = false;
+let automaticWorkspaceApprovalRetryTimer = null;
+let shuttingDown = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
 const cliUpdateChecker = createCLIUpdateChecker();
 
@@ -112,6 +114,9 @@ async function hasRunningWork(backends) {
 }
 
 function startAutomaticWorkspaceApprovalRetryLoop() {
+  if (automaticWorkspaceApprovalRetryTimer) {
+    return;
+  }
   const timer = setInterval(() => {
     if (!runtime || automaticWorkspaceApprovalRetryInFlight) {
       return;
@@ -128,6 +133,7 @@ function startAutomaticWorkspaceApprovalRetryLoop() {
         automaticWorkspaceApprovalRetryInFlight = false;
       });
   }, automaticWorkspaceApprovalRetryIntervalMs);
+  automaticWorkspaceApprovalRetryTimer = timer;
   timer.unref();
 }
 
@@ -325,12 +331,18 @@ async function applyCLIUpdatesEndpoint(response, request) {
   const body = await readJSON(request);
   try {
     const current = await cliUpdateChecker.read();
+    const updatedBackends = backendsForIdentifier(body.id);
     const result = await applyCLIUpdates({
       hasRunningWork,
       packageNames: packageNamesForIdentifier(body.id),
-      backends: backendsForIdentifier(body.id),
+      backends: updatedBackends,
       prefix: sharedInstallPrefix(current, body.id),
     });
+    if (updatedBackends.includes("claude")) {
+      runtime?.closeClaudeWorkers(
+        new Error("Claude CLI가 갱신되어 지속 세션을 다시 시작합니다."),
+      );
+    }
     cliUpdateChecker.invalidate();
     send(response, 200, {
       ...result,
@@ -2294,6 +2306,44 @@ server.on("upgrade", (request, socket, head) => {
     webSocketServer.emit("connection", client, request);
   });
 });
+
+async function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log(`${signal} 신호를 받아 사무실 백엔드를 종료합니다.`);
+  if (automaticWorkspaceApprovalRetryTimer) {
+    clearInterval(automaticWorkspaceApprovalRetryTimer);
+    automaticWorkspaceApprovalRetryTimer = null;
+  }
+  runtime?.shutdown();
+  for (const socket of sockets) {
+    socket.terminate();
+  }
+  await new Promise((resolveClose) => {
+    if (!server.listening) {
+      resolveClose();
+      return;
+    }
+    server.close(resolveClose);
+  });
+  await pool.end();
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, () => {
+    void shutdown(signal)
+      .then(() => process.exit(0))
+      .catch((error) => {
+        console.error(
+          "백엔드 종료 중 오류가 발생했습니다.",
+          error instanceof Error ? error.message : String(error),
+        );
+        process.exit(1);
+      });
+  });
+}
 
 try {
   await migrate();

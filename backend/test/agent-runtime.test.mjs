@@ -25,6 +25,8 @@ import {
   AgentJobNotFoundError,
   AgentRuntime,
   buildArguments,
+  claudePersistentArguments,
+  claudePersistentWorkerSignature,
   claudeSessionPath,
   claudeSessionResumable,
   codexUsageDelta,
@@ -592,6 +594,214 @@ test("Claude 신규와 재개도 DB 업무 지침만 그대로 전달한다", ()
     assert.notEqual(suggestionsIndex, -1);
     assert.equal(argumentsList[suggestionsIndex + 1], "true");
   }
+});
+
+test("Claude 지속 세션은 prompt를 인수가 아닌 stream-json stdin으로 받는다", () => {
+  const character = {
+    backend: "claude",
+    model: "claude-opus-5",
+    effort: "xhigh",
+    fastMode: false,
+    permission: "bypassPermissions",
+    identityPrompt: "업데이트된 역할 지침을 따른다.",
+  };
+  for (const previousSessionID of [null, "session-1"]) {
+    const argumentsList = claudePersistentArguments(
+      character,
+      previousSessionID,
+    );
+    assert.equal(argumentsList[0], "-p");
+    assert.equal(argumentsList.includes("--input-format"), true);
+    assert.equal(
+      argumentsList[argumentsList.indexOf("--input-format") + 1],
+      "stream-json",
+    );
+    assert.equal(argumentsList.includes("--include-partial-messages"), true);
+    assert.equal(argumentsList.includes("--prompt-suggestions"), true);
+    assert.equal(
+      argumentsList[argumentsList.indexOf("--append-system-prompt") + 1],
+      character.identityPrompt,
+    );
+    assert.equal(
+      argumentsList.includes("--resume"),
+      previousSessionID !== null,
+    );
+    assert.equal(
+      argumentsList.includes("--exclude-dynamic-system-prompt-sections"),
+      false,
+    );
+    assert.equal(argumentsList.includes("테스트 prompt"), false);
+  }
+});
+
+test("Claude 지속 세션 서명은 캐시를 바꾸는 설정과 작업 공간을 구분한다", () => {
+  const character = {
+    backend: "claude",
+    model: "claude-opus-5",
+    effort: "high",
+    fastMode: false,
+    permission: "auto",
+    identityPrompt: "업무 지침",
+  };
+  const original = claudePersistentWorkerSignature({
+    character,
+    executable: "/bin/claude",
+    workdir: "/repo/a",
+  });
+  assert.equal(
+    original,
+    claudePersistentWorkerSignature({
+      character: { ...character },
+      executable: "/bin/claude",
+      workdir: "/repo/a",
+    }),
+  );
+  assert.notEqual(
+    original,
+    claudePersistentWorkerSignature({
+      character: { ...character, identityPrompt: "바뀐 지침" },
+      executable: "/bin/claude",
+      workdir: "/repo/a",
+    }),
+  );
+  assert.notEqual(
+    original,
+    claudePersistentWorkerSignature({
+      character,
+      executable: "/bin/claude",
+      workdir: "/repo/b",
+    }),
+  );
+});
+
+test("AgentRuntime은 같은 Claude 설정·세션·작업 공간에서 worker 하나를 재사용한다", () => {
+  const created = [];
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+    claudeWorkerFactory: (options) => {
+      const worker = {
+        child: {},
+        signature: options.signature,
+        sessionID: options.sessionID,
+        closed: false,
+        matches({ signature, sessionID }) {
+          return !this.closed &&
+            this.signature === signature &&
+            (this.sessionID ?? null) === (sessionID ?? null);
+        },
+        close() {
+          this.closed = true;
+          options.onExit(this);
+        },
+      };
+      created.push(worker);
+      return worker;
+    },
+  });
+  const state = {
+    character: {
+      id: "left-woman",
+      backend: "claude",
+      model: "claude-opus-5",
+      effort: "high",
+      fastMode: false,
+      permission: "auto",
+      identityPrompt: "업무 지침",
+    },
+    workdir: "/repo/worktree",
+    externalSessionID: "session-1",
+  };
+
+  const first = runtime.acquireClaudeWorker(state, "/bin/claude");
+  const second = runtime.acquireClaudeWorker(state, "/bin/claude");
+  assert.equal(first, second);
+  assert.equal(created.length, 1);
+
+  const replacement = runtime.acquireClaudeWorker({
+    ...state,
+    character: { ...state.character, effort: "xhigh" },
+  }, "/bin/claude");
+  assert.notEqual(replacement, first);
+  assert.equal(first.closed, true);
+  assert.equal(created.length, 2);
+
+  runtime.shutdown();
+  assert.equal(replacement.closed, true);
+  assert.equal(runtime.claudeWorkers.size, 0);
+});
+
+test("연속 Claude 업무는 같은 worker stdin 턴으로 실행하고 각각 완료한다", async () => {
+  const prompts = [];
+  const completed = [];
+  let spawnCount = 0;
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+    claudeWorkerFactory: (options) => {
+      spawnCount += 1;
+      return {
+        child: {},
+        signature: options.signature,
+        sessionID: options.sessionID,
+        matches({ signature, sessionID }) {
+          return this.signature === signature &&
+            (this.sessionID ?? null) === (sessionID ?? null);
+        },
+        async runTurn({ prompt, onLine }) {
+          prompts.push(prompt);
+          await onLine(JSON.stringify({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            result: `응답: ${prompt}`,
+          }));
+        },
+        close() {},
+      };
+    },
+  });
+  runtime.persistResponseDraft = async () => {};
+  runtime.complete = async (state, decoded) => {
+    completed.push({ turnID: state.turnID, text: decoded.text });
+  };
+  const character = {
+    id: "left-woman",
+    backend: "claude",
+    model: "claude-opus-5",
+    effort: "high",
+    fastMode: false,
+    permission: "auto",
+    identityPrompt: "업무 지침",
+  };
+  const state = (turnID, prompt) => ({
+    turnID,
+    character,
+    workdir: "/repo/worktree",
+    prompt,
+    executionPrompt: prompt,
+    externalSessionID: null,
+    responseText: "",
+    partialText: "",
+    visibleAgentMessages: [],
+    lastPartialPersistedAt: 0,
+    cancelRequested: false,
+    failure: null,
+  });
+
+  await runtime.executeClaude(state("turn-1", "첫 질문"));
+  await runtime.executeClaude(state("turn-2", "둘째 질문"));
+
+  assert.equal(spawnCount, 1);
+  assert.deepEqual(prompts, ["첫 질문", "둘째 질문"]);
+  assert.deepEqual(completed, [
+    { turnID: "turn-1", text: "응답: 첫 질문" },
+    { turnID: "turn-2", text: "응답: 둘째 질문" },
+  ]);
 });
 
 test("Claude 실행은 기본 압축과 OFFICESTRA 명시적 업데이트를 사용한다", () => {

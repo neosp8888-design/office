@@ -44,6 +44,7 @@ import {
 import {
   CodexRolloutCollaborationTracker,
 } from "./codex-rollout-collaboration.mjs";
+import { ClaudePersistentWorker } from "./claude-persistent-worker.mjs";
 import {
   appendLocalImagePreviews,
   listGeneratedImages,
@@ -143,6 +144,7 @@ export class AgentRuntime {
     broadcast,
     workspaceManager = null,
     rolloutReaderFactory = createRolloutReader,
+    claudeWorkerFactory = (options) => new ClaudePersistentWorker(options),
   }) {
     this.pool = pool;
     this.withTransaction = withTransaction;
@@ -151,7 +153,9 @@ export class AgentRuntime {
     this.broadcast = broadcast;
     this.workspaceManager = workspaceManager;
     this.rolloutReaderFactory = rolloutReaderFactory;
+    this.claudeWorkerFactory = claudeWorkerFactory;
     this.running = new Map();
+    this.claudeWorkers = new Map();
     this.automaticApprovalCharacters = new Set();
     this.preparingJobs = new Set();
     this.postProcessingJobs = new Set();
@@ -1066,7 +1070,11 @@ export class AgentRuntime {
     }
 
     state.cancelRequested = true;
-    terminateProcessGroup(state.process);
+    if (state.claudeWorker) {
+      state.claudeWorker.cancelCurrent();
+    } else {
+      terminateProcessGroup(state.process);
+    }
     const message = "사용자가 업무를 중단했습니다.";
     try {
       await this.completePendingInitialCodexReasoning(state);
@@ -1406,15 +1414,9 @@ export class AgentRuntime {
   }
 
   async execute(state) {
-    if (
-      state.character.backend === "claude" &&
-      state.externalSessionID
-    ) {
-      prepareClaudeSessionResume({
-        sessionID: state.externalSessionID,
-        workdir: state.workdir,
-        previousWorkdir: state.resumeExecutionWorkdir,
-      });
+    if (state.character.backend === "claude") {
+      await this.executeClaude(state);
+      return;
     }
     const executable = locateExecutable(state.character);
     const cliArguments = buildArguments({
@@ -1465,6 +1467,115 @@ export class AgentRuntime {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
     await this.complete(state, decoded);
+  }
+
+  async executeClaude(state) {
+    if (state.externalSessionID) {
+      prepareClaudeSessionResume({
+        sessionID: state.externalSessionID,
+        workdir: state.workdir,
+        previousWorkdir: state.resumeExecutionWorkdir,
+      });
+    }
+    const executable = locateExecutable(state.character);
+    const worker = this.acquireClaudeWorker(state, executable);
+    state.claudeWorker = worker;
+    state.process = worker.child;
+    try {
+      await worker.runTurn({
+        prompt: state.executionPrompt ?? state.prompt,
+        onLine: async (line) => await this.consumeOutputLine(state, line),
+      });
+    } catch (error) {
+      if (await this.settleCancelledOutput(state)) {
+        return;
+      }
+      throw error;
+    }
+
+    if (await this.settleCancelledOutput(state)) {
+      return;
+    }
+    if (state.failure) {
+      throw new Error(state.failure);
+    }
+    const candidate = this.finalResponseCandidate(state);
+    const decoded = decodeAgentResponse(candidate);
+    if (!decoded.text) {
+      throw new Error("CLI 최종 메시지가 없습니다.");
+    }
+    await this.complete(state, decoded);
+  }
+
+  acquireClaudeWorker(state, executable) {
+    const characterID = state.character.id;
+    const signature = claudePersistentWorkerSignature({
+      character: state.character,
+      executable,
+      workdir: state.workdir,
+    });
+    const existing = this.claudeWorkers.get(characterID);
+    if (existing?.matches({
+      signature,
+      sessionID: state.externalSessionID,
+    })) {
+      return existing;
+    }
+    existing?.close(
+      new Error("Claude 설정 또는 작업 공간이 바뀌어 지속 세션을 교체합니다."),
+    );
+
+    let worker;
+    worker = this.claudeWorkerFactory({
+      executable,
+      argumentsList: claudePersistentArguments(
+        state.character,
+        state.externalSessionID,
+      ),
+      cwd: state.workdir,
+      env: executionEnvironment(state.character),
+      signature,
+      sessionID: state.externalSessionID,
+      onExit: (exitedWorker) => {
+        if (this.claudeWorkers.get(characterID) === exitedWorker) {
+          this.claudeWorkers.delete(characterID);
+        }
+      },
+    });
+    this.claudeWorkers.set(characterID, worker);
+    return worker;
+  }
+
+  closeClaudeWorker(
+    characterID,
+    expected = null,
+    reason = new Error("Claude 지속 세션을 종료했습니다."),
+  ) {
+    const worker = this.claudeWorkers.get(characterID);
+    if (!worker || (expected && worker !== expected)) {
+      return false;
+    }
+    this.claudeWorkers.delete(characterID);
+    worker.close(reason);
+    return true;
+  }
+
+  shutdown() {
+    this.closeClaudeWorkers(
+      new Error("OFFICESTRA 백엔드가 종료됩니다."),
+    );
+  }
+
+  closeClaudeWorkers(
+    reason = new Error("Claude 지속 세션을 종료했습니다."),
+  ) {
+    for (const [characterID, worker] of this.claudeWorkers) {
+      this.closeClaudeWorker(
+        characterID,
+        worker,
+        reason,
+      );
+    }
   }
 
   startCodexRolloutMonitor(state) {
@@ -1562,114 +1673,118 @@ export class AgentRuntime {
       crlfDelay: Infinity,
     });
     for await (const line of lines) {
-      const event = parseAgentEvent(
-        line,
-        state.character.backend,
-        state.workdir,
-      );
-      if (!event) {
-        continue;
-      }
-      if (event.usage) {
-        const usage = usageForTurn(state, event.usage);
-        if (usage) {
-          state.usage = usage;
-        }
-      }
-      this.enrichFileChangeEvent(state, event);
-      if (
-        event.sessionID &&
-        event.sessionID !== state.externalSessionID
-      ) {
-        await this.activateSession(state, event.sessionID);
-      }
-      if (event.streamMessageID) {
-        state.streamMessageID = event.streamMessageID;
-        state.partialText = "";
-        state.responseText = "";
-        state.lastPartialPersistedAt = 0;
-      }
-      const activities = [
-        ...(Array.isArray(event.activities) ? event.activities : []),
-        ...(event.activity ? [event.activity] : []),
-      ];
-      const pendingReasoningBeforeEvent = activities.length > 0
-        ? state.pendingInitialCodexReasoning
-        : null;
-      if (activities.length > 0) {
-        await this.promotePendingAgentMessage(state);
-        for (const activity of activities) {
-          await this.addParsedActivity(
-            state,
-            this.scopedActivity(state, activity),
-          );
-        }
-        if (pendingReasoningBeforeEvent) {
-          await this.completePendingInitialCodexReasoning(
-            state,
-            pendingReasoningBeforeEvent,
-          );
-        }
-      }
-      if (event.agentMessage) {
-        const key = event.agentMessageKey ?? null;
-        if (state.character.backend === "codex") {
-          await this.completePendingInitialCodexReasoning(state);
-          await this.addActivity(state, {
-            kind: "message",
-            text: event.agentMessage,
-            eventKey: key ? `message:${key}` : null,
-            status: "completed",
-            preserveOccurredAt: true,
-          });
-        } else {
-          if (
-            state.pendingAgentMessage &&
-            state.pendingAgentMessage.key !== key
-          ) {
-            await this.promotePendingAgentMessage(state);
-          }
-          state.pendingAgentMessage = {
-            key,
-            text: event.agentMessage,
-          };
-        }
-        this.rememberVisibleAgentMessage(
-          state,
-          key,
-          event.agentMessage,
-        );
-        state.responseText = event.agentMessage;
-        state.partialText = event.agentMessage;
-        await this.persistResponseDraft(
-          state,
-          this.visibleResponseText(state),
-        );
-      }
-      if (event.responseDelta) {
-        state.partialText += event.responseDelta;
-        await this.persistPartialResponse(state);
-      }
-      if (event.responseText) {
-        this.rememberVisibleAgentMessage(
-          state,
-          null,
-          event.responseText,
-        );
-        state.responseText = event.responseText;
-        await this.persistResponseDraft(
-          state,
-          this.visibleResponseText(state),
-        );
-      }
-      if (event.warning) {
-        state.warning = event.warning;
-      }
-      if (event.failure) {
-        state.failure = event.failure;
-      }
+      await this.consumeOutputLine(state, line);
     }
     await this.completePendingInitialCodexReasoning(state);
+  }
+
+  async consumeOutputLine(state, line) {
+    const event = parseAgentEvent(
+      line,
+      state.character.backend,
+      state.workdir,
+    );
+    if (!event) {
+      return;
+    }
+    if (event.usage) {
+      const usage = usageForTurn(state, event.usage);
+      if (usage) {
+        state.usage = usage;
+      }
+    }
+    this.enrichFileChangeEvent(state, event);
+    if (
+      event.sessionID &&
+      event.sessionID !== state.externalSessionID
+    ) {
+      await this.activateSession(state, event.sessionID);
+    }
+    if (event.streamMessageID) {
+      state.streamMessageID = event.streamMessageID;
+      state.partialText = "";
+      state.responseText = "";
+      state.lastPartialPersistedAt = 0;
+    }
+    const activities = [
+      ...(Array.isArray(event.activities) ? event.activities : []),
+      ...(event.activity ? [event.activity] : []),
+    ];
+    const pendingReasoningBeforeEvent = activities.length > 0
+      ? state.pendingInitialCodexReasoning
+      : null;
+    if (activities.length > 0) {
+      await this.promotePendingAgentMessage(state);
+      for (const activity of activities) {
+        await this.addParsedActivity(
+          state,
+          this.scopedActivity(state, activity),
+        );
+      }
+      if (pendingReasoningBeforeEvent) {
+        await this.completePendingInitialCodexReasoning(
+          state,
+          pendingReasoningBeforeEvent,
+        );
+      }
+    }
+    if (event.agentMessage) {
+      const key = event.agentMessageKey ?? null;
+      if (state.character.backend === "codex") {
+        await this.completePendingInitialCodexReasoning(state);
+        await this.addActivity(state, {
+          kind: "message",
+          text: event.agentMessage,
+          eventKey: key ? `message:${key}` : null,
+          status: "completed",
+          preserveOccurredAt: true,
+        });
+      } else {
+        if (
+          state.pendingAgentMessage &&
+          state.pendingAgentMessage.key !== key
+        ) {
+          await this.promotePendingAgentMessage(state);
+        }
+        state.pendingAgentMessage = {
+          key,
+          text: event.agentMessage,
+        };
+      }
+      this.rememberVisibleAgentMessage(
+        state,
+        key,
+        event.agentMessage,
+      );
+      state.responseText = event.agentMessage;
+      state.partialText = event.agentMessage;
+      await this.persistResponseDraft(
+        state,
+        this.visibleResponseText(state),
+      );
+    }
+    if (event.responseDelta) {
+      state.partialText += event.responseDelta;
+      await this.persistPartialResponse(state);
+    }
+    if (event.responseText) {
+      this.rememberVisibleAgentMessage(
+        state,
+        null,
+        event.responseText,
+      );
+      state.responseText = event.responseText;
+      await this.persistResponseDraft(
+        state,
+        this.visibleResponseText(state),
+      );
+    }
+    if (event.warning) {
+      state.warning = event.warning;
+    }
+    if (event.failure) {
+      state.failure = event.failure;
+    }
   }
 
   scopedActivity(state, activity) {
@@ -2446,6 +2561,11 @@ export class AgentRuntime {
     }
     if (workspaceReview?.hasChanges) {
       const characterID = state.character.id;
+      this.closeClaudeWorker(
+        characterID,
+        state.claudeWorker,
+        new Error("변경된 작업 공간을 병합하기 전에 Claude 세션을 닫습니다."),
+      );
       this.automaticApprovalCharacters.add(characterID);
       try {
         if (this.running.get(characterID) === state) {
@@ -3274,12 +3394,22 @@ export class AgentRuntime {
     const plan = await this.inspectWorkspaceForSessionEnd(characterID);
     const { workspace, reviewTurnID, review } = plan;
     if (!workspace) {
+      this.closeClaudeWorker(
+        characterID,
+        null,
+        new Error("직원 CLI 세션을 종료합니다."),
+      );
       return await this.withTransaction(async (client) =>
         await this.applyWorkspaceSessionEndPlan(client, plan)
       );
     }
 
     if (review.hasChanges) {
+      this.closeClaudeWorker(
+        characterID,
+        null,
+        new Error("작업 공간 검토 전에 Claude 세션을 닫습니다."),
+      );
       const updated = await this.pool.query(
         `
           UPDATE task_workspaces
@@ -3333,6 +3463,11 @@ export class AgentRuntime {
       );
     }
 
+    this.closeClaudeWorker(
+      characterID,
+      null,
+      new Error("직원 CLI 세션을 종료합니다."),
+    );
     await this.workspaceManager.cleanup(workspace);
     const closed = await this.withTransaction(async (client) =>
       await this.applyWorkspaceSessionEndPlan(client, plan)
@@ -5115,6 +5250,56 @@ function claudeArguments(
     argumentsList.push("--resume", previousSessionID);
   }
   return argumentsList;
+}
+
+export function claudePersistentArguments(character, previousSessionID) {
+  if (character.fastMode && character.model !== "claude-opus-5") {
+    throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
+  }
+  const argumentsList = [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--input-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--prompt-suggestions",
+    "true",
+    "--settings",
+    JSON.stringify({ fastMode: character.fastMode === true }),
+    "--effort",
+    character.effort,
+    "--permission-mode",
+    character.permission,
+  ];
+  if (character.model) {
+    argumentsList.push("--model", character.model);
+  }
+  argumentsList.push(
+    "--append-system-prompt",
+    configuredIdentityPrompt(character),
+  );
+  if (previousSessionID) {
+    argumentsList.push("--resume", previousSessionID);
+  }
+  return argumentsList;
+}
+
+export function claudePersistentWorkerSignature({
+  character,
+  executable,
+  workdir,
+}) {
+  return JSON.stringify({
+    executable: String(executable ?? ""),
+    workdir: String(workdir ?? ""),
+    model: String(character.model ?? ""),
+    effort: String(character.effort ?? ""),
+    fastMode: character.fastMode === true,
+    permission: String(character.permission ?? ""),
+    identityPrompt: configuredIdentityPrompt(character),
+  });
 }
 
 function configuredIdentityPrompt(character) {
