@@ -157,7 +157,10 @@ function transcriptEntries(kind, path, maxReadBytes) {
 }
 
 export function claudeContextEntry(line) {
-  if (!line.includes("\"usage\"")) {
+  if (
+    !line.includes("\"usage\"") &&
+    !line.includes("compact_boundary")
+  ) {
     return null;
   }
   let record;
@@ -165,6 +168,20 @@ export function claudeContextEntry(line) {
     record = JSON.parse(line);
   } catch {
     return null;
+  }
+  if (
+    record?.type === "system" &&
+    record.subtype === "compact_boundary"
+  ) {
+    const metadata = record.compact_metadata ?? record.compactMetadata ?? {};
+    const usedTokens = tokenCount(
+      metadata.post_tokens ?? metadata.postTokens,
+    );
+    const at = Date.parse(record.timestamp);
+    if (usedTokens <= 0 || !Number.isFinite(at)) {
+      return null;
+    }
+    return { at, usedTokens, limitTokens: null };
   }
   if (record?.type !== "assistant" || record.isSidechain === true) {
     return null;

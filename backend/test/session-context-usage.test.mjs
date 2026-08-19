@@ -72,6 +72,22 @@ test("Claude 기록은 입력과 캐시를 합쳐 컨텍스트 점유로 계산�
   assert.equal(entry.limitTokens, null);
 });
 
+test("Claude 압축 경계는 압축 뒤 컨텍스트 점유를 반영한다", () => {
+  const entry = claudeContextEntry(JSON.stringify({
+    type: "system",
+    subtype: "compact_boundary",
+    timestamp: "2026-08-20T01:02:03.000Z",
+    compact_metadata: {
+      pre_tokens: 905_000,
+      post_tokens: 47_500,
+    },
+  }));
+
+  assert.equal(entry.usedTokens, 47_500);
+  assert.equal(entry.limitTokens, null);
+  assert.equal(entry.at, Date.parse("2026-08-20T01:02:03.000Z"));
+});
+
 test("Claude 부속 대화와 사용량 없는 줄은 건너뛴다", () => {
   assert.equal(
     claudeContextEntry(

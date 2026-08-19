@@ -227,3 +227,45 @@ test("누적 집계가 감소하면 새 query 기준으로 그대로 사용한�
   assert.equal(scoped.result.modelUsage.model.inputTokens, 40);
   assert.equal(scoped.result.modelUsage.model.costUSD, 0.4);
 });
+
+test("Claude 수동 압축은 /compact와 완료 경계의 토큰을 사용한다", async () => {
+  const child = new FakeChild();
+  const worker = new ClaudePersistentWorker({
+    executable: "claude",
+    argumentsList: ["-p"],
+    cwd: "/repo",
+    env: {},
+    signature: "compact",
+    sessionID: "session-1",
+    spawnProcess: () => child,
+    suggestionGraceMs: 5,
+  });
+
+  const submitted = await submittedMessage(child, () => worker.compact());
+  assert.equal(submitted.message.message.content, "/compact");
+  emit(child, {
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: {
+      pre_tokens: 901_000,
+      post_tokens: 42_000,
+    },
+  });
+  emit(child, {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "Compacted conversation",
+    total_cost_usd: 0.1,
+  });
+  emit(child, {
+    type: "prompt_suggestion",
+    suggestion: "계속할까요?",
+  });
+
+  assert.deepEqual(await submitted.promise, {
+    preTokens: 901_000,
+    postTokens: 42_000,
+  });
+  worker.close();
+});

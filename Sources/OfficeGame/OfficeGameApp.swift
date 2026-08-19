@@ -950,6 +950,12 @@ private struct LiveWorkspaceCommandBar: View {
                         character: character
                     )
 
+                    ContextCompactionControls(
+                        director: director,
+                        character: character
+                    )
+                    .id(character.id)
+
                     if PixelOfficeAsset.fullBodyProfileURL(for: character.id) != nil
                         || PixelOfficeAsset.fullBodyProfileVideoURL(
                             for: character.id
@@ -1787,6 +1793,224 @@ struct AgentQuickSettingsAvailability: Equatable {
     var canChangeBackend: Bool {
         canChangeCurrentBackendSettings && !needsWorkspaceReview
     }
+}
+
+struct ContextCompactionAvailability: Equatable {
+    let isReady: Bool
+    let isUpdatingConfiguration: Bool
+    let isRunning: Bool
+    let hasActiveSession: Bool
+    let isCompacting: Bool
+
+    var canAdjustThreshold: Bool {
+        isReady && !isUpdatingConfiguration && !isRunning && !isCompacting
+    }
+
+    var canCompactNow: Bool {
+        canAdjustThreshold && hasActiveSession
+    }
+}
+
+private struct ContextCompactionControls: View {
+    @ObservedObject var director: AgentDirector
+    let character: CharacterConfiguration
+    @State private var draftPercent: Double
+    @State private var alert: ContextCompactionAlert?
+
+    init(
+        director: AgentDirector,
+        character: CharacterConfiguration
+    ) {
+        self.director = director
+        self.character = character
+        _draftPercent = State(
+            initialValue: Double(
+                director.autoCompactPercent(for: character.id)
+            )
+        )
+    }
+
+    private var availability: ContextCompactionAvailability {
+        ContextCompactionAvailability(
+            isReady: director.isReadyForSubmissions,
+            isUpdatingConfiguration: director.isUpdatingConfiguration,
+            isRunning: director.runningCharacters.contains(character.id),
+            hasActiveSession: director.hasActiveSession(for: character.id),
+            isCompacting: director.compactingCharacters.contains(character.id)
+        )
+    }
+
+    private var roundedPercent: Int {
+        Int(draftPercent.rounded())
+    }
+
+    private var contextLimit: Int? {
+        director.sessionContextLimit(for: character.id)
+    }
+
+    private var thresholdText: String {
+        guard let contextLimit else {
+            return "\(roundedPercent)%"
+        }
+        let tokens = contextLimit * roundedPercent / 100
+        return "\(roundedPercent)% · \(compactTokenCount(tokens))"
+    }
+
+    private var thresholdHelp: String {
+        guard let contextLimit else {
+            return "세션의 실제 최대 컨텍스트 대비 자동 압축 기준"
+        }
+        return "실제 최대 \(compactTokenCount(contextLimit)) 토큰 중 \(thresholdText)에서 자동 압축"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label("자동", systemImage: "gauge.with.dots.needle.33percent")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Slider(
+                value: $draftPercent,
+                in: 50 ... 95,
+                step: 5,
+                onEditingChanged: thresholdEditingChanged
+            )
+            .frame(width: 92)
+            .tint(DashboardPalette.accent)
+            .disabled(!availability.canAdjustThreshold)
+            .accessibilityLabel("자동 컨텍스트 압축 기준")
+            .accessibilityValue("\(roundedPercent)퍼센트")
+            .help(thresholdHelp)
+
+            Text(thresholdText)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(DashboardPalette.accent)
+                .frame(minWidth: 28, alignment: .trailing)
+
+            Button {
+                alert = .confirmation
+            } label: {
+                if availability.isCompacting {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("압축 중")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                } else {
+                    Label(
+                        "지금 압축",
+                        systemImage: "arrow.down.right.and.arrow.up.left"
+                    )
+                    .font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DashboardPalette.accent)
+            .disabled(!availability.canCompactNow)
+            .accessibilityLabel("컨텍스트 지금 압축")
+            .help(
+                availability.hasActiveSession
+                    ? "현재 CLI 세션의 컨텍스트를 즉시 요약 압축"
+                    : "첫 대화 뒤 활성 세션이 생기면 압축할 수 있습니다"
+            )
+        }
+        .onChange(
+            of: director.autoCompactPercent(for: character.id)
+        ) { _, value in
+            draftPercent = Double(value)
+        }
+        .alert(item: $alert, content: compactionAlert)
+    }
+
+    private func thresholdEditingChanged(_ editing: Bool) {
+        guard !editing else {
+            return
+        }
+        let requested = roundedPercent
+        Task {
+            do {
+                try await director.updateAutoCompactPercent(
+                    requested,
+                    for: character.id
+                )
+            } catch {
+                draftPercent = Double(
+                    director.autoCompactPercent(for: character.id)
+                )
+                alert = .message(
+                    title: "자동 압축 기준 저장 실패",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func compactionAlert(
+        _ alert: ContextCompactionAlert
+    ) -> Alert {
+        switch alert {
+        case .confirmation:
+            return Alert(
+                title: Text("컨텍스트를 지금 압축할까요?"),
+                message: Text(
+                    "\(character.name)의 \(character.backend.title) 대화 내용을 요약으로 바꿉니다. 이전 세부 내용은 되돌릴 수 없습니다."
+                ),
+                primaryButton: .destructive(Text("압축")) {
+                    Task { await compactNow() }
+                },
+                secondaryButton: .cancel(Text("취소"))
+            )
+        case let .message(title, message):
+            return Alert(
+                title: Text(title),
+                message: Text(message),
+                dismissButton: .default(Text("확인"))
+            )
+        }
+    }
+
+    private func compactNow() async {
+        do {
+            let result = try await director.compactContext(for: character.id)
+            let detail: String
+            if let before = result.preTokens, let after = result.postTokens {
+                detail = "\(compactTokenCount(before)) → \(compactTokenCount(after)) 토큰"
+            } else {
+                detail = "활성 세션을 요약 압축했습니다."
+            }
+            alert = .message(title: "컨텍스트 압축 완료", message: detail)
+        } catch {
+            alert = .message(
+                title: "컨텍스트 압축 실패",
+                message: error.localizedDescription
+            )
+        }
+    }
+}
+
+private enum ContextCompactionAlert: Identifiable {
+    case confirmation
+    case message(title: String, message: String)
+
+    var id: String {
+        switch self {
+        case .confirmation:
+            "confirmation"
+        case let .message(title, message):
+            "message:\(title):\(message)"
+        }
+    }
+}
+
+private func compactTokenCount(_ value: Int) -> String {
+    if value >= 1_000_000 {
+        return String(format: "%.2fM", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.1fK", Double(value) / 1_000)
+    }
+    return String(value)
 }
 
 private struct AgentQuickSettingsView: View {

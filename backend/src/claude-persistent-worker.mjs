@@ -112,6 +112,49 @@ export class ClaudePersistentWorker {
     });
   }
 
+  async compact() {
+    let boundary = null;
+    let resultError = null;
+    await this.runTurn({
+      prompt: "/compact",
+      onLine: async (line) => {
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (event.type === "system" && event.subtype === "compact_boundary") {
+          boundary = event;
+        }
+        if (
+          event.type === "result" &&
+          (event.is_error === true || event.subtype !== "success")
+        ) {
+          resultError = String(
+            event.result ?? event.error ?? "Claude 컨텍스트 압축이 실패했습니다.",
+          );
+        }
+      },
+    });
+    if (resultError) {
+      throw new Error(resultError);
+    }
+    if (!boundary) {
+      throw new Error("Claude가 압축 완료 경계를 보고하지 않았습니다.");
+    }
+    const metadata = boundary.compact_metadata ??
+      boundary.compactMetadata ?? {};
+    return {
+      preTokens: finiteTokenCount(
+        metadata.pre_tokens ?? metadata.preTokens,
+      ),
+      postTokens: finiteTokenCount(
+        metadata.post_tokens ?? metadata.postTokens,
+      ),
+    };
+  }
+
   cancelCurrent() {
     this.close(new Error("사용자가 Claude 업무를 중단했습니다."));
   }
@@ -248,6 +291,12 @@ export class ClaudePersistentWorker {
     this.exitNotified = true;
     this.onExit(this);
   }
+}
+
+function finiteTokenCount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
 }
 
 export function scopedClaudeCumulativeResult(result, previous = null) {
