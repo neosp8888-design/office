@@ -135,6 +135,7 @@ test("누적 사용량은 컨텍스트 점유로 오인하지 않는다", () => 
 });
 
 test("Claude 모델 문자열로 컨텍스트 한도를 찾는다", () => {
+  assert.equal(claudeContextWindow("fable"), 1_000_000);
   assert.equal(claudeContextWindow("claude-opus-5"), 1_000_000);
   assert.equal(claudeContextWindow("claude-sonnet-5"), 1_000_000);
   assert.equal(claudeContextWindow("claude-haiku-4-5-20251001"), 200_000);

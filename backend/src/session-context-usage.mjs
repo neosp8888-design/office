@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 const CLAUDE_CONTEXT_WINDOWS = [
   ["claude-fable-5", 1_000_000],
+  ["fable", 1_000_000],
   ["claude-mythos-5", 1_000_000],
   ["claude-opus-5", 1_000_000],
   ["claude-opus-4-8", 1_000_000],
