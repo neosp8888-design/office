@@ -44,6 +44,10 @@ import {
 import {
   CodexRolloutCollaborationTracker,
 } from "./codex-rollout-collaboration.mjs";
+import { compactCodexThread } from "./codex-context-compactor.mjs";
+import {
+  resolveCodexContextConfiguration,
+} from "./codex-model-context.mjs";
 import { ClaudePersistentWorker } from "./claude-persistent-worker.mjs";
 import {
   appendLocalImagePreviews,
@@ -51,6 +55,7 @@ import {
 } from "./local-artifacts.mjs";
 import { GitWorkspaceError } from "./git-workspace.mjs";
 import { estimateTokenCost } from "./token-cost-estimator.mjs";
+import { sessionContextUsage } from "./session-context-usage.mjs";
 import {
   ProvenanceValidationError,
   portableResponseSources,
@@ -81,6 +86,7 @@ const TASK_WORKSPACE_EXECUTION_CONSTRAINT =
 export class AgentBusyError extends Error {}
 export class AgentDrainingError extends Error {}
 export class AgentJobNotFoundError extends Error {}
+export class AgentSessionNotFoundError extends Error {}
 export class CharacterNotFoundError extends Error {}
 
 export async function persistTurnWikiProposals(client, {
@@ -145,6 +151,9 @@ export class AgentRuntime {
     workspaceManager = null,
     rolloutReaderFactory = createRolloutReader,
     claudeWorkerFactory = (options) => new ClaudePersistentWorker(options),
+    codexCompactor = compactCodexThread,
+    codexContextResolver = resolveCodexContextConfiguration,
+    contextUsageReader = sessionContextUsage,
   }) {
     this.pool = pool;
     this.withTransaction = withTransaction;
@@ -154,8 +163,13 @@ export class AgentRuntime {
     this.workspaceManager = workspaceManager;
     this.rolloutReaderFactory = rolloutReaderFactory;
     this.claudeWorkerFactory = claudeWorkerFactory;
+    this.codexCompactor = codexCompactor;
+    this.codexContextResolver = codexContextResolver;
+    this.contextUsageReader = contextUsageReader;
     this.running = new Map();
     this.claudeWorkers = new Map();
+    this.compactingCharacters = new Set();
+    this.preparingCharacters = new Set();
     this.automaticApprovalCharacters = new Set();
     this.preparingJobs = new Set();
     this.postProcessingJobs = new Set();
@@ -169,6 +183,7 @@ export class AgentRuntime {
   activeWorkCount() {
     return this.preparingJobs.size +
       this.running.size +
+      this.compactingCharacters.size +
       this.automaticApprovalCharacters.size +
       this.postProcessingJobs.size;
   }
@@ -589,14 +604,26 @@ export class AgentRuntime {
       );
     }
 
+    const characterID = String(options?.characterID ?? "");
+    if (
+      this.compactingCharacters.has(characterID) ||
+      this.preparingCharacters.has(characterID)
+    ) {
+      throw new AgentBusyError(
+        "이 직원의 컨텍스트 압축 또는 업무 준비가 끝난 뒤 시작하세요.",
+      );
+    }
+
     const preparation = Symbol(
-      `prepare-agent-job:${String(options?.characterID ?? "unknown")}`,
+      `prepare-agent-job:${characterID || "unknown"}`,
     );
     this.preparingJobs.add(preparation);
+    this.preparingCharacters.add(characterID);
     try {
       return await this.startAccepted(options);
     } finally {
       this.preparingJobs.delete(preparation);
+      this.preparingCharacters.delete(characterID);
     }
   }
 
@@ -615,6 +642,7 @@ export class AgentRuntime {
       !automaticRepair &&
       (
         this.running.has(characterID) ||
+        this.compactingCharacters.has(characterID) ||
         this.automaticApprovalCharacters.has(characterID)
       )
     ) {
@@ -1173,6 +1201,7 @@ export class AgentRuntime {
             model,
             effort,
             fast_mode AS "fastMode",
+            auto_compact_percent AS "autoCompactPercent",
             permission,
             identity_prompt AS "identityPrompt",
             config
@@ -1425,6 +1454,7 @@ export class AgentRuntime {
       previousSessionID: state.externalSessionID,
       attachments: state.attachments,
       workdir: state.workdir,
+      codexContext: this.codexContextResolver(state.character),
     });
     const child = spawn(executable, cliArguments, {
       cwd: state.workdir,
@@ -1467,6 +1497,7 @@ export class AgentRuntime {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
     await this.complete(state, decoded);
+    await this.maybeAutoCompactAfterTurn(state);
   }
 
   async executeClaude(state) {
@@ -1505,6 +1536,7 @@ export class AgentRuntime {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
     await this.complete(state, decoded);
+    await this.maybeAutoCompactAfterTurn(state);
   }
 
   acquireClaudeWorker(state, executable) {
@@ -1575,6 +1607,230 @@ export class AgentRuntime {
         worker,
         reason,
       );
+    }
+  }
+
+  async compactionTarget(characterID) {
+    const result = await this.pool.query(
+      `
+        SELECT
+          character.id,
+          character.name,
+          character.seat,
+          character.backend,
+          character.model,
+          character.effort,
+          character.fast_mode AS "fastMode",
+          character.auto_compact_percent AS "autoCompactPercent",
+          character.permission,
+          character.identity_prompt AS "identityPrompt",
+          character.config,
+          session.external_id AS "externalSessionID",
+          conversation.workdir AS "conversationWorkdir",
+          session_scope.repository_root AS "sessionRepositoryRoot",
+          resume_workspace.execution_workdir AS "resumeExecutionWorkdir"
+        FROM characters AS character
+        LEFT JOIN active_cli_sessions AS active
+          ON active.character_id = character.id
+        LEFT JOIN cli_sessions AS session
+          ON session.id = active.cli_session_id
+          AND session.ended_at IS NULL
+        LEFT JOIN conversations AS conversation
+          ON conversation.id = session.conversation_id
+        LEFT JOIN LATERAL (
+          SELECT candidate.repository_root
+          FROM task_workspaces AS candidate
+          WHERE candidate.cli_session_id = session.id
+            AND candidate.repository_root IS NOT NULL
+          ORDER BY candidate.updated_at DESC, candidate.id DESC
+          LIMIT 1
+        ) AS session_scope ON true
+        LEFT JOIN LATERAL (
+          SELECT candidate.execution_workdir
+          FROM turns AS completed_turn
+          JOIN task_workspaces AS candidate
+            ON candidate.id = completed_turn.task_workspace_id
+          WHERE completed_turn.cli_session_id = session.id
+            AND completed_turn.status = 'completed'
+            AND candidate.execution_workdir IS NOT NULL
+          ORDER BY
+            completed_turn.ended_at DESC NULLS LAST,
+            completed_turn.started_at DESC,
+            completed_turn.id DESC
+          LIMIT 1
+        ) AS resume_workspace ON true
+        WHERE character.id = $1
+        LIMIT 1
+      `,
+      [characterID],
+    );
+    if (result.rowCount === 0) {
+      throw new CharacterNotFoundError("캐릭터를 찾을 수 없습니다.");
+    }
+    const row = result.rows[0];
+    if (
+      !row.externalSessionID ||
+      !activeSessionMatchesRuntime(row, {
+        workdir: this.workdir,
+        repositoryRoot: this.repositoryRoot,
+      })
+    ) {
+      throw new AgentSessionNotFoundError(
+        "압축할 활성 CLI 세션이 없습니다.",
+      );
+    }
+    const previousWorkdir = String(row.resumeExecutionWorkdir ?? "").trim();
+    const workdir = previousWorkdir && existsSync(previousWorkdir)
+      ? previousWorkdir
+      : this.workdir;
+    return {
+      character: {
+        id: row.id,
+        name: row.name,
+        seat: row.seat,
+        backend: row.backend,
+        model: row.model,
+        effort: row.effort,
+        fastMode: row.fastMode,
+        autoCompactPercent: normalizeAutoCompactPercent(
+          row.autoCompactPercent,
+        ),
+        permission: row.permission,
+        identityPrompt: row.identityPrompt,
+        config: row.config ?? {},
+      },
+      externalSessionID: row.externalSessionID,
+      resumeExecutionWorkdir: previousWorkdir || null,
+      workdir,
+    };
+  }
+
+  contextUsage(target, at = Date.now()) {
+    return this.contextUsageReader({
+      backend: target.character.backend,
+      sessionID: target.externalSessionID,
+      model: target.character.model,
+      at,
+    });
+  }
+
+  async compactContext(characterID, {
+    automatic = false,
+    expectedSessionID = null,
+  } = {}) {
+    if (this.draining) {
+      throw new AgentDrainingError(
+        "백엔드가 안전한 전환을 준비 중이라 컨텍스트를 압축하지 않습니다.",
+      );
+    }
+    if (
+      this.running.has(characterID) ||
+      this.preparingCharacters.has(characterID) ||
+      this.automaticApprovalCharacters.has(characterID) ||
+      this.compactingCharacters.has(characterID)
+    ) {
+      throw new AgentBusyError(
+        "이 직원의 현재 업무와 후속 처리가 끝난 뒤 압축하세요.",
+      );
+    }
+
+    this.compactingCharacters.add(characterID);
+    try {
+      const target = await this.compactionTarget(characterID);
+      if (
+        expectedSessionID &&
+        target.externalSessionID !== expectedSessionID
+      ) {
+        throw new AgentBusyError(
+          "압축 기준을 확인한 뒤 활성 세션이 바뀌었습니다.",
+        );
+      }
+      const before = this.contextUsage(target);
+      let nativeResult = {};
+      if (target.character.backend === "claude") {
+        prepareClaudeSessionResume({
+          sessionID: target.externalSessionID,
+          workdir: target.workdir,
+          previousWorkdir: target.resumeExecutionWorkdir,
+        });
+        const executable = locateExecutable(target.character);
+        const worker = this.acquireClaudeWorker(target, executable);
+        nativeResult = await worker.compact();
+      } else {
+        const codexContext = this.codexContextResolver(target.character);
+        nativeResult = await this.codexCompactor({
+          executable: locateExecutable(target.character),
+          threadID: target.externalSessionID,
+          cwd: target.workdir,
+          env: executionEnvironment(target.character),
+          contextWindow: codexContext?.contextWindow ?? null,
+          autoCompactTokenLimit:
+            codexContext?.autoCompactTokenLimit ?? null,
+        });
+      }
+      const after = this.contextUsage(target);
+      const measuredPostTokens = after?.usedTokens != null &&
+          (
+            before?.usedTokens == null ||
+            after.usedTokens < before.usedTokens
+          )
+        ? after.usedTokens
+        : null;
+      const payload = {
+        ok: true,
+        automatic,
+        backend: target.character.backend,
+        sessionId: target.externalSessionID,
+        preTokens: nativeResult?.preTokens ?? before?.usedTokens ?? null,
+        postTokens: nativeResult?.postTokens ?? measuredPostTokens,
+        limitTokens: after?.limitTokens ?? before?.limitTokens ?? null,
+      };
+      this.broadcast({
+        type: "context.compacted",
+        characterId: characterID,
+        automatic,
+      });
+      return payload;
+    } finally {
+      this.compactingCharacters.delete(characterID);
+    }
+  }
+
+  async maybeAutoCompactAfterTurn(state) {
+    const sessionID = String(state.externalSessionID ?? "").trim();
+    if (!sessionID || this.draining) {
+      return null;
+    }
+    const target = {
+      character: state.character,
+      externalSessionID: sessionID,
+    };
+    const usage = this.contextUsage(target);
+    if (!usage?.limitTokens) {
+      return null;
+    }
+    const threshold = normalizeAutoCompactPercent(
+      state.character.autoCompactPercent,
+    );
+    if ((usage.usedTokens * 100) < (usage.limitTokens * threshold)) {
+      return null;
+    }
+    try {
+      return await this.compactContext(state.character.id, {
+        automatic: true,
+        expectedSessionID: sessionID,
+      });
+    } catch (error) {
+      console.warn(
+        `${state.character.name} 자동 컨텍스트 압축에 실패했습니다.`,
+        error instanceof Error ? error.message : String(error),
+      );
+      this.broadcast({
+        type: "context.compaction.failed",
+        characterId: state.character.id,
+        automatic: true,
+      });
+      return null;
     }
   }
 
@@ -4124,6 +4380,14 @@ function canonicalRuntimePath(value) {
   }
 }
 
+export function normalizeAutoCompactPercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) {
+    return 90;
+  }
+  return Math.min(95, Math.max(50, Math.round(percent)));
+}
+
 function workspaceReviewPayload(
   workspace,
   diff,
@@ -5088,6 +5352,7 @@ export function buildArguments({
   previousSessionID,
   attachments = [],
   workdir = null,
+  codexContext = null,
 }) {
   return character.backend === "codex"
     ? codexArguments(
@@ -5095,6 +5360,7 @@ export function buildArguments({
       prompt,
       previousSessionID,
       attachments,
+      codexContext,
     )
     : claudeArguments(
       character,
@@ -5112,7 +5378,9 @@ export function executionEnvironment(
   }
   const environment = { ...baseEnvironment };
   delete environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-  delete environment.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  environment.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(
+    normalizeAutoCompactPercent(character.autoCompactPercent),
+  );
   // CLI 갱신은 OFFICESTRA의 명시적 업데이트 화면에서만 수행한다.
   // 업무 사이에 Claude가 바뀌면 긴 재개 세션의 프롬프트 캐시가 한 번
   // 전부 무효화될 수 있으므로 자식 프로세스의 자동 갱신은 끈다.
@@ -5172,6 +5440,7 @@ function codexArguments(
   prompt,
   previousSessionID,
   attachments,
+  codexContext,
 ) {
   const argumentsList = ["exec"];
   if (previousSessionID) {
@@ -5181,6 +5450,17 @@ function codexArguments(
   }
   if (character.model) {
     argumentsList.push("-c", `model="${character.model}"`);
+  }
+  if (
+    codexContext?.contextWindow > 0 &&
+    codexContext?.autoCompactTokenLimit > 0
+  ) {
+    argumentsList.push(
+      "-c",
+      `model_context_window=${codexContext.contextWindow}`,
+      "-c",
+      `model_auto_compact_token_limit=${codexContext.autoCompactTokenLimit}`,
+    );
   }
   argumentsList.push(
     "-c",
@@ -5298,6 +5578,9 @@ export function claudePersistentWorkerSignature({
     effort: String(character.effort ?? ""),
     fastMode: character.fastMode === true,
     permission: String(character.permission ?? ""),
+    autoCompactPercent: normalizeAutoCompactPercent(
+      character.autoCompactPercent,
+    ),
     identityPrompt: configuredIdentityPrompt(character),
   });
 }

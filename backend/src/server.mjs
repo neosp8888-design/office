@@ -8,6 +8,7 @@ import {
   AgentBusyError,
   AgentDrainingError,
   AgentJobNotFoundError,
+  AgentSessionNotFoundError,
   AgentRuntime,
   CharacterNotFoundError,
 } from "./agent-runtime.mjs";
@@ -211,6 +212,20 @@ function routeCharacterIdentityPrompt(pathname) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function routeCharacterContextSettings(pathname) {
+  const match = pathname.match(
+    /^\/api\/characters\/([^/]+)\/context-settings$/,
+  );
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function routeCharacterContextCompact(pathname) {
+  const match = pathname.match(
+    /^\/api\/characters\/([^/]+)\/context\/compact$/,
+  );
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function routeCharacterHistory(pathname) {
   const match = pathname.match(/^\/api\/characters\/([^/]+)\/history$/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -259,6 +274,7 @@ async function listCharacters(response) {
         model,
         effort,
         fast_mode AS "fastMode",
+        auto_compact_percent AS "autoCompactPercent",
         permission,
         identity_prompt AS "identityPrompt"
       FROM characters
@@ -465,6 +481,55 @@ async function updateCharacterIdentityPrompt(response, characterID, body) {
     return;
   }
   send(response, 200, character);
+}
+
+async function updateCharacterContextSettings(response, characterID, body) {
+  const autoCompactPercent = Number(body.autoCompactPercent);
+  if (
+    !Number.isInteger(autoCompactPercent) ||
+    autoCompactPercent < 50 ||
+    autoCompactPercent > 95
+  ) {
+    send(response, 400, {
+      error: "자동 압축 기준은 50% 이상 95% 이하의 정수여야 합니다.",
+    });
+    return;
+  }
+  const result = await pool.query(
+    `
+      UPDATE characters
+      SET auto_compact_percent = $2, updated_at = now()
+      WHERE id = $1
+      RETURNING
+        id,
+        auto_compact_percent AS "autoCompactPercent"
+    `,
+    [characterID, autoCompactPercent],
+  );
+  if (result.rowCount === 0) {
+    send(response, 404, { error: "캐릭터를 찾을 수 없습니다." });
+    return;
+  }
+  send(response, 200, result.rows[0]);
+}
+
+async function compactCharacterContext(response, characterID) {
+  if (!runtime) {
+    send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
+    return;
+  }
+  try {
+    send(response, 200, await runtime.compactContext(characterID));
+  } catch (error) {
+    if (
+      error instanceof CharacterNotFoundError ||
+      error instanceof AgentSessionNotFoundError
+    ) {
+      send(response, 404, { error: error.message });
+      return;
+    }
+    throw error;
+  }
 }
 
 async function updateCharacterSettings(response, characterID, body) {
@@ -2054,6 +2119,12 @@ const server = createServer(async (request, response) => {
     const identityPromptCharacterID = routeCharacterIdentityPrompt(
       url.pathname,
     );
+    const contextSettingsCharacterID = routeCharacterContextSettings(
+      url.pathname,
+    );
+    const contextCompactCharacterID = routeCharacterContextCompact(
+      url.pathname,
+    );
     const historyCharacterID = routeCharacterHistory(url.pathname);
     const jobCharacterID = routeAgentJob(url.pathname);
     const liveFeedTurnID = routeLiveFeedTurn(url.pathname);
@@ -2199,6 +2270,27 @@ const server = createServer(async (request, response) => {
         identityPromptCharacterID,
         await readJSON(request),
       );
+    } else if (
+      request.method === "PUT" &&
+      contextSettingsCharacterID
+    ) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await updateCharacterContextSettings(
+        response,
+        contextSettingsCharacterID,
+        await readJSON(request),
+      );
+    } else if (
+      request.method === "POST" &&
+      contextCompactCharacterID
+    ) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await readJSON(request);
+      await compactCharacterContext(response, contextCompactCharacterID);
     } else if (
       request.method === "POST" &&
       url.pathname === "/api/turns"

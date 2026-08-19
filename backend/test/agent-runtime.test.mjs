@@ -35,6 +35,7 @@ import {
   findClaudeSessionPath,
   latestClaudeUsageFromSession,
   latestCodexUsageFromRollout,
+  normalizeAutoCompactPercent,
   persistTurnWikiProposals,
   prepareClaudeSessionResume,
   recoverInterruptedUsage,
@@ -52,6 +53,149 @@ const codexCharacter = {
   seat: "우측 아래",
   identityPrompt: "업무를 정확히 처리한다.",
 };
+
+test("자동 압축 기준은 50~95% 범위와 90% 기본값을 사용한다", () => {
+  assert.equal(normalizeAutoCompactPercent(undefined), 90);
+  assert.equal(normalizeAutoCompactPercent(42), 50);
+  assert.equal(normalizeAutoCompactPercent(93.6), 94);
+  assert.equal(normalizeAutoCompactPercent(100), 95);
+});
+
+test("턴 종료 점유가 직원 기준에 도달하면 같은 세션을 자동 압축한다", async () => {
+  const calls = [];
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    contextUsageReader: () => ({
+      usedTokens: 900_000,
+      limitTokens: 1_000_000,
+    }),
+  });
+  runtime.compactContext = async (characterID, options) => {
+    calls.push({ characterID, options });
+    return { ok: true };
+  };
+
+  await runtime.maybeAutoCompactAfterTurn({
+    externalSessionID: "session-1",
+    character: {
+      id: "boss",
+      name: "백부장",
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      autoCompactPercent: 90,
+    },
+  });
+
+  assert.deepEqual(calls, [{
+    characterID: "boss",
+    options: {
+      automatic: true,
+      expectedSessionID: "session-1",
+    },
+  }]);
+});
+
+test("턴 종료 점유가 직원 기준 미만이면 자동 압축하지 않는다", async () => {
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    contextUsageReader: () => ({
+      usedTokens: 899_999,
+      limitTokens: 1_000_000,
+    }),
+  });
+  let called = false;
+  runtime.compactContext = async () => {
+    called = true;
+  };
+
+  await runtime.maybeAutoCompactAfterTurn({
+    externalSessionID: "session-1",
+    character: {
+      id: "boss",
+      name: "백부장",
+      backend: "codex",
+      model: "gpt-5.6-sol",
+      autoCompactPercent: 90,
+    },
+  });
+
+  assert.equal(called, false);
+});
+
+test("Codex 수동 압축은 활성 세션을 app-server compactor에 전달한다", async () => {
+  const calls = [];
+  const usage = [
+    { usedTokens: 230_000, limitTokens: 258_400 },
+    { usedTokens: 31_000, limitTokens: 258_400 },
+  ];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => ({
+        rowCount: 1,
+        rows: [{
+          id: "boss",
+          name: "백부장",
+          seat: "상단",
+          backend: "codex",
+          model: "gpt-5.6-sol",
+          effort: "ultra",
+          fastMode: true,
+          autoCompactPercent: 90,
+          permission: "danger-full-access",
+          identityPrompt: "업무 지침",
+          config: {},
+          externalSessionID: "thread-1",
+          conversationWorkdir: "/tmp",
+          sessionRepositoryRoot: "/tmp",
+          resumeExecutionWorkdir: "/tmp",
+        }],
+      }),
+    },
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/tmp",
+    repositoryRoot: "/tmp",
+    broadcast: (event) => calls.push({ event }),
+    contextUsageReader: () => usage.shift(),
+    codexContextResolver: () => ({
+      contextWindow: 872_000,
+      autoCompactTokenLimit: 745_560,
+    }),
+    codexCompactor: async (options) => {
+      calls.push({ compact: options });
+      return { turnID: "turn-compact" };
+    },
+  });
+
+  const result = await runtime.compactContext("boss");
+
+  assert.equal(calls[0].compact.threadID, "thread-1");
+  assert.equal(calls[0].compact.cwd, "/tmp");
+  assert.equal(calls[0].compact.contextWindow, 872_000);
+  assert.equal(calls[0].compact.autoCompactTokenLimit, 745_560);
+  assert.deepEqual(result, {
+    ok: true,
+    automatic: false,
+    backend: "codex",
+    sessionId: "thread-1",
+    preTokens: 230_000,
+    postTokens: 31_000,
+    limitTokens: 258_400,
+  });
+  assert.deepEqual(calls[1].event, {
+    type: "context.compacted",
+    characterId: "boss",
+    automatic: false,
+  });
+  assert.equal(runtime.compactingCharacters.size, 0);
+});
 
 function wikiProposalTestClient(queries) {
   const projectID = "11111111-1111-4111-8111-111111111111";
@@ -476,6 +620,29 @@ test("Codex는 Fast 비활성화도 신규 실행과 재개에 명시한다", ()
   }
 });
 
+test("Codex는 최대 창과 직원별 네이티브 자동 압축 한도를 전달한다", () => {
+  for (const previousSessionID of [null, "session-1"]) {
+    const argumentsList = buildArguments({
+      character: codexCharacter,
+      prompt: "긴 컨텍스트로 계속해줘.",
+      previousSessionID,
+      codexContext: {
+        contextWindow: 872_000,
+        autoCompactTokenLimit: 745_560,
+      },
+    });
+
+    assert.equal(
+      argumentsList.includes("model_context_window=872000"),
+      true,
+    );
+    assert.equal(
+      argumentsList.includes("model_auto_compact_token_limit=745560"),
+      true,
+    );
+  }
+});
+
 test("Codex 재개는 바뀐 모델·추론·Fast·권한을 같은 세션에 전달한다", () => {
   const argumentsList = buildArguments({
     character: {
@@ -804,14 +971,14 @@ test("연속 Claude 업무는 같은 worker stdin 턴으로 실행하고 각각 
   ]);
 });
 
-test("Claude 실행은 기본 압축과 OFFICESTRA 명시적 업데이트를 사용한다", () => {
+test("Claude 실행은 직원별 자동 압축 기준과 명시적 업데이트를 사용한다", () => {
   const baseEnvironment = {
     PATH: "/tmp/bin",
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: "250000",
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "65",
   };
   const claudeEnvironment = executionEnvironment(
-    { backend: "claude" },
+    { backend: "claude", autoCompactPercent: 93 },
     baseEnvironment,
   );
 
@@ -824,13 +991,7 @@ test("Claude 실행은 기본 압축과 OFFICESTRA 명시적 업데이트를 사
     ),
     false,
   );
-  assert.equal(
-    Object.hasOwn(
-      claudeEnvironment,
-      "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
-    ),
-    false,
-  );
+  assert.equal(claudeEnvironment.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "93");
   assert.equal(claudeEnvironment.DISABLE_AUTOUPDATER, "1");
 
   const codexEnvironment = { PATH: "/tmp/bin" };

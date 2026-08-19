@@ -423,6 +423,54 @@ struct OfficeDatabaseClient: Sendable {
         try validate(response)
     }
 
+    func updateAutoCompactPercent(
+        _ percent: Int,
+        for character: OfficeCharacter
+    ) async throws -> CharacterContextSettings {
+        let url = baseURL
+            .appending(path: "api/characters")
+            .appending(path: character.rawValue)
+            .appending(path: "context-settings")
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            CharacterContextSettingsRequest(autoCompactPercent: percent)
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(
+            CharacterContextSettings.self,
+            from: data
+        )
+    }
+
+    func compactContext(
+        for character: OfficeCharacter
+    ) async throws -> ContextCompactionResult {
+        let url = baseURL
+            .appending(path: "api/characters")
+            .appending(path: character.rawValue)
+            .appending(path: "context")
+            .appending(path: "compact")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = Data("{}".utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(
+            ContextCompactionResult.self,
+            from: data
+        )
+    }
+
     func fetchCharacterHistory(
         for character: OfficeCharacter
     ) async throws -> CharacterHistory {
@@ -868,8 +916,24 @@ struct StoredCharacterProfile: Decodable, Sendable {
     let model: String?
     let effort: String
     let fastMode: Bool
+    var autoCompactPercent: Int? = nil
     let permission: String
     let identityPrompt: String
+}
+
+struct CharacterContextSettings: Decodable, Equatable, Sendable {
+    let id: String
+    let autoCompactPercent: Int
+}
+
+struct ContextCompactionResult: Decodable, Equatable, Sendable {
+    let ok: Bool
+    let automatic: Bool
+    let backend: AgentBackend
+    let sessionId: String
+    let preTokens: Int?
+    let postTokens: Int?
+    let limitTokens: Int?
 }
 
 struct StoredActiveSession: Decodable, Sendable {
@@ -1481,6 +1545,10 @@ struct RuntimeCLIPathsResult: Decodable, Equatable, Sendable {
 
 private struct IdentityPromptRequest: Encodable {
     let identityPrompt: String
+}
+
+private struct CharacterContextSettingsRequest: Encodable {
+    let autoCompactPercent: Int
 }
 
 enum OfficeDatabaseError: LocalizedError {

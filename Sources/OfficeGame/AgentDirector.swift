@@ -694,6 +694,12 @@ final class AgentDirector: ObservableObject {
         Set<OfficeCharacter> = []
     @Published private(set) var cancellingCharacters:
         Set<OfficeCharacter> = []
+    @Published private(set) var compactingCharacters:
+        Set<OfficeCharacter> = []
+    @Published private(set) var autoCompactPercents:
+        [OfficeCharacter: Int] = Dictionary(
+            uniqueKeysWithValues: OfficeCharacter.allCases.map { ($0, 90) }
+        )
     /// 응답 생성 중에 미리 걸어 둔 다음 업무다. 직원마다 최대 3개.
     @Published private(set) var queuedCommands:
         [OfficeCharacter: QueuedCommandQueue] = [:]
@@ -1741,6 +1747,80 @@ final class AgentDirector: ObservableObject {
         }
     }
 
+    func autoCompactPercent(for character: OfficeCharacter) -> Int {
+        min(95, max(50, autoCompactPercents[character] ?? 90))
+    }
+
+    func hasActiveSession(for character: OfficeCharacter) -> Bool {
+        !(sessionIDs[character] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+    }
+
+    func sessionContextLimit(for character: OfficeCharacter) -> Int? {
+        liveTurns.first {
+            $0.characterId == character.rawValue &&
+                $0.sessionContext != nil
+        }?.sessionContext?.limitTokens
+    }
+
+    func updateAutoCompactPercent(
+        _ percent: Int,
+        for character: OfficeCharacter
+    ) async throws {
+        guard isReadyForSubmissions else {
+            throw AgentContextCompactionError.notReady(
+                sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+            )
+        }
+        guard
+            !runningCharacters.contains(character),
+            !compactingCharacters.contains(character)
+        else {
+            throw AgentContextCompactionError.busy
+        }
+        guard !isUpdatingConfiguration else {
+            throw AgentContextCompactionError.configurationBusy
+        }
+        let normalized = min(95, max(50, percent))
+        isUpdatingConfiguration = true
+        defer { isUpdatingConfiguration = false }
+        let stored = try await database.updateAutoCompactPercent(
+            normalized,
+            for: character
+        )
+        var updated = autoCompactPercents
+        updated[character] = stored.autoCompactPercent
+        autoCompactPercents = updated
+    }
+
+    func compactContext(
+        for character: OfficeCharacter
+    ) async throws -> ContextCompactionResult {
+        guard isReadyForSubmissions else {
+            throw AgentContextCompactionError.notReady(
+                sessionRestoreError ?? "세션 복구가 끝난 뒤 압축할 수 있습니다."
+            )
+        }
+        guard hasActiveSession(for: character) else {
+            throw AgentContextCompactionError.noSession
+        }
+        guard
+            !runningCharacters.contains(character),
+            !compactingCharacters.contains(character)
+        else {
+            throw AgentContextCompactionError.busy
+        }
+        guard !isUpdatingConfiguration else {
+            throw AgentContextCompactionError.configurationBusy
+        }
+        compactingCharacters.insert(character)
+        defer { compactingCharacters.remove(character) }
+        let result = try await database.compactContext(for: character)
+        _ = await refreshLiveFeed(announcingTransitions: false)
+        return result
+    }
+
     func characterHistory(
         for character: OfficeCharacter
     ) async throws -> CharacterHistory {
@@ -1941,6 +2021,10 @@ final class AgentDirector: ObservableObject {
                 let storedCharacters = try await database.fetchCharacters()
                 let automationSettings =
                     try await database.fetchAutomationSettings()
+                var restoredAutoCompactPercents = Dictionary(
+                    uniqueKeysWithValues:
+                        OfficeCharacter.allCases.map { ($0, 90) }
+                )
                 for stored in storedCharacters {
                     guard let character = OfficeCharacter(rawValue: stored.id)
                     else {
@@ -1963,7 +2047,12 @@ final class AgentDirector: ObservableObject {
                         identityPrompt: stored.identityPrompt,
                         to: character
                     )
+                    restoredAutoCompactPercents[character] = min(
+                        95,
+                        max(50, stored.autoCompactPercent ?? 90)
+                    )
                 }
+                autoCompactPercents = restoredAutoCompactPercents
                 autoApproveAndMerge =
                     automationSettings.autoApproveAndMerge
 
@@ -2570,6 +2659,26 @@ final class AgentDirector: ObservableObject {
             monitorHitbox: character.monitorHitbox,
             bubble: character.bubble
         )
+    }
+}
+
+private enum AgentContextCompactionError: LocalizedError {
+    case notReady(String)
+    case noSession
+    case busy
+    case configurationBusy
+
+    var errorDescription: String? {
+        switch self {
+        case let .notReady(message):
+            message
+        case .noSession:
+            "압축할 활성 CLI 세션이 없습니다."
+        case .busy:
+            "현재 업무나 컨텍스트 압축이 끝난 뒤 다시 시도하세요."
+        case .configurationBusy:
+            "다른 설정 저장이 끝난 뒤 다시 시도하세요."
+        }
     }
 }
 
