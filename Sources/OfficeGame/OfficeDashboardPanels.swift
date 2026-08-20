@@ -3962,6 +3962,10 @@ private struct LiveTurnCard: View {
 
                 if !promptSuggestions.isEmpty {
                     AgentPromptSuggestionList(
+                        director: director,
+                        character: OfficeCharacter(
+                            rawValue: turn.characterId
+                        ),
                         suggestions: promptSuggestions
                     )
                 }
@@ -4220,7 +4224,16 @@ private struct LiveTurnCard: View {
 }
 
 private struct AgentPromptSuggestionList: View {
+    @ObservedObject var director: AgentDirector
+    let character: OfficeCharacter?
     let suggestions: [String]
+
+    private var isSending: Bool {
+        guard let character else {
+            return false
+        }
+        return director.runningCharacters.contains(character)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -4228,18 +4241,25 @@ private struct AgentPromptSuggestionList: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(DashboardPalette.accent)
 
-            ForEach(Array(suggestions.enumerated()), id: \.offset) { _, text in
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 3)
-
-                    Text(text)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(Array(suggestions.enumerated()), id: \.offset) { index, text in
+                if let character {
+                    Button {
+                        director.submit(text, to: character)
+                    } label: {
+                        suggestionRow(text)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSending)
+                    .opacity(isSending ? 0.45 : 1)
+                    .help("눌러서 이 질문 보내기")
+                    .accessibilityIdentifier(
+                        "promptSuggestion.\(index + 1)"
+                    )
+                    .accessibilityLabel(
+                        OfficeLocalization.format("%@ 보내기", text)
+                    )
+                } else {
+                    suggestionRow(text)
                 }
             }
         }
@@ -4253,7 +4273,21 @@ private struct AgentPromptSuggestionList: View {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .stroke(DashboardPalette.accent.opacity(0.16))
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    private func suggestionRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 3)
+
+            Text(text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contentShape(Rectangle())
     }
 }
 
