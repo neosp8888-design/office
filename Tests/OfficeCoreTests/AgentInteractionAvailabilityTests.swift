@@ -109,4 +109,17 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
 
         XCTAssertEqual(profile.autoCompactPercent, 95)
     }
+
+    func testContextCompactionConfirmationUsesConfiguredDisplayName() {
+        let message = ContextCompactionPresentation.confirmationMessage(
+            displayName: "로과장",
+            backendTitle: "Claude Code"
+        )
+
+        XCTAssertEqual(
+            message,
+            "로과장의 Claude Code 대화 내용을 요약으로 바꿉니다. 이전 세부 내용은 되돌릴 수 없습니다."
+        )
+        XCTAssertFalse(message.contains("왼쪽 여자"))
+    }
 }

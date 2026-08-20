@@ -1954,7 +1954,10 @@ private struct ContextCompactionControls: View {
             return Alert(
                 title: Text("컨텍스트를 지금 압축할까요?"),
                 message: Text(
-                    "\(character.name)의 \(character.backend.title) 대화 내용을 요약으로 바꿉니다. 이전 세부 내용은 되돌릴 수 없습니다."
+                    ContextCompactionPresentation.confirmationMessage(
+                        displayName: director.displayName(for: character.id),
+                        backendTitle: character.backend.title
+                    )
                 ),
                 primaryButton: .destructive(Text("압축")) {
                     Task { await compactNow() }
@@ -1986,6 +1989,15 @@ private struct ContextCompactionControls: View {
                 message: error.localizedDescription
             )
         }
+    }
+}
+
+enum ContextCompactionPresentation {
+    static func confirmationMessage(
+        displayName: String,
+        backendTitle: String
+    ) -> String {
+        "\(displayName)의 \(backendTitle) 대화 내용을 요약으로 바꿉니다. 이전 세부 내용은 되돌릴 수 없습니다."
     }
 }
 
