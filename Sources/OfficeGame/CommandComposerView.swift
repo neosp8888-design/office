@@ -176,7 +176,7 @@ struct CommandEntryRow: View {
                 + "\(QueuedCommandQueue.maximumCount)개"
         case .awaitingWorkspaceReview:
             return OfficeLocalization.string(
-                "변경사항 검토를 마친 뒤 다음 업무를 예약할 수 있습니다"
+                "변경사항 통합을 마친 뒤 다음 업무를 예약할 수 있습니다"
             )
         case .full:
             return "예약이 가득 찼습니다 · 최대 "

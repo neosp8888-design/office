@@ -20,7 +20,7 @@ test(
     const sessionID = randomUUID();
     let ordinal = 0;
 
-    async function insertWorkspace(status, { paused = false } = {}) {
+    async function insertWorkspace(status) {
       ordinal += 1;
       const workspaceID = randomUUID();
       const worktreePath = `/tmp/workspace-index-${suffix}-${ordinal}`;
@@ -36,11 +36,10 @@ test(
             execution_workdir,
             branch_name,
             base_branch,
-            base_commit,
-            auto_repair_paused
+            base_commit
           )
           VALUES (
-            $1, $2, $3, '/repo', '/repo', $4, $4, $5, 'main', 'base', $6
+            $1, $2, $3, '/repo', '/repo', $4, $4, $5, 'main', 'base'
           )
         `,
         [
@@ -49,7 +48,6 @@ test(
           status,
           worktreePath,
           `workspace-index-${suffix}-${ordinal}`,
-          paused,
         ],
       );
       return workspaceID;
@@ -107,7 +105,7 @@ test(
       await client.query(
         `
           UPDATE task_workspaces
-          SET auto_repair_paused = true
+          SET status = 'awaiting_approval'
           WHERE id = $1
         `,
         [activeWorkspaceID],

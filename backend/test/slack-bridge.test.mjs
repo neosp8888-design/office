@@ -90,6 +90,22 @@ test("실시간 진행은 최근 활동만 간결하게 표시한다", () => {
   assert.match(text, /응답 작성 중/);
 });
 
+test("Slack은 자동 병합 버튼 없이 명시적 통합 상태만 표시한다", () => {
+  const pending = renderSlackTurn({
+    characterName: "백부장",
+    status: "completed",
+    workspace: { status: "awaiting_approval" },
+  });
+  const conflict = renderSlackTurn({
+    characterName: "로과장",
+    status: "completed",
+    workspace: { status: "conflict" },
+  });
+
+  assert.match(pending, /변경 통합 대기/);
+  assert.match(conflict, /통합 충돌/);
+});
+
 test("긴 Slack 최종 응답은 내용 손실 없이 여러 메시지로 나눈다", () => {
   const chunks = splitSlackMessage("첫째 줄\n둘째 줄\n셋째 줄", 10);
   assert.ok(chunks.length > 1);

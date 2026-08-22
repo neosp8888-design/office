@@ -109,10 +109,9 @@ final class QueuedCommandQueueTests: XCTestCase {
         }
     }
 
-    func testAutomaticMergeDefersDrainInsteadOfDroppingReservation() {
-        // 자동 병합이 켜져 있으면 턴이 completed로 끝나는 순간 작업
-        // 공간이 아직 승인·병합 대기다. 이때 예약을 꺼내면 백엔드가
-        // 거부해 그대로 사라진다.
+    func testIntegrationDefersDrainInsteadOfDroppingReservation() {
+        // 턴이 completed로 끝나는 순간 작업 공간 통합이 진행 중이면
+        // 예약을 꺼내지 않고 통합이 끝난 뒤 이어서 보낸다.
         for status in [LiveTurnStatus.completed, .interrupted, .failed] {
             XCTAssertFalse(
                 QueuedCommandDrainPolicy.shouldDrain(

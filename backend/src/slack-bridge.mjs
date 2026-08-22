@@ -100,44 +100,6 @@ export async function startSlackBridge({
     });
   });
 
-  app.action("officestra.workspace-approve", async ({
-    ack,
-    action,
-    body,
-    client,
-  }) => {
-    await ack();
-    if (!isAuthorizedSlackRequest(configuration, body)) {
-      return;
-    }
-    await handleWorkspaceAction({
-      context,
-      action,
-      body,
-      client,
-      decision: "approve",
-    });
-  });
-
-  app.action("officestra.workspace-reject", async ({
-    ack,
-    action,
-    body,
-    client,
-  }) => {
-    await ack();
-    if (!isAuthorizedSlackRequest(configuration, body)) {
-      return;
-    }
-    await handleWorkspaceAction({
-      context,
-      action,
-      body,
-      client,
-      decision: "reject",
-    });
-  });
-
   app.event("app_mention", async (args) => {
     await receiveSlackMessage(context, args);
   });
@@ -311,38 +273,6 @@ async function runTurnMonitor(context, target) {
   }
 }
 
-async function handleWorkspaceAction({
-  context,
-  action,
-  body,
-  client,
-  decision,
-}) {
-  try {
-    const value = JSON.parse(action.value);
-    await backendJSON(
-      `${context.backendURL}/api/workspace-reviews/${encodeURIComponent(value.turnId)}/${decision}`,
-      {
-        method: "POST",
-        body: decision === "approve" ? { reviewTree: value.reviewTree } : {},
-      },
-    );
-    await client.chat.postMessage({
-      channel: body.channel.id,
-      thread_ts: body.message.thread_ts ?? body.message.ts,
-      text: decision === "approve"
-        ? "✅ 변경사항을 승인했습니다."
-        : "↩️ 변경사항을 거절하고 작업 공간을 보존했습니다.",
-    });
-  } catch (error) {
-    await client.chat.postMessage({
-      channel: body.channel.id,
-      thread_ts: body.message.thread_ts ?? body.message.ts,
-      text: `❌ 검토 처리 실패. ${safeErrorMessage(error)}`,
-    });
-  }
-}
-
 async function employeeSelectionMessage(context, teamID, userID) {
   const [characters, preference] = await Promise.all([
     listCharacters(context),
@@ -400,7 +330,7 @@ export function renderSlackTurn(turn) {
 }
 
 function progressBlocks(turn) {
-  const blocks = [
+  return [
     {
       type: "section",
       text: {
@@ -409,35 +339,6 @@ function progressBlocks(turn) {
       },
     },
   ];
-  if (
-    turn.workspace?.status === "awaiting_approval" &&
-    turn.workspace.reviewTree
-  ) {
-    const value = JSON.stringify({
-      turnId: turn.id,
-      reviewTree: turn.workspace.reviewTree,
-    });
-    blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          action_id: "officestra.workspace-approve",
-          style: "primary",
-          text: { type: "plain_text", text: "승인 후 병합" },
-          value,
-        },
-        {
-          type: "button",
-          action_id: "officestra.workspace-reject",
-          style: "danger",
-          text: { type: "plain_text", text: "거절" },
-          value,
-        },
-      ],
-    });
-  }
-  return blocks;
 }
 
 function slackStatusLabel(turn) {
@@ -445,7 +346,16 @@ function slackStatusLabel(turn) {
     return "❓ 답변 필요";
   }
   if (turn.workspace?.status === "awaiting_approval") {
-    return "📝 변경 검토 필요";
+    return "📦 변경 통합 대기";
+  }
+  if (turn.workspace?.status === "merging") {
+    return "🔄 변경 통합 중";
+  }
+  if (turn.workspace?.status === "conflict") {
+    return "⚠️ 통합 충돌";
+  }
+  if (turn.workspace?.status === "merged") {
+    return "✅ 통합 완료";
   }
   switch (turn.status) {
   case "completed":

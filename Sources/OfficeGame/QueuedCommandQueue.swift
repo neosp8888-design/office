@@ -98,9 +98,9 @@ enum QueuedCommandDrainPolicy {
         isImmediateRequest: Bool,
         isWorkspaceBlocking: Bool = false
     ) -> Bool {
-        // 변경사항이 승인·병합 대기면 백엔드가 새 업무를 거부한다.
-        // 자동 병합이 켜져 있으면 완료와 병합이 붙어 일어나므로 완료
-        // 시점에 예약을 꺼내면 그대로 버려진다. 검토가 풀린 뒤 보낸다.
+        // 변경사항 통합이 진행 중이면 백엔드가 새 업무를 거부한다.
+        // 이때 예약을 꺼내면 그대로 버려질 수 있으므로 통합이 끝난 뒤
+        // 보낸다.
         if isWorkspaceBlocking {
             return false
         }
