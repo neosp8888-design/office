@@ -122,8 +122,7 @@ final class WorkspaceReviewPresentationTests: XCTestCase {
             mergedCommit: "merged",
             errorMessage: nil,
             diff: diff,
-            diffTruncated: diff == nil ? nil : false,
-            automaticApprovalPending: false
+            diffTruncated: diff == nil ? nil : false
         )
     }
 }

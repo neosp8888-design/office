@@ -645,12 +645,8 @@ struct CharacterSettingsDrafts: Equatable, Sendable {
     let names: [OfficeCharacter: String]
     let settings: [OfficeCharacter: CharacterAgentSettings]
     let identityPrompts: [OfficeCharacter: String]
-    let autoApproveAndMerge: Bool
 
-    init(
-        storedCharacters: [StoredCharacterProfile],
-        automationSettings: AutomationSettings
-    ) {
+    init(storedCharacters: [StoredCharacterProfile]) {
         var names: [OfficeCharacter: String] = [:]
         var settings: [OfficeCharacter: CharacterAgentSettings] = [:]
         var identityPrompts: [OfficeCharacter: String] = [:]
@@ -673,7 +669,6 @@ struct CharacterSettingsDrafts: Equatable, Sendable {
         self.names = names
         self.settings = settings
         self.identityPrompts = identityPrompts
-        autoApproveAndMerge = automationSettings.autoApproveAndMerge
     }
 }
 
@@ -712,7 +707,6 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var isReadyForSubmissions = false
     @Published private(set) var sessionRestoreError: String?
     @Published private(set) var isUpdatingConfiguration = false
-    @Published private(set) var autoApproveAndMerge = true
     @Published private(set) var turnPersistenceErrors:
         [OfficeCharacter: String] = [:]
     @Published private(set) var settingsStatus: String?
@@ -767,7 +761,7 @@ final class AgentDirector: ObservableObject {
     /// 바로 적용으로 중단시킨 직원이다. 이 중단만은 실패·중단 상태에서도
     /// 다음 예약을 이어서 보낸다.
     private var immediateQueueDrainCharacters: Set<OfficeCharacter> = []
-    /// 변경사항 검토가 끝나기를 기다리는 예약 배출이다. 검토가 풀린
+    /// 변경사항 통합이 끝나기를 기다리는 예약 배출이다. 통합이 끝난
     /// 시점에 이어서 보낸다.
     private var deferredQueueDrainCharacters: Set<OfficeCharacter> = []
     private var acknowledgedWarningMessages: [OfficeCharacter: String] = [:]
@@ -1596,16 +1590,8 @@ final class AgentDirector: ObservableObject {
     func fetchCharacterSettingsDrafts() async -> CharacterSettingsDrafts? {
         settingsStatus = nil
         do {
-            async let storedCharacters = database.fetchCharacters()
-            async let automationSettings =
-                database.fetchAutomationSettings()
-            let (characters, automation) = try await (
-                storedCharacters,
-                automationSettings
-            )
             return CharacterSettingsDrafts(
-                storedCharacters: characters,
-                automationSettings: automation
+                storedCharacters: try await database.fetchCharacters()
             )
         } catch {
             settingsStatus = error.localizedDescription
@@ -1616,8 +1602,7 @@ final class AgentDirector: ObservableObject {
     func saveConfiguration(
         names nameDrafts: [OfficeCharacter: String],
         settings settingsDrafts: [OfficeCharacter: CharacterAgentSettings],
-        identityPrompts identityPromptDrafts: [OfficeCharacter: String],
-        autoApproveAndMerge autoApproveAndMergeDraft: Bool
+        identityPrompts identityPromptDrafts: [OfficeCharacter: String]
     ) async {
         settingsStatus = nil
         guard isReadyForSubmissions else {
@@ -1638,25 +1623,9 @@ final class AgentDirector: ObservableObject {
             isUpdatingConfiguration = false
         }
         do {
-            let automationChanged =
-                autoApproveAndMergeDraft != autoApproveAndMerge
-            if automationChanged {
-                let automationSettings =
-                    try await database.updateAutomationSettings(
-                        autoApproveAndMerge: autoApproveAndMergeDraft
-                    )
-                autoApproveAndMerge =
-                    automationSettings.autoApproveAndMerge
-            }
             guard pendingWorkspaceReviewCharacters.isEmpty else {
-                if automationChanged {
-                    settingsStatus = autoApproveAndMerge
-                        ? "자동 승인 설정을 저장했고 대기 중 변경사항을 처리합니다."
-                        : "자동 승인 설정을 꺼서 저장했습니다. 기존 변경사항은 검토 대기합니다."
-                } else {
-                    settingsStatus =
-                        "변경사항 검토를 마친 뒤 직원 설정을 바꿀 수 있습니다."
-                }
+                settingsStatus =
+                    "변경사항 통합을 마친 뒤 직원 설정을 바꿀 수 있습니다."
                 return
             }
             for character in characters {
@@ -1725,7 +1694,7 @@ final class AgentDirector: ObservableObject {
                 || !pendingWorkspaceReviewCharacters.contains(character)
         else {
             settingsStatus =
-                "CLI 변경은 변경사항 검토를 마친 뒤 할 수 있습니다."
+                "CLI 변경은 변경사항 통합을 마친 뒤 할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
@@ -2019,8 +1988,6 @@ final class AgentDirector: ObservableObject {
         while !Task.isCancelled {
             do {
                 let storedCharacters = try await database.fetchCharacters()
-                let automationSettings =
-                    try await database.fetchAutomationSettings()
                 var restoredAutoCompactPercents = Dictionary(
                     uniqueKeysWithValues:
                         OfficeCharacter.allCases.map { ($0, 90) }
@@ -2053,8 +2020,6 @@ final class AgentDirector: ObservableObject {
                     )
                 }
                 autoCompactPercents = restoredAutoCompactPercents
-                autoApproveAndMerge =
-                    automationSettings.autoApproveAndMerge
 
                 let activeSessions = try await database.fetchActiveSessions()
                 var restoredConversationIDs:
@@ -2469,7 +2434,7 @@ final class AgentDirector: ObservableObject {
             ) {
                 drainQueuedCommand(for: character)
             } else if isWorkspaceBlocking {
-                // 검토·병합이 끝나면 이어서 보낸다.
+                // 통합이 끝나면 이어서 보낸다.
                 deferredQueueDrainCharacters.insert(character)
             } else if isImmediateRequest {
                 immediateQueueDrainCharacters.remove(character)

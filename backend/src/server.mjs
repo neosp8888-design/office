@@ -87,13 +87,10 @@ import {
 } from "./cli-updates.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
-const automaticWorkspaceApprovalRetryIntervalMs = 10_000;
 const liveFeedMinimumTurnsPerCharacter = 10;
 const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
-let automaticWorkspaceApprovalRetryInFlight = false;
-let automaticWorkspaceApprovalRetryTimer = null;
 let shuttingDown = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
 const cliUpdateChecker = createCLIUpdateChecker();
@@ -112,30 +109,6 @@ async function hasRunningWork(backends) {
     [backends ?? null],
   );
   return result.rows.length > 0;
-}
-
-function startAutomaticWorkspaceApprovalRetryLoop() {
-  if (automaticWorkspaceApprovalRetryTimer) {
-    return;
-  }
-  const timer = setInterval(() => {
-    if (!runtime || automaticWorkspaceApprovalRetryInFlight) {
-      return;
-    }
-    automaticWorkspaceApprovalRetryInFlight = true;
-    void runtime.resumePendingAutomaticWorkspaceApprovals()
-      .catch((error) => {
-        console.warn(
-          "대기 중인 자동 승인·병합을 다시 시도하지 못했습니다.",
-          error instanceof Error ? error.message : String(error),
-        );
-      })
-      .finally(() => {
-        automaticWorkspaceApprovalRetryInFlight = false;
-      });
-  }, automaticWorkspaceApprovalRetryIntervalMs);
-  automaticWorkspaceApprovalRetryTimer = timer;
-  timer.unref();
 }
 
 function broadcast(event) {
@@ -311,21 +284,6 @@ async function listActiveSessions(response) {
   send(response, 200, { sessions: result.rows });
 }
 
-async function readAutomationSettings(response) {
-  const result = await pool.query(
-    `
-      SELECT
-        auto_approve_workspaces AS "autoApproveAndMerge"
-      FROM automation_settings
-      WHERE singleton = true
-    `,
-  );
-  send(response, 200, {
-    autoApproveAndMerge:
-      result.rows?.[0]?.autoApproveAndMerge ?? true,
-  });
-}
-
 async function usageSummary(response, url) {
   const force = ["1", "true"].includes(
     String(url.searchParams.get("force") ?? "").toLowerCase(),
@@ -376,43 +334,6 @@ async function applyCLIUpdatesEndpoint(response, request) {
     send(response, 500, {
       error: error instanceof Error ? error.message : String(error),
     });
-  }
-}
-
-async function updateAutomationSettings(response, body) {
-  if (typeof body.autoApproveAndMerge !== "boolean") {
-    send(response, 400, {
-      error: "자동 승인·병합 설정은 boolean 값이어야 합니다.",
-    });
-    return;
-  }
-  const result = await pool.query(
-    `
-      INSERT INTO automation_settings (
-        singleton,
-        auto_approve_workspaces,
-        updated_at
-      )
-      VALUES (true, $1, now())
-      ON CONFLICT (singleton) DO UPDATE
-      SET
-        auto_approve_workspaces = EXCLUDED.auto_approve_workspaces,
-        updated_at = now()
-      RETURNING
-        auto_approve_workspaces AS "autoApproveAndMerge"
-    `,
-    [body.autoApproveAndMerge],
-  );
-  send(response, 200, result.rows[0]);
-  if (body.autoApproveAndMerge) {
-    void runtime?.resumePendingAutomaticWorkspaceApprovals().catch(
-      (error) => {
-        console.warn(
-          "자동 승인·병합 활성화 뒤 대기 업무를 재개하지 못했습니다.",
-          error instanceof Error ? error.message : String(error),
-        );
-      },
-    );
   }
 }
 
@@ -1289,25 +1210,7 @@ async function queryTurnFeed({
           'headCommit', task_workspace.head_commit,
           'changedFiles', task_workspace.changed_files,
           'mergedCommit', task_workspace.merged_commit,
-          'errorMessage', task_workspace.error_message,
-          'autoRetryCount', task_workspace.auto_retry_count,
-          'autoRepairPaused', task_workspace.auto_repair_paused,
-          'autoWaitingForPeer', task_workspace.auto_waiting_for_peer,
-          -- 자동 승인이 켜져 있고 재시도가 소진되지 않았으면 사용자
-          -- 확인이 필요 없는 자동 병합 대기 상태다. 앱이 승인 버튼을
-          -- 잠깐 띄웠다 지우지 않도록 서버가 판정해 내려준다.
-          'automaticApprovalPending', (
-            task_workspace.status = 'awaiting_approval'
-            AND task_workspace.auto_repair_paused = false
-            AND COALESCE(
-              (
-                SELECT auto_approve_workspaces
-                FROM automation_settings
-                WHERE singleton = true
-              ),
-              true
-            )
-          )
+          'errorMessage', task_workspace.error_message
         ) AS review
         FROM task_workspaces AS task_workspace
         WHERE task_workspace.review_turn_id = t.id
@@ -2172,11 +2075,6 @@ const server = createServer(async (request, response) => {
       await listActiveSessions(response);
     } else if (
       request.method === "GET" &&
-      url.pathname === "/api/automation-settings"
-    ) {
-      await readAutomationSettings(response);
-    } else if (
-      request.method === "GET" &&
       url.pathname === "/api/usage-summary"
     ) {
       await usageSummary(response, url);
@@ -2190,17 +2088,6 @@ const server = createServer(async (request, response) => {
       url.pathname === "/api/cli-updates/apply"
     ) {
       await applyCLIUpdatesEndpoint(response, request);
-    } else if (
-      request.method === "PUT" &&
-      url.pathname === "/api/automation-settings"
-    ) {
-      if (!trustedJSONMutation(request, response)) {
-        return;
-      }
-      await updateAutomationSettings(
-        response,
-        await readJSON(request),
-      );
     } else if (request.method === "GET" && historyCharacterID) {
       await characterHistory(response, historyCharacterID);
     } else if (
@@ -2405,10 +2292,6 @@ async function shutdown(signal) {
   }
   shuttingDown = true;
   console.log(`${signal} 신호를 받아 사무실 백엔드를 종료합니다.`);
-  if (automaticWorkspaceApprovalRetryTimer) {
-    clearInterval(automaticWorkspaceApprovalRetryTimer);
-    automaticWorkspaceApprovalRetryTimer = null;
-  }
   runtime?.shutdown();
   for (const socket of sockets) {
     socket.terminate();
@@ -2481,9 +2364,6 @@ try {
     broadcast,
   });
   await runtime.recoverInterruptedJobs();
-  await runtime.wakePeerWaitingAutomaticApprovals({ resume: false });
-  await runtime.resumePendingAutomaticWorkspaceApprovals();
-  startAutomaticWorkspaceApprovalRetryLoop();
   server.listen(port, "127.0.0.1", () => {
     console.log(`사무실 백엔드 실행 중 http://127.0.0.1:${port}`);
     void startSlackBridge({

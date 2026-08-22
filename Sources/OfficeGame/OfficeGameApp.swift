@@ -1194,7 +1194,7 @@ private struct LiveWorkspaceCommandBar: View {
                     )
                 case .awaitingWorkspaceReview:
                     return OfficeLocalization.format(
-                        "%@의 변경사항 검토를 마치면 예약할 수 있습니다",
+                        "%@의 변경사항 통합을 마치면 예약할 수 있습니다",
                         selectedName
                     )
                 case .full:
@@ -2077,7 +2077,7 @@ private struct AgentQuickSettingsView: View {
             .help(
                 availability.needsWorkspaceReview
                     ? OfficeLocalization.string(
-                        "변경사항 검토를 마친 뒤 CLI를 전환할 수 있습니다"
+                        "변경사항 통합을 마친 뒤 CLI를 전환할 수 있습니다"
                     )
                     : OfficeLocalization.string("직원 CLI 선택")
             )
@@ -2175,11 +2175,11 @@ private struct AgentQuickSettingsView: View {
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.orange)
                     .accessibilityLabel(
-                        OfficeLocalization.string("변경사항 검토 대기")
+                        OfficeLocalization.string("변경사항 통합 대기")
                     )
                     .help(
                         OfficeLocalization.string(
-                            "검토 대기 중 · 현재 CLI의 모델 설정은 바꿀 수 있고 "
+                            "통합 대기 중 · 현재 CLI의 모델 설정은 바꿀 수 있고 "
                                 + "CLI 전환만 잠깁니다"
                         )
                     )
@@ -2228,7 +2228,6 @@ private struct CharacterSettingsView: View {
     @State private var settingsDrafts:
         [OfficeCharacter: CharacterAgentSettings] = [:]
     @State private var identityPromptDrafts: [OfficeCharacter: String] = [:]
-    @State private var autoApproveAndMergeDraft = true
     @State private var isLoadingDrafts = true
     @State private var hasLoadedDatabaseDrafts = false
 
@@ -2240,31 +2239,6 @@ private struct CharacterSettingsView: View {
             Text("이름, 역할·업무 지침, CLI 실행 방식을 직원마다 설정합니다.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Toggle(
-                    OfficeLocalization.string(
-                        "작업 완료 후 자동 승인·병합"
-                    ),
-                    isOn: $autoApproveAndMergeDraft
-                )
-                .font(.system(size: 12, weight: .semibold))
-
-                Text(
-                    OfficeLocalization.string(
-                        "기존 안전 검사 후 자동 병합합니다. 동료 충돌은 "
-                            + "완료까지 기다렸다 재개하고, 해결 실패는 최대 "
-                            + "3회 재질의합니다."
-                    )
-                )
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.primary.opacity(0.045))
-            )
 
             Group {
                 if isLoadingDrafts {
@@ -2306,11 +2280,7 @@ private struct CharacterSettingsView: View {
                 Text(OfficeLocalization.string(status))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(
-                        [
-                            "설정을 저장했습니다.",
-                            "자동 승인 설정을 저장했고 대기 중 변경사항을 처리합니다.",
-                            "자동 승인 설정을 꺼서 저장했습니다. 기존 변경사항은 검토 대기합니다.",
-                        ].contains(status)
+                        status == "설정을 저장했습니다."
                             ? Color.green
                             : Color.red
                     )
@@ -2328,8 +2298,7 @@ private struct CharacterSettingsView: View {
                             settings: settingsDrafts,
                             identityPrompts: identityPromptDrafts.mapValues {
                                 OfficeLocalization.canonicalIdentityPrompt($0)
-                            },
-                            autoApproveAndMerge: autoApproveAndMergeDraft
+                            }
                         )
                     }
                 }
@@ -2362,7 +2331,6 @@ private struct CharacterSettingsView: View {
         identityPromptDrafts = drafts.identityPrompts.mapValues {
             OfficeLocalization.displayIdentityPrompt($0)
         }
-        autoApproveAndMergeDraft = drafts.autoApproveAndMerge
         hasLoadedDatabaseDrafts = true
     }
 

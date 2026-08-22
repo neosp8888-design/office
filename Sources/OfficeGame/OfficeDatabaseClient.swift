@@ -229,33 +229,6 @@ struct OfficeDatabaseClient: Sendable {
         )
     }
 
-    func fetchAutomationSettings() async throws -> AutomationSettings {
-        let url = baseURL.appending(path: "api/automation-settings")
-        let (data, response) = try await URLSession.shared.data(from: url)
-        try validate(response, data: data)
-        return try JSONDecoder().decode(AutomationSettings.self, from: data)
-    }
-
-    func updateAutomationSettings(
-        autoApproveAndMerge: Bool
-    ) async throws -> AutomationSettings {
-        let url = baseURL.appending(path: "api/automation-settings")
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue(
-            "application/json",
-            forHTTPHeaderField: "content-type"
-        )
-        request.httpBody = try JSONEncoder().encode(
-            AutomationSettings(
-                autoApproveAndMerge: autoApproveAndMerge
-            )
-        )
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response, data: data)
-        return try JSONDecoder().decode(AutomationSettings.self, from: data)
-    }
-
     func updateName(
         _ name: String,
         for character: OfficeCharacter
@@ -1203,9 +1176,6 @@ struct TurnWorkspaceReview: Decodable, Equatable, Sendable {
     let errorMessage: String?
     let diff: String?
     let diffTruncated: Bool?
-    // 서버가 판정한 자동 병합 예정 여부. 자동 승인이 켜져 있고 자동
-    // 재시도가 남아 있으면 참이며, 이때는 사용자 확인이 필요 없다.
-    let automaticApprovalPending: Bool?
 
     func fileBaseDirectory(fallback: String) -> String {
         if let executionWorkdir, !executionWorkdir.isEmpty {
@@ -1236,31 +1206,6 @@ struct TurnWorkspaceReview: Decodable, Equatable, Sendable {
         return fallback
     }
 
-    var canApprove: Bool {
-        status == .awaitingApproval
-            && !(reviewTree?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty ?? true)
-    }
-
-    // 자동 병합이 예정된 동안에는 승인·거절을 사용자에게 묻지 않는다.
-    // 자동 재시도가 소진돼 최종 대기로 남은 경우에만 확인을 받는다.
-    var awaitsUserDecision: Bool {
-        status == .awaitingApproval
-            && automaticApprovalPending != true
-    }
-
-    var showsAutomaticMergeProgress: Bool {
-        status == .awaitingApproval
-            && automaticApprovalPending == true
-    }
-
-    var canRetryMerge: Bool {
-        status == .conflict
-            && !(reviewTree?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty ?? true)
-    }
 }
 
 struct SessionContextUsage: Decodable, Equatable, Sendable {
@@ -1449,10 +1394,6 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
 struct ArchiveFeedPage: Decodable, Sendable {
     let turns: [LiveFeedTurn]
     let total: Int
-}
-
-struct AutomationSettings: Codable, Equatable, Sendable {
-    let autoApproveAndMerge: Bool
 }
 
 func agentExecutionModeTitle(_ fastMode: Bool?) -> String {

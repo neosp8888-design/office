@@ -1,4 +1,4 @@
-// 이 파일은 격리 작업공간의 변경 비교와 승인·거절 및 병합 결과를 표시한다.
+// 이 파일은 격리 작업공간의 변경과 명시적 통합 결과를 표시한다.
 
 import SwiftUI
 
@@ -13,11 +13,7 @@ struct WorkspaceReviewPanel: View {
     let workspace: TurnWorkspaceReview
     let resolveReview: WorkspaceReviewResolver
 
-    @State private var detailedReview: TurnWorkspaceReview?
     @State private var isWorkRecordListExpanded = false
-    @State private var isResolving = false
-    @State private var showsApprovalConfirmation = false
-    @State private var requestError: String?
 
     private static let visibleFileLimit = 12
 
@@ -29,7 +25,7 @@ struct WorkspaceReviewPanel: View {
                 changedFileSummary
             }
 
-            if let message = requestError ?? currentReview.errorMessage {
+            if let message = currentReview.errorMessage {
                 Label(
                     message,
                     systemImage: "exclamationmark.triangle.fill"
@@ -49,52 +45,10 @@ struct WorkspaceReviewPanel: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(statusColor.opacity(0.22))
         }
-        .onChange(of: workspace) { _, updatedWorkspace in
-            requestError = nil
-            guard let detailedReview else {
-                return
-            }
-            if
-                detailedReview.reviewTree != updatedWorkspace.reviewTree
-                    || detailedReview.baseCommit
-                        != updatedWorkspace.baseCommit
-            {
-                self.detailedReview = nil
-                isWorkRecordListExpanded = false
-                return
-            }
-            if
-                detailedReview.status != updatedWorkspace.status
-                    || detailedReview.headCommit
-                        != updatedWorkspace.headCommit
-                    || detailedReview.mergedCommit
-                        != updatedWorkspace.mergedCommit
-                    || detailedReview.errorMessage
-                        != updatedWorkspace.errorMessage
-            {
-                self.detailedReview = updatedWorkspace
-            }
-        }
-        .confirmationDialog(
-            "\(currentReview.baseBranch) 브랜치에 병합할까요?",
-            isPresented: $showsApprovalConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("승인 후 \(currentReview.baseBranch) 병합") {
-                approveCurrentReview()
-            }
-            Button("취소", role: .cancel) {}
-        } message: {
-            Text(
-                "\(currentReview.branchName)의 변경 "
-                    + "\(currentReview.changedFiles.count)개를 "
-                    + "\(currentReview.baseBranch)에 병합합니다."
-            )
-        }
     }
 
     private var currentReview: TurnWorkspaceReview {
-        detailedReview ?? workspace
+        workspace
     }
 
     private var fileGroups: WorkspaceReviewFileGroups {
@@ -117,7 +71,7 @@ struct WorkspaceReviewPanel: View {
                     Text(statusTitle)
                         .font(.system(size: 12.5, weight: .bold))
 
-                    if currentReview.status == .merging || isResolving {
+                    if currentReview.status == .merging {
                         ProgressView()
                             .controlSize(.mini)
                             .tint(statusColor)
@@ -155,7 +109,7 @@ struct WorkspaceReviewPanel: View {
         VStack(alignment: .leading, spacing: 5) {
             if !fileGroups.primary.isEmpty {
                 fileGroupLabel(
-                    title: "검토할 변경",
+                    title: "통합할 변경",
                     count: fileGroups.primary.count
                 )
                 changedFileRows(
@@ -205,44 +159,19 @@ struct WorkspaceReviewPanel: View {
     private var actions: some View {
         switch currentReview.status {
         case .awaitingApproval:
-            // 자동 병합 예정이면 확인 버튼을 아예 만들지 않는다.
-            // 잠깐 나타났다 사라지면 카드 높이가 흔들린다.
-            if currentReview.awaitsUserDecision {
-                HStack(spacing: 8) {
-                    Spacer()
-
-                    Button("거절", role: .destructive) {
-                        resolve(.reject)
-                    }
-                    .disabled(isResolving)
-                    .accessibilityIdentifier("rejectWorkspace-\(turnID)")
-
-                    Button("승인 후 \(currentReview.baseBranch) 병합") {
-                        showsApprovalConfirmation = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isResolving)
-                    .help("검토한 변경사항을 원본 브랜치에 병합합니다.")
-                    .accessibilityIdentifier("approveWorkspace-\(turnID)")
-                }
-            }
+            Label(
+                "클대리에게 통합·재빌드·재시작을 요청하면 반영됩니다.",
+                systemImage: "tray.full.fill"
+            )
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(.secondary)
         case .conflict:
-            HStack(spacing: 8) {
-                Spacer()
-                Button("충돌 작업 거절", role: .destructive) {
-                    resolve(.reject)
-                }
-                .disabled(isResolving)
-                .accessibilityIdentifier("rejectWorkspace-\(turnID)")
-
-                Button("다시 병합") {
-                    retryCurrentReview()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isResolving || !currentReview.canRetryMerge)
-                .help("같은 검토 버전을 최신 main에 다시 병합합니다.")
-                .accessibilityIdentifier("retryWorkspace-\(turnID)")
-            }
+            Label(
+                "통합 충돌은 클대리에게 해결을 요청하세요.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(.red)
         case .active, .merging, .merged, .rejected, .closed, .failed:
             EmptyView()
         }
@@ -253,19 +182,17 @@ struct WorkspaceReviewPanel: View {
         case .active:
             "격리 작업공간 사용 중"
         case .awaitingApproval:
-            currentReview.showsAutomaticMergeProgress
-                ? "\(currentReview.baseBranch) 자동 병합 중"
-                : "변경사항 검토 필요"
+            "변경사항 통합 대기"
         case .merging:
-            "승인된 변경사항 병합 중"
+            "변경사항 통합 중"
         case .merged:
-            "\(currentReview.baseBranch) 병합 완료"
+            "\(currentReview.baseBranch) 통합 완료"
         case .rejected:
             "변경사항 거절됨"
         case .closed:
             "변경 없는 작업공간 종료됨"
         case .conflict:
-            "병합 충돌"
+            "통합 충돌"
         case .failed:
             "작업공간 처리 실패"
         }
@@ -276,9 +203,7 @@ struct WorkspaceReviewPanel: View {
         case .active:
             "hammer.fill"
         case .awaitingApproval:
-            currentReview.showsAutomaticMergeProgress
-                ? "arrow.triangle.merge"
-                : "doc.text.magnifyingglass"
+            "tray.full.fill"
         case .merging:
             "arrow.triangle.merge"
         case .merged:
@@ -299,9 +224,7 @@ struct WorkspaceReviewPanel: View {
         case .active, .merging:
             DashboardPalette.accent
         case .awaitingApproval:
-            currentReview.showsAutomaticMergeProgress
-                ? DashboardPalette.accent
-                : .orange
+            .orange
         case .merged:
             .green
         case .rejected, .closed:
@@ -313,44 +236,6 @@ struct WorkspaceReviewPanel: View {
 
     private var resultCommit: String? {
         currentReview.mergedCommit ?? currentReview.headCommit
-    }
-
-    private func resolve(_ decision: WorkspaceReviewDecision) {
-        guard !isResolving else {
-            return
-        }
-        isResolving = true
-        requestError = nil
-        Task {
-            defer {
-                isResolving = false
-            }
-            do {
-                detailedReview = try await resolveReview(turnID, decision)
-            } catch {
-                requestError = error.localizedDescription
-            }
-        }
-    }
-
-    private func approveCurrentReview() {
-        guard
-            currentReview.canApprove,
-            let reviewTree = currentReview.reviewTree
-        else {
-            return
-        }
-        resolve(.approve(reviewTree: reviewTree))
-    }
-
-    private func retryCurrentReview() {
-        guard
-            currentReview.canRetryMerge,
-            let reviewTree = currentReview.reviewTree
-        else {
-            return
-        }
-        resolve(.approve(reviewTree: reviewTree))
     }
 
     @ViewBuilder

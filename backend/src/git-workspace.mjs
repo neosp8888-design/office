@@ -626,7 +626,7 @@ export class GitWorkspaceManager {
       } catch (rollbackError) {
         throw new GitWorkspaceError(
           "command-failed",
-          `병합 검증과 원본 브랜치 자동 복구에 실패했습니다. ${
+          `통합 검증과 원본 브랜치 복구에 실패했습니다. ${
             rollbackError instanceof Error
               ? rollbackError.message
               : String(rollbackError)
@@ -1250,7 +1250,7 @@ async function requireNoActiveApprovalHooks(directory, untrackedPaths) {
     ) {
       throw new GitWorkspaceError(
         "not-clean",
-        `원본에 미추적 파일과 활성 Git hook이 함께 있어 자동 병합할 수 없습니다: ${hookName}`,
+        `원본에 미추적 파일과 활성 Git hook이 함께 있어 통합할 수 없습니다: ${hookName}`,
       );
     }
   }

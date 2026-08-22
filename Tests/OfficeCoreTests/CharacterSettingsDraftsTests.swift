@@ -32,10 +32,7 @@ final class CharacterSettingsDraftsTests: XCTestCase {
                     permission: "auto",
                     identityPrompt: "표시하지 않음"
                 ),
-            ],
-            automationSettings: AutomationSettings(
-                autoApproveAndMerge: false
-            )
+            ]
         )
 
         XCTAssertEqual(drafts.names, [.boss: "백부장"])
@@ -53,6 +50,5 @@ final class CharacterSettingsDraftsTests: XCTestCase {
                 permission: .fullAccess
             )
         )
-        XCTAssertFalse(drafts.autoApproveAndMerge)
     }
 }
