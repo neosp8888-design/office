@@ -2181,15 +2181,13 @@ export class AgentRuntime {
   }
 
   completedResponseText(state, decoded) {
+    // 한 턴이 여러 조각으로 나뉘면 앞 조각의 기계 블록(OFFICE_SOURCES 등)이
+    // 이어붙인 본문 한가운데로 들어가 화면에 날것으로 노출된다.
+    // 조각마다 기계 블록을 떼어낸 뒤 합친다.
     const values = (state.visibleAgentMessages ?? [])
-      .map((message) => message.text)
+      .map((message) => decodeAgentResponse(message.text).text)
       .filter(Boolean);
-    if (
-      values.at(-1) === state.responseText &&
-      values.at(-1) !== decoded.text
-    ) {
-      values[values.length - 1] = decoded.text;
-    } else if (values.at(-1) !== decoded.text) {
+    if (values.at(-1) !== decoded.text) {
       values.push(decoded.text);
     }
     return values.join("\n\n");
