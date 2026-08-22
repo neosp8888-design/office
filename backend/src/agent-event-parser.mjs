@@ -7,6 +7,7 @@ import { normalizeResponseSources } from "./work-record-provenance.mjs";
 const MAX_REASONING_LENGTH = 6_000;
 const MAX_COLLABORATION_PROMPT_LENGTH = 4_000;
 const MAX_COLLABORATION_RESULT_LENGTH = 12_000;
+const NEED_INPUT_MARKER = "[NEED_INPUT]";
 const RESPONSE_SOURCES_MARKER = "[OFFICE_SOURCES]";
 const WIKI_PROPOSALS_MARKER = "[OFFICE_WIKI_PROPOSALS]";
 const MAX_WIKI_PROPOSALS = 3;
@@ -59,12 +60,10 @@ export function parseAgentEvent(line, backend, workdir = null) {
 export function decodeAgentResponse(value) {
   const decodedBlocks = responseMachineBlocks(String(value ?? "").trim());
   const text = decodedBlocks.text;
-  const marker = "[NEED_INPUT]";
+  const decodedNeedInput = needInputResponse(text);
   const response = {
-    text: text.startsWith(marker)
-      ? text.slice(marker.length).replace(/^\s+/, "")
-      : text,
-    needsInput: text.startsWith(marker),
+    text: decodedNeedInput.text,
+    needsInput: decodedNeedInput.needsInput,
     sources: decodedBlocks.sources,
     proposals: decodedBlocks.proposals,
     wikiProposalError: decodedBlocks.wikiProposalError,
@@ -73,6 +72,33 @@ export function decodeAgentResponse(value) {
     response.sourceError = decodedBlocks.sourceError;
   }
   return response;
+}
+
+function needInputResponse(text) {
+  if (text.startsWith(NEED_INPUT_MARKER)) {
+    return {
+      text: text.slice(NEED_INPUT_MARKER.length).replace(/^\s+/, ""),
+      needsInput: true,
+    };
+  }
+
+  let lastMarkerLine = null;
+  for (const match of text.matchAll(
+    /^[\t ]*\[NEED_INPUT\][\t ]*(?:\r?\n|$)/gm,
+  )) {
+    lastMarkerLine = match;
+  }
+  if (!lastMarkerLine) {
+    return { text, needsInput: false };
+  }
+
+  const markerIndex = lastMarkerLine.index;
+  return {
+    text: `${text.slice(0, markerIndex)}${text.slice(
+      markerIndex + lastMarkerLine[0].length,
+    )}`.trim(),
+    needsInput: true,
+  };
 }
 
 function responseMachineBlocks(text) {

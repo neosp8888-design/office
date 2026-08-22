@@ -966,6 +966,50 @@ test("사용자 확인 표식을 질문 상태로 분리한다", () => {
   );
 });
 
+test("설명 뒤의 단독 사용자 확인 표식도 질문 상태로 분리한다", () => {
+  const decoded = decodeAgentResponse(`확인한 내용을 먼저 설명합니다.
+
+[NEED_INPUT]
+어느 색으로 할까요?
+
+[OFFICE_SOURCES]
+[{"kind":"file","title":"설정","locator":"config.json:3"}]`);
+
+  assert.equal(
+    decoded.text,
+    "확인한 내용을 먼저 설명합니다.\n\n어느 색으로 할까요?",
+  );
+  assert.equal(decoded.needsInput, true);
+  assert.equal(decoded.sources.length, 1);
+  assert.equal(decoded.sources[0].locator, "config.json:3");
+});
+
+test("여러 단독 사용자 확인 표식 중 마지막 줄만 제거한다", () => {
+  const decoded = decodeAgentResponse(`첫 번째 표식입니다.
+[NEED_INPUT]
+설명을 이어갑니다.
+[NEED_INPUT]
+최종 질문입니다.`);
+
+  assert.equal(
+    decoded.text,
+    "첫 번째 표식입니다.\n[NEED_INPUT]\n설명을 이어갑니다.\n최종 질문입니다.",
+  );
+  assert.equal(decoded.needsInput, true);
+});
+
+test("문장 안의 사용자 확인 표식은 질문 상태로 해석하지 않는다", () => {
+  const text = "형식 예시는 [NEED_INPUT]처럼 작성합니다.";
+
+  assert.deepEqual(decodeAgentResponse(text), {
+    text,
+    needsInput: false,
+    sources: [],
+    proposals: [],
+    wikiProposalError: null,
+  });
+});
+
 test("응답 끝의 출처 블록을 본문과 분리한다", () => {
   assert.deepEqual(
     decodeAgentResponse(`완료했습니다.
