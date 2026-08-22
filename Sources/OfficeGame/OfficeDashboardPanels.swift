@@ -89,14 +89,28 @@ struct OfficeDetailPanel: View {
                             Button {
                                 usageRefreshRequestID = UUID()
                             } label: {
-                                if usageIsRefreshing {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
+                                // 옆 부제목과 같은 크기·색으로 맞춘다.
+                                // 두 상태의 크기를 고정해 눌러도 글자가 밀리지 않는다.
+                                Group {
+                                    if usageIsRefreshing {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                            .scaleEffect(0.62)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(
+                                                .system(
+                                                    size: 9.5,
+                                                    weight: .semibold
+                                                )
+                                            )
+                                    }
                                 }
+                                .frame(width: 12, height: 12)
+                                .foregroundStyle(.secondary)
+                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.plain)
                             .disabled(usageIsRefreshing)
                             .accessibilityLabel("한도 새로고침")
                             .accessibilityValue(
