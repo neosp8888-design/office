@@ -42,6 +42,8 @@ import {
   promptWithAttachments,
   stageAttachments,
 } from "../src/agent-runtime.mjs";
+import { decodeAgentResponse } from "../src/agent-event-parser.mjs";
+
 
 const codexCharacter = {
   backend: "codex",
@@ -1974,6 +1976,39 @@ test("공개 진행 설명은 활동에 남기고 응답 본문에도 누적 유
     runtime.finalResponseCandidate(state),
     "검증을 통과했습니다.",
   );
+});
+
+test("여러 조각으로 나뉜 응답은 조각마다 기계 블록을 떼고 합친다", () => {
+  const runtime = new AgentRuntime({
+    pool: { query: async () => ({ rowCount: 1 }) },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const early =
+    "앞부분 분석입니다.\n\n[OFFICE_SOURCES]\n" +
+    '[{"kind":"file","title":"러너","locator":"backend/src/migrate.mjs","excerpt":"e"}]';
+  const finalRaw =
+    "끝났습니다.\n\n[OFFICE_SOURCES]\n" +
+    '[{"kind":"file","title":"완료","locator":"backend/src/db.mjs","excerpt":"e"}]';
+  const state = {
+    responseText: finalRaw,
+    partialText: "",
+    visibleAgentMessages: [
+      { key: "message-1", text: early },
+      { key: "message-2", text: finalRaw },
+    ],
+  };
+  const decoded = decodeAgentResponse(finalRaw);
+
+  const joined = runtime.completedResponseText(state, decoded);
+
+  assert.equal(
+    joined.includes("[OFFICE_SOURCES]"),
+    false,
+    "이어붙인 본문 어디에도 기계 블록이 날것으로 남지 않는다",
+  );
+  assert.equal(joined, "앞부분 분석입니다.\n\n끝났습니다.");
 });
 
 test("서로 다른 ID의 같은 문장은 각각 응답 순서에 남긴다", async () => {
