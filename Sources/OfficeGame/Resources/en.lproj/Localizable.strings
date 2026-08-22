@@ -50,8 +50,8 @@
 "사용 가능" = "Available";
 "잔여량 낮음" = "Low remaining";
 "정보 없음" = "No data";
-"사용 통계(API 요금 추정 환산)" = "Usage statistics (estimated API cost)";
-"오늘" = "Today";
+"API 요금 추정" = "Estimated API cost";
+"오늘 비용" = "Today's cost";
 "최근 토큰" = "Recent tokens";
 "대화를 불러오는 중" = "Loading conversation";
 "아직 업무 대화가 없습니다" = "No work conversations yet";

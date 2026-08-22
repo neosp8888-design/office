@@ -775,7 +775,7 @@ private struct UsageActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(
-                "이 사무실 사용 통계(API 요금 추정)",
+                "API 요금 추정",
                 systemImage: "chart.bar.xaxis"
             )
                 .font(.system(size: 10, weight: .bold))
@@ -784,7 +784,7 @@ private struct UsageActivityCard: View {
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     UsageMetricCell(
-                        label: "오늘",
+                        label: "오늘 비용",
                         value: costText(activity?.todayCostUSD),
                         tint: tint
                     )

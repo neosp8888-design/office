@@ -4,6 +4,33 @@ import XCTest
 @testable import OfficeGame
 
 final class UsageBoardLayoutTests: XCTestCase {
+    func testUsageCardPresentsOnlyEstimatedAPICost() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
+        let source = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeDashboardPanels.swift"),
+            encoding: .utf8
+        )
+        let start = try XCTUnwrap(
+            source.range(of: "private struct UsageActivityCard")?.lowerBound
+        )
+        let end = try XCTUnwrap(
+            source.range(
+                of: "private struct UsageMetricCell",
+                range: start..<source.endIndex
+            )?.lowerBound
+        )
+        let card = String(source[start..<end])
+
+        XCTAssertTrue(card.contains("\"API 요금 추정\""))
+        XCTAssertTrue(card.contains("label: \"오늘 비용\""))
+        XCTAssertTrue(card.contains("label: \"30일 비용\""))
+        XCTAssertFalse(card.contains("이 사무실 사용 통계"))
+    }
+
     func testUsesSingleColumnBelowThreshold() {
         XCTAssertTrue(
             UsageBoardLayout.usesSingleColumn(
