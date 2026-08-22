@@ -166,6 +166,24 @@ final class PixelOfficeAssetTests: XCTestCase {
         XCTAssertEqual(size.height, 1_280)
     }
 
+    func testKodaeriLegRaiseProfileVideoUsesCommonPortraitCanvas() async throws {
+        let videoURL = try XCTUnwrap(
+            PixelOfficeAsset.fullBodyProfileVideoURLs(for: .rightWoman).last
+        )
+        XCTAssertEqual(
+            videoURL.lastPathComponent,
+            "kodaeri-legraise_00017_.mp4"
+        )
+
+        let asset = AVURLAsset(url: videoURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let videoTrack = try XCTUnwrap(videoTracks.first)
+        let size = try await videoTrack.load(.naturalSize)
+
+        XCTAssertEqual(size.width, 720)
+        XCTAssertEqual(size.height, 1_280)
+    }
+
     func testAllThemesUseTheRetinaV4Canvas() throws {
         for style in OfficeArtStyle.allCases {
             for theme in style.supportedThemes {
