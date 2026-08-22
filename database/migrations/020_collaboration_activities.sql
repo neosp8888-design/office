@@ -11,7 +11,8 @@ CHECK (
         'command',
         'tool',
         'message',
-        'collaboration'
+        'collaboration',
+        'suggestion'
     )
 );
 

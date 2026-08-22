@@ -1673,6 +1673,7 @@ test("협업 활동 스키마와 실시간 API가 구조화 내용을 함께 제
   );
 
   assert.match(migrationSource, /'collaboration'/);
+  assert.match(migrationSource, /'suggestion'/);
   assert.match(
     migrationSource,
     /ADD COLUMN IF NOT EXISTS collaboration jsonb/,
