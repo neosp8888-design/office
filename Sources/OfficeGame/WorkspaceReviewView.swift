@@ -160,14 +160,14 @@ struct WorkspaceReviewPanel: View {
         switch currentReview.status {
         case .awaitingApproval:
             Label(
-                "클대리에게 통합·재빌드·재시작을 요청하면 반영됩니다.",
+                "통합·재빌드·재시작을 요청하면 반영됩니다.",
                 systemImage: "tray.full.fill"
             )
             .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(.secondary)
         case .conflict:
             Label(
-                "통합 충돌은 클대리에게 해결을 요청하세요.",
+                "통합 충돌 해결을 요청하세요.",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .font(.system(size: 10.5, weight: .semibold))

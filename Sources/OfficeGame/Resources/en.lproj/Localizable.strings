@@ -201,8 +201,8 @@
 "변경사항 통합 대기" = "Changes waiting for integration";
 "변경사항 통합 중" = "Integrating changes";
 "통합 충돌" = "Integration conflict";
-"클대리에게 통합·재빌드·재시작을 요청하면 반영됩니다." = "Ask the integration assistant to integrate, rebuild, and restart when you are ready.";
-"통합 충돌은 클대리에게 해결을 요청하세요." = "Ask the integration assistant to resolve this conflict.";
+"통합·재빌드·재시작을 요청하면 반영됩니다." = "Request integration, rebuild, and restart when you are ready.";
+"통합 충돌 해결을 요청하세요." = "Request help to resolve this integration conflict.";
 "작업공간 처리 실패" = "Workspace processing failed";
 "추가" = "Added";
 "수정" = "Modified";
