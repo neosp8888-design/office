@@ -109,6 +109,7 @@ final class PixelOfficeAssetTests: XCTestCase {
             .rightWoman: [
                 "profile-right-woman-loop.mp4",
                 "kodaeri-fantasy-palmier-loop-10s.mp4",
+                "kodaeri-legraise_00017_.mp4",
             ],
             .leftMan: [
                 "profile-left-man-photoreal-loop-silent.mp4",

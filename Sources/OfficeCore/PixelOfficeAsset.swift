@@ -242,6 +242,7 @@ public enum PixelOfficeAsset {
             filenames = [
                 "profile-right-woman-loop",
                 "kodaeri-fantasy-palmier-loop-10s",
+                "kodaeri-legraise_00017_",
             ]
         case .leftMan:
             filenames = [
