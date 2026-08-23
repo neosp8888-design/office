@@ -388,7 +388,13 @@ export async function readUsageActivity(pool, now = new Date()) {
   return activity;
 }
 
-function flattenedLimits(codex, claude, errors, fetchedAt) {
+function flattenedLimits(
+  codex,
+  claude,
+  errors,
+  fetchedAt,
+  stale = { codex: false, claude: false },
+) {
   return {
     codexFiveHour: codex?.fiveHour?.remaining ?? null,
     codexFiveHourResetAt: codex?.fiveHour?.resetAt ?? null,
@@ -402,8 +408,22 @@ function flattenedLimits(codex, claude, errors, fetchedAt) {
     claudePlan: claude?.plan ?? null,
     codexLimitError: errors.codex,
     claudeLimitError: errors.claude,
+    codexLimitStale: Boolean(stale.codex),
+    claudeLimitStale: Boolean(stale.claude),
     fetchedAt: fetchedAt.toISOString(),
   };
+}
+
+// 조회에 실패하거나 호출을 건너뛰면 직전 정상값을 유지한다. 값을 지워
+// 화면이 비어 보이는 것보다 조금 지난 값을 보여 주는 편이 낫다.
+function resolvedProviderLimits(result, lastGood, fallbackMessage) {
+  if (result.status === "fulfilled" && result.value) {
+    return { value: result.value, error: null, stale: false };
+  }
+  const error = result.status === "rejected"
+    ? safeError(result.reason, fallbackMessage)
+    : null;
+  return { value: lastGood, error, stale: Boolean(lastGood) };
 }
 
 export function createUsageSummaryReader({
@@ -413,9 +433,16 @@ export function createUsageSummaryReader({
   activityReader = (now) => readUsageActivity(pool, now),
   now = () => new Date(),
   cacheLifetimeMs = 30_000,
+  // Claude 한도 엔드포인트는 토큰 하나당 호출 간격이 좁다. 직원 CLI와
+  // 사용자 세션이 같은 토큰을 공유해서 자주 부르면 429가 난다.
+  claudeCacheLifetimeMs = 300_000,
+  claudeRetryBackoffMs = 90_000,
 }) {
   let cachedLimits = null;
   let inFlightLimits = null;
+  let lastGoodCodex = null;
+  let lastGoodClaude = null;
+  let claudeCooldownUntil = 0;
 
   async function limits(force) {
     const current = now();
@@ -429,26 +456,40 @@ export function createUsageSummaryReader({
     if (inFlightLimits) return await inFlightLimits;
 
     inFlightLimits = (async () => {
+      // 성공 후에는 캐시 수명, 실패 후에는 백오프가 끝나야 다시 부른다.
+      // force여도 이 간격은 지킨다. 그 사이에는 직전 정상값을 쓴다.
+      const claudeDue = current.getTime() >= claudeCooldownUntil;
       const [codexResult, claudeResult] = await Promise.allSettled([
         codexReader(),
-        claudeReader(),
+        claudeDue ? claudeReader() : Promise.resolve(null),
       ]);
       const fetchedAt = now();
+      if (claudeDue) {
+        const claudeOK = claudeResult.status === "fulfilled" &&
+          Boolean(claudeResult.value);
+        claudeCooldownUntil = fetchedAt.getTime() +
+          (claudeOK ? claudeCacheLifetimeMs : claudeRetryBackoffMs);
+      }
+
+      const codex = resolvedProviderLimits(
+        codexResult,
+        lastGoodCodex,
+        "Codex 한도를 확인할 수 없습니다.",
+      );
+      const claude = resolvedProviderLimits(
+        claudeResult,
+        lastGoodClaude,
+        "Claude 한도를 확인할 수 없습니다.",
+      );
+      lastGoodCodex = codex.value ?? lastGoodCodex;
+      lastGoodClaude = claude.value ?? lastGoodClaude;
+
       const value = flattenedLimits(
-        codexResult.status === "fulfilled" ? codexResult.value : null,
-        claudeResult.status === "fulfilled" ? claudeResult.value : null,
-        {
-          codex: codexResult.status === "rejected"
-            ? safeError(codexResult.reason, "Codex 한도를 확인할 수 없습니다.")
-            : null,
-          claude: claudeResult.status === "rejected"
-            ? safeError(
-              claudeResult.reason,
-              "Claude 한도를 확인할 수 없습니다.",
-            )
-            : null,
-        },
+        codex.value,
+        claude.value,
+        { codex: codex.error, claude: claude.error },
         fetchedAt,
+        { codex: codex.stale, claude: claude.stale },
       );
       cachedLimits = { cachedAt: fetchedAt.getTime(), value };
       return value;

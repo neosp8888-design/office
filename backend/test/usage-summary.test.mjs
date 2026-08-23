@@ -16,6 +16,15 @@ import {
   readUsageActivity,
 } from "../src/usage-summary.mjs";
 
+function emptyActivityFixture() {
+  return {
+    todayCostUSD: 0,
+    recentTokens: 0,
+    last30DaysCostUSD: 0,
+    last30DaysTokens: 0,
+  };
+}
+
 test("Codex app-server 한도는 창 길이로 5시간과 7일을 구분한다", () => {
   assert.deepEqual(
     parseCodexRateLimits({
@@ -251,8 +260,86 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
   assert.equal(second.codexActivity.todayCostUSD, 2);
   assert.equal(forced.codexActivity.todayCostUSD, 3);
   assert.equal(codexReads, 2);
-  assert.equal(claudeReads, 2);
+  // Claude 한도는 토큰당 호출 간격이 좁아 force여도 캐시 수명 안에서는
+  // 업스트림을 다시 부르지 않고 직전 값을 그대로 쓴다.
+  assert.equal(claudeReads, 1);
+  assert.equal(forced.claudeFiveHour, 50);
   assert.equal(activityReads, 3);
+});
+
+test("Claude 한도 조회가 실패해도 직전 값을 유지하고 오류만 표시한다", async () => {
+  let claudeReads = 0;
+  let current = new Date("2026-08-23T00:00:00Z");
+  const reader = createUsageSummaryReader({
+    pool: {},
+    codexReader: async () => ({
+      fiveHour: { remaining: 70, resetAt: null },
+      weekly: { remaining: 60, resetAt: null },
+      plan: "Pro",
+    }),
+    claudeReader: async () => {
+      claudeReads += 1;
+      if (claudeReads === 1) {
+        return {
+          fiveHour: { remaining: 48, resetAt: null },
+          weekly: { remaining: 13, resetAt: null },
+          plan: "Max",
+        };
+      }
+      throw new Error("Claude 계정 한도 조회가 실패했습니다 (HTTP 429).");
+    },
+    activityReader: async () => ({
+      codex: emptyActivityFixture(),
+      claude: emptyActivityFixture(),
+    }),
+    now: () => current,
+  });
+
+  const healthy = await reader();
+  assert.equal(healthy.claudeFiveHour, 48);
+  assert.equal(healthy.claudeLimitStale, false);
+  assert.equal(healthy.claudeLimitError, null);
+
+  // 캐시 수명이 지난 뒤 429가 나도 값은 남고 오류만 붙는다.
+  current = new Date("2026-08-23T00:06:00Z");
+  const failed = await reader({ force: true });
+  assert.equal(claudeReads, 2);
+  assert.equal(failed.claudeFiveHour, 48, "직전 정상값을 유지한다");
+  assert.equal(failed.claudeWeekly, 13);
+  assert.equal(failed.claudeLimitStale, true);
+  assert.match(failed.claudeLimitError, /429/);
+  assert.equal(failed.codexFiveHour, 70, "코덱스 한도는 영향받지 않는다");
+});
+
+test("Claude 한도 조회가 실패하면 백오프 동안 다시 부르지 않는다", async () => {
+  let claudeReads = 0;
+  let current = new Date("2026-08-23T00:00:00Z");
+  const reader = createUsageSummaryReader({
+    pool: {},
+    codexReader: async () => null,
+    claudeReader: async () => {
+      claudeReads += 1;
+      throw new Error("Claude 계정 한도 조회가 실패했습니다 (HTTP 429).");
+    },
+    activityReader: async () => ({
+      codex: emptyActivityFixture(),
+      claude: emptyActivityFixture(),
+    }),
+    now: () => current,
+  });
+
+  await reader();
+  assert.equal(claudeReads, 1);
+
+  // 백오프(90초) 안에서는 강제 갱신을 눌러도 업스트림을 부르지 않는다.
+  current = new Date("2026-08-23T00:00:30Z");
+  await reader({ force: true });
+  assert.equal(claudeReads, 1);
+
+  // 백오프가 지나면 다시 시도한다.
+  current = new Date("2026-08-23T00:02:00Z");
+  await reader({ force: true });
+  assert.equal(claudeReads, 2);
 });
 
 test("한 공급자 실패는 다른 한도와 DB 통계를 가리지 않는다", async () => {
