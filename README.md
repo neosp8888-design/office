@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
+  <a href="https://github.com/neosp8888-design/office/releases/tag/v1.3.3"><img src="https://img.shields.io/badge/Release-v1.3.3-2F6FEB" alt="Latest release v1.3.3"></a>
 </p>
 
 OFFICESTRA는 여러 CLI 세션을 터미널 창마다 따로 관리하는 대신, 하나의
@@ -29,11 +30,14 @@ five-person AI team._
 
 - 다섯 명의 직원에게 필요한 업무만 각각 배정하거나 누구에게든 협업이나 업무 분배를 요청하면, 해당 직원이 로컬 API로 다른 직원에게 프롬프트를 넣고 진행 상황을 모니터링한 뒤 종합해 보고한다.
 - 직원마다 Codex 또는 Claude Code, 모델, Fast·Standard, 추론 단계와 파일 권한을 선택한다.
+- 실행 중인 직원에게 다음 업무를 최대 3개까지 예약하고 순서를 바꾸거나 즉시 적용한다.
 - 입력 즉시 `생각 중` 상태부터 메시지·추론·명령·도구·파일 변경을 실제 순서로 확인한다.
 - Codex 공개 메시지를 각각 복사하고 파일 변경 결과를 발생 위치에서 확인한다.
 - 앱을 닫았다 다시 열어도 PostgreSQL 상태와 CLI 세션을 복구한다.
 - 파일을 최대 20개까지 첨부하고 이미지 썸네일·생성 이미지·Markdown 결과를 본다.
 - 직원별 기록과 전체 보관함을 Fast·Standard까지 포함해 검색한다.
+- 실제 세션 컨텍스트 잔량을 확인하고 직원별 자동 압축 기준을 조절하거나 즉시 압축한다. 압축 시작·완료·실패는 직원 말풍선과 상태 아이콘으로 실시간 표시한다.
+- Claude Code가 제공하는 다음 질문 추천을 바로 실행하고, 완료 응답에 좋아요·싫어요 평가를 남긴다.
 - 과거 업무 기록을 RAG로 자동 덧붙이지 않고 필요할 때만 명시적으로 검색하며, 오래 유지할 결정·제약·사건 교훈은 사용자 승인 뒤 사내 위키에 축적한다.
 - 2D·3D 오피스와 낮·밤 테마를 전환하며 실제 업무 상태를 캐릭터 애니메이션으로 본다.
 
@@ -44,7 +48,7 @@ five-person AI team._
 | 실시간 오피스 | 다섯 직원 선택, 업무 상태 확인, 2D·3D 및 낮·밤 전환 |
 | 직원 모니터 | 해당 직원의 대화와 세션 기록 열기 |
 | 캐비닛 | 모든 직원의 업무 기록 검색 및 상세 보기 |
-| 화이트보드 | Codex·Claude 계정 잔여량과 PostgreSQL 사용 통계 확인 |
+| 화이트보드 | Codex·Claude 계정 잔여량, 오늘·30일 API 요금 추정, CLI 업데이트 확인 |
 | 사내 위키 | 승인된 지속 지식 검색, 직원이 제안한 지식의 승인·거절 |
 | 실시간 업무실 | 선택한 직원의 진행 이벤트와 최종 응답을 시간순으로 확인 |
 | 하단 입력창 | 직원·CLI·모델·Fast·Standard·추론·권한 선택, 파일 첨부, 업무 실행·중단 |
@@ -61,10 +65,13 @@ five-person AI team._
 - 모델·Fast 또는 Standard·추론 단계·읽기/쓰기 권한 설정
 - 선택 모드와 실제 실행 모드를 직원 설정과 각 업무 기록에 별도로 저장
 - 직원별 외부 CLI 세션 저장과 후속 업무 재개
+- Claude Code는 같은 설정·세션·작업 폴더에서 지속 프로세스를 재사용하고, Codex는 기존 스레드를 재개
 - 같은 CLI의 모델·Fast·추론·권한·역할 변경은 기존 세션을 유지하고,
   Codex ↔ Claude 전환만 새 실행 세션 시작(세션이 초기화되어도 DB를 통해 이전작업을 이어갈수 있음)
 - 사용자 판단이 필요한 질문을 같은 세션에서 이어서 답변
 - 같은 직원의 중복 업무 차단과 실행 중 업무 취소
+- 직원별 실제 컨텍스트 한도·잔량 표시, 50~95% 자동 압축 기준과 수동 압축
+- 자동·수동 압축의 진행·완료·실패 상태를 WebSocket으로 동기화하고 재연결 시 진행 상태 복구
 - 모델 한도 소진과 일반 실행 실패를 다른 상태로 표시
 
 ### 실시간 업무
@@ -73,9 +80,11 @@ five-person AI team._
 - PostgreSQL에 업무·응답·공개 진행 이벤트를 먼저 저장
 - WebSocket 변경 알림과 REST 스냅샷을 조합한 재연결
 - 업무 전송 즉시 임시 카드와 움직이는 `생각 중` 상태 표시
+- 실행 중인 직원에게 다음 업무를 최대 3개까지 예약하고 취소·순서 변경·즉시 적용
 - DB 발생 순서대로 진행 설명·추론·메시지·명령·도구를 배치하고 연속 작업만 그룹화
 - 실행 중 활동을 같은 이벤트 행에서 완료·실패 상태로 갱신해 중복 표시 방지
 - 공개 메시지마다 개별 복사 버튼과 마지막 결론 구분 제공
+- 공급자가 제안한 다음 질문을 후속 업무로 바로 전송하고 완료 응답에 좋아요·싫어요 평가 저장
 - Codex 파일 변경 시작 카드를 같은 타임라인 위치에서 완료·실패와 경로로 갱신하고 가능한 추가·삭제 통계 표시
 - Claude Code는 도구 이름 배지와 셸 명령, 파일 편집 카드, 할 일 체크리스트, 접히는 사고 블록으로 구분해 표시
 - 추론·명령·도구 작업 그룹은 기본 닫힘이며 필요할 때 펼침
@@ -93,7 +102,8 @@ five-person AI team._
 - 실행 당시 CLI·모델·추론·Fast 또는 Standard 설정과 외부 세션 ID 보존
 - 실시간 카드, 직원별 기록과 전체 대화 보관함에서 실행 모드를 항상 표시
 - 공급자 계정에서 직접 받은 Codex·Claude의 5시간·7일 잔여량과 요금제 표시
-- 이 OFFICESTRA가 PostgreSQL에 기록한 오늘·최근 30일 비용과 토큰 통계 표시
+- 이 OFFICESTRA가 기록한 오늘·최근 30일 API 요금 추정 표시
+- Codex·Claude CLI의 설치 버전과 사용 가능한 업데이트를 확인하고 선택한 CLI만 갱신
 - 완료 업무를 PostgreSQL `work_records` 원본으로 저장하고 검색 가능한 기록을
   `rag_documents` 파생 검색 자료로 동기화
 - 별도 RAG 검색으로 찾은 과거 업무 기록을 새 프롬프트에 자동 주입하지 않고,
@@ -174,27 +184,28 @@ OFFICESTRA 백엔드는 자동 commit·merge·rebase·push를 하지 않는다. 
 ## 설치
 
 OFFICESTRA는 Apple Silicon(M1 이상)과 macOS 14 이상을 지원한다. Intel Mac은
-지원하지 않는다. 현재 저장소는 실행 앱, DMG, 앱 ZIP을 배포하지 않으며 최신
-`main` 소스만 제공한다. 실행하려면 Apple 개발 도구, Node.js, Docker Desktop,
-Codex CLI 또는 Claude Code CLI 하나가 필요하다.
+지원하지 않는다. 최신 공개 빌드는 **v1.3.3 Community Preview**이며 DMG에는
+Apple Silicon용 앱, Node.js와 로컬 백엔드가 포함된다. Docker Desktop과 로그인된
+Codex CLI 또는 Claude Code CLI 하나는 사용자가 준비해야 한다. `main`에는 최신
+릴리스 뒤에 푸시된 변경이 포함될 수 있다.
 
-모델 목록은 설치된 CLI 버전과 계정 권한에 따라 달라질 수 있다.
+모델 목록과 실제 사용 가능 여부는 설치된 CLI 버전과 계정 권한에 따라 달라진다.
 
 ### 가장 쉬운 방법
 
-GitHub 저장소의 **Code → Download ZIP**으로 현재 `main` 소스를 받을 수 있다.
-이 ZIP은 실행 앱이 아니라 소스 코드다. Git을 사용한다면 다음 명령으로 같은
-최신 소스를 받을 수 있다.
+1. [OFFICESTRA v1.3.3 릴리스](https://github.com/neosp8888-design/office/releases/tag/v1.3.3)에서
+   `OFFICESTRA-v1.3.3-macOS-arm64.dmg`를 받는다.
+2. DMG를 열고 `OFFICESTRA.app`을 **Applications**로 끌어다 놓는다.
+3. 첫 실행은 앱을 우클릭해 **열기**를 선택한다. 현재 공개 빌드는 ad-hoc
+   서명이며 Apple 공증을 받지 않아 일반 더블클릭을 macOS가 막을 수 있다.
+4. 첫 실행 도우미에서 Docker·CLI 상태를 확인하고 직원들이 함께 사용할 프로젝트
+   폴더를 선택한다.
 
-```sh
-git clone --depth 1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
-```
-
-태그와 GitHub Release는 운영하지 않는다. 아래 절차에 따라 소스에서 직접
-실행하며, 배포 원칙은 [소스 공개 정책](docs/RELEASING.md)에 정리되어 있다.
+릴리스 페이지에는 버전 `1.3.3`(빌드 6), arm64 아키텍처와 DMG SHA-256이 함께
+게시된다. 현재 `main`을 직접 실행하려는 개발자는 아래 소스 빌드 절차를 사용한다.
 
 <details>
-<summary><strong>소스에서 직접 빌드하는 개발자용 명령 보기</strong></summary>
+<summary><strong>현재 main을 소스에서 직접 실행하는 개발자용 명령 보기</strong></summary>
 
 ### 새 Mac에서 직접 설치하기
 
@@ -388,6 +399,12 @@ Standard로 표시한다.
 `전체 허용`은 작업 폴더 밖의 파일과 시스템 명령에도 영향을 줄 수 있다.
 역할 지침과 `workdir`를 확인한 뒤 필요한 직원에게만 사용한다.
 
+직원 프로필의 컨텍스트 제어에서 실제 세션 최대치와 잔량을 확인할 수 있다.
+자동 압축 기준은 50~95%에서 조절하며 기본값은 90%다. `지금 압축`은 활성
+Codex 스레드의 네이티브 compact 또는 Claude Code의 `/compact`를 사용한다.
+압축 중에는 해당 직원의 새 업무와 모델·권한 변경을 잠그고, 완료·실패 결과를
+말풍선과 직원 선택기 상태 아이콘에 남긴다.
+
 ## 로컬 API
 
 기본 주소는 `http://127.0.0.1:4317`이다. 이 API는 앱과 같은 Mac에서 쓰는
@@ -398,14 +415,19 @@ Standard로 표시한다.
 | 상태 확인 | `GET /health` |
 | 직원 목록 | `GET /api/characters` |
 | 활성 세션 | `GET /api/active-sessions` |
+| 사용량·요금 추정 | `GET /api/usage-summary` |
+| CLI 업데이트 확인·적용 | `GET /api/cli-updates`, `POST /api/cli-updates/apply` |
 | 전체·직원별 기록 | `GET /api/history`, `GET /api/characters/:id/history` |
 | 실시간 피드 | `GET /api/live-feed`, `GET /api/live-feed/:turnId` |
 | 전체 보관함 피드 | `GET /api/archive-feed` |
 | 변경 알림 | `WS /ws` |
 | 직원 설정 | `PUT /api/characters/:id/name`, `PUT /api/characters/:id/settings` |
 | 역할 지침 | `PUT /api/characters/:id/identity-prompt` |
+| 자동 압축 기준 | `PUT /api/characters/:id/context-settings` |
+| 컨텍스트 즉시 압축 | `POST /api/characters/:id/context/compact` |
 | 업무 실행 | `POST /api/agent-jobs` |
 | 업무 중단 | `DELETE /api/agent-jobs/:characterId` |
+| 완료 응답 평가 | `PUT /api/turns/:turnId/feedback` |
 | 업무 기록 원본 검색 | `GET /api/work-records` |
 | 턴 응답 근거 | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
 | RAG 문서·검색 | `POST /api/rag/documents`, `POST /api/rag/search` |
@@ -538,6 +560,7 @@ docs/images/              공개 문서용 선별 화면 이미지
 - CLI와 Docker 설치·로그인은 사용자가 로컬에서 준비해야 한다.
 - 모델 목록은 현재 코드에 정의돼 있으며 CLI의 모든 모델을 자동 탐색하지 않는다.
 - Claude Code Fast 모드는 현재 Opus 5에서만 사용할 수 있다.
+- 공개 DMG는 ad-hoc 서명이며 Apple 공증을 받지 않아 첫 실행 때 명시적으로 **열기**를 선택해야 한다.
 - 공유 작업 폴더에는 직원 또는 외부 터미널·IDE 사이의 파일 잠금이 없다. 같은
   파일을 동시에 고치면 변경이 겹칠 수 있으므로 Git diff와 dirty 상태를 직접
   확인해야 한다.

@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
   <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
+  <a href="https://github.com/neosp8888-design/office/releases/tag/v1.3.3"><img src="https://img.shields.io/badge/Release-v1.3.3-2F6FEB" alt="Latest release v1.3.3"></a>
 </p>
 
 OFFICESTRA replaces a collection of separate terminal sessions with one interactive office. Select an AI coworker, assign a task, and watch their user-visible progress and final response in real time. Every coworker has an independent role, CLI provider, model, reasoning effort, speed tier, permission level, and persistent conversation session. The backend keeps work running even when the app window is closed.
@@ -20,13 +21,16 @@ OFFICESTRA replaces a collection of separate terminal sessions with one interact
 
 ## Core experience
 
-- Assign each task to only the coworkers who need it.
+- Assign work directly or ask any coworker to delegate through the local API, monitor the other coworkers, and synthesize their results.
 - Choose Codex or Claude Code, a model, Fast or Standard mode, reasoning effort, and file permissions per coworker.
+- Queue up to three follow-up tasks for a busy coworker, reorder them, or apply one immediately.
 - See `Thinking` immediately, followed by user-visible messages, reasoning summaries, commands, tools, and file changes in their actual order.
 - Copy individual Codex messages and inspect file-change results where they occurred.
 - Restore persisted PostgreSQL state and provider-native CLI sessions after relaunching the app.
 - Attach up to 20 files and view image thumbnails, generated images, and Markdown output.
 - Search per-coworker history and the complete archive by task, response, model, session ID, reasoning effort, and speed tier.
+- Inspect each provider session's actual context remaining, set a per-coworker automatic compaction threshold, or compact immediately. Start, completion, and failure appear live in speech bubbles and status icons.
+- Run Claude Code's suggested follow-up questions directly and rate completed responses with like or dislike feedback.
 - Do not append past work records through automatic RAG retrieval; query them only when needed, and promote durable decisions, constraints, and incident lessons to the Internal Wiki only after user approval.
 - Switch between 2D and 3D offices and day or night themes while characters and speech bubbles reflect live work state.
 
@@ -37,7 +41,7 @@ OFFICESTRA replaces a collection of separate terminal sessions with one interact
 | Live office | Select five coworkers, inspect status, and switch between 2D, 3D, day, and night scenes |
 | Coworker monitors | Open the selected coworker's conversations and provider session history |
 | Archive cabinet | Search and inspect work from every coworker |
-| Whiteboard | View Codex and Claude account quotas plus PostgreSQL usage statistics |
+| Whiteboard | View Codex and Claude account quotas, today's and 30-day API cost estimates, and CLI updates |
 | Internal Wiki (`사내 위키`) | Search approved durable knowledge and approve or reject coworker proposals |
 | Live workspace | Follow progress events and final responses in chronological order |
 | Command bar | Select coworkers, provider, model, speed, reasoning, permissions, attachments, and run or stop tasks |
@@ -53,9 +57,12 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Model, Fast or Standard mode, reasoning effort, and read/write permission controls.
 - Separate persistence of selected settings and the settings actually used for each turn.
 - Provider-native session IDs for follow-up work.
+- Claude Code reuses one persistent process for the same settings, session, and workspace; Codex resumes its existing thread.
 - Model, speed, effort, permission, and role changes within the same provider keep the current session; switching between Codex and Claude starts a new one.
 - In-session replies when an agent needs a user decision.
 - Protection against concurrent tasks for the same coworker, with cancellation for active work.
+- Actual context limits and remaining tokens, 50–95% automatic compaction thresholds, and manual compaction per coworker.
+- WebSocket-synchronized automatic and manual compaction progress, completion, and failure, including active-state restoration after reconnecting.
 - Separate visual states for quota exhaustion and ordinary execution failures.
 
 ### Live work
@@ -64,9 +71,11 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Tasks, responses, and user-visible progress events are written to PostgreSQL before the UI is notified.
 - REST snapshots and WebSocket change notifications support reconnecting without losing work.
 - Optimistic task cards display an animated `Thinking` state immediately after submission.
+- A busy coworker can hold up to three queued follow-up tasks with cancel, reorder, and apply-now actions.
 - Progress explanations, reasoning summaries, messages, commands, and tools retain database event order, while only adjacent operations are grouped.
 - A single activity row moves from running to completed or failed instead of producing duplicate entries.
 - Every user-visible message has its own copy action, and the final conclusion remains visually distinct.
+- Provider-supplied follow-up suggestions can be submitted as the next task, and completed responses retain like or dislike feedback.
 - Codex file-change cards update in place with status, paths, and available addition/deletion counts.
 - Claude Code timelines distinguish tool badges, shell commands, file edits, task lists, and collapsible thinking blocks.
 - Reasoning, command, and tool groups start collapsed and can be expanded on demand.
@@ -84,7 +93,8 @@ The office scene is not decorative. Characters, monitors, the archive cabinet, a
 - Preserve the provider, model, effort, speed tier, and external session ID used by every turn.
 - Show the execution mode consistently in live cards, coworker history, and the complete archive.
 - Display Codex and Claude 5-hour and 7-day quotas fetched directly from provider accounts, with account-plan labels.
-- Display today's and trailing 30-day cost and token statistics recorded by this OFFICESTRA instance in PostgreSQL.
+- Display today's and trailing 30-day API cost estimates recorded by this OFFICESTRA instance.
+- Check installed Codex and Claude CLI versions and apply updates only to the selected provider.
 - Store completed work as source-of-truth records in PostgreSQL `work_records` and synchronize searchable records into derived `rag_documents`.
 - Do not inject separately retrieved past work records into new prompts automatically. When prior context is needed, coworkers explicitly query `GET /api/work-records` or `POST /api/rag/search`; continuity within the same provider-native CLI session is preserved.
 - Let coworkers propose durable decisions, constraints, and significant incident lessons, while the user approves or rejects them under **Pending Review (`확인 대기`)** in the Internal Wiki.
@@ -103,7 +113,7 @@ flowchart LR
 ```
 
 1. The app submits a coworker and task to `POST /api/agent-jobs`.
-2. The UI renders an optimistic turn while the backend launches the selected CLI in the configured workspace.
+2. The UI renders an optimistic turn while the backend launches the selected CLI in the shared configured workspace. Different coworkers can run concurrently.
 3. The returned `turnId` reconciles the optimistic card with the persisted record.
 4. Sequenced progress activities and response drafts are stored in PostgreSQL first.
 5. `/ws` announces a change, and the app fetches the latest turn state from `GET /api/live-feed/:turnId`.
@@ -121,7 +131,6 @@ a direct message or mention it in a channel to start that coworker's CLI task.
 - Each Slack thread keeps its OFFICESTRA conversation ID for follow-up messages.
 - One status message is updated with live activity, and final replies stay in the thread.
 - Tasks that need input continue in the same coworker session when you reply in the thread.
-- Pending Git workspace changes can be approved or rejected from Slack.
 - Only explicitly allowed Slack user IDs may start CLI tasks.
 
 To configure the integration.
@@ -138,45 +147,56 @@ The token file stays outside the repository and must not be committed. If the
 tokens are absent, only the Slack integration is disabled; the macOS app and
 existing backend continue to work normally.
 
-## Parallel development and Git safety
+## Shared workspace and Git operation
 
-When `workdir` is a Git repository, OFFICESTRA creates a dedicated branch and worktree for each reviewable task workspace. Worktrees isolate file changes and have a lifecycle independent from Codex threads and Claude sessions. Approving, merging, or rejecting a workspace does not replace the coworker's active CLI session.
+Every new task uses the configured `workdir`. If it is a Git repository,
+OFFICESTRA does not create a separate branch or worktree; coworkers operate on
+the currently selected branch, usually `main`.
 
-After a successful task creates changes, the live task card keeps the status, result commit, and changed-file list compact. With **Automatically approve and merge completed work** enabled (the default), OFFICESTRA revalidates the review tree and source worktree, merges automatically, and blocks the coworker's next task until post-merge processing finishes. If the setting is disabled or automatic recovery retries are exhausted, the card remains in manual review so the user can approve or reject it. Rejected branches and worktrees are retained for recovery.
+Different coworkers can run concurrently in the same folder. Each one sees the
+current files and uncommitted changes, so edits to unrelated files accumulate in
+one working tree. Concurrent edits to the same file or line can overwrite each
+other. Every coding task should inspect `git status` and `git diff` before editing
+or committing. Restarting the backend closes running or preparing turns as
+`interrupted`; they are not replayed automatically.
 
-When a Codex-to-Claude or Claude-to-Codex switch would end an active session, unreviewed changes move to review and the settings request stops with `409`. An unchanged worktree is cleaned up automatically before the new provider session starts. Workspace approval, merge, and rejection do not end a provider session by themselves.
+The OFFICESTRA backend does not automatically commit, merge, rebase, or push.
+A task may be explicitly instructed to edit, test, and commit. Include push only
+when remote publication is intended. Review all accumulated changes and resolve
+overlapping edits or conflicts before committing.
 
-Immediately before merging, OFFICESTRA verifies that the source worktree is still on the recorded branch and clean, invalidates approval if the reviewed task tree changed, serializes merges per repository, and checks for conflicts before touching the source branch. Dirty source state and conflicts stop the merge for user review.
-
-Non-Git workdirs continue to use the existing shared-folder behavior. A Git worktree isolates repository file changes only; it does not isolate processes, ports, databases, or files outside the workdir.
+OFFICESTRA does not lock files against other coworkers, terminals, or IDEs. Git
+state remains the source of truth for identifying and reconciling concurrent
+changes.
 
 ## Installation
 
 OFFICESTRA supports Apple silicon (M1 or later) and macOS 14 or later. Intel
-Macs are not supported. This repository distributes the latest `main` source
-only; it does not publish a runnable app, DMG, or app ZIP. Running the project
-requires Apple developer tools, Node.js, Docker Desktop, and either Codex CLI
-or Claude Code CLI.
+Macs are not supported. The latest public build is the **v1.3.3 Community
+Preview**. Its DMG includes the Apple silicon app, Node.js, and the local
+backend. Users still provide Docker Desktop and an authenticated Codex CLI or
+Claude Code CLI. `main` may contain changes pushed after the latest release.
 
 Available models still depend on the installed CLI version and account
 entitlements.
 
 ### Easiest path
 
-Use **Code → Download ZIP** on the GitHub repository to download the current
-`main` source. That ZIP contains source code, not a runnable app. With Git, the
-following command downloads the same latest source.
+1. Open the [OFFICESTRA v1.3.3 release](https://github.com/neosp8888-design/office/releases/tag/v1.3.3)
+   and download `OFFICESTRA-v1.3.3-macOS-arm64.dmg`.
+2. Open the DMG and drag `OFFICESTRA.app` into **Applications**.
+3. For the first launch, Control-click the app and choose **Open**. The public
+   build is ad hoc signed and not Apple-notarized, so macOS may block an
+   ordinary double-click.
+4. Use the first-run assistant to verify Docker and CLI availability and select
+   the project folder shared by all coworkers.
 
-```sh
-git clone --depth 1 https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
-```
-
-Tags and GitHub Releases are not used. Follow the instructions below to run
-from source; see the [source publishing policy](docs/RELEASING.md) for the
-repository policy.
+The release page publishes version `1.3.3` (build 6), the arm64 architecture,
+and the DMG SHA-256. Developers who want the current `main` should use the
+source workflow below.
 
 <details>
-<summary><strong>Show developer commands for building from source</strong></summary>
+<summary><strong>Show developer commands for running the current main from source</strong></summary>
 
 ### Manual setup on a new Mac
 
@@ -284,8 +304,8 @@ sed -i '' "s#/Users/your-name/Projects#$HOME/Projects#" Sources/OfficeCore/Resou
 grep '"workdir"' Sources/OfficeCore/Resources/characters.json
 ```
 
-Use another absolute path instead of `$HOME/Projects` if preferred. Isolated Git
-task worktrees are created under `~/.officestra/worktrees` by default.
+Use another absolute path instead of `$HOME/Projects` if preferred. Every
+coworker uses the current files and changes in that shared folder.
 
 #### 6. Start the backend and app
 
@@ -365,6 +385,13 @@ The app presents a common three-level permission model over provider-specific va
 
 `Full access` can affect files outside the workspace and run system commands. Enable it only for coworkers whose role instructions and workspace you have reviewed.
 
+The context controls in each coworker profile show the provider session's actual
+limit and remaining tokens. Automatic compaction can be set from 50% to 95%,
+with 90% as the default. **Compact now** uses Codex's native thread compactor or
+Claude Code's `/compact`. While compaction is active, new work and provider
+settings for that coworker are locked; speech bubbles and selector icons retain
+the completion or failure result.
+
 ## Local API
 
 The default base URL is `http://127.0.0.1:4317`. This is a local control plane for the macOS app and does not provide authentication.
@@ -374,27 +401,25 @@ The default base URL is `http://127.0.0.1:4317`. This is a local control plane f
 | Health | `GET /health` |
 | Coworkers | `GET /api/characters` |
 | Active sessions | `GET /api/active-sessions` |
+| Usage and cost estimates | `GET /api/usage-summary` |
+| Check and apply CLI updates | `GET /api/cli-updates`, `POST /api/cli-updates/apply` |
 | Complete or per-coworker history | `GET /api/history`, `GET /api/characters/:id/history` |
 | Live feed | `GET /api/live-feed`, `GET /api/live-feed/:turnId` |
 | Complete archive feed | `GET /api/archive-feed` |
 | Change notifications | `WS /ws` |
 | Coworker settings | `PUT /api/characters/:id/name`, `PUT /api/characters/:id/settings` |
 | Role instructions | `PUT /api/characters/:id/identity-prompt` |
+| Automatic compaction threshold | `PUT /api/characters/:id/context-settings` |
+| Compact context now | `POST /api/characters/:id/context/compact` |
 | Start a task | `POST /api/agent-jobs` |
 | Stop a task | `DELETE /api/agent-jobs/:characterId` |
-| Inspect Git changes | `GET /api/workspace-reviews/:turnId` |
-| Approve or reject Git changes | `POST /api/workspace-reviews/:turnId/approve`, `POST /api/workspace-reviews/:turnId/reject` |
+| Rate a completed response | `PUT /api/turns/:turnId/feedback` |
 | Search source work records | `GET /api/work-records` |
 | Turn response sources | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
 | RAG storage and search | `POST /api/rag/documents`, `POST /api/rag/search` |
 | Approved Internal Wiki pages | `GET /api/wiki/pages`, `GET /api/wiki/pages/:pageId` |
 | Internal Wiki proposals | `GET /api/wiki/proposals`, `POST /api/wiki/proposals` |
 | Approve or reject a wiki proposal | `POST /api/wiki/proposals/:proposalId/approve`, `POST /api/wiki/proposals/:proposalId/reject` |
-
-Approval and rejection requests use `application/json`. Approval must send the
-`reviewTree` from the reviewed response as `{"reviewTree":"..."}`; rejection
-sends `{}`. A changed tree or stale review value stops with `409`, and the
-latest diff must be reviewed again.
 
 Internal Wiki approval and rejection are explicit user decisions made under
 **Internal Wiki (`사내 위키`) → Pending Review (`확인 대기`)** in the app. The app sends an intent header
@@ -417,13 +442,18 @@ curl -X POST http://127.0.0.1:4317/api/agent-jobs \
 
 Accepted requests return `202` with a `turnId`, `conversationId`, and `status`. A second task for an already-busy coworker returns `409`; different coworkers may run concurrently.
 
+With sufficient permission, a coworker can call the same local API from its CLI
+session. When the user explicitly requests delegation, that coworker can assign
+work through `POST /api/agent-jobs`, monitor `GET /api/live-feed`, and synthesize
+the results. The backend itself is not an autonomous orchestrator: it does not
+independently plan, delegate, monitor, or retry work.
+
 ## Data and security boundaries
 
 - Tasks, responses, sessions, activities, source-of-truth `work_records`, and response sources are stored in a local PostgreSQL Docker volume.
 - `checklist.md` and `context-notes.md` are frozen snapshots from the work-record database transition. They are neither regenerated nor edited; current work records are available through the read-only `GET /api/work-records` endpoint.
 - Internal Wiki proposals and approved pages stay in local PostgreSQL. Pending, rejected, and conflicted proposals remain outside ordinary RAG search and published-wiki search; only approved pages enter the separate wiki search index with links to their source work records.
 - Attachments are copied into `.office-attachments/` under the configured workspace. When `workdir` points to another Git repository, add this directory to that repository's `.gitignore` as well.
-- Approved worktrees are cleaned up after merging, while rejected worktrees and branches are retained for recovery and must be removed manually when no longer needed.
 - OFFICESTRA does not store API keys. It uses each CLI's existing local authentication.
 - The backend binds to `127.0.0.1` by default.
 - PostgreSQL is exposed only on `127.0.0.1:54329` by the included Compose configuration.
@@ -494,9 +524,9 @@ See [`APP-DESIGN.md`](APP-DESIGN.md) for the product design background and [`LLM
 - Users must install and authenticate the CLI providers and Docker locally.
 - The model list is currently defined in code rather than discovered dynamically from every CLI model.
 - Claude Code Fast mode is currently limited to Opus 5.
-- Git worktrees do not isolate processes, ports, databases, or files outside the repository.
-- A full-access agent can bypass the worktree boundary by committing or pushing through the source repository's absolute path. OFFICESTRA detects a dirty source tree but cannot distinguish a clean direct commit, so production use should pair `workspace-write` or `auto` permissions with protected remote branch rules.
-- Conflict resolution and cleanup of a dirty source worktree require user judgment.
+- The public DMG is ad hoc signed and not Apple-notarized, so its first launch requires the explicit **Open** action.
+- The shared workspace has no file lock between coworkers, terminals, or IDEs. Concurrent edits can overlap, so inspect Git diffs and dirty state directly.
+- The backend does not automatically commit or push. Remote publication must be requested explicitly, ideally with protected remote branch rules.
 - There is no orchestrator that automatically decomposes one large task and assigns it across the whole team.
 - Text queries for work records and the Internal Wiki use PostgreSQL full-text search; RAG vector-search embeddings are not generated automatically.
 - The unauthenticated local API must not be used as an externally exposed service.
