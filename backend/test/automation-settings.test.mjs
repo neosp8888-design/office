@@ -51,17 +51,18 @@ test("자동 승인 설정 API와 주기 실행 경로를 제공하지 않는다
   );
 });
 
-test("신규 업무는 worktree를 만들지 않고 공유 폴더 실행 대기열에 들어간다", () => {
+test("신규 업무는 worktree 없이 공유 폴더에서 직원별로 즉시 실행한다", () => {
   const startAcceptedSource = runtimeSource.slice(
     runtimeSource.indexOf("async startAccepted("),
-    runtimeSource.indexOf("async scheduleExecution("),
+    runtimeSource.indexOf("async ensureWorkspace("),
   );
   assert.match(startAcceptedSource, /isolateGitWorkdir: false/);
   assert.match(startAcceptedSource, /workspace: null/);
   assert.match(startAcceptedSource, /workdir: this\.workdir/);
+  assert.match(startAcceptedSource, /this\.running\.set\(characterID, state\)/);
   assert.doesNotMatch(startAcceptedSource, /ensureWorkspace\(/);
-  assert.match(runtimeSource, /this\.executionQueue = \[\]/);
-  assert.match(runtimeSource, /async runExecution\(/);
+  assert.doesNotMatch(runtimeSource, /this\.executionQueue = \[\]/);
+  assert.doesNotMatch(runtimeSource, /activeExecutionState/);
 });
 
 test("앱은 통합 대기 상태로 업무·설정·화면을 차단하지 않는다", () => {

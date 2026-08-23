@@ -66,16 +66,6 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function waitFor(predicate, message = "조건을 기다리는 중 시간 초과") {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  assert.fail(message);
-}
-
 test("자동 압축 기준은 50~95% 범위와 90% 기본값을 사용한다", () => {
   assert.equal(normalizeAutoCompactPercent(undefined), 90);
   assert.equal(normalizeAutoCompactPercent(42), 50);
@@ -450,11 +440,11 @@ test("drain은 이미 시작된 승인 후처리를 기다리고 새 수동 검�
   assert.equal(runtime.maintenanceStatus().idle, true);
 });
 
-test("여러 직원 업무는 공유 폴더에서 접수 순서대로 한 번에 하나만 실행한다", async () => {
-  const characterIDs = ["boss", "right-man", "left-man"];
-  const gates = new Map(
-    characterIDs.map((characterID) => [characterID, deferred()]),
-  );
+test("서로 다른 직원 업무는 같은 공유 폴더에서 동시에 실행된다", async () => {
+  const gates = {
+    boss: deferred(),
+    "right-man": deferred(),
+  };
   const events = [];
   const runtime = new AgentRuntime({
     pool: { query: async () => ({ rowCount: 1, rows: [] }) },
@@ -485,9 +475,8 @@ test("여러 직원 업무는 공유 폴더에서 접수 순서대로 한 번에
   runtime.execute = async (state) => {
     assert.equal(state.workdir, "/repo");
     assert.equal(state.workspace, null);
-    assert.equal(runtime.running.size, 1);
     events.push(`execute:${state.character.id}`);
-    await gates.get(state.character.id).promise;
+    await gates[state.character.id].promise;
   };
 
   const first = await runtime.start({
@@ -498,224 +487,20 @@ test("여러 직원 업무는 공유 폴더에서 접수 순서대로 한 번에
     characterID: "right-man",
     prompt: "둘째 업무",
   });
-  const third = await runtime.start({
-    characterID: "left-man",
-    prompt: "셋째 업무",
-  });
 
   assert.equal(first.status, "running");
-  assert.equal(second.status, "pending");
-  assert.equal(third.status, "pending");
-  assert.deepEqual(events, [
-    "begin:turn-boss",
-    "execute:boss",
-  ]);
-  assert.deepEqual(
-    runtime.executionQueue.map((state) => state.character.id),
-    ["right-man", "left-man"],
-  );
-  assert.equal(runtime.maintenanceStatus().activeTurnCount, 3);
-
-  runtime.beginDrain();
-  gates.get("boss").resolve();
-  await waitFor(() => events.includes("execute:right-man"));
+  assert.equal(second.status, "running");
   assert.deepEqual(events, [
     "begin:turn-boss",
     "execute:boss",
     "begin:turn-right-man",
     "execute:right-man",
   ]);
+  assert.equal(runtime.running.size, 2);
+  assert.equal(runtime.maintenanceStatus().activeTurnCount, 2);
 
-  gates.get("right-man").resolve();
-  await waitFor(() => events.includes("execute:left-man"));
-  gates.get("left-man").resolve();
-  await waitFor(() => runtime.maintenanceStatus().idle);
-
-  assert.deepEqual(events, [
-    "begin:turn-boss",
-    "execute:boss",
-    "begin:turn-right-man",
-    "execute:right-man",
-    "begin:turn-left-man",
-    "execute:left-man",
-  ]);
-  assert.equal(runtime.maintenanceStatus().draining, true);
-});
-
-test("먼저 접수한 업무의 준비가 늦어도 실행 순서는 바뀌지 않는다", async () => {
-  const firstPreparationStarted = deferred();
-  const firstPreparationGate = deferred();
-  const executionGates = {
-    boss: deferred(),
-    "right-man": deferred(),
-  };
-  const executed = [];
-  const runtime = new AgentRuntime({
-    pool: { query: async () => ({ rowCount: 1, rows: [] }) },
-    withTransaction: async () => {},
-    workdir: "/repo",
-    broadcast: () => {},
-  });
-  runtime.prepareTurn = async ({ characterID, prompt, conversationID }) => {
-    if (characterID === "boss") {
-      firstPreparationStarted.resolve();
-      await firstPreparationGate.promise;
-    }
-    return {
-      turnID: `turn-${characterID}`,
-      sessionID: `session-${characterID}`,
-      conversationID,
-      externalSessionID: null,
-      character: { id: characterID, backend: "codex" },
-      prompt,
-    };
-  };
-  runtime.beginPreparedTurn = async () => {};
-  runtime.execute = async (state) => {
-    executed.push(state.character.id);
-    await executionGates[state.character.id].promise;
-  };
-
-  const firstRequest = runtime.start({
-    characterID: "boss",
-    prompt: "먼저 접수",
-  });
-  await firstPreparationStarted.promise;
-  const second = await runtime.start({
-    characterID: "right-man",
-    prompt: "나중 접수",
-  });
-
-  assert.equal(second.status, "pending");
-  assert.deepEqual(executed, []);
-  firstPreparationGate.resolve();
-  const first = await firstRequest;
-  assert.equal(first.status, "running");
-  assert.deepEqual(executed, ["boss"]);
-
-  executionGates.boss.resolve();
-  await waitFor(() => executed.includes("right-man"));
-  executionGates["right-man"].resolve();
-  await waitFor(() => runtime.maintenanceStatus().idle);
-  assert.deepEqual(executed, ["boss", "right-man"]);
-});
-
-test("대기 중인 직원 업무를 취소하면 활성 업무는 유지하고 CLI를 시작하지 않는다", async () => {
-  const activeGate = deferred();
-  const queries = [];
-  const executed = [];
-  const runtime = new AgentRuntime({
-    pool: {
-      query: async (text, values) => {
-        queries.push({ text, values });
-        return { rowCount: 1, rows: [] };
-      },
-    },
-    withTransaction: async (body) => body({
-      query: async (text, values) => {
-        queries.push({ text, values });
-        return { rowCount: 1, rows: [] };
-      },
-    }),
-    workdir: "/repo",
-    broadcast: () => {},
-  });
-  runtime.prepareTurn = async ({ characterID, prompt, conversationID }) => ({
-    turnID: `turn-${characterID}`,
-    sessionID: `session-${characterID}`,
-    conversationID,
-    externalSessionID: null,
-    character: { id: characterID, backend: "codex" },
-    prompt,
-  });
-  runtime.beginPreparedTurn = async () => {};
-  runtime.execute = async (state) => {
-    executed.push(state.character.id);
-    if (state.character.id === "boss") {
-      await activeGate.promise;
-    }
-  };
-
-  await runtime.start({ characterID: "boss", prompt: "실행 업무" });
-  const queued = await runtime.start({
-    characterID: "right-man",
-    prompt: "취소할 업무",
-  });
-  assert.equal(queued.status, "pending");
-
-  const cancelled = await runtime.cancel("right-man");
-  assert.deepEqual(cancelled, {
-    turnId: "turn-right-man",
-    status: "interrupted",
-  });
-  assert.deepEqual(executed, ["boss"]);
-  assert.equal(runtime.running.has("boss"), true);
-  assert.equal(runtime.queuedCharacters.has("right-man"), false);
-  assert.equal(
-    queries.some(({ text, values }) =>
-      /status = 'interrupted'/.test(text) &&
-      values?.[0] === "turn-right-man"
-    ),
-    true,
-  );
-
-  activeGate.resolve();
-  await waitFor(() => runtime.maintenanceStatus().idle);
-  assert.deepEqual(executed, ["boss"]);
-});
-
-test("대기 업무의 시작 실패는 다음 직원에게 넘어간다", async () => {
-  const firstGate = deferred();
-  const lastGate = deferred();
-  const events = [];
-  const runtime = new AgentRuntime({
-    pool: { query: async () => ({ rowCount: 1, rows: [] }) },
-    withTransaction: async () => {},
-    workdir: "/repo",
-    broadcast: () => {},
-  });
-  runtime.prepareTurn = async ({ characterID, prompt, conversationID }) => ({
-    turnID: `turn-${characterID}`,
-    sessionID: `session-${characterID}`,
-    conversationID,
-    externalSessionID: null,
-    character: { id: characterID, backend: "codex" },
-    prompt,
-  });
-  runtime.beginPreparedTurn = async (turnID) => {
-    events.push(`begin:${turnID}`);
-    if (turnID === "turn-right-man") {
-      throw new Error("시작 실패");
-    }
-  };
-  runtime.failPreparedTurn = async (state, error) => {
-    events.push(`failed:${state.turnID}:${error.message}`);
-  };
-  runtime.execute = async (state) => {
-    events.push(`execute:${state.character.id}`);
-    if (state.character.id === "boss") {
-      await firstGate.promise;
-    } else {
-      await lastGate.promise;
-    }
-  };
-
-  await runtime.start({ characterID: "boss", prompt: "첫 업무" });
-  await runtime.start({ characterID: "right-man", prompt: "실패 업무" });
-  await runtime.start({ characterID: "left-man", prompt: "다음 업무" });
-  firstGate.resolve();
-  await waitFor(() => events.includes("execute:left-man"));
-
-  assert.deepEqual(events, [
-    "begin:turn-boss",
-    "execute:boss",
-    "begin:turn-right-man",
-    "failed:turn-right-man:시작 실패",
-    "begin:turn-left-man",
-    "execute:left-man",
-  ]);
-  lastGate.resolve();
-  await waitFor(() => runtime.maintenanceStatus().idle);
+  gates.boss.resolve();
+  gates["right-man"].resolve();
 });
 
 test("후처리 계수는 작업 실패 뒤에도 반드시 해제된다", async () => {
@@ -2771,7 +2556,6 @@ test("신규 업무는 worktree 없이 공유 프로젝트에서 실행된다", 
     "공유 폴더 업무 시작도 RAG 문서를 검색하면 안 됩니다.",
   );
   executionGate.resolve();
-  await waitFor(() => runtime.activeExecutionState === null);
 });
 
 test("첨부 참조는 작업 기록에 남고 검색 JSON은 어디에도 섞이지 않는다", async () => {
@@ -2866,7 +2650,6 @@ test("첨부 참조는 작업 기록에 남고 검색 JSON은 어디에도 섞�
     assert.match(workRecordInsert.values[6], /\.office-attachments/);
     assert.doesNotMatch(workRecordInsert.values[6], /rag-1/);
     executionGate.resolve();
-    await waitFor(() => runtime.activeExecutionState === null);
   } finally {
     executionGate.resolve();
     rmSync(workdir, { recursive: true, force: true });
@@ -3823,7 +3606,6 @@ test("Git 프로젝트 신규 업무도 worktree 검사 없이 공유 폴더에�
   assert.equal(result.status, "running");
   assert.equal(runtime.running.get("boss").workspace, null);
   executionGate.resolve();
-  await waitFor(() => runtime.activeExecutionState === null);
 });
 
 test("완료된 변경 업무는 자동 통합 없이 통합 대기로 저장한다", async () => {

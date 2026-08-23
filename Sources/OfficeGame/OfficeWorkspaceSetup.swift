@@ -512,7 +512,7 @@ struct OfficeWorkspaceSetupView: View {
                 Text("업무 폴더 선택")
                     .font(.system(size: 18, weight: .semibold))
                 Text(
-                    "직원들이 함께 작업할 프로젝트 폴더를 선택하세요. 업무는 이 폴더에서 접수 순서대로 하나씩 실행됩니다."
+                    "직원들이 함께 작업할 프로젝트 폴더를 선택하세요. 모든 직원은 이 폴더의 현재 파일을 함께 사용합니다."
                 )
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
