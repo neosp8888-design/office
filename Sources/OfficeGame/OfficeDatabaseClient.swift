@@ -604,35 +604,6 @@ struct OfficeDatabaseClient: Sendable {
         return try historyDecoder().decode(ArchiveFeedPage.self, from: data)
     }
 
-    func fetchWorkspaceReview(
-        turnID: String
-    ) async throws -> TurnWorkspaceReview {
-        try await workspaceReviewRequest(
-            turnID: turnID,
-            action: nil
-        )
-    }
-
-    func approveWorkspaceReview(
-        turnID: String,
-        reviewTree: String
-    ) async throws -> TurnWorkspaceReview {
-        try await workspaceReviewRequest(
-            turnID: turnID,
-            action: "approve",
-            reviewTree: reviewTree
-        )
-    }
-
-    func rejectWorkspaceReview(
-        turnID: String
-    ) async throws -> TurnWorkspaceReview {
-        try await workspaceReviewRequest(
-            turnID: turnID,
-            action: "reject"
-        )
-    }
-
     func startAgentJob(
         character: OfficeCharacter,
         prompt: String,
@@ -723,41 +694,6 @@ struct OfficeDatabaseClient: Sendable {
                 payload?.error ?? "백엔드 요청에 실패했습니다."
             )
         }
-    }
-
-    private func workspaceReviewRequest(
-        turnID: String,
-        action: String?,
-        reviewTree: String? = nil
-    ) async throws -> TurnWorkspaceReview {
-        var url = baseURL
-            .appending(path: "api")
-            .appending(path: "workspace-reviews")
-            .appending(path: turnID)
-        if let action {
-            url = url.appending(path: action)
-        }
-        var request = URLRequest(url: url)
-        if action != nil {
-            request.httpMethod = "POST"
-            request.setValue(
-                "application/json",
-                forHTTPHeaderField: "content-type"
-            )
-            if let reviewTree {
-                request.httpBody = try JSONEncoder().encode(
-                    WorkspaceReviewApprovalRequest(reviewTree: reviewTree)
-                )
-            } else {
-                request.httpBody = Data("{}".utf8)
-            }
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response, data: data)
-        return try JSONDecoder().decode(
-            WorkspaceReviewResponse.self,
-            from: data
-        ).workspace
     }
 
     private func wikiProposalActionURL(
@@ -1126,19 +1062,6 @@ enum WorkspaceReviewStatus: String, Decodable, Equatable, Sendable {
     case closed
     case conflict
     case failed
-
-    var blocksNewTasks: Bool {
-        switch self {
-        case .awaitingApproval, .merging, .conflict:
-            true
-        case .active, .merged, .rejected, .closed, .failed:
-            false
-        }
-    }
-
-    var showsReviewPanel: Bool {
-        self != .active && self != .closed
-    }
 }
 
 struct WorkspaceChangedFile: Decodable, Equatable, Identifiable, Sendable {
@@ -1410,14 +1333,6 @@ private struct LiveFeedResponse: Decodable {
 
 private struct LiveFeedTurnResponse: Decodable {
     let turn: LiveFeedTurn
-}
-
-private struct WorkspaceReviewResponse: Decodable {
-    let workspace: TurnWorkspaceReview
-}
-
-private struct WorkspaceReviewApprovalRequest: Encodable {
-    let reviewTree: String
 }
 
 private struct TurnFeedbackRequest: Encodable {

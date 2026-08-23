@@ -56,6 +56,26 @@ const codexCharacter = {
   identityPrompt: "업무를 정확히 처리한다.",
 };
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitFor(predicate, message = "조건을 기다리는 중 시간 초과") {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(message);
+}
+
 test("자동 압축 기준은 50~95% 범위와 90% 기본값을 사용한다", () => {
   assert.equal(normalizeAutoCompactPercent(undefined), 90);
   assert.equal(normalizeAutoCompactPercent(42), 50);
@@ -428,6 +448,274 @@ test("drain은 이미 시작된 승인 후처리를 기다리고 새 수동 검�
   releaseApproval();
   await approval;
   assert.equal(runtime.maintenanceStatus().idle, true);
+});
+
+test("여러 직원 업무는 공유 폴더에서 접수 순서대로 한 번에 하나만 실행한다", async () => {
+  const characterIDs = ["boss", "right-man", "left-man"];
+  const gates = new Map(
+    characterIDs.map((characterID) => [characterID, deferred()]),
+  );
+  const events = [];
+  const runtime = new AgentRuntime({
+    pool: { query: async () => ({ rowCount: 1, rows: [] }) },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.prepareTurn = async ({
+    characterID,
+    prompt,
+    conversationID,
+    isolateGitWorkdir,
+  }) => {
+    assert.equal(isolateGitWorkdir, false);
+    return {
+      turnID: `turn-${characterID}`,
+      sessionID: `session-${characterID}`,
+      conversationID,
+      externalSessionID: null,
+      character: { id: characterID, backend: "codex" },
+      prompt,
+      workspace: null,
+    };
+  };
+  runtime.beginPreparedTurn = async (turnID) => {
+    events.push(`begin:${turnID}`);
+  };
+  runtime.execute = async (state) => {
+    assert.equal(state.workdir, "/repo");
+    assert.equal(state.workspace, null);
+    assert.equal(runtime.running.size, 1);
+    events.push(`execute:${state.character.id}`);
+    await gates.get(state.character.id).promise;
+  };
+
+  const first = await runtime.start({
+    characterID: "boss",
+    prompt: "첫 업무",
+  });
+  const second = await runtime.start({
+    characterID: "right-man",
+    prompt: "둘째 업무",
+  });
+  const third = await runtime.start({
+    characterID: "left-man",
+    prompt: "셋째 업무",
+  });
+
+  assert.equal(first.status, "running");
+  assert.equal(second.status, "pending");
+  assert.equal(third.status, "pending");
+  assert.deepEqual(events, [
+    "begin:turn-boss",
+    "execute:boss",
+  ]);
+  assert.deepEqual(
+    runtime.executionQueue.map((state) => state.character.id),
+    ["right-man", "left-man"],
+  );
+  assert.equal(runtime.maintenanceStatus().activeTurnCount, 3);
+
+  runtime.beginDrain();
+  gates.get("boss").resolve();
+  await waitFor(() => events.includes("execute:right-man"));
+  assert.deepEqual(events, [
+    "begin:turn-boss",
+    "execute:boss",
+    "begin:turn-right-man",
+    "execute:right-man",
+  ]);
+
+  gates.get("right-man").resolve();
+  await waitFor(() => events.includes("execute:left-man"));
+  gates.get("left-man").resolve();
+  await waitFor(() => runtime.maintenanceStatus().idle);
+
+  assert.deepEqual(events, [
+    "begin:turn-boss",
+    "execute:boss",
+    "begin:turn-right-man",
+    "execute:right-man",
+    "begin:turn-left-man",
+    "execute:left-man",
+  ]);
+  assert.equal(runtime.maintenanceStatus().draining, true);
+});
+
+test("먼저 접수한 업무의 준비가 늦어도 실행 순서는 바뀌지 않는다", async () => {
+  const firstPreparationStarted = deferred();
+  const firstPreparationGate = deferred();
+  const executionGates = {
+    boss: deferred(),
+    "right-man": deferred(),
+  };
+  const executed = [];
+  const runtime = new AgentRuntime({
+    pool: { query: async () => ({ rowCount: 1, rows: [] }) },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.prepareTurn = async ({ characterID, prompt, conversationID }) => {
+    if (characterID === "boss") {
+      firstPreparationStarted.resolve();
+      await firstPreparationGate.promise;
+    }
+    return {
+      turnID: `turn-${characterID}`,
+      sessionID: `session-${characterID}`,
+      conversationID,
+      externalSessionID: null,
+      character: { id: characterID, backend: "codex" },
+      prompt,
+    };
+  };
+  runtime.beginPreparedTurn = async () => {};
+  runtime.execute = async (state) => {
+    executed.push(state.character.id);
+    await executionGates[state.character.id].promise;
+  };
+
+  const firstRequest = runtime.start({
+    characterID: "boss",
+    prompt: "먼저 접수",
+  });
+  await firstPreparationStarted.promise;
+  const second = await runtime.start({
+    characterID: "right-man",
+    prompt: "나중 접수",
+  });
+
+  assert.equal(second.status, "pending");
+  assert.deepEqual(executed, []);
+  firstPreparationGate.resolve();
+  const first = await firstRequest;
+  assert.equal(first.status, "running");
+  assert.deepEqual(executed, ["boss"]);
+
+  executionGates.boss.resolve();
+  await waitFor(() => executed.includes("right-man"));
+  executionGates["right-man"].resolve();
+  await waitFor(() => runtime.maintenanceStatus().idle);
+  assert.deepEqual(executed, ["boss", "right-man"]);
+});
+
+test("대기 중인 직원 업무를 취소하면 활성 업무는 유지하고 CLI를 시작하지 않는다", async () => {
+  const activeGate = deferred();
+  const queries = [];
+  const executed = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1, rows: [] };
+      },
+    },
+    withTransaction: async (body) => body({
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1, rows: [] };
+      },
+    }),
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.prepareTurn = async ({ characterID, prompt, conversationID }) => ({
+    turnID: `turn-${characterID}`,
+    sessionID: `session-${characterID}`,
+    conversationID,
+    externalSessionID: null,
+    character: { id: characterID, backend: "codex" },
+    prompt,
+  });
+  runtime.beginPreparedTurn = async () => {};
+  runtime.execute = async (state) => {
+    executed.push(state.character.id);
+    if (state.character.id === "boss") {
+      await activeGate.promise;
+    }
+  };
+
+  await runtime.start({ characterID: "boss", prompt: "실행 업무" });
+  const queued = await runtime.start({
+    characterID: "right-man",
+    prompt: "취소할 업무",
+  });
+  assert.equal(queued.status, "pending");
+
+  const cancelled = await runtime.cancel("right-man");
+  assert.deepEqual(cancelled, {
+    turnId: "turn-right-man",
+    status: "interrupted",
+  });
+  assert.deepEqual(executed, ["boss"]);
+  assert.equal(runtime.running.has("boss"), true);
+  assert.equal(runtime.queuedCharacters.has("right-man"), false);
+  assert.equal(
+    queries.some(({ text, values }) =>
+      /status = 'interrupted'/.test(text) &&
+      values?.[0] === "turn-right-man"
+    ),
+    true,
+  );
+
+  activeGate.resolve();
+  await waitFor(() => runtime.maintenanceStatus().idle);
+  assert.deepEqual(executed, ["boss"]);
+});
+
+test("대기 업무의 시작 실패는 다음 직원에게 넘어간다", async () => {
+  const firstGate = deferred();
+  const lastGate = deferred();
+  const events = [];
+  const runtime = new AgentRuntime({
+    pool: { query: async () => ({ rowCount: 1, rows: [] }) },
+    withTransaction: async () => {},
+    workdir: "/repo",
+    broadcast: () => {},
+  });
+  runtime.prepareTurn = async ({ characterID, prompt, conversationID }) => ({
+    turnID: `turn-${characterID}`,
+    sessionID: `session-${characterID}`,
+    conversationID,
+    externalSessionID: null,
+    character: { id: characterID, backend: "codex" },
+    prompt,
+  });
+  runtime.beginPreparedTurn = async (turnID) => {
+    events.push(`begin:${turnID}`);
+    if (turnID === "turn-right-man") {
+      throw new Error("시작 실패");
+    }
+  };
+  runtime.failPreparedTurn = async (state, error) => {
+    events.push(`failed:${state.turnID}:${error.message}`);
+  };
+  runtime.execute = async (state) => {
+    events.push(`execute:${state.character.id}`);
+    if (state.character.id === "boss") {
+      await firstGate.promise;
+    } else {
+      await lastGate.promise;
+    }
+  };
+
+  await runtime.start({ characterID: "boss", prompt: "첫 업무" });
+  await runtime.start({ characterID: "right-man", prompt: "실패 업무" });
+  await runtime.start({ characterID: "left-man", prompt: "다음 업무" });
+  firstGate.resolve();
+  await waitFor(() => events.includes("execute:left-man"));
+
+  assert.deepEqual(events, [
+    "begin:turn-boss",
+    "execute:boss",
+    "begin:turn-right-man",
+    "failed:turn-right-man:시작 실패",
+    "begin:turn-left-man",
+    "execute:left-man",
+  ]);
+  lastGate.resolve();
+  await waitFor(() => runtime.maintenanceStatus().idle);
 });
 
 test("후처리 계수는 작업 실패 뒤에도 반드시 해제된다", async () => {
@@ -2422,17 +2710,12 @@ test("업무 프롬프트에 보관된 첨부 경로를 기록한다", () => {
   assert.match(prompt, /\.office-attachments/);
 });
 
-test("활성 workspace 업무도 과거 기록 검색 없이 실행된다", async () => {
+test("신규 업무는 worktree 없이 공유 프로젝트에서 실행된다", async () => {
   let beginCount = 0;
   let executeCount = 0;
   let failCount = 0;
   const queries = [];
-  const workspace = {
-    id: "workspace-1",
-    status: "active",
-    repositoryRoot: "/repo",
-    executionWorkdir: "/worktrees/workspace-1",
-  };
+  const executionGate = deferred();
   const runtime = new AgentRuntime({
     pool: {
       query: async (text, values) => {
@@ -2452,7 +2735,9 @@ test("활성 workspace 업무도 과거 기록 검색 없이 실행된다", asyn
     character: { id: "boss", backend: "codex" },
     prompt,
   });
-  runtime.ensureWorkspace = async () => workspace;
+  runtime.ensureWorkspace = async () => {
+    assert.fail("신규 업무에서 worktree를 준비하면 안 됩니다.");
+  };
   runtime.beginPreparedTurn = async () => {
     beginCount += 1;
   };
@@ -2461,6 +2746,7 @@ test("활성 workspace 업무도 과거 기록 검색 없이 실행된다", asyn
   };
   runtime.execute = async () => {
     executeCount += 1;
+    await executionGate.promise;
   };
 
   const result = await runtime.start({
@@ -2468,14 +2754,13 @@ test("활성 workspace 업무도 과거 기록 검색 없이 실행된다", asyn
     prompt: "세션 유지 상태를 확인해줘.",
     conversationID: "11111111-1111-1111-1111-111111111111",
   });
-  await new Promise((resolve) => setImmediate(resolve));
-
   const state = runtime.running.get("boss");
   assert.equal(result.status, "running");
   assert.equal(beginCount, 1);
   assert.equal(executeCount, 1);
   assert.equal(failCount, 0);
-  assert.equal(state.workspace.status, "active");
+  assert.equal(state.workspace, null);
+  assert.equal(state.workdir, "/repo");
   assert.equal(state.executionPrompt, state.recordPrompt);
   assert.doesNotMatch(state.executionPrompt, /office_retrieved_records/);
   assert.equal(
@@ -2483,14 +2768,17 @@ test("활성 workspace 업무도 과거 기록 검색 없이 실행된다", asyn
       /searchable_rag_documents/.test(String(text ?? ""))
     ),
     false,
-    "workspace 업무 시작도 RAG 문서를 검색하면 안 됩니다.",
+    "공유 폴더 업무 시작도 RAG 문서를 검색하면 안 됩니다.",
   );
+  executionGate.resolve();
+  await waitFor(() => runtime.activeExecutionState === null);
 });
 
 test("첨부 참조는 작업 기록에 남고 검색 JSON은 어디에도 섞이지 않는다", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "office-record-attachment-"));
   const source = join(workdir, "report.pdf");
   writeFileSync(source, "attachment body");
+  const executionGate = deferred();
   const queries = [];
   let storedPrompt = null;
   const query = async (text, values) => {
@@ -2539,11 +2827,13 @@ test("첨부 참조는 작업 기록에 남고 검색 JSON은 어디에도 섞�
     },
     prompt,
   });
-  runtime.ensureWorkspace = async () => null;
+  runtime.ensureWorkspace = async () => {
+    assert.fail("첨부 업무도 worktree를 준비하면 안 됩니다.");
+  };
   runtime.beginPreparedTurn = async (_turnID, prompt) => {
     storedPrompt = prompt;
   };
-  runtime.execute = async () => {};
+  runtime.execute = async () => await executionGate.promise;
 
   try {
     await runtime.start({
@@ -2575,7 +2865,10 @@ test("첨부 참조는 작업 기록에 남고 검색 JSON은 어디에도 섞�
     assert.match(workRecordInsert.values[6], /report\.pdf/);
     assert.match(workRecordInsert.values[6], /\.office-attachments/);
     assert.doesNotMatch(workRecordInsert.values[6], /rag-1/);
+    executionGate.resolve();
+    await waitFor(() => runtime.activeExecutionState === null);
   } finally {
+    executionGate.resolve();
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -2754,6 +3047,7 @@ test("백엔드 복구는 중단된 턴의 실행 중 활동도 닫는다", asyn
   const count = await runtime.recoverInterruptedJobs();
 
   assert.equal(count, 2);
+  assert.match(queries[0], /WHERE status IN \('pending', 'running'\)/);
   assert.match(queries[0], /UPDATE turn_activities AS activity/);
   assert.match(queries[0], /activity\.status = 'running'/);
   assert.match(queries[0], /existing_terminal_turns/);
@@ -3471,64 +3765,65 @@ test("workspace 인덱스는 검토본과 별개로 실제 실행 workspace만 �
   assert.doesNotMatch(predicate, /'merging'/);
 });
 
-test("Git 저장소 확인 뒤 provisioning 계획이 사라지면 공유 폴더로 후퇴하지 않는다", async () => {
+test("Git 프로젝트 신규 업무도 worktree 검사 없이 공유 폴더에서 시작한다", async () => {
   const events = [];
+  const executionGate = deferred();
   const runtime = new AgentRuntime({
     pool: { query: async () => ({ rowCount: 1, rows: [] }) },
     withTransaction: async () => {},
     workdir: "/repo",
     workspaceManager: {
       isRepository: async () => {
-        events.push("git:is-repository");
-        return true;
+        assert.fail("신규 업무에서 Git 저장소 검사를 하면 안 됩니다.");
       },
       planProvision: async () => {
-        events.push("git:plan");
-        return null;
+        assert.fail("신규 업무에서 worktree 계획을 만들면 안 됩니다.");
       },
       provisionPlanned: async () => {
-        assert.fail("계획이 없으면 worktree 생성을 시도하면 안 됩니다.");
+        assert.fail("신규 업무에서 worktree를 생성하면 안 됩니다.");
       },
     },
     broadcast: () => {},
   });
   runtime.prepareTurn = async (input) => {
     events.push("db:prepare-turn");
-    assert.equal(input.isolateGitWorkdir, true);
+    assert.equal(input.isolateGitWorkdir, false);
     return {
       turnID: "turn-1",
       sessionID: "session-1",
-      workspaceID: "workspace-1",
+      workspaceID: null,
       conversationID: input.conversationID,
       externalSessionID: null,
       character: { id: "boss", backend: "codex" },
       prompt: input.prompt,
       workspace: null,
       reusedSession: false,
-      isolateGitWorkdir: true,
+      isolateGitWorkdir: false,
     };
   };
-  runtime.failPreparedTurn = async (_prepared, error) => {
-    events.push("db:fail-prepared-turn");
-    assert.equal(error.code, "invalid-state");
+  runtime.beginPreparedTurn = async () => {
+    events.push("db:begin-turn");
+  };
+  runtime.execute = async (state) => {
+    events.push(`cli:${state.workdir}`);
+    await executionGate.promise;
   };
 
-  await assert.rejects(
-    runtime.start({
-      characterID: "boss",
-      prompt: "업무",
-      conversationID: "11111111-1111-1111-1111-111111111111",
-    }),
-    (error) => error?.code === "invalid-state",
-  );
+  const result = await runtime.start({
+    characterID: "boss",
+    prompt: "업무",
+    conversationID: "11111111-1111-1111-1111-111111111111",
+  });
 
   assert.deepEqual(events, [
-    "git:is-repository",
     "db:prepare-turn",
-    "git:plan",
-    "db:fail-prepared-turn",
+    "db:begin-turn",
+    "cli:/repo",
   ]);
-  assert.equal(runtime.running.size, 0);
+  assert.equal(result.status, "running");
+  assert.equal(runtime.running.get("boss").workspace, null);
+  executionGate.resolve();
+  await waitFor(() => runtime.activeExecutionState === null);
 });
 
 test("완료된 변경 업무는 자동 통합 없이 통합 대기로 저장한다", async () => {
@@ -4820,7 +5115,7 @@ test("활성 CLI 세션이 없으면 검토 대기 workspace와 분리해 새 �
   assert.equal(prepared.reusedSession, false);
 });
 
-test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토 턴도 고정한다", () => {
+test("실시간 피드는 과거 workspace 검토 턴을 최근 제한 밖에 고정하지 않는다", () => {
   const serverSource = readFileSync(
     new URL("../src/server.mjs", import.meta.url),
     "utf8",
@@ -4833,15 +5128,13 @@ test("실시간 피드 쿼리는 최근 제한 밖의 미해결 workspace 검토
   assert.ok(queryStart >= 0 && queryEnd > queryStart);
   const querySource = serverSource.slice(queryStart, queryEnd);
 
-  assert.match(querySource, /UNION[\s\S]*task_workspace\.review_turn_id/);
-  assert.match(querySource, /task_workspace\.id = t\.task_workspace_id/);
+  const selectedStart = querySource.indexOf("selected_turn_ids AS (");
+  const selectedEnd = querySource.indexOf("\n      SELECT\n        t.id", selectedStart);
+  assert.ok(selectedStart >= 0 && selectedEnd > selectedStart);
   assert.doesNotMatch(
-    querySource,
-    /task_workspace\.cli_session_id = s\.id/,
+    querySource.slice(selectedStart, selectedEnd),
+    /task_workspace|awaiting_approval|merging|conflict/,
   );
-  for (const status of ["awaiting_approval", "merging", "conflict"]) {
-    assert.match(querySource, new RegExp(`'${status}'`));
-  }
 });
 
 test("실시간 피드는 직원별 최신 대화를 최근 제한 밖에서도 보존한다", () => {
@@ -4875,7 +5168,7 @@ test("실시간 피드는 직원별 최신 대화를 최근 제한 밖에서도 
   );
   assert.match(
     querySource,
-    /includesWorkspaceReviews,[\s\S]*liveFeedMinimumTurnsPerCharacter/,
+    /includesCharacterMinimums,[\s\S]*liveFeedMinimumTurnsPerCharacter/,
   );
   assert.match(
     querySource,
@@ -4893,11 +5186,11 @@ test("실시간 피드는 직원별 최신 대화를 최근 제한 밖에서도 
   );
   assert.match(
     serverSource.slice(liveStart, archiveStart),
-    /includesWorkspaceReviews: true/,
+    /includesCharacterMinimums: true/,
   );
   assert.match(
     serverSource.slice(archiveStart, contextStart),
-    /includesWorkspaceReviews: false/,
+    /includesCharacterMinimums: false/,
   );
 });
 
@@ -4916,5 +5209,5 @@ test("대화 보관함은 전체 검색을 12건 페이지로 요청한다", () 
   assert.match(archiveSource, /limit"\) \?\? 12/);
   assert.match(archiveSource, /offset/);
   assert.match(querySource, /ILIKE '%' \|\| \$1 \|\| '%'/);
-  assert.match(querySource, /includesWorkspaceReviews: false/);
+  assert.match(querySource, /includesCharacterMinimums: false/);
 });

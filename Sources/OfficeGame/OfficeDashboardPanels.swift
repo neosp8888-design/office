@@ -2745,7 +2745,6 @@ struct LiveWorkspaceFeed: View, Equatable {
     private let latestTerminalTurnID: String?
     private let latestSubmittedCommandID: UUID?
     private let latestStartedCommandID: UUID?
-    private let resolveWorkspaceReview: WorkspaceReviewResolver
     private let updateResponseFeedback:
         (String, TurnResponseFeedback?) async -> Void
     @State private var followState = LiveWorkspaceFeedFollowState()
@@ -2781,12 +2780,6 @@ struct LiveWorkspaceFeed: View, Equatable {
         latestTerminalTurnID = metadata.latestTerminalTurnID
         latestSubmittedCommandID = metadata.latestSubmittedCommandID
         latestStartedCommandID = metadata.latestStartedCommandID
-        resolveWorkspaceReview = { turnID, decision in
-            try await director.resolveWorkspaceReview(
-                turnID: turnID,
-                decision: decision
-            )
-        }
         updateResponseFeedback = { turnID, feedback in
             await director.updateResponseFeedback(
                 turnID: turnID,
@@ -3000,8 +2993,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                                             .shouldAnimateInitialResponse(
                                                 for: turn
                                             ),
-                                        resolveWorkspaceReview:
-                                            resolveWorkspaceReview,
                                         updateResponseFeedback:
                                             updateResponseFeedback
                                     ) {
@@ -3813,7 +3804,6 @@ private struct EquatableLiveTurnCard: View, Equatable {
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
     let shouldAnimateInitialResponse: Bool
-    let resolveWorkspaceReview: WorkspaceReviewResolver
     let updateResponseFeedback:
         (String, TurnResponseFeedback?) async -> Void
     let finishResponseAnimation: () -> Void
@@ -3838,7 +3828,6 @@ private struct EquatableLiveTurnCard: View, Equatable {
             shouldAnimateResponse: shouldAnimateResponse,
             shouldAnimateInitialResponse:
                 shouldAnimateInitialResponse,
-            resolveWorkspaceReview: resolveWorkspaceReview,
             updateResponseFeedback: updateResponseFeedback,
             finishResponseAnimation: finishResponseAnimation
         )
@@ -3946,7 +3935,6 @@ private struct LiveTurnCard: View {
     let workspaceDirectory: String
     let shouldAnimateResponse: Bool
     let shouldAnimateInitialResponse: Bool
-    let resolveWorkspaceReview: WorkspaceReviewResolver
     let updateResponseFeedback:
         (String, TurnResponseFeedback?) async -> Void
     let finishResponseAnimation: () -> Void
@@ -3999,16 +3987,6 @@ private struct LiveTurnCard: View {
                     ResponseSourceList(
                         sources: turn.responseSources,
                         workspaceDirectory: effectiveWorkspaceDirectory
-                    )
-                }
-
-                if let workspace = turn.workspace,
-                    workspace.status.showsReviewPanel
-                {
-                    WorkspaceReviewPanel(
-                        turnID: turn.id,
-                        workspace: workspace,
-                        resolveReview: resolveWorkspaceReview
                     )
                 }
 

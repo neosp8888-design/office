@@ -68,11 +68,6 @@ final class CharacterSelectionStore: ObservableObject {
     }
 }
 
-enum WorkspaceReviewDecision {
-    case approve(reviewTree: String)
-    case reject
-}
-
 @MainActor
 final class CharacterLiveFeedStore: ObservableObject {
     @Published private(set) var turns: [LiveFeedTurn]
@@ -189,9 +184,6 @@ final class LiveFeedStore: ObservableObject {
             if selectedCount < minimumTurnsPerCharacter {
                 selectedTurnIDs.insert(turn.id)
                 selectedCounts[turn.characterId] = selectedCount + 1
-            }
-            if turn.workspace?.status.blocksNewTasks == true {
-                selectedTurnIDs.insert(turn.id)
             }
         }
 
@@ -698,8 +690,6 @@ final class AgentDirector: ObservableObject {
     /// 응답 생성 중에 미리 걸어 둔 다음 업무다. 직원마다 최대 3개.
     @Published private(set) var queuedCommands:
         [OfficeCharacter: QueuedCommandQueue] = [:]
-    @Published private(set) var pendingWorkspaceReviewCharacters:
-        Set<OfficeCharacter> = []
     @Published private(set) var failedCharacters:
         [OfficeCharacter: String] = [:]
     @Published private(set) var offDutyCharacters:
@@ -761,9 +751,6 @@ final class AgentDirector: ObservableObject {
     /// 바로 적용으로 중단시킨 직원이다. 이 중단만은 실패·중단 상태에서도
     /// 다음 예약을 이어서 보낸다.
     private var immediateQueueDrainCharacters: Set<OfficeCharacter> = []
-    /// 변경사항 통합이 끝나기를 기다리는 예약 배출이다. 통합이 끝난
-    /// 시점에 이어서 보낸다.
-    private var deferredQueueDrainCharacters: Set<OfficeCharacter> = []
     private var acknowledgedWarningMessages: [OfficeCharacter: String] = [:]
     private var bubbleDismissTasks: [OfficeCharacter: Task<Void, Never>] = [:]
     private var idleChatterTask: Task<Void, Never>?
@@ -1058,9 +1045,6 @@ final class AgentDirector: ObservableObject {
             isSelectedCharacterRunning: selectedCharacterID.map {
                 runningCharacters.contains($0)
             } ?? false,
-            needsWorkspaceReview: selectedCharacterID.map {
-                pendingWorkspaceReviewCharacters.contains($0)
-            } ?? false,
             isFull: selectedCharacterID.map {
                 queuedCommands[$0]?.isFull == true
             } ?? false
@@ -1069,13 +1053,6 @@ final class AgentDirector: ObservableObject {
 
     var canQueueForSelectedCharacter: Bool {
         selectedCharacterQueueAvailability == .available
-    }
-
-    var selectedCharacterNeedsWorkspaceReview: Bool {
-        guard let selectedCharacterID else {
-            return false
-        }
-        return pendingWorkspaceReviewCharacters.contains(selectedCharacterID)
     }
 
     func selectDefaultCharacterIfNeeded() {
@@ -1408,7 +1385,6 @@ final class AgentDirector: ObservableObject {
             !trimmed.isEmpty,
             isReadyForSubmissions,
             !isUpdatingConfiguration,
-            !pendingWorkspaceReviewCharacters.contains(character),
             runningCharacters.contains(character)
         else {
             return false
@@ -1510,12 +1486,6 @@ final class AgentDirector: ObservableObject {
         }
     }
 
-    func fetchWorkspaceReview(
-        turnID: String
-    ) async throws -> TurnWorkspaceReview {
-        try await database.fetchWorkspaceReview(turnID: turnID)
-    }
-
     func updateResponseFeedback(
         turnID: String,
         feedback: TurnResponseFeedback?
@@ -1545,33 +1515,6 @@ final class AgentDirector: ObservableObject {
                 realtimeConnectionError = message
             }
         }
-    }
-
-    func resolveWorkspaceReview(
-        turnID: String,
-        decision: WorkspaceReviewDecision
-    ) async throws -> TurnWorkspaceReview {
-        let workspace: TurnWorkspaceReview
-        switch decision {
-        case .approve(let reviewTree):
-            workspace = try await database.approveWorkspaceReview(
-                turnID: turnID,
-                reviewTree: reviewTree
-            )
-        case .reject:
-            workspace = try await database.rejectWorkspaceReview(
-                turnID: turnID
-            )
-        }
-
-        let refreshed = await refreshLiveFeedTurn(
-            turnID,
-            announcingTransitions: false
-        )
-        if !refreshed {
-            scheduleRealtimeFeedRefresh(turnID: turnID)
-        }
-        return workspace
     }
 
     func agentSettings(
@@ -1623,11 +1566,6 @@ final class AgentDirector: ObservableObject {
             isUpdatingConfiguration = false
         }
         do {
-            guard pendingWorkspaceReviewCharacters.isEmpty else {
-                settingsStatus =
-                    "변경사항 통합을 마친 뒤 직원 설정을 바꿀 수 있습니다."
-                return
-            }
             for character in characters {
                 let name =
                     nameDrafts[character.id]?
@@ -1685,16 +1623,6 @@ final class AgentDirector: ObservableObject {
         }
         guard !runningCharacters.contains(character) else {
             settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
-            return
-        }
-        let changesBackend = agentSettings(for: character).backend
-            != settings.backend
-        guard
-            !changesBackend
-                || !pendingWorkspaceReviewCharacters.contains(character)
-        else {
-            settingsStatus =
-                "CLI 변경은 변경사항 통합을 마친 뒤 할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
@@ -2317,25 +2245,6 @@ final class AgentDirector: ObservableObject {
             uniqueKeysWithValues: turns.map { ($0.id, $0.status) }
         )
 
-        let updatedReviewCharacters = Set(
-            turns.compactMap { turn -> OfficeCharacter? in
-                guard turn.workspace?.status.blocksNewTasks == true else {
-                    return nil
-                }
-                return OfficeCharacter(rawValue: turn.characterId)
-            }
-        )
-        if pendingWorkspaceReviewCharacters != updatedReviewCharacters {
-            let resolvedCharacters = pendingWorkspaceReviewCharacters
-                .subtracting(updatedReviewCharacters)
-            pendingWorkspaceReviewCharacters = updatedReviewCharacters
-            for character in resolvedCharacters
-            where deferredQueueDrainCharacters.contains(character) {
-                deferredQueueDrainCharacters.remove(character)
-                drainQueuedCommand(for: character)
-            }
-        }
-
         let runningTurns = turns.filter { $0.status.isRunning }
         let updatedRunningCharacters = Set(
             runningTurns.compactMap {
@@ -2425,17 +2334,11 @@ final class AgentDirector: ObservableObject {
 
             let isImmediateRequest = immediateQueueDrainCharacters
                 .contains(character)
-            let isWorkspaceBlocking =
-                turn.workspace?.status.blocksNewTasks == true
             if QueuedCommandDrainPolicy.shouldDrain(
                 status: turn.status,
-                isImmediateRequest: isImmediateRequest,
-                isWorkspaceBlocking: isWorkspaceBlocking
+                isImmediateRequest: isImmediateRequest
             ) {
                 drainQueuedCommand(for: character)
-            } else if isWorkspaceBlocking {
-                // 통합이 끝나면 이어서 보낸다.
-                deferredQueueDrainCharacters.insert(character)
             } else if isImmediateRequest {
                 immediateQueueDrainCharacters.remove(character)
             }

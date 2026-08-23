@@ -1035,7 +1035,7 @@ async function queryTurnFeed({
   query = null,
   limit,
   offset = 0,
-  includesWorkspaceReviews,
+  includesCharacterMinimums,
 }) {
   const result = await pool.query(
     `
@@ -1092,19 +1092,6 @@ async function queryTurnFeed({
           AND $3::text IS NULL
           AND $4::integer = 0
           AND ranked.character_rank <= $6::integer
-        UNION
-        SELECT task_workspace.review_turn_id
-        FROM task_workspaces AS task_workspace
-        WHERE $1::uuid IS NULL
-          AND $5::boolean
-          AND $3::text IS NULL
-          AND $4::integer = 0
-          AND task_workspace.review_turn_id IS NOT NULL
-          AND task_workspace.status IN (
-            'awaiting_approval',
-            'merging',
-            'conflict'
-          )
         UNION
         SELECT $1::uuid
         WHERE $1::uuid IS NOT NULL
@@ -1227,7 +1214,7 @@ async function queryTurnFeed({
       limit,
       query,
       offset,
-      includesWorkspaceReviews,
+      includesCharacterMinimums,
       liveFeedMinimumTurnsPerCharacter,
     ],
   );
@@ -1240,7 +1227,7 @@ async function queryLiveFeed({ turnID = null, limit }) {
   const page = await queryTurnFeed({
     turnID,
     limit,
-    includesWorkspaceReviews: true,
+    includesCharacterMinimums: true,
   });
   return page;
 }
@@ -1251,7 +1238,7 @@ async function queryArchiveFeed({ query, limit, offset }) {
       query,
       limit,
       offset,
-      includesWorkspaceReviews: false,
+      includesCharacterMinimums: false,
     }),
     pool.query(
       `

@@ -1488,59 +1488,6 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
-    func testWorkspaceReviewBlocksOnlyUnresolvedMergeStates() {
-        XCTAssertTrue(WorkspaceReviewStatus.awaitingApproval.blocksNewTasks)
-        XCTAssertTrue(WorkspaceReviewStatus.merging.blocksNewTasks)
-        XCTAssertTrue(WorkspaceReviewStatus.conflict.blocksNewTasks)
-        XCTAssertFalse(WorkspaceReviewStatus.active.blocksNewTasks)
-        XCTAssertFalse(WorkspaceReviewStatus.merged.blocksNewTasks)
-        XCTAssertFalse(WorkspaceReviewStatus.rejected.blocksNewTasks)
-        XCTAssertFalse(WorkspaceReviewStatus.closed.blocksNewTasks)
-        XCTAssertFalse(WorkspaceReviewStatus.failed.blocksNewTasks)
-        XCTAssertFalse(WorkspaceReviewStatus.active.showsReviewPanel)
-        XCTAssertFalse(WorkspaceReviewStatus.closed.showsReviewPanel)
-        XCTAssertTrue(WorkspaceReviewStatus.awaitingApproval.showsReviewPanel)
-    }
-
-    func testSnapshotKeepsOldBlockingWorkspaceTurnBeyondRecentLimit() {
-        let baseDate = Date(timeIntervalSinceReferenceDate: 10_000)
-        var turns = (0 ..< 120).map { index in
-            makeTurn(
-                id: "recent-\(index)",
-                characterID: OfficeCharacter.rightMan.rawValue,
-                prompt: "최근 업무",
-                startedAt: baseDate.addingTimeInterval(-Double(index))
-            )
-        }
-        turns.append(
-            makeTurn(
-                id: "old-closed-review",
-                characterID: OfficeCharacter.rightMan.rawValue,
-                prompt: "종료된 검토",
-                startedAt: baseDate.addingTimeInterval(-120),
-                workspace: makeWorkspace(status: .closed)
-            )
-        )
-        turns.append(
-            makeTurn(
-                id: "old-blocking-review",
-                characterID: OfficeCharacter.boss.rawValue,
-                prompt: "승인 대기 검토",
-                startedAt: baseDate.addingTimeInterval(-121),
-                workspace: makeWorkspace(status: .awaitingApproval)
-            )
-        )
-
-        let snapshot = LiveFeedStore.snapshotTurns(
-            from: turns,
-            recentLimit: 120
-        )
-
-        XCTAssertEqual(snapshot.count, 121)
-        XCTAssertFalse(snapshot.contains { $0.id == "old-closed-review" })
-        XCTAssertEqual(snapshot.last?.id, "old-blocking-review")
-    }
-
     func testSnapshotKeepsMinimumTurnsForEachCharacter() {
         let baseDate = Date(timeIntervalSinceReferenceDate: 11_000)
         var turns = (0 ..< 120).map { index in

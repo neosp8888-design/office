@@ -110,14 +110,16 @@ five-person AI team._
 ```mermaid
 flowchart LR
     UI["OFFICESTRA macOS 앱"] <-->|"REST · WebSocket"| API["Node.js 백엔드"]
-    API --> CX["Codex CLI"]
-    API --> CL["Claude Code CLI"]
+    API --> Q["전역 FIFO · 한 번에 한 업무"]
+    Q --> CX["Codex CLI"]
+    Q --> CL["Claude Code CLI"]
     API <-->|"세션 · 업무 · 활동 · 응답"| DB["PostgreSQL · pgvector"]
     API --> FS["로컬 작업 폴더 · 첨부 파일"]
 ```
 
 1. 앱이 `POST /api/agent-jobs`로 직원과 업무를 지정한다.
-2. 앱은 임시 턴을 즉시 표시하고 백엔드는 선택된 CLI를 작업 폴더에서 실행한다.
+2. 앱은 임시 턴을 즉시 표시하고 백엔드는 업무를 전역 대기열에 접수한다.
+   실행 중인 업무가 없을 때만 선택된 CLI를 공유 작업 폴더에서 시작한다.
 3. 백엔드가 반환한 `turnId`로 임시 턴을 실제 저장 기록과 합친다.
 4. 순번과 이벤트 키가 있는 진행 활동·응답 초안을 PostgreSQL에 먼저 저장한다.
 5. `/ws`가 변경 사실을 알리면 앱은 `GET /api/live-feed/:turnId`로 최신 상태만 읽는다.
@@ -136,7 +138,6 @@ Slack Socket Mode를 켜면 4317 포트를 외부에 공개하지 않고도 모�
 - Slack 스레드마다 OFFICESTRA 대화 ID를 보존해 후속 답변을 같은 대화로 전달한다.
 - 진행 중인 활동은 한 상태 메시지에서 갱신하고 최종 응답은 같은 스레드에 남긴다.
 - 사용자 답변이 필요한 업무는 같은 스레드에 답하면 기존 직원 세션으로 이어진다.
-- Git 변경이 승인 대기 상태이면 Slack에서 승인·거절할 수 있다.
 - 허용된 Slack 사용자 ID만 CLI 업무를 시작할 수 있다.
 
 설정 방법은 다음과 같다.
@@ -151,35 +152,24 @@ Slack Socket Mode를 켜면 4317 포트를 외부에 공개하지 않고도 모�
 토큰 파일은 저장소 밖에 두며 Git에 커밋하지 않는다. 토큰이 없으면 Slack 기능만
 비활성화되고 macOS 앱과 기존 백엔드는 그대로 동작한다.
 
-## 병렬 개발과 Git 안전 수칙
+## 공유 작업 폴더와 Git 운영
 
-Git 저장소를 `workdir`로 지정하면 OFFICESTRA가 검토 단위 업무마다 전용
-branch와 worktree를 만든다. worktree는 파일 변경만 격리하며 Codex thread나
-Claude session의 수명주기와는 독립적이다. 승인·병합·거절 뒤 새 worktree를
-만들어도 같은 직원의 CLI 세션은 그대로 재개한다.
+모든 새 업무는 설정된 `workdir`를 함께 사용한다. Git 프로젝트라면 별도 branch나
+worktree를 만들지 않고 현재 선택된 branch(일반적으로 `main`)에서 그대로 실행한다.
 
-변경이 생긴 업무가 성공하면 우측 업무 카드는 상태·결과 커밋·변경 파일 목록을
-간결하게 표시한다. 기본값인 **작업 완료 후 자동 승인·병합**이 켜져 있으면
-OFFICESTRA가 검토 tree와 원본 작업 트리 상태를 다시 확인한 뒤 자동 병합하고,
-후속 처리가 끝날 때까지 해당 직원의 다음 업무를 잠근다. 설정을 끄거나 자동
-복구 재시도가 끝내 실패하면 카드가 수동 검토 상태로 남아 사용자가 승인하거나
-거절한다. 거절한 branch와 worktree는 복구할 수 있도록 보존한다.
+여러 직원에게 연달아 업무를 보내도 백엔드 전역 FIFO가 접수 순서를 보존한다.
+첫 직원의 CLI만 실행되고 나머지는 `pending`으로 기다리며, 현재 업무의 완료·실패·
+중단 처리가 끝나면 다음 업무가 시작된다. 먼저 접수한 업무의 DB 준비가 늦어도
+실행 순서는 바뀌지 않는다. 백엔드를 재시작하면 실행 중이거나 대기 중이던 턴은
+`interrupted`로 닫히며 자동 재실행하지 않는다.
 
-Codex ↔ Claude 전환으로 활성 세션을 끝낼 때 변경사항이 남아 있으면 먼저
-검토 대기로 전환하고 설정 저장을 `409`로 중단한다. 변경사항이 없는 빈
-worktree만 자동으로 정리한 뒤 새 provider 세션을 시작한다. worktree 자체의
-승인·병합·거절은 provider 세션을 종료하지 않는다.
+OFFICESTRA 백엔드는 자동 commit·merge·rebase·push를 하지 않는다. 각 CLI는 같은
+작업 트리의 현재 변경과 이전 커밋을 직접 확인하므로, 수정·테스트·커밋까지 한
+업무에서 마치도록 지시할 수 있다. push가 필요할 때만 사용자 지시에 포함한다.
+충돌이나 dirty 상태가 있으면 해당 업무에서 확인하고 해결한 뒤 계속한다.
 
-병합 직전에는 다음 조건을 다시 검사한다.
-
-- 원본 작업 트리가 처음 기록한 branch에 있고 미추적 파일까지 clean인지 확인한다.
-- 검토 뒤 작업 tree가 달라졌으면 기존 승인을 무효화하고 새 diff를 요구한다.
-- 저장소별 병합을 직렬화하고 최신 원본과의 충돌을 원본 변경 전에 검사한다.
-- 충돌이나 dirty 원본을 발견하면 자동 해결하지 않고 병합을 중단한다.
-
-Git 저장소가 아닌 `workdir`는 기존 공유 폴더 방식으로 실행된다. worktree는 Git
-파일 변경만 격리하며 프로세스, 포트, 데이터베이스와 작업 폴더 밖의 파일은
-격리하지 않는다.
+이 직렬화는 같은 백엔드로 접수한 CLI 업무끼리만 보장한다. 외부 터미널, IDE,
+별도 OFFICESTRA 백엔드가 같은 폴더를 동시에 수정하는 것까지 잠그지는 않는다.
 
 ## 설치
 
@@ -312,8 +302,8 @@ sed -i '' "s#/Users/your-name/Projects#$HOME/Projects#" Sources/OfficeCore/Resou
 grep '"workdir"' Sources/OfficeCore/Resources/characters.json
 ```
 
-다른 폴더를 쓰려면 `$HOME/Projects` 대신 그 폴더의 절대 경로를 넣는다. Git 업무의
-격리 worktree는 기본적으로 `~/.officestra/worktrees`에 생성된다.
+다른 폴더를 쓰려면 `$HOME/Projects` 대신 그 폴더의 절대 경로를 넣는다. 모든
+직원 업무는 선택한 폴더에서 접수 순서대로 하나씩 실행된다.
 
 #### 6. 백엔드와 앱 실행
 
@@ -416,19 +406,12 @@ Standard로 표시한다.
 | 역할 지침 | `PUT /api/characters/:id/identity-prompt` |
 | 업무 실행 | `POST /api/agent-jobs` |
 | 업무 중단 | `DELETE /api/agent-jobs/:characterId` |
-| Git 변경 검토 | `GET /api/workspace-reviews/:turnId` |
-| Git 승인·거절 | `POST /api/workspace-reviews/:turnId/approve`, `POST /api/workspace-reviews/:turnId/reject` |
 | 업무 기록 원본 검색 | `GET /api/work-records` |
 | 턴 응답 근거 | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
 | RAG 문서·검색 | `POST /api/rag/documents`, `POST /api/rag/search` |
 | 승인된 사내 위키 | `GET /api/wiki/pages`, `GET /api/wiki/pages/:pageId` |
 | 사내 위키 제안 | `GET /api/wiki/proposals`, `POST /api/wiki/proposals` |
 | 위키 제안 승인·거절 | `POST /api/wiki/proposals/:proposalId/approve`, `POST /api/wiki/proposals/:proposalId/reject` |
-
-Git 승인·거절 요청은 `application/json`으로 보낸다. 승인은 검토 응답에서 받은
-`reviewTree`를 `{"reviewTree":"..."}`로 그대로 보내고 거절은 `{}`를 보낸다.
-그 뒤 변경 tree가 달라졌거나 오래된 검토 값을 보내면 `409`로 중단하고 최신
-diff를 다시 확인해야 한다.
 
 사내 위키 승인·거절은 앱의 **사내 위키 → 확인 대기**에서 사용자가 직접
 결정한다. 앱은 버튼 동작과 일반 로컬 API 호출을 구분하는 intent header를
@@ -470,7 +453,6 @@ API를 이용한 직원 주도 오케스트레이션은 가능하다. 다만 직
   제안은 일반 RAG와 게시된 위키 검색에 나타나지 않으며, 승인된 페이지만 원본 업무
   기록과 연결된 별도 위키 검색 자료가 된다.
 - 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사된다. 다른 Git 저장소를 `workdir`로 사용한다면 해당 저장소의 `.gitignore`에도 이 폴더를 추가해야 한다.
-- 승인된 worktree는 병합 뒤 정리되지만 거절된 worktree와 branch는 복구를 위해 남으므로 필요 없어진 뒤 사용자가 삭제한다.
 - OFFICESTRA는 API 키를 직접 저장하지 않고 각 CLI의 기존 로컬 로그인을 사용한다.
 - 백엔드는 기본적으로 `127.0.0.1`에만 바인딩된다.
 - PostgreSQL의 호스트 포트도 `127.0.0.1:54329`에만 바인딩된다.
@@ -556,12 +538,11 @@ docs/images/              공개 문서용 선별 화면 이미지
 - CLI와 Docker 설치·로그인은 사용자가 로컬에서 준비해야 한다.
 - 모델 목록은 현재 코드에 정의돼 있으며 CLI의 모든 모델을 자동 탐색하지 않는다.
 - Claude Code Fast 모드는 현재 Opus 5에서만 사용할 수 있다.
-- Git worktree는 프로세스·포트·DB와 저장소 밖 파일을 격리하지 않는다.
-- 전체 권한 에이전트가 원본 저장소 절대경로에 직접 commit 또는 push하면
-  worktree 경계를 우회할 수 있다. OFFICESTRA는 원본의 dirty 상태는 감지하지만
-  clean commit은 구분할 수 없으므로 업무용에서는 `workspace-write` 또는 `auto`
-  권한과 보호된 원격 branch 규칙을 함께 사용한다.
-- 충돌 해결과 dirty 원본 작업 트리 정리는 사용자가 직접 판단해야 한다.
+- 공유 작업 폴더 직렬화는 하나의 백엔드 프로세스로 접수한 업무에만 적용된다.
+  외부 터미널이나 IDE에서 같은 파일을 고치면 Git 충돌과 dirty 상태를 직접
+  확인해야 한다.
+- 백엔드는 자동 commit이나 push를 하지 않는다. 원격 반영이 필요하면 업무에
+  명시하고, 보호된 원격 branch 규칙을 함께 사용한다.
 - 직원 주도 오케스트레이션은 가능하지만, 백엔드가 독립적으로 업무를
   계획·분배·감시·재시도하는 자동 오케스트레이터는 없다.
 - 작업 기록과 사내 위키의 텍스트 검색은 PostgreSQL 전문 검색을 사용하고, RAG
