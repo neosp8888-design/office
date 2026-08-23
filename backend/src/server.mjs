@@ -2253,7 +2253,10 @@ const server = createServer(async (request, response) => {
 
 webSocketServer.on("connection", (socket) => {
   sockets.add(socket);
-  socket.send(JSON.stringify({ type: "ready" }));
+  socket.send(JSON.stringify({
+    type: "ready",
+    compactingCharacterIds: runtime?.compactingCharacterIDs() ?? [],
+  }));
   socket.on("close", () => {
     sockets.delete(socket);
   });

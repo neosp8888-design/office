@@ -140,9 +140,53 @@ final class CharacterLiveFeedStore: ObservableObject {
     }
 }
 
-private struct RealtimeFeedEvent: Decodable {
+struct RealtimeFeedEvent: Decodable, Equatable {
     let type: String
     let turnId: String?
+    let characterId: String?
+    let automatic: Bool?
+    let preTokens: Int?
+    let postTokens: Int?
+    let limitTokens: Int?
+    let errorMessage: String?
+    let compactingCharacterIds: [String]?
+
+    init(
+        type: String,
+        turnId: String? = nil,
+        characterId: String? = nil,
+        automatic: Bool? = nil,
+        preTokens: Int? = nil,
+        postTokens: Int? = nil,
+        limitTokens: Int? = nil,
+        errorMessage: String? = nil,
+        compactingCharacterIds: [String]? = nil
+    ) {
+        self.type = type
+        self.turnId = turnId
+        self.characterId = characterId
+        self.automatic = automatic
+        self.preTokens = preTokens
+        self.postTokens = postTokens
+        self.limitTokens = limitTokens
+        self.errorMessage = errorMessage
+        self.compactingCharacterIds = compactingCharacterIds
+    }
+}
+
+extension RealtimeFeedEvent {
+    var officeCharacter: OfficeCharacter? {
+        characterId.flatMap(OfficeCharacter.init(rawValue:))
+    }
+}
+
+enum ContextCompactionNotice: Equatable {
+    case completed(
+        automatic: Bool,
+        preTokens: Int?,
+        postTokens: Int?
+    )
+    case failed(automatic: Bool, message: String?)
 }
 
 @MainActor
@@ -683,6 +727,8 @@ final class AgentDirector: ObservableObject {
         Set<OfficeCharacter> = []
     @Published private(set) var compactingCharacters:
         Set<OfficeCharacter> = []
+    @Published private(set) var contextCompactionNotices:
+        [OfficeCharacter: ContextCompactionNotice] = [:]
     @Published private(set) var autoCompactPercents:
         [OfficeCharacter: Int] = Dictionary(
             uniqueKeysWithValues: OfficeCharacter.allCases.map { ($0, 90) }
@@ -1006,6 +1052,13 @@ final class AgentDirector: ObservableObject {
         return runningCharacters.contains(selectedCharacterID)
     }
 
+    var isSelectedCharacterCompacting: Bool {
+        guard let selectedCharacterID else {
+            return false
+        }
+        return compactingCharacters.contains(selectedCharacterID)
+    }
+
     var isCancellingSelectedCharacter: Bool {
         guard let selectedCharacterID else {
             return false
@@ -1136,10 +1189,12 @@ final class AgentDirector: ObservableObject {
         }
         guard
             pendingQuestions[character] == nil,
-            !runningCharacters.contains(character)
+            !runningCharacters.contains(character),
+            !compactingCharacters.contains(character)
         else {
             return
         }
+        contextCompactionNotices[character] = nil
         if activeIdleChatterCharacter == character {
             activeIdleChatterCharacter = nil
         }
@@ -1161,10 +1216,12 @@ final class AgentDirector: ObservableObject {
         if remainingCompletedCharacters != unreviewedCompletedCharacters {
             unreviewedCompletedCharacters = remainingCompletedCharacters
         }
+        contextCompactionNotices[character.id] = nil
         selectedCharacterID = character.id
         let shouldShowReadyBubble =
             pendingQuestions[character.id] == nil
             && !runningCharacters.contains(character.id)
+            && !compactingCharacters.contains(character.id)
             && failedCharacters[character.id] == nil
             &&
             offDutyCharacters[character.id] == nil
@@ -1195,7 +1252,8 @@ final class AgentDirector: ObservableObject {
             isReadyForSubmissions,
             !isUpdatingConfiguration,
             !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !runningCharacters.contains(character.id)
+            !runningCharacters.contains(character.id),
+            !compactingCharacters.contains(character.id)
         else {
             onSubmissionFailed?()
             onRequestFinished?()
@@ -1214,6 +1272,7 @@ final class AgentDirector: ObservableObject {
         questionSubmissionErrors[character.id] = nil
         turnPersistenceErrors[character.id] = nil
         unreviewedCompletedCharacters.remove(character.id)
+        contextCompactionNotices[character.id] = nil
         acknowledgedWarningMessages[character.id] = nil
         failedCharacters[character.id] = nil
         offDutyCharacters[character.id] = nil
@@ -1553,8 +1612,12 @@ final class AgentDirector: ObservableObject {
                 sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
             return
         }
-        guard runningCharacters.isEmpty else {
-            settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
+        guard
+            runningCharacters.isEmpty,
+            compactingCharacters.isEmpty
+        else {
+            settingsStatus =
+                "진행 중인 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
@@ -1621,8 +1684,12 @@ final class AgentDirector: ObservableObject {
                 sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
             return
         }
-        guard !runningCharacters.contains(character) else {
-            settingsStatus = "진행 중인 업무가 끝난 뒤 설정할 수 있습니다."
+        guard
+            !runningCharacters.contains(character),
+            !compactingCharacters.contains(character)
+        else {
+            settingsStatus =
+                "진행 중인 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다."
             return
         }
         guard !isUpdatingConfiguration else {
@@ -1659,6 +1726,12 @@ final class AgentDirector: ObservableObject {
             $0.characterId == character.rawValue &&
                 $0.sessionContext != nil
         }?.sessionContext?.limitTokens
+    }
+
+    func contextCompactionNotice(
+        for character: OfficeCharacter
+    ) -> ContextCompactionNotice? {
+        contextCompactionNotices[character]
     }
 
     func updateAutoCompactPercent(
@@ -1788,6 +1861,8 @@ final class AgentDirector: ObservableObject {
         var updatedBubbles = bubbles.filter {
             pendingQuestions[$0.key] != nil
                 || runningCharacters.contains($0.key)
+                || compactingCharacters.contains($0.key)
+                || contextCompactionNotices[$0.key] != nil
                 || !isWarningAcknowledged(for: $0.key)
                     && warningMessage(for: $0.key) != nil
         }
@@ -1835,7 +1910,9 @@ final class AgentDirector: ObservableObject {
 
         let idleCharacters = SpeechBubbleIdleChatterPolicy.candidates(
             characters: characters,
-            runningCharacters: runningCharacters,
+            runningCharacters: runningCharacters.union(
+                compactingCharacters
+            ),
             occupiedCharacters: Set(bubbles.keys),
             questionCharacters: Set(pendingQuestions.keys),
             failedCharacters: Set(failedCharacters.keys),
@@ -2016,6 +2093,9 @@ final class AgentDirector: ObservableObject {
                             self.realtimeConnectionError = nil
                         }
                         let event = self.realtimeEvent(from: message)
+                        let handledRealtimeState = event.map {
+                            self.applyRealtimeEvent($0)
+                        } ?? false
                         if event?.type == "ready" {
                             let shouldRefreshSnapshot =
                                 self.hasReceivedRealtimeReady
@@ -2024,7 +2104,7 @@ final class AgentDirector: ObservableObject {
                             if shouldRefreshSnapshot {
                                 self.scheduleRealtimeFeedRefresh(turnID: nil)
                             }
-                        } else {
+                        } else if !handledRealtimeState {
                             self.scheduleRealtimeFeedRefresh(
                                 turnID: event?.turnId
                             )
@@ -2066,6 +2146,102 @@ final class AgentDirector: ObservableObject {
             RealtimeFeedEvent.self,
             from: data
         )
+    }
+
+    @discardableResult
+    func applyRealtimeEvent(
+        _ event: RealtimeFeedEvent,
+        schedulesFeedRefresh: Bool = true
+    ) -> Bool {
+        switch event.type {
+        case "ready":
+            let synchronized = Set(
+                (event.compactingCharacterIds ?? []).compactMap(
+                    OfficeCharacter.init(rawValue:)
+                )
+            )
+            let newlyCompacting = synchronized.subtracting(
+                compactingCharacters
+            )
+            compactingCharacters = synchronized
+            for character in newlyCompacting {
+                contextCompactionNotices[character] = nil
+                showContextCompactionStarted(
+                    for: character,
+                    automatic: false
+                )
+            }
+            return true
+
+        case "context.compaction.started":
+            guard let character = event.officeCharacter else {
+                return false
+            }
+            compactingCharacters.insert(character)
+            contextCompactionNotices[character] = nil
+            showContextCompactionStarted(
+                for: character,
+                automatic: event.automatic == true
+            )
+            return true
+
+        case "context.compacted":
+            guard let character = event.officeCharacter else {
+                return false
+            }
+            compactingCharacters.remove(character)
+            contextCompactionNotices[character] = .completed(
+                automatic: event.automatic == true,
+                preTokens: event.preTokens,
+                postTokens: event.postTokens
+            )
+            let title = event.automatic == true
+                ? OfficeLocalization.string("자동 컨텍스트 압축 완료")
+                : OfficeLocalization.string("컨텍스트 압축 완료")
+            showBubble("✅ \(title)", for: character)
+            if schedulesFeedRefresh {
+                scheduleRealtimeFeedRefresh(turnID: nil)
+            }
+            return true
+
+        case "context.compaction.failed":
+            guard let character = event.officeCharacter else {
+                return false
+            }
+            compactingCharacters.remove(character)
+            contextCompactionNotices[character] = .failed(
+                automatic: event.automatic == true,
+                message: event.errorMessage
+            )
+            let title = event.automatic == true
+                ? OfficeLocalization.string("자동 컨텍스트 압축 실패")
+                : OfficeLocalization.string("컨텍스트 압축 실패")
+            var lines = ["⚠️ \(title)"]
+            if let detail = event.errorMessage?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ), !detail.isEmpty {
+                lines.append(detail)
+            }
+            showBubble(
+                lines.joined(separator: "\n"),
+                for: character,
+                autoDismiss: false
+            )
+            return true
+
+        default:
+            return false
+        }
+    }
+
+    private func showContextCompactionStarted(
+        for character: OfficeCharacter,
+        automatic: Bool
+    ) {
+        let title = automatic
+            ? OfficeLocalization.string("자동 컨텍스트 압축 중")
+            : OfficeLocalization.string("컨텍스트 압축 중")
+        showBubble("🗜️ \(title)", for: character, autoDismiss: false)
     }
 
     private func scheduleRealtimeFeedRefresh(turnID: String?) {

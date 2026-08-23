@@ -34,6 +34,11 @@ test("컨텍스트 설정과 수동 압축 API를 신뢰된 로컬 JSON 경로�
   );
 });
 
+test("웹소켓은 압축 진행 상태를 시작·완료·실패와 재연결에 제공한다", () => {
+  assert.match(serverSource, /compactingCharacterIds:/);
+  assert.match(serverSource, /runtime\?\.compactingCharacterIDs\(\)/);
+});
+
 test("자동 압축 기준 migration은 90% 기본값과 50~95% 제약을 둔다", () => {
   assert.match(
     migrationSource,

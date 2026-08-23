@@ -99,6 +99,21 @@ final class CommandEntryDraftTests: XCTestCase {
         )
     }
 
+    func testCompactingCharacterCannotReceiveOrQueueWork() {
+        let availability = CommandEntryAvailability(
+            isReady: true,
+            isUpdatingConfiguration: false,
+            hasSelectedCharacter: true,
+            isSelectedCharacterRunning: false,
+            isSelectedCharacterCompacting: true,
+            canQueueForSelectedCharacter: false
+        )
+
+        XCTAssertFalse(availability.canSubmit)
+        XCTAssertFalse(availability.canQueue)
+        XCTAssertFalse(availability.acceptsInput)
+    }
+
     func testEmptyDraftWithoutAttachmentsCannotSubmit() {
         let draft = CommandEntryDraft(text: "  \n ")
 

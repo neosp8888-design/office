@@ -188,10 +188,15 @@ test("Codex 수동 압축은 활성 세션을 app-server compactor에 전달한�
 
   const result = await runtime.compactContext("boss");
 
-  assert.equal(calls[0].compact.threadID, "thread-1");
-  assert.equal(calls[0].compact.cwd, "/tmp");
-  assert.equal(calls[0].compact.contextWindow, 872_000);
-  assert.equal(calls[0].compact.autoCompactTokenLimit, 745_560);
+  assert.deepEqual(calls[0].event, {
+    type: "context.compaction.started",
+    characterId: "boss",
+    automatic: false,
+  });
+  assert.equal(calls[1].compact.threadID, "thread-1");
+  assert.equal(calls[1].compact.cwd, "/tmp");
+  assert.equal(calls[1].compact.contextWindow, 872_000);
+  assert.equal(calls[1].compact.autoCompactTokenLimit, 745_560);
   assert.deepEqual(result, {
     ok: true,
     automatic: false,
@@ -201,12 +206,79 @@ test("Codex 수동 압축은 활성 세션을 app-server compactor에 전달한�
     postTokens: 31_000,
     limitTokens: 258_400,
   });
-  assert.deepEqual(calls[1].event, {
+  assert.deepEqual(calls[2].event, {
     type: "context.compacted",
     characterId: "boss",
     automatic: false,
+    preTokens: 230_000,
+    postTokens: 31_000,
+    limitTokens: 258_400,
   });
+  assert.deepEqual(runtime.compactingCharacterIDs(), []);
   assert.equal(runtime.compactingCharacters.size, 0);
+});
+
+test("압축 실패도 시작과 종료 이벤트를 보내고 점유를 해제한다", async () => {
+  const events = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async () => ({
+        rowCount: 1,
+        rows: [{
+          id: "boss",
+          name: "백부장",
+          seat: "상단",
+          backend: "codex",
+          model: "gpt-5.6-sol",
+          effort: "max",
+          fastMode: false,
+          autoCompactPercent: 90,
+          permission: "danger-full-access",
+          identityPrompt: "업무 지침",
+          config: {},
+          externalSessionID: "thread-1",
+          conversationWorkdir: "/tmp",
+          sessionRepositoryRoot: "/tmp",
+          resumeExecutionWorkdir: "/tmp",
+        }],
+      }),
+    },
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/tmp",
+    repositoryRoot: "/tmp",
+    broadcast: (event) => events.push(event),
+    contextUsageReader: () => ({
+      usedTokens: 230_000,
+      limitTokens: 258_400,
+    }),
+    codexContextResolver: () => ({
+      contextWindow: 872_000,
+      autoCompactTokenLimit: 745_560,
+    }),
+    codexCompactor: async () => {
+      throw new Error("압축기 실패");
+    },
+  });
+
+  await assert.rejects(
+    runtime.compactContext("boss", { automatic: true }),
+    /압축기 실패/,
+  );
+
+  assert.deepEqual(events, [
+    {
+      type: "context.compaction.started",
+      characterId: "boss",
+      automatic: true,
+    },
+    {
+      type: "context.compaction.failed",
+      characterId: "boss",
+      automatic: true,
+      errorMessage: "압축기 실패",
+    },
+  ]);
+  assert.deepEqual(runtime.compactingCharacterIDs(), []);
 });
 
 function wikiProposalTestClient(queries) {

@@ -195,6 +195,10 @@ export class AgentRuntime {
     };
   }
 
+  compactingCharacterIDs() {
+    return [...this.compactingCharacters].sort();
+  }
+
   beginDrain() {
     this.draining = true;
     return this.maintenanceStatus();
@@ -1482,6 +1486,11 @@ export class AgentRuntime {
     }
 
     this.compactingCharacters.add(characterID);
+    this.broadcast({
+      type: "context.compaction.started",
+      characterId: characterID,
+      automatic,
+    });
     try {
       const target = await this.compactionTarget(characterID);
       if (
@@ -1532,14 +1541,27 @@ export class AgentRuntime {
         postTokens: nativeResult?.postTokens ?? measuredPostTokens,
         limitTokens: after?.limitTokens ?? before?.limitTokens ?? null,
       };
+      this.compactingCharacters.delete(characterID);
       this.broadcast({
         type: "context.compacted",
         characterId: characterID,
         automatic,
+        preTokens: payload.preTokens,
+        postTokens: payload.postTokens,
+        limitTokens: payload.limitTokens,
       });
       return payload;
-    } finally {
+    } catch (error) {
       this.compactingCharacters.delete(characterID);
+      this.broadcast({
+        type: "context.compaction.failed",
+        characterId: characterID,
+        automatic,
+        errorMessage: error instanceof Error
+          ? error.message
+          : String(error),
+      });
+      throw error;
     }
   }
 
@@ -1572,11 +1594,6 @@ export class AgentRuntime {
         `${state.character.name} 자동 컨텍스트 압축에 실패했습니다.`,
         error instanceof Error ? error.message : String(error),
       );
-      this.broadcast({
-        type: "context.compaction.failed",
-        characterId: state.character.id,
-        automatic: true,
-      });
       return null;
     }
   }

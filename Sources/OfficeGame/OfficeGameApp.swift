@@ -1038,6 +1038,10 @@ private struct LiveWorkspaceCommandBar: View {
                     selectedCharacterID == character.id
                 let isRunning =
                     director.runningCharacters.contains(character.id)
+                let isCompacting =
+                    director.compactingCharacters.contains(character.id)
+                let compactionNotice =
+                    director.contextCompactionNotice(for: character.id)
                 let name = director.displayName(for: character.id)
                 let badgeColor = DashboardPalette.characterAccent(
                     for: character.id.rawValue
@@ -1084,10 +1088,15 @@ private struct LiveWorkspaceCommandBar: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        if isRunning || isCompleted {
+                        if
+                            isRunning || isCompacting || isCompleted
+                                || compactionNotice != nil
+                        {
                             CharacterTaskStatusIndicator(
                                 isRunning: isRunning,
+                                isCompacting: isCompacting,
                                 isCompleted: isCompleted,
+                                compactionNotice: compactionNotice,
                                 reduceMotion: reduceMotion
                             )
                         }
@@ -1182,6 +1191,12 @@ private struct LiveWorkspaceCommandBar: View {
             {
                 return OfficeLocalization.format(
                     "%@에게 새 업무를 보내 다시 시작하세요",
+                    selectedName
+                )
+            }
+            if director.compactingCharacters.contains(selectedCharacterID) {
+                return OfficeLocalization.format(
+                    "%@의 컨텍스트 압축이 끝나면 업무를 보낼 수 있습니다",
                     selectedName
                 )
             }
@@ -1289,7 +1304,8 @@ private extension LiveWorkspaceCommandBar {
         guard
             director.isReadyForSubmissions,
             !director.isUpdatingConfiguration,
-            let selectedCharacterID
+            let selectedCharacterID,
+            !director.compactingCharacters.contains(selectedCharacterID)
         else {
             return false
         }
@@ -1386,7 +1402,9 @@ private extension LiveWorkspaceCommandBar {
 
 private struct CharacterTaskStatusIndicator: View {
     let isRunning: Bool
+    let isCompacting: Bool
     let isCompleted: Bool
+    let compactionNotice: ContextCompactionNotice?
     let reduceMotion: Bool
 
     private let completedColor = Color(
@@ -1394,10 +1412,41 @@ private struct CharacterTaskStatusIndicator: View {
         green: 0.52,
         blue: 0.16
     )
+    private let compactionColor = Color(
+        red: 0.48,
+        green: 0.38,
+        blue: 0.92
+    )
 
     var body: some View {
         Group {
-            if isRunning {
+            if isCompacting {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(compactionColor)
+                    .frame(width: 19, height: 19)
+                    .accessibilityLabel("컨텍스트 압축 중")
+                    .help("컨텍스트 압축 중")
+            } else if let compactionNotice {
+                switch compactionNotice {
+                case .completed:
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 19, height: 19)
+                        .background(Color.green, in: Circle())
+                        .accessibilityLabel("컨텍스트 압축 완료")
+                        .help(compactionNoticeHelp(compactionNotice))
+                case .failed:
+                    Image(systemName: "exclamationmark")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 19, height: 19)
+                        .background(Color.red, in: Circle())
+                        .accessibilityLabel("컨텍스트 압축 실패")
+                        .help(compactionNoticeHelp(compactionNotice))
+                }
+            } else if isRunning {
                 CoreAnimationDotsView(
                     dotSize: 4,
                     spacing: 2.5,
@@ -1427,6 +1476,30 @@ private struct CharacterTaskStatusIndicator: View {
             }
         }
         .frame(width: 24, height: 24)
+    }
+
+    private func compactionNoticeHelp(
+        _ notice: ContextCompactionNotice
+    ) -> String {
+        switch notice {
+        case let .completed(automatic, preTokens, postTokens):
+            let title = automatic
+                ? "자동 컨텍스트 압축 완료"
+                : "컨텍스트 압축 완료"
+            guard let preTokens, let postTokens else {
+                return title
+            }
+            return "\(title) · \(compactTokenCount(preTokens)) → "
+                + "\(compactTokenCount(postTokens)) 토큰"
+        case let .failed(automatic, message):
+            let title = automatic
+                ? "자동 컨텍스트 압축 실패"
+                : "컨텍스트 압축 실패"
+            guard let message, !message.isEmpty else {
+                return title
+            }
+            return "\(title) · \(message)"
+        }
     }
 }
 
@@ -1779,9 +1852,22 @@ struct AgentQuickSettingsAvailability: Equatable {
     let isReady: Bool
     let isUpdatingConfiguration: Bool
     let isRunning: Bool
+    let isCompacting: Bool
+
+    init(
+        isReady: Bool,
+        isUpdatingConfiguration: Bool,
+        isRunning: Bool,
+        isCompacting: Bool = false
+    ) {
+        self.isReady = isReady
+        self.isUpdatingConfiguration = isUpdatingConfiguration
+        self.isRunning = isRunning
+        self.isCompacting = isCompacting
+    }
 
     var canChangeCurrentBackendSettings: Bool {
-        isReady && !isUpdatingConfiguration && !isRunning
+        isReady && !isUpdatingConfiguration && !isRunning && !isCompacting
     }
 
     var canChangeBackend: Bool {
@@ -1840,6 +1926,10 @@ private struct ContextCompactionControls: View {
 
     private var contextLimit: Int? {
         director.sessionContextLimit(for: character.id)
+    }
+
+    private var compactionNotice: ContextCompactionNotice? {
+        director.contextCompactionNotice(for: character.id)
     }
 
     private var thresholdText: String {
@@ -1908,7 +1998,19 @@ private struct ContextCompactionControls: View {
                     ? "현재 CLI 세션의 컨텍스트를 즉시 요약 압축"
                     : "첫 대화 뒤 활성 세션이 생기면 압축할 수 있습니다"
             )
+
+            if !availability.isCompacting, let compactionNotice {
+                switch compactionNotice {
+                case .completed:
+                    Label("압축 완료", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .failed:
+                    Label("압축 실패", systemImage: "exclamationmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
+            }
         }
+        .font(.system(size: 10.5, weight: .semibold))
         .onChange(
             of: director.autoCompactPercent(for: character.id)
         ) { _, value in
@@ -2031,7 +2133,9 @@ private struct AgentQuickSettingsView: View {
         AgentQuickSettingsAvailability(
             isReady: director.isReadyForSubmissions,
             isUpdatingConfiguration: director.isUpdatingConfiguration,
-            isRunning: director.runningCharacters.contains(character.id)
+            isRunning: director.runningCharacters.contains(character.id),
+            isCompacting:
+                director.compactingCharacters.contains(character.id)
         )
     }
 

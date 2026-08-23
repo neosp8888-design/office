@@ -37,13 +37,31 @@ struct CommandEntryAvailability: Equatable {
     let isUpdatingConfiguration: Bool
     let hasSelectedCharacter: Bool
     let isSelectedCharacterRunning: Bool
+    let isSelectedCharacterCompacting: Bool
     let canQueueForSelectedCharacter: Bool
+
+    init(
+        isReady: Bool,
+        isUpdatingConfiguration: Bool,
+        hasSelectedCharacter: Bool,
+        isSelectedCharacterRunning: Bool,
+        isSelectedCharacterCompacting: Bool = false,
+        canQueueForSelectedCharacter: Bool
+    ) {
+        self.isReady = isReady
+        self.isUpdatingConfiguration = isUpdatingConfiguration
+        self.hasSelectedCharacter = hasSelectedCharacter
+        self.isSelectedCharacterRunning = isSelectedCharacterRunning
+        self.isSelectedCharacterCompacting = isSelectedCharacterCompacting
+        self.canQueueForSelectedCharacter = canQueueForSelectedCharacter
+    }
 
     var canSubmit: Bool {
         isReady
             && !isUpdatingConfiguration
             && hasSelectedCharacter
             && !isSelectedCharacterRunning
+            && !isSelectedCharacterCompacting
     }
 
     /// 응답 생성 중에는 같은 입력이 다음 턴 예약으로 넘어간다.
@@ -52,6 +70,7 @@ struct CommandEntryAvailability: Equatable {
             && !isUpdatingConfiguration
             && hasSelectedCharacter
             && isSelectedCharacterRunning
+            && !isSelectedCharacterCompacting
             && canQueueForSelectedCharacter
     }
 
@@ -144,6 +163,8 @@ struct CommandEntryRow: View {
             isUpdatingConfiguration: director.isUpdatingConfiguration,
             hasSelectedCharacter: director.selectedCharacter != nil,
             isSelectedCharacterRunning: director.isSelectedCharacterRunning,
+            isSelectedCharacterCompacting:
+                director.isSelectedCharacterCompacting,
             canQueueForSelectedCharacter:
                 director.canQueueForSelectedCharacter
         )

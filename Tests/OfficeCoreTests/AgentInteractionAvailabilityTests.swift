@@ -24,6 +24,18 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
         XCTAssertFalse(availability.canChangeBackend)
     }
 
+    func testCompactingCharacterBlocksEveryQuickSetting() {
+        let availability = AgentQuickSettingsAvailability(
+            isReady: true,
+            isUpdatingConfiguration: false,
+            isRunning: false,
+            isCompacting: true
+        )
+
+        XCTAssertFalse(availability.canChangeCurrentBackendSettings)
+        XCTAssertFalse(availability.canChangeBackend)
+    }
+
     func testQueueAvailabilityReportsFullQueue() {
         let full = SelectedCharacterQueueAvailability.resolve(
             isReady: true,
