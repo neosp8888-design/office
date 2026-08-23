@@ -109,38 +109,6 @@ final class QueuedCommandQueueTests: XCTestCase {
         }
     }
 
-    func testIntegrationDefersDrainInsteadOfDroppingReservation() {
-        // 턴이 completed로 끝나는 순간 작업 공간 통합이 진행 중이면
-        // 예약을 꺼내지 않고 통합이 끝난 뒤 이어서 보낸다.
-        for status in [LiveTurnStatus.completed, .interrupted, .failed] {
-            XCTAssertFalse(
-                QueuedCommandDrainPolicy.shouldDrain(
-                    status: status,
-                    isImmediateRequest: false,
-                    isWorkspaceBlocking: true
-                ),
-                "\(status): 검토·병합 대기 중에는 예약을 꺼내면 안 됩니다."
-            )
-            XCTAssertFalse(
-                QueuedCommandDrainPolicy.shouldDrain(
-                    status: status,
-                    isImmediateRequest: true,
-                    isWorkspaceBlocking: true
-                ),
-                "\(status): 바로 적용도 검토·병합 대기 중에는 보류해야 합니다."
-            )
-        }
-
-        // 병합이 끝나 차단이 풀리면 그대로 이어 간다.
-        XCTAssertTrue(
-            QueuedCommandDrainPolicy.shouldDrain(
-                status: .completed,
-                isImmediateRequest: false,
-                isWorkspaceBlocking: false
-            )
-        )
-    }
-
     func testFailedSubmissionRestoresReservationToFront() {
         var queue = QueuedCommandQueue()
         XCTAssertTrue(queue.enqueue(QueuedCommand(prompt: "첫 예약")))

@@ -1,4 +1,4 @@
-// 자동 승인·병합 제거와 명시적 통합 대기 계약을 검증한다.
+// 신규 업무의 공유 폴더 직렬 실행과 과거 workspace 호환 경계를 검증한다.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -16,9 +16,13 @@ const settingsViewSource = readFileSync(
   new URL("../../Sources/OfficeGame/OfficeGameApp.swift", import.meta.url),
   "utf8",
 );
-const reviewViewSource = readFileSync(
+const directorSource = readFileSync(
+  new URL("../../Sources/OfficeGame/AgentDirector.swift", import.meta.url),
+  "utf8",
+);
+const dashboardSource = readFileSync(
   new URL(
-    "../../Sources/OfficeGame/WorkspaceReviewView.swift",
+    "../../Sources/OfficeGame/OfficeDashboardPanels.swift",
     import.meta.url,
   ),
   "utf8",
@@ -47,29 +51,30 @@ test("자동 승인 설정 API와 주기 실행 경로를 제공하지 않는다
   );
 });
 
-test("완료된 변경은 자동 통합 없이 명시적 통합 대기로 저장한다", () => {
-  assert.match(
-    runtimeSource,
-    /workspaceReview\.hasChanges\s*\?\s*"awaiting_approval"/,
+test("신규 업무는 worktree를 만들지 않고 공유 폴더 실행 대기열에 들어간다", () => {
+  const startAcceptedSource = runtimeSource.slice(
+    runtimeSource.indexOf("async startAccepted("),
+    runtimeSource.indexOf("async scheduleExecution("),
   );
-  assert.doesNotMatch(runtimeSource, /SELECT auto_approve_workspaces/);
-  assert.doesNotMatch(runtimeSource, /auto_repair_paused|auto_waiting_for_peer/);
+  assert.match(startAcceptedSource, /isolateGitWorkdir: false/);
+  assert.match(startAcceptedSource, /workspace: null/);
+  assert.match(startAcceptedSource, /workdir: this\.workdir/);
+  assert.doesNotMatch(startAcceptedSource, /ensureWorkspace\(/);
+  assert.match(runtimeSource, /this\.executionQueue = \[\]/);
+  assert.match(runtimeSource, /async runExecution\(/);
 });
 
-test("설정과 검토 화면은 자동·수동 병합 조작을 노출하지 않는다", () => {
+test("앱은 통합 대기 상태로 업무·설정·화면을 차단하지 않는다", () => {
   assert.doesNotMatch(settingsViewSource, /autoApproveAndMerge/);
-  assert.doesNotMatch(
-    reviewViewSource,
-    /approveWorkspace-|rejectWorkspace-|retryWorkspace-/,
-  );
-  assert.match(reviewViewSource, /변경사항 통합 대기/);
+  assert.doesNotMatch(directorSource, /pendingWorkspaceReviewCharacters/);
+  assert.doesNotMatch(dashboardSource, /WorkspaceReviewPanel\(/);
   assert.doesNotMatch(
     slackSource,
-    /officestra\.workspace-approve|officestra\.workspace-reject/,
+    /officestra\.workspace-approve|officestra\.workspace-reject|변경 통합 대기|통합 충돌/,
   );
 });
 
-test("클대리의 명시적 통합에 필요한 핵심 API는 유지한다", () => {
+test("과거 workspace 정리를 위한 호환 API는 유지한다", () => {
   assert.match(serverSource, /function routeWorkspaceReview/);
   assert.match(serverSource, /\(approve\|reject\)/);
   assert.match(serverSource, /route\.action === "approve"/);

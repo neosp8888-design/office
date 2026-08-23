@@ -345,18 +345,6 @@ function slackStatusLabel(turn) {
   if (turn.needsInput) {
     return "❓ 답변 필요";
   }
-  if (turn.workspace?.status === "awaiting_approval") {
-    return "📦 변경 통합 대기";
-  }
-  if (turn.workspace?.status === "merging") {
-    return "🔄 변경 통합 중";
-  }
-  if (turn.workspace?.status === "conflict") {
-    return "⚠️ 통합 충돌";
-  }
-  if (turn.workspace?.status === "merged") {
-    return "✅ 통합 완료";
-  }
   switch (turn.status) {
   case "completed":
     return "✅ 완료";

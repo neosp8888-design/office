@@ -67,7 +67,6 @@ struct CommandEntryAvailability: Equatable {
 enum SelectedCharacterQueueAvailability: Equatable {
     case unavailable
     case available
-    case awaitingWorkspaceReview
     case full
 
     static func resolve(
@@ -75,7 +74,6 @@ enum SelectedCharacterQueueAvailability: Equatable {
         isUpdatingConfiguration: Bool,
         hasSelectedCharacter: Bool,
         isSelectedCharacterRunning: Bool,
-        needsWorkspaceReview: Bool,
         isFull: Bool
     ) -> Self {
         guard
@@ -85,9 +83,6 @@ enum SelectedCharacterQueueAvailability: Equatable {
             isSelectedCharacterRunning
         else {
             return .unavailable
-        }
-        if needsWorkspaceReview {
-            return .awaitingWorkspaceReview
         }
         return isFull ? .full : .available
     }
@@ -174,10 +169,6 @@ struct CommandEntryRow: View {
         case .available:
             return "지금 응답이 끝나면 이어서 보냅니다 · 최대 "
                 + "\(QueuedCommandQueue.maximumCount)개"
-        case .awaitingWorkspaceReview:
-            return OfficeLocalization.string(
-                "변경사항 통합을 마친 뒤 다음 업무를 예약할 수 있습니다"
-            )
         case .full:
             return "예약이 가득 찼습니다 · 최대 "
                 + "\(QueuedCommandQueue.maximumCount)개"

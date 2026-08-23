@@ -95,15 +95,8 @@ enum QueuedCommandDrainPolicy {
     /// 바로 적용은 사용자가 명시적으로 요청한 중단이므로 예외다.
     static func shouldDrain(
         status: LiveTurnStatus,
-        isImmediateRequest: Bool,
-        isWorkspaceBlocking: Bool = false
+        isImmediateRequest: Bool
     ) -> Bool {
-        // 변경사항 통합이 진행 중이면 백엔드가 새 업무를 거부한다.
-        // 이때 예약을 꺼내면 그대로 버려질 수 있으므로 통합이 끝난 뒤
-        // 보낸다.
-        if isWorkspaceBlocking {
-            return false
-        }
         if isImmediateRequest {
             return true
         }

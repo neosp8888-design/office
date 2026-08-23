@@ -166,6 +166,14 @@ export class AgentRuntime {
     this.codexContextResolver = codexContextResolver;
     this.contextUsageReader = contextUsageReader;
     this.running = new Map();
+    // 모든 직원은 같은 프로젝트 폴더를 사용한다. 동시에 두 CLI가 같은
+    // 파일을 고치지 않도록 접수 순서대로 한 턴씩만 실행한다.
+    this.executionQueue = [];
+    this.queuedCharacters = new Set();
+    this.executionStartingState = null;
+    this.activeExecutionState = null;
+    this.nextExecutionSequence = 0;
+    this.preparingExecutionSequences = new Set();
     this.claudeWorkers = new Map();
     this.compactingCharacters = new Set();
     this.preparingCharacters = new Set();
@@ -179,10 +187,16 @@ export class AgentRuntime {
   }
 
   activeWorkCount() {
-    return this.preparingJobs.size +
-      this.running.size +
-      this.compactingCharacters.size +
-      this.postProcessingJobs.size;
+    const activeCharacters = new Set([
+      ...this.preparingCharacters,
+      ...this.running.keys(),
+      ...this.queuedCharacters,
+      ...this.compactingCharacters,
+    ]);
+    if (this.executionStartingState?.character?.id) {
+      activeCharacters.add(this.executionStartingState.character.id);
+    }
+    return activeCharacters.size + this.postProcessingJobs.size;
   }
 
   maintenanceStatus() {
@@ -397,7 +411,9 @@ export class AgentRuntime {
     const characterID = String(options?.characterID ?? "");
     if (
       this.compactingCharacters.has(characterID) ||
-      this.preparingCharacters.has(characterID)
+      this.preparingCharacters.has(characterID) ||
+      this.queuedCharacters.has(characterID) ||
+      this.executionStartingState?.character?.id === characterID
     ) {
       throw new AgentBusyError(
         "이 직원의 컨텍스트 압축 또는 업무 준비가 끝난 뒤 시작하세요.",
@@ -407,13 +423,21 @@ export class AgentRuntime {
     const preparation = Symbol(
       `prepare-agent-job:${characterID || "unknown"}`,
     );
+    const executionSequence = this.nextExecutionSequence + 1;
+    this.nextExecutionSequence = executionSequence;
     this.preparingJobs.add(preparation);
     this.preparingCharacters.add(characterID);
+    this.preparingExecutionSequences.add(executionSequence);
     try {
-      return await this.startAccepted(options);
+      return await this.startAccepted({
+        ...options,
+        executionSequence,
+      });
     } finally {
       this.preparingJobs.delete(preparation);
       this.preparingCharacters.delete(characterID);
+      this.preparingExecutionSequences.delete(executionSequence);
+      this.startNextQueuedExecution();
     }
   }
 
@@ -422,6 +446,7 @@ export class AgentRuntime {
     prompt,
     conversationID,
     attachmentPaths = [],
+    executionSequence,
   }) {
     const cleanPrompt = String(prompt ?? "").trim();
     if (!cleanPrompt && attachmentPaths.length === 0) {
@@ -429,6 +454,8 @@ export class AgentRuntime {
     }
     if (
       this.running.has(characterID) ||
+      this.queuedCharacters.has(characterID) ||
+      this.executionStartingState?.character?.id === characterID ||
       this.compactingCharacters.has(characterID)
     ) {
       throw new AgentBusyError(
@@ -439,19 +466,12 @@ export class AgentRuntime {
     let prepared;
     let attachments = [];
     try {
-      const isolateGitWorkdir = this.workspaceManager
-        ? typeof this.workspaceManager.isRepository === "function"
-          ? await this.workspaceManager.isRepository()
-          : true
-        : false;
       prepared = await this.prepareTurn({
         characterID,
         prompt: cleanPrompt || "첨부 파일을 확인해줘.",
         conversationID: conversationID || randomUUID(),
-        isolateGitWorkdir,
+        isolateGitWorkdir: false,
       });
-      const workspace = await this.ensureWorkspace(prepared);
-      const workdir = workspace?.executionWorkdir ?? this.workdir;
       const recordPrompt = cleanPrompt || "첨부 파일을 확인해줘.";
       attachments = stageAttachments({
         attachmentPaths,
@@ -464,14 +484,14 @@ export class AgentRuntime {
         recordPrompt,
         attachments,
       );
-      await this.beginPreparedTurn(prepared.turnID, effectivePrompt);
       prepared = {
         ...prepared,
         prompt: effectivePrompt,
         recordPrompt: effectivePrompt,
         executionPrompt: effectivePrompt,
-        workspace,
-        workdir,
+        workspace: null,
+        workspaceID: null,
+        workdir: this.workdir,
       };
     } catch (error) {
       removeStagedAttachments(attachments);
@@ -525,19 +545,153 @@ export class AgentRuntime {
       usage: null,
       warning: null,
       failure: null,
+      executionSequence,
     };
-    this.running.set(characterID, state);
-    this.broadcast({ type: "feed.changed", turnId: state.turnID });
-
-    void this.execute(state).catch(async (error) => {
-      await this.fail(state, error);
-    });
+    const status = await this.scheduleExecution(state);
 
     return {
       turnId: state.turnID,
       conversationId: state.conversationID,
-      status: "running",
+      status,
     };
+  }
+
+  async scheduleExecution(state) {
+    if (
+      this.activeExecutionState ||
+      this.executionStartingState ||
+      this.hasEarlierPreparingExecution(state.executionSequence)
+    ) {
+      this.enqueueExecution(state);
+      this.queuedCharacters.add(state.character.id);
+      this.broadcast({
+        type: "feed.changed",
+        turnId: state.turnID,
+        characterId: state.character.id,
+      });
+      return "pending";
+    }
+
+    try {
+      const started = await this.activateExecution(state);
+      if (!started) {
+        this.startNextQueuedExecution();
+        return "interrupted";
+      }
+      return "running";
+    } catch (error) {
+      removeStagedAttachments(state.attachments);
+      await this.failPreparedTurn(state, error);
+      this.startNextQueuedExecution();
+      throw error;
+    }
+  }
+
+  enqueueExecution(state) {
+    this.executionQueue.push(state);
+    this.executionQueue.sort((lhs, rhs) =>
+      (lhs.executionSequence ?? Number.MAX_SAFE_INTEGER) -
+      (rhs.executionSequence ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
+
+  hasEarlierPreparingExecution(executionSequence) {
+    if (!Number.isSafeInteger(executionSequence)) {
+      return false;
+    }
+    for (const preparingSequence of this.preparingExecutionSequences) {
+      if (preparingSequence < executionSequence) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async activateExecution(state) {
+    this.executionStartingState = state;
+    try {
+      await this.beginPreparedTurn(state.turnID, state.executionPrompt);
+      if (state.cancelRequested) {
+        await this.interruptQueuedExecution(state);
+        return false;
+      }
+      this.activeExecutionState = state;
+      this.running.set(state.character.id, state);
+      this.broadcast({
+        type: "feed.changed",
+        turnId: state.turnID,
+        characterId: state.character.id,
+      });
+      void this.runExecution(state);
+      return true;
+    } finally {
+      if (this.executionStartingState === state) {
+        this.executionStartingState = null;
+      }
+    }
+  }
+
+  async runExecution(state) {
+    try {
+      await this.execute(state);
+    } catch (error) {
+      try {
+        await this.fail(state, error);
+      } catch (failureError) {
+        console.error(
+          "실패한 업무 상태를 저장하지 못했습니다.",
+          failureError instanceof Error
+            ? failureError.message
+            : String(failureError),
+        );
+      }
+    } finally {
+      if (this.running.get(state.character.id) === state) {
+        this.running.delete(state.character.id);
+      }
+      if (this.activeExecutionState === state) {
+        this.activeExecutionState = null;
+      }
+      this.startNextQueuedExecution();
+    }
+  }
+
+  startNextQueuedExecution() {
+    if (this.activeExecutionState || this.executionStartingState) {
+      return;
+    }
+    const state = this.executionQueue[0];
+    if (!state) {
+      return;
+    }
+    if (this.hasEarlierPreparingExecution(state.executionSequence)) {
+      return;
+    }
+    this.executionQueue.shift();
+    this.queuedCharacters.delete(state.character.id);
+    void this.activateQueuedExecution(state);
+  }
+
+  async activateQueuedExecution(state) {
+    try {
+      const started = await this.activateExecution(state);
+      if (!started) {
+        this.startNextQueuedExecution();
+      }
+    } catch (error) {
+      removeStagedAttachments(state.attachments);
+      try {
+        await this.failPreparedTurn(state, error);
+      } catch (failureError) {
+        console.error(
+          "대기 중 업무의 시작 실패를 저장하지 못했습니다.",
+          failureError instanceof Error
+            ? failureError.message
+            : String(failureError),
+        );
+      }
+      this.startNextQueuedExecution();
+    }
   }
 
   async ensureWorkspace(prepared) {
@@ -871,12 +1025,75 @@ export class AgentRuntime {
     });
   }
 
+  async interruptQueuedExecution(state) {
+    if (state.queuedInterruptionPromise) {
+      return state.queuedInterruptionPromise;
+    }
+    const message = "사용자가 대기 중인 업무를 중단했습니다.";
+    state.queuedInterruptionPromise = (async () => {
+      await this.withTransaction(async (client) => {
+        await client.query(
+          `
+            UPDATE turns
+            SET
+              status = 'interrupted',
+              needs_input = false,
+              error_message = $2,
+              ended_at = now(),
+              updated_at = now()
+            WHERE id = $1
+              AND status IN ('pending', 'running')
+          `,
+          [state.turnID, message],
+        );
+        if (!state.externalSessionID) {
+          await client.query(
+            `
+              UPDATE cli_sessions
+              SET ended_at = COALESCE(ended_at, now())
+              WHERE id = $1
+            `,
+            [state.sessionID],
+          );
+        }
+      });
+      removeStagedAttachments(state.attachments);
+      this.broadcast({
+        type: "feed.changed",
+        turnId: state.turnID,
+        characterId: state.character.id,
+      });
+      return {
+        turnId: state.turnID,
+        status: "interrupted",
+      };
+    })();
+    return state.queuedInterruptionPromise;
+  }
+
   async cancel(characterID) {
     const state = this.running.get(characterID);
     if (!state) {
-      throw new AgentJobNotFoundError(
-        "실행 중인 업무를 찾을 수 없습니다.",
+      const queuedIndex = this.executionQueue.findIndex(
+        (candidate) => candidate.character.id === characterID,
       );
+      const queuedState = queuedIndex >= 0
+        ? this.executionQueue.splice(queuedIndex, 1)[0]
+        : this.executionStartingState?.character?.id === characterID
+        ? this.executionStartingState
+        : null;
+      if (!queuedState) {
+        throw new AgentJobNotFoundError(
+          "실행 또는 대기 중인 업무를 찾을 수 없습니다.",
+        );
+      }
+      queuedState.cancelRequested = true;
+      this.queuedCharacters.delete(characterID);
+      const interrupted = await this.interruptQueuedExecution(queuedState);
+      if (queuedState !== this.executionStartingState) {
+        this.startNextQueuedExecution();
+      }
+      return interrupted;
     }
 
     state.cancelRequested = true;
@@ -1089,7 +1306,11 @@ export class AgentRuntime {
         sessionID = active.id;
         externalSessionID = active.externalSessionID;
         effectiveConversationID = active.conversationID;
-        workspace = workspaceFromActiveRow(active);
+        // 신규 업무는 언제나 설정된 프로젝트 폴더에서 실행한다. 과거
+        // 버전이 남긴 활성 worktree는 복구·검토용 기록으로만 유지한다.
+        workspace = isolateGitWorkdir
+          ? workspaceFromActiveRow(active)
+          : null;
       } else {
         effectiveConversationID = conversationID;
         await client.query(
