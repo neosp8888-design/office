@@ -2,6 +2,16 @@
 
 import SwiftUI
 
+enum ResponseSourceDisplayPolicy {
+    static func showsSources(
+        hasSources: Bool,
+        isRunning: Bool,
+        animatesResponse: Bool
+    ) -> Bool {
+        hasSources && !isRunning && !animatesResponse
+    }
+}
+
 struct ResponseSourceWarningView: View {
     let message: String
     let accessibilityIdentifier: String

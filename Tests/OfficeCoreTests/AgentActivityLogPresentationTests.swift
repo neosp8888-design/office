@@ -512,6 +512,37 @@ final class AgentActivityLogPresentationTests: XCTestCase {
         )
     }
 
+    func testResponseSourcesWaitForStreamingAndTypingToFinish() {
+        XCTAssertFalse(
+            ResponseSourceDisplayPolicy.showsSources(
+                hasSources: true,
+                isRunning: true,
+                animatesResponse: true
+            )
+        )
+        XCTAssertFalse(
+            ResponseSourceDisplayPolicy.showsSources(
+                hasSources: true,
+                isRunning: false,
+                animatesResponse: true
+            )
+        )
+        XCTAssertTrue(
+            ResponseSourceDisplayPolicy.showsSources(
+                hasSources: true,
+                isRunning: false,
+                animatesResponse: false
+            )
+        )
+        XCTAssertFalse(
+            ResponseSourceDisplayPolicy.showsSources(
+                hasSources: false,
+                isRunning: false,
+                animatesResponse: false
+            )
+        )
+    }
+
     func testCompletedResponseLineSequencePreservesBlankLines() {
         let sequence = CompletedResponseLineSequence(
             source: "첫 줄\n\n세 번째 줄\n"

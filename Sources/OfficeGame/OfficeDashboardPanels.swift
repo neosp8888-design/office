@@ -3983,11 +3983,16 @@ private struct LiveTurnCard: View {
                     )
                 }
 
-                if !turn.responseSources.isEmpty {
+                if ResponseSourceDisplayPolicy.showsSources(
+                    hasSources: !turn.responseSources.isEmpty,
+                    isRunning: turn.status.isRunning,
+                    animatesResponse: shouldAnimateResponse
+                ) {
                     ResponseSourceList(
                         sources: turn.responseSources,
                         workspaceDirectory: effectiveWorkspaceDirectory
                     )
+                    .transition(.opacity)
                 }
 
                 if let error = turn.errorMessage,
