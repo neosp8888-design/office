@@ -194,7 +194,6 @@ enum OfficePanelControl {
     case theme
     case backend
     case artStyle
-    case settings
 }
 
 enum OfficePanelControlLayout {
@@ -208,8 +207,6 @@ enum OfficePanelControlLayout {
             .bottomLeading
         case .artStyle:
             .bottomTrailing
-        case .settings:
-            .topTrailing
         }
     }
 }
@@ -217,7 +214,6 @@ enum OfficePanelControlLayout {
 private struct OfficeGameView: View {
     @ObservedObject var director: AgentDirector
     @StateObject private var backendController = OfficeBackendController()
-    @State private var showsCharacterSettings = false
     @State private var profileCharacter: OfficeCharacter?
     @State private var historyTarget: ConversationHistoryTarget?
     @State private var bubbleDetail: BubbleDetail?
@@ -481,12 +477,6 @@ private struct OfficeGameView: View {
             alignment: OfficePanelControlLayout.alignment(for: .artStyle)
         ) {
             artStyleToggle
-                .padding(12)
-        }
-        .overlay(
-            alignment: OfficePanelControlLayout.alignment(for: .settings)
-        ) {
-            characterSettingsButton
                 .padding(12)
         }
         .officePanelStyle()
@@ -867,6 +857,7 @@ private struct LiveWorkspaceCommandBar: View {
     @State private var attachments: [PendingAttachment] = []
     @State private var attachmentSelectionError: String?
     @State private var isPreparingAttachments = false
+    @State private var identitySettingsCharacter: OfficeCharacter?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -896,6 +887,12 @@ private struct LiveWorkspaceCommandBar: View {
                     }
                     inbox.removeStaleItems()
                 }.value
+            }
+            .sheet(item: $identitySettingsCharacter) { character in
+                CharacterIdentitySettingsView(
+                    director: director,
+                    character: character
+                )
             }
     }
 
@@ -981,6 +978,21 @@ private struct LiveWorkspaceCommandBar: View {
                         .accessibilityLabel("직원 프로필")
                         .help("직원 프로필 보기")
                     }
+
+                    Button {
+                        identitySettingsCharacter = character.id
+                    } label: {
+                        Label("설정", systemImage: "gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(
+                        DashboardPalette.providerAccent(
+                            for: character.backend
+                        )
+                    )
+                    .accessibilityLabel("직원 설정")
+                    .help("이름과 업무 지침 설정")
 
                     Spacer(minLength: 0)
                 }
@@ -1256,54 +1268,6 @@ enum CharacterSelectorLabelStyle {
         }
         return Color.primary.opacity(isSelected ? 0.88 : 0.56)
     }
-}
-
-private extension OfficeGameView {
-    private var characterSettingsButton: some View {
-        Button {
-            showsCharacterSettings.toggle()
-        } label: {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 20, height: 20)
-        }
-        .buttonStyle(.plain)
-        .environment(\.colorScheme, theme.isNight ? .dark : .light)
-        .foregroundStyle(theme.isNight ? Color.white : Color.black.opacity(0.72))
-        .padding(.horizontal, 8)
-        .frame(height: 32)
-        .background(
-            theme.isNight
-                ? Color.black.opacity(0.72)
-                : Color.white.opacity(0.92),
-            in: Capsule()
-        )
-        .overlay {
-            Capsule()
-                .stroke(
-                    theme.isNight
-                        ? Color.white.opacity(0.25)
-                        : Color.black.opacity(0.08)
-                )
-        }
-        .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
-        .sheet(isPresented: $showsCharacterSettings) {
-            CharacterSettingsView(director: director)
-        }
-        .disabled(
-            !director.isReadyForSubmissions
-                || director.isUpdatingConfiguration
-        )
-        .opacity(
-            director.isReadyForSubmissions
-                && !director.isUpdatingConfiguration
-                ? 1
-                : 0.45
-        )
-        .accessibilityLabel("캐릭터 설정")
-        .help("캐릭터 이름 설정")
-    }
-
 }
 
 private extension LiveWorkspaceCommandBar {
@@ -2322,50 +2286,88 @@ private struct QuickSettingLabel: View {
     }
 }
 
-enum CharacterSettingsLayout {
-    static let width: CGFloat = 960
-    static let height: CGFloat = 700
-    static let identityPromptHeight: CGFloat = 220
+enum CharacterIdentitySettingsLayout {
+    static let width: CGFloat = 620
+    static let height: CGFloat = 500
+    static let identityPromptHeight: CGFloat = 280
 }
 
-private struct CharacterSettingsView: View {
-    @ObservedObject var director: AgentDirector
+private struct CharacterIdentitySettingsView: View {
+    let director: AgentDirector
+    let character: OfficeCharacter
+
     @Environment(\.dismiss) private var dismiss
-    @State private var nameDrafts: [OfficeCharacter: String] = [:]
-    @State private var settingsDrafts:
-        [OfficeCharacter: CharacterAgentSettings] = [:]
-    @State private var identityPromptDrafts: [OfficeCharacter: String] = [:]
-    @State private var isLoadingDrafts = true
-    @State private var hasLoadedDatabaseDrafts = false
+    @State private var nameDraft = ""
+    @State private var identityPromptDraft = ""
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var hasLoaded = false
+    @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("직원별 설정")
+        VStack(alignment: .leading, spacing: 16) {
+            Text("\(director.displayName(for: character)) 설정")
                 .font(.system(size: 17, weight: .bold))
 
-            Text("이름, 역할·업무 지침, CLI 실행 방식을 직원마다 설정합니다.")
+            Text("선택한 직원의 이름과 업무 지침만 저장합니다.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
             Group {
-                if isLoadingDrafts {
+                if isLoading {
                     ProgressView("최신 설정을 불러오는 중입니다.")
-                        .frame(maxWidth: .infinity, minHeight: 180)
-                } else if hasLoadedDatabaseDrafts {
-                    ScrollView {
-                        VStack(spacing: 10) {
-                            ForEach(director.characters) { character in
-                                CharacterSettingsEditor(
-                                    seat: character.seat,
-                                    name: nameBinding(for: character.id),
-                                    identityPrompt: identityPromptBinding(
-                                        for: character.id
-                                    ),
-                                    settings: settingsBinding(
-                                        for: character.id
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if hasLoaded {
+                    VStack(alignment: .leading, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("이름")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            TextField("이름", text: $nameDraft)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("업무 지침")
+                                    .font(
+                                        .system(size: 11, weight: .semibold)
+                                    )
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(identityPromptDraft.count) / 1,200")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(
+                                        identityPromptDraft.count > 1_200
+                                            ? Color.red
+                                            : Color.secondary
+                                    )
+                            }
+
+                            TextEditor(text: $identityPromptDraft)
+                                .font(.system(size: 12))
+                                .frame(
+                                    height: CharacterIdentitySettingsLayout
+                                        .identityPromptHeight
+                                )
+                                .padding(6)
+                                .background(
+                                    Color(nsColor: .textBackgroundColor),
+                                    in: RoundedRectangle(
+                                        cornerRadius: 8,
+                                        style: .continuous
                                     )
                                 )
-                            }
+                                .overlay {
+                                    RoundedRectangle(
+                                        cornerRadius: 8,
+                                        style: .continuous
+                                    )
+                                    .stroke(
+                                        Color.primary.opacity(0.14),
+                                        lineWidth: 1
+                                    )
+                                }
                         }
                     }
                 } else {
@@ -2374,246 +2376,97 @@ private struct CharacterSettingsView: View {
                             .font(.system(size: 12, weight: .semibold))
                         Button("다시 시도") {
                             Task {
-                                await loadDrafts()
+                                await load()
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let status = director.settingsStatus {
-                Text(OfficeLocalization.string(status))
+            if let errorMessage {
+                Text(errorMessage)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(
-                        status == "설정을 저장했습니다."
-                            ? Color.green
-                            : Color.red
-                    )
+                    .foregroundStyle(.red)
             }
 
             HStack {
                 Spacer()
-                Button("닫기") {
+                Button("취소") {
                     dismiss()
                 }
                 Button("저장") {
                     Task {
-                        await director.saveConfiguration(
-                            names: nameDrafts,
-                            settings: settingsDrafts,
-                            identityPrompts: identityPromptDrafts.mapValues {
-                                OfficeLocalization.canonicalIdentityPrompt($0)
-                            }
-                        )
+                        await save()
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!hasLoadedDatabaseDrafts || isLoadingDrafts)
+                .disabled(!canSave)
             }
         }
         .padding(18)
         .frame(
-            width: CharacterSettingsLayout.width,
-            height: CharacterSettingsLayout.height
+            width: CharacterIdentitySettingsLayout.width,
+            height: CharacterIdentitySettingsLayout.height
         )
-        .task {
-            await loadDrafts()
+        .task(id: character) {
+            await load()
         }
+        .interactiveDismissDisabled(isSaving)
     }
 
-    private func loadDrafts() async {
-        isLoadingDrafts = true
-        hasLoadedDatabaseDrafts = false
+    private var canSave: Bool {
+        hasLoaded
+            && !isLoading
+            && !isSaving
+            && (1...30).contains(
+                nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).count
+            )
+            && (1...1_200).contains(
+                identityPromptDraft
+                    .trimmingCharacters(in: .whitespacesAndNewlines).count
+            )
+    }
+
+    private func load() async {
+        isLoading = true
+        hasLoaded = false
+        errorMessage = nil
         defer {
-            isLoadingDrafts = false
+            isLoading = false
         }
-        guard let drafts = await director.fetchCharacterSettingsDrafts()
-        else {
-            return
+        do {
+            let draft = try await director.fetchCharacterIdentitySettings(
+                for: character
+            )
+            nameDraft = draft.name
+            identityPromptDraft = OfficeLocalization.displayIdentityPrompt(
+                draft.identityPrompt
+            )
+            hasLoaded = true
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        nameDrafts = drafts.names
-        settingsDrafts = drafts.settings
-        identityPromptDrafts = drafts.identityPrompts.mapValues {
-            OfficeLocalization.displayIdentityPrompt($0)
+    }
+
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+        defer {
+            isSaving = false
         }
-        hasLoadedDatabaseDrafts = true
-    }
-
-    private func nameBinding(
-        for character: OfficeCharacter
-    ) -> Binding<String> {
-        Binding(
-            get: { nameDrafts[character] ?? "" },
-            set: { nameDrafts[character] = $0 }
-        )
-    }
-
-    private func settingsBinding(
-        for character: OfficeCharacter
-    ) -> Binding<CharacterAgentSettings> {
-        Binding(
-            get: {
-                settingsDrafts[character]
-                    ?? director.agentSettings(for: character)
-            },
-            set: { settingsDrafts[character] = $0 }
-        )
-    }
-
-    private func identityPromptBinding(
-        for character: OfficeCharacter
-    ) -> Binding<String> {
-        Binding(
-            get: { identityPromptDrafts[character] ?? "" },
-            set: { identityPromptDrafts[character] = $0 }
-        )
-    }
-}
-
-private struct CharacterSettingsEditor: View {
-    let seat: String
-    @Binding var name: String
-    @Binding var identityPrompt: String
-    @Binding var settings: CharacterAgentSettings
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text(OfficeLocalization.string(seat))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 70, alignment: .leading)
-
-                TextField("이름", text: $name)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text("역할·업무 지침")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $identityPrompt)
-                    .font(.system(size: 12))
-                    .frame(height: CharacterSettingsLayout.identityPromptHeight)
-                    .padding(4)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(
-                                Color.primary.opacity(0.14),
-                                lineWidth: 1
-                            )
-                    }
-            }
-
-            HStack(spacing: 12) {
-                settingPickerLabel("CLI")
-                Picker("CLI", selection: backendBinding) {
-                    ForEach(AgentBackend.allCases) { backend in
-                        Text(backend.title).tag(backend)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 130)
-
-                settingPickerLabel("모델")
-                Picker("모델", selection: modelBinding) {
-                    ForEach(settings.backend.modelOptions, id: \.self) { model in
-                        Text(settings.backend.modelTitle(model)).tag(model)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 130)
-
-                settingPickerLabel("추론")
-                Picker("추론", selection: $settings.effort) {
-                    ForEach(
-                        settings.backend.effortOptions(for: settings.model),
-                        id: \.self
-                    ) {
-                        Text($0).tag($0)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 90)
-            }
-            .controlSize(.small)
-
-            HStack(spacing: 12) {
-                settingPickerLabel("권한")
-                Picker("권한", selection: $settings.permission) {
-                    ForEach(AgentPermission.allCases) { permission in
-                        Text(OfficeLocalization.string(permission.title))
-                            .tag(permission)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 300)
-
-                Text(settings.permission.cliValue(for: settings.backend))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-
-                Spacer()
-
-                if settings.backend.supportsFastMode(model: settings.model) {
-                    Toggle(isOn: fastModeBinding) {
-                        Label(
-                            settings.fastMode ? "Fast" : "Standard",
-                            systemImage: settings.fastMode ? "bolt.fill" : "bolt"
-                        )
-                        .font(.system(size: 11, weight: .semibold))
-                    }
-                    .toggleStyle(.switch)
-                    .fixedSize()
-                }
-            }
-            .controlSize(.small)
+        do {
+            try await director.saveCharacterIdentitySettings(
+                name: nameDraft,
+                identityPrompt: OfficeLocalization.canonicalIdentityPrompt(
+                    identityPromptDraft
+                ),
+                for: character
+            )
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        .padding(11)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
-        )
-    }
-
-    private var backendBinding: Binding<AgentBackend> {
-        Binding(
-            get: { settings.backend },
-            set: { backend in
-                settings = CharacterAgentSettings(
-                    backend: backend,
-                    model: backend.defaultModel,
-                    effort: "high",
-                    fastMode: settings.fastMode
-                        && backend.supportsFastMode(
-                            model: backend.defaultModel
-                        ),
-                    permission: settings.permission
-                )
-            }
-        )
-    }
-
-    private var modelBinding: Binding<String> {
-        Binding(
-            get: { settings.model ?? settings.backend.defaultModel },
-            set: { settings.selectModel($0) }
-        )
-    }
-
-    private var fastModeBinding: Binding<Bool> {
-        Binding(
-            get: { settings.fastMode },
-            set: { settings.setFastMode($0) }
-        )
-    }
-
-    private func settingPickerLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
     }
 }

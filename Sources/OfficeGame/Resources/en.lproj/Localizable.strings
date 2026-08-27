@@ -331,3 +331,8 @@
 "[민감 정보가 포함된 줄 숨김]" = "[Line containing sensitive information hidden]";
 "앱에 포함된 실행 파일이 완전하지 않습니다. 앱을 다시 설치하세요." = "The bundled runtime is incomplete. Reinstall the app.";
 "앱에 포함된 Node 실행 파일을 실행할 수 없습니다." = "The bundled Node executable cannot be run.";
+"설정" = "Settings";
+"직원 설정" = "Teammate settings";
+"업무 지침" = "Work instructions";
+"선택한 직원의 이름과 업무 지침만 저장합니다." = "Save only this teammate's name and work instructions.";
+"이름과 업무 지침 설정" = "Edit name and work instructions";

@@ -38,11 +38,4 @@ final class OfficePanelControlLayoutTests: XCTestCase {
             36
         )
     }
-
-    func testSettingsControlUsesTopTrailingCorner() {
-        XCTAssertEqual(
-            OfficePanelControlLayout.alignment(for: .settings),
-            .topTrailing
-        )
-    }
 }

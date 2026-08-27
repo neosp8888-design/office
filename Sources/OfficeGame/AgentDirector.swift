@@ -677,34 +677,13 @@ enum SpeechBubbleIdleChatterPolicy {
     }
 }
 
-struct CharacterSettingsDrafts: Equatable, Sendable {
-    let names: [OfficeCharacter: String]
-    let settings: [OfficeCharacter: CharacterAgentSettings]
-    let identityPrompts: [OfficeCharacter: String]
+struct CharacterIdentitySettingsDraft: Equatable, Sendable {
+    let name: String
+    let identityPrompt: String
 
-    init(storedCharacters: [StoredCharacterProfile]) {
-        var names: [OfficeCharacter: String] = [:]
-        var settings: [OfficeCharacter: CharacterAgentSettings] = [:]
-        var identityPrompts: [OfficeCharacter: String] = [:]
-
-        for stored in storedCharacters {
-            guard let character = OfficeCharacter(rawValue: stored.id) else {
-                continue
-            }
-            names[character] = stored.name
-            settings[character] = CharacterAgentSettings(
-                backend: stored.backend,
-                model: stored.model,
-                effort: stored.effort,
-                fastMode: stored.fastMode,
-                permission: AgentPermission(cliValue: stored.permission)
-            )
-            identityPrompts[character] = stored.identityPrompt
-        }
-
-        self.names = names
-        self.settings = settings
-        self.identityPrompts = identityPrompts
+    init(storedCharacter: StoredCharacterProfile) {
+        name = storedCharacter.name
+        identityPrompt = storedCharacter.identityPrompt
     }
 }
 
@@ -1589,88 +1568,86 @@ final class AgentDirector: ObservableObject {
             )
     }
 
-    func fetchCharacterSettingsDrafts() async -> CharacterSettingsDrafts? {
-        settingsStatus = nil
-        do {
-            return CharacterSettingsDrafts(
-                storedCharacters: try await database.fetchCharacters()
-            )
-        } catch {
-            settingsStatus = error.localizedDescription
-            return nil
+    func fetchCharacterIdentitySettings(
+        for character: OfficeCharacter
+    ) async throws -> CharacterIdentitySettingsDraft {
+        let storedCharacters = try await database.fetchCharacters()
+        guard let storedCharacter = storedCharacters.first(
+            where: { $0.id == character.rawValue }
+        ) else {
+            throw CharacterIdentitySettingsError.characterNotFound
         }
+        return CharacterIdentitySettingsDraft(
+            storedCharacter: storedCharacter
+        )
     }
 
-    func saveConfiguration(
-        names nameDrafts: [OfficeCharacter: String],
-        settings settingsDrafts: [OfficeCharacter: CharacterAgentSettings],
-        identityPrompts identityPromptDrafts: [OfficeCharacter: String]
-    ) async {
-        settingsStatus = nil
+    func saveCharacterIdentitySettings(
+        name: String,
+        identityPrompt: String,
+        for character: OfficeCharacter
+    ) async throws {
+        let trimmedName = name.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let trimmedIdentityPrompt = identityPrompt.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard (1...30).contains(trimmedName.count) else {
+            throw CharacterIdentitySettingsError.invalidNameLength
+        }
+        guard (1...1_200).contains(trimmedIdentityPrompt.count) else {
+            throw CharacterIdentitySettingsError.invalidIdentityPromptLength
+        }
         guard isReadyForSubmissions else {
-            settingsStatus =
-                sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
-            return
+            throw CharacterIdentitySettingsError.notReady(
+                sessionRestoreError
+                    ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+            )
         }
         guard
-            runningCharacters.isEmpty,
-            compactingCharacters.isEmpty
+            !runningCharacters.contains(character),
+            !compactingCharacters.contains(character)
         else {
-            settingsStatus =
-                "진행 중인 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다."
-            return
+            throw CharacterIdentitySettingsError.busy
         }
         guard !isUpdatingConfiguration else {
-            settingsStatus = "다른 설정을 저장하는 중입니다."
-            return
+            throw CharacterIdentitySettingsError.configurationBusy
         }
+
         isUpdatingConfiguration = true
+        settingsStatus = nil
         defer {
             isUpdatingConfiguration = false
         }
+
+        let currentName = names[character] ?? character.rawValue
+        let currentIdentityPrompt = self.identityPrompt(for: character)
         do {
-            for character in characters {
-                let name =
-                    nameDrafts[character.id]?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !name.isEmpty else {
-                    throw AgentConfigurationError.emptyName
-                }
-                if name != displayName(for: character.id) {
-                    try await database.updateName(name, for: character.id)
-                    names[character.id] = name
-                }
+            if trimmedIdentityPrompt != currentIdentityPrompt {
+                try await database.updateIdentityPrompt(
+                    trimmedIdentityPrompt,
+                    for: character
+                )
+            }
+            if trimmedName != currentName {
+                try await database.updateName(trimmedName, for: character)
+            }
 
-                if
-                    let settings = settingsDrafts[character.id],
-                    settings != character.agentSettings
-                {
-                    try await database.updateSettings(
-                        settings,
-                        for: character.id
-                    )
-                    apply(settings, to: character.id)
-                }
-
-                let identityPrompt =
-                    identityPromptDrafts[character.id]?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !identityPrompt.isEmpty else {
-                    throw AgentConfigurationError.emptyIdentityPrompt
-                }
-                if identityPrompt != character.identityPrompt {
-                    try await database.updateIdentityPrompt(
-                        identityPrompt,
-                        for: character.id
-                    )
-                    apply(identityPrompt: identityPrompt, to: character.id)
-                }
+            if trimmedIdentityPrompt != currentIdentityPrompt {
+                apply(
+                    identityPrompt: trimmedIdentityPrompt,
+                    to: character
+                )
+            }
+            if trimmedName != currentName {
+                names[character] = trimmedName
             }
             settingsStatus = "설정을 저장했습니다."
         } catch {
-            let message = error.localizedDescription
             await restorePersistentState()
-            settingsStatus = message
+            settingsStatus = error.localizedDescription
+            throw error
         }
     }
 
@@ -2726,16 +2703,28 @@ private enum AgentContextCompactionError: LocalizedError {
     }
 }
 
-private enum AgentConfigurationError: LocalizedError {
-    case emptyName
-    case emptyIdentityPrompt
+private enum CharacterIdentitySettingsError: LocalizedError {
+    case characterNotFound
+    case invalidNameLength
+    case invalidIdentityPromptLength
+    case notReady(String)
+    case busy
+    case configurationBusy
 
     var errorDescription: String? {
         switch self {
-        case .emptyName:
-            "직원 이름을 입력하세요."
-        case .emptyIdentityPrompt:
-            "직원별 역할·업무 지침을 입력하세요."
+        case .characterNotFound:
+            "직원 설정을 찾을 수 없습니다."
+        case .invalidNameLength:
+            "이름은 1자 이상 30자 이하여야 합니다."
+        case .invalidIdentityPromptLength:
+            "업무 지침은 1자 이상 1,200자 이하여야 합니다."
+        case let .notReady(message):
+            message
+        case .busy:
+            "이 직원의 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다."
+        case .configurationBusy:
+            "다른 설정을 저장하는 중입니다."
         }
     }
 }
