@@ -11,21 +11,10 @@ export async function compactCodexThread({
   threadID,
   cwd,
   env,
-  contextWindow = null,
-  autoCompactTokenLimit = null,
   spawnProcess = spawn,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }) {
-  const argumentsList = [];
-  if (contextWindow > 0 && autoCompactTokenLimit > 0) {
-    argumentsList.push(
-      "-c",
-      `model_context_window=${contextWindow}`,
-      "-c",
-      `model_auto_compact_token_limit=${autoCompactTokenLimit}`,
-    );
-  }
-  argumentsList.push("app-server", "--stdio");
+  const argumentsList = ["app-server", "--stdio"];
   const child = spawnProcess(executable, argumentsList, {
     cwd,
     env,

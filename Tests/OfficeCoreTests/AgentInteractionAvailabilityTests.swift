@@ -121,4 +121,17 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
         )
         XCTAssertFalse(message.contains("왼쪽 여자"))
     }
+
+    func testOnlyClaudeShowsAdjustableAutoCompactionThreshold() {
+        XCTAssertTrue(
+            ContextCompactionPresentation.usesAdjustableThreshold(
+                backend: .claude
+            )
+        )
+        XCTAssertFalse(
+            ContextCompactionPresentation.usesAdjustableThreshold(
+                backend: .codex
+            )
+        )
+    }
 }
