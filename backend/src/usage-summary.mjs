@@ -520,7 +520,7 @@ export async function readUsageActivity(pool, now = new Date()) {
   const activity = {
     codex: emptyActivity(),
     claude: emptyActivity(),
-    antigravity: emptyActivity(false),
+    antigravity: emptyActivity(),
   };
   for (const row of result.rows ?? []) {
     if (!Object.hasOwn(activity, row.provider)) continue;
@@ -531,7 +531,7 @@ export async function readUsageActivity(pool, now = new Date()) {
       last30DaysTokens: Math.round(
         finiteNumber(row.last30DaysTokens) ?? 0,
       ),
-      costEstimateSupported: row.provider !== "antigravity",
+      costEstimateSupported: true,
     };
   }
   return activity;

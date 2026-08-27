@@ -595,11 +595,7 @@ private struct UsageBoardContent: View {
             plan: snapshot.claudePlan,
             activity: snapshot.claudeActivity,
             showsFiveHour: true,
-            tint: Color(
-                red: 0.77,
-                green: 0.43,
-                blue: 0.25
-            )
+            tint: DashboardPalette.providerAccent(for: .claude)
         )
         UsageProviderColumn(
             name: "Codex",
@@ -614,7 +610,7 @@ private struct UsageBoardContent: View {
             plan: snapshot.codexPlan,
             activity: snapshot.codexActivity,
             showsFiveHour: true,
-            tint: DashboardPalette.accent
+            tint: DashboardPalette.providerAccent(for: .codex)
         )
         UsageProviderColumn(
             name: "Antigravity",
@@ -629,7 +625,7 @@ private struct UsageBoardContent: View {
             plan: snapshot.antigravityPlan,
             activity: snapshot.antigravityActivity,
             showsFiveHour: false,
-            tint: Color(red: 0.19, green: 0.49, blue: 0.88)
+            tint: DashboardPalette.providerAccent(for: .antigravity)
         )
     }
 
@@ -812,9 +808,7 @@ private struct UsageActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(
-                activity?.costEstimateSupported == false
-                    ? "토큰 사용량"
-                    : "토큰 · API 요금 추정",
+                "API 요금 추정",
                 systemImage: "chart.bar.xaxis"
             )
                 .font(.system(size: 10, weight: .bold))
@@ -823,35 +817,16 @@ private struct UsageActivityCard: View {
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     UsageMetricCell(
-                        label: "오늘 토큰",
-                        value: tokenText(activity?.recentTokens),
+                        label: "오늘 비용",
+                        value: costText(activity?.todayCostUSD),
                         tint: tint
                     )
                     UsageMetricCell(
-                        label: "30일 토큰",
-                        value: tokenText(activity?.last30DaysTokens),
+                        label: "30일 비용",
+                        value: costText(activity?.last30DaysCostUSD),
                         tint: tint
                     )
                 }
-                if activity?.costEstimateSupported != false {
-                    GridRow {
-                        UsageMetricCell(
-                            label: "오늘 비용",
-                            value: costText(activity?.todayCostUSD),
-                            tint: tint
-                        )
-                        UsageMetricCell(
-                            label: "30일 비용",
-                            value: costText(activity?.last30DaysCostUSD),
-                            tint: tint
-                        )
-                    }
-                }
-            }
-            if activity?.costEstimateSupported == false {
-                Text("구독 사용량의 USD 비용 환산은 지원하지 않습니다.")
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -870,11 +845,6 @@ private struct UsageActivityCard: View {
             return "–"
         }
         return String(format: "$%.2f", value)
-    }
-
-    private func tokenText(_ value: Int64?) -> String {
-        guard let value else { return "–" }
-        return value.formatted(.number.notation(.compactName))
     }
 
 }
@@ -4146,6 +4116,7 @@ private struct LiveTurnCard: View {
 
     private var claudeTranscript: some View {
         ClaudeTranscriptView(
+            backend: effectiveBackend,
             turnID: turn.id,
             workspaceDirectory: effectiveWorkspaceDirectory,
             activities: transcriptActivities,
@@ -5184,6 +5155,19 @@ private enum CharacterAvatarImageCache {
 
 enum DashboardPalette {
     static let accent = Color(red: 0.13, green: 0.55, blue: 0.52)
+    static let claudeAccent = Color(red: 0.77, green: 0.43, blue: 0.25)
+    static let antigravityAccent = Color(red: 0.19, green: 0.49, blue: 0.88)
+
+    static func providerAccent(for backend: AgentBackend) -> Color {
+        switch backend {
+        case .claude:
+            claudeAccent
+        case .codex:
+            accent
+        case .antigravity:
+            antigravityAccent
+        }
+    }
 
     static func canvas(isNight: Bool) -> Color {
         isNight

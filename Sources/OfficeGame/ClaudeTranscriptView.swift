@@ -5,7 +5,20 @@ import OfficeCore
 import SwiftUI
 
 enum ClaudePalette {
-    static let accent = Color(red: 0.78, green: 0.42, blue: 0.23)
+    static func accent(for backend: AgentBackend) -> Color {
+        DashboardPalette.providerAccent(for: backend)
+    }
+
+    static func nsAccent(for backend: AgentBackend) -> NSColor {
+        switch backend {
+        case .claude:
+            NSColor(calibratedRed: 0.77, green: 0.43, blue: 0.25, alpha: 1)
+        case .codex:
+            NSColor(calibratedRed: 0.13, green: 0.55, blue: 0.52, alpha: 1)
+        case .antigravity:
+            NSColor(calibratedRed: 0.19, green: 0.49, blue: 0.88, alpha: 1)
+        }
+    }
 
     static func color(for family: ClaudeToolFamily) -> Color {
         switch family {
@@ -116,6 +129,7 @@ extension ClaudeToolGroupKind {
 }
 
 struct ClaudeTranscriptView: View {
+    let backend: AgentBackend
     let turnID: String
     let workspaceDirectory: String
     let activities: [LiveFeedActivity]
@@ -195,7 +209,7 @@ struct ClaudeTranscriptView: View {
             }
 
             if presentation.showsWaiting {
-                ClaudeWaitingView()
+                ClaudeWaitingView(backend: backend)
                     .transition(
                         reduceMotion
                             ? .opacity
@@ -232,7 +246,7 @@ struct ClaudeTranscriptView: View {
     ) -> some View {
         switch entry {
         case .thoughts(let run):
-            ClaudeThoughtRunView(run: run)
+            ClaudeThoughtRunView(run: run, backend: backend)
                 .equatable()
         case .tools(let run):
             ClaudeToolRunView(run: run)
@@ -240,10 +254,11 @@ struct ClaudeTranscriptView: View {
         case .edits(let run):
             ClaudeEditRunView(
                 run: run,
-                workspaceDirectory: workspaceDirectory
+                workspaceDirectory: workspaceDirectory,
+                backend: backend
             )
         case .plan(let board):
-            ClaudePlanBoardView(board: board)
+            ClaudePlanBoardView(board: board, backend: backend)
         case .message(let message):
             ClaudeMessageView(
                 turnID: turnID,
@@ -256,7 +271,8 @@ struct ClaudeTranscriptView: View {
                 animatesInitialSource: animatesInitialResponse,
                 responseFeedback: responseFeedback,
                 updateResponseFeedback: updateResponseFeedback,
-                onFinishedTyping: onResponsePresented
+                onFinishedTyping: onResponsePresented,
+                backend: backend
             )
         }
     }
@@ -269,6 +285,8 @@ struct ClaudeResponseCompletionRevision: Hashable {
 }
 
 private struct ClaudeWaitingView: View {
+    let backend: AgentBackend
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -277,12 +295,7 @@ private struct ClaudeWaitingView: View {
                 dotSize: 4,
                 spacing: 2.5,
                 travel: 2.5,
-                color: NSColor(
-                    calibratedRed: 0.78,
-                    green: 0.42,
-                    blue: 0.23,
-                    alpha: 1
-                ),
+                color: ClaudePalette.nsAccent(for: backend),
                 isAnimated: !reduceMotion
             )
             .frame(width: 20, height: 16)
@@ -297,7 +310,7 @@ private struct ClaudeWaitingView: View {
         .padding(.horizontal, 10)
         .frame(height: 36)
         .background(
-            ClaudePalette.accent.opacity(0.06),
+            ClaudePalette.accent(for: backend).opacity(0.06),
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .accessibilityElement(children: .combine)
@@ -308,6 +321,7 @@ private struct ClaudeWaitingView: View {
 /// 추론은 Claude Code의 강점이라 최신 원문은 접지 않고 이전 기록만 접는다.
 private struct ClaudeThoughtRunView: View, Equatable {
     let run: ClaudeThoughtRun
+    let backend: AgentBackend
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isExpanded = false
@@ -319,7 +333,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
         lhs: ClaudeThoughtRunView,
         rhs: ClaudeThoughtRunView
     ) -> Bool {
-        lhs.run == rhs.run
+        lhs.run == rhs.run && lhs.backend == rhs.backend
     }
 
     var body: some View {
@@ -378,12 +392,12 @@ private struct ClaudeThoughtRunView: View, Equatable {
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
         .background(
-            ClaudePalette.accent.opacity(0.05),
+            ClaudePalette.accent(for: backend).opacity(0.05),
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(ClaudePalette.accent.opacity(0.14))
+                .stroke(ClaudePalette.accent(for: backend).opacity(0.14))
         }
         .onChange(of: run.isRunning) { _, running in
             isExpanded = transcriptGroupExpansionState(
@@ -400,12 +414,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
                     dotSize: 3,
                     spacing: 2,
                     travel: 2,
-                    color: NSColor(
-                        calibratedRed: 0.78,
-                        green: 0.42,
-                        blue: 0.23,
-                        alpha: 1
-                    ),
+                    color: ClaudePalette.nsAccent(for: backend),
                     isAnimated: !reduceMotion
                 )
                 .frame(width: 18, height: 14)
@@ -436,7 +445,9 @@ private struct ClaudeThoughtRunView: View, Equatable {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "sparkle")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(ClaudePalette.accent.opacity(0.65))
+                .foregroundStyle(
+                    ClaudePalette.accent(for: backend).opacity(0.65)
+                )
                 .frame(width: 15, height: 15)
 
             Text(thought.text)
@@ -676,6 +687,7 @@ private struct ClaudeToolBadge: View {
 private struct ClaudeEditRunView: View {
     let run: ClaudeEditRun
     let workspaceDirectory: String
+    let backend: AgentBackend
 
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
@@ -716,7 +728,7 @@ private struct ClaudeEditRunView: View {
                 if run.status == .running {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(ClaudePalette.accent)
+                        .tint(ClaudePalette.accent(for: backend))
                 }
 
                 Spacer(minLength: 6)
@@ -727,7 +739,9 @@ private struct ClaudeEditRunView: View {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(
-                            copied ? ClaudePalette.accent : Color.secondary
+                            copied
+                                ? ClaudePalette.accent(for: backend)
+                                : Color.secondary
                         )
                 }
                 .buttonStyle(.plain)
@@ -808,7 +822,7 @@ private struct ClaudeEditRunView: View {
     private var statusColor: Color {
         switch run.status {
         case .running:
-            ClaudePalette.accent
+            ClaudePalette.accent(for: backend)
         case .completed:
             .green
         case .failed:
@@ -834,13 +848,14 @@ private struct ClaudeEditRunView: View {
 /// Claude Code의 할 일 목록은 진행 상황을 그대로 드러내는 것이 핵심이다.
 private struct ClaudePlanBoardView: View {
     let board: ClaudePlanBoard
+    let backend: AgentBackend
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "checklist")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(ClaudePalette.accent(for: backend))
 
                 Text("작업 계획")
                     .font(.system(size: 12, weight: .bold))
@@ -853,11 +868,11 @@ private struct ClaudePlanBoardView: View {
                             design: .monospaced
                         )
                     )
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(ClaudePalette.accent(for: backend))
                     .padding(.horizontal, 6)
                     .frame(height: 17)
                     .background(
-                        Color.orange.opacity(0.12),
+                        ClaudePalette.accent(for: backend).opacity(0.12),
                         in: Capsule()
                     )
 
@@ -897,12 +912,12 @@ private struct ClaudePlanBoardView: View {
         }
         .padding(11)
         .background(
-            Color.orange.opacity(0.05),
+            ClaudePalette.accent(for: backend).opacity(0.05),
             in: RoundedRectangle(cornerRadius: 11, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(Color.orange.opacity(0.16))
+                .stroke(ClaudePalette.accent(for: backend).opacity(0.16))
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
@@ -927,7 +942,7 @@ private struct ClaudePlanBoardView: View {
         case .done:
             .secondary
         case .active:
-            .orange
+            ClaudePalette.accent(for: backend)
         case .todo:
             .primary
         }
@@ -947,6 +962,7 @@ private struct ClaudeMessageView: View {
     let responseFeedback: TurnResponseFeedback?
     let updateResponseFeedback: (TurnResponseFeedback?) async -> Void
     let onFinishedTyping: () -> Void
+    let backend: AgentBackend
 
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
@@ -960,7 +976,9 @@ private struct ClaudeMessageView: View {
                 )
                 .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(
-                    needsInput ? Color.orange : ClaudePalette.accent
+                    needsInput
+                        ? Color.orange
+                        : ClaudePalette.accent(for: backend)
                 )
             }
 
@@ -986,7 +1004,7 @@ private struct ClaudeMessageView: View {
             ResponseMessageFooter(
                 occurredAt: message.occurredAt,
                 copied: copied,
-                accentColor: ClaudePalette.accent,
+                accentColor: ClaudePalette.accent(for: backend),
                 accessibilityID: "copyMessage-\(message.id)",
                 showsFeedback: isConclusion && !needsInput,
                 feedback: responseFeedback,

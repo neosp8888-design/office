@@ -26,6 +26,7 @@ const CLAUDE_FAST_PRICES_PER_MILLION = {
 };
 
 const SONNET_FIVE_STANDARD_PRICE_CHANGE = Date.UTC(2026, 8, 1);
+const GEMINI_FLASH_PROMOTION_END = Date.UTC(2027, 0, 1);
 
 export function estimateTokenCost({
   backend,
@@ -45,6 +46,9 @@ export function estimateTokenCost({
       usage,
       pricedAt,
     });
+  }
+  if (backend === "antigravity") {
+    return estimateAntigravityCost({ model, usage, pricedAt });
   }
   if (backend !== "codex") {
     return null;
@@ -78,6 +82,54 @@ export function estimateTokenCost({
     outputTokens * prices.output
   ) / 1_000_000;
   return roundedCost(cost);
+}
+
+function estimateAntigravityCost({ model, usage, pricedAt }) {
+  const inputTokens = nonnegativeNumber(usage.inputTokens);
+  const outputTokens = nonnegativeNumber(usage.outputTokens);
+  if (inputTokens === null || outputTokens === null) {
+    return null;
+  }
+  const cachedInputTokens = nonnegativeNumber(usage.cachedInputTokens) ?? 0;
+  const prices = antigravityPrices(
+    model,
+    inputTokens + cachedInputTokens,
+    pricedAt,
+  );
+  if (!prices) {
+    return null;
+  }
+
+  // agy stream-json은 캐시 미스 입력과 cache_read_tokens를 별도로 보고한다.
+  // output_tokens에는 thinking_tokens가 이미 포함되므로 추론 토큰을 다시
+  // 더하지 않는다. 컨텍스트 캐시 보관 시간은 CLI 턴 데이터로 알 수 없어
+  // 저장 요금은 이 API 환산 추정치에서 제외한다.
+  const cost = (
+    inputTokens * prices.input +
+    cachedInputTokens * prices.cached +
+    outputTokens * prices.output
+  ) / 1_000_000;
+  return roundedCost(cost);
+}
+
+function antigravityPrices(model, promptTokens, pricedAt) {
+  const timestamp = priceTimestamp(pricedAt);
+  switch (model) {
+    case "gemini-3.7-flash":
+    case "gemini-3.6-flash":
+      return timestamp < GEMINI_FLASH_PROMOTION_END
+        ? { input: 0.75, cached: 0.075, output: 3.75 }
+        : { input: 1.5, cached: 0.15, output: 7.5 };
+    case "gemini-3.5-flash":
+      return { input: 1.5, cached: 0.15, output: 9 };
+    case "gemini-3.1-pro":
+    case "gemini-3.1-pro-preview":
+      return promptTokens > 200_000
+        ? { input: 4, cached: 0.4, output: 18 }
+        : { input: 2, cached: 0.2, output: 12 };
+    default:
+      return null;
+  }
 }
 
 function estimateClaudeCost({ model, fastMode, usage, pricedAt }) {

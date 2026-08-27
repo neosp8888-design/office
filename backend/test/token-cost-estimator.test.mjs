@@ -36,6 +36,73 @@ test("GPT-5.6 Sol Fast 비용은 Fast 공식 단가를 사용한다", () => {
   );
 });
 
+test("Gemini 3.7 Flash는 agy의 분리된 입력·캐시와 합산 출력을 계산한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.7-flash",
+      fastMode: false,
+      pricedAt: new Date("2026-08-28T00:00:00Z"),
+      usage: {
+        inputTokens: 100_000,
+        cachedInputTokens: 20_000,
+        outputTokens: 5_000,
+        reasoningOutputTokens: 4_000,
+      },
+    }),
+    0.09525,
+  );
+});
+
+test("Gemini 3.7 Flash는 프로모션 종료 뒤 정가를 사용한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.7-flash",
+      fastMode: false,
+      pricedAt: new Date("2027-01-01T00:00:00Z"),
+      usage: {
+        inputTokens: 100_000,
+        cachedInputTokens: 20_000,
+        outputTokens: 5_000,
+      },
+    }),
+    0.1905,
+  );
+});
+
+test("Gemini 3.1 Pro는 전체 프롬프트 20만 초과 단가를 적용한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.1-pro",
+      fastMode: false,
+      usage: {
+        inputTokens: 2_000,
+        cachedInputTokens: 200_000,
+        outputTokens: 1_000,
+      },
+    }),
+    0.106,
+  );
+});
+
+test("Gemini 3.5 Flash는 모델별 출력 단가를 사용한다", () => {
+  assert.equal(
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.5-flash",
+      fastMode: false,
+      usage: {
+        inputTokens: 1_000,
+        cachedInputTokens: 1_000,
+        outputTokens: 1_000,
+      },
+    }),
+    0.01065,
+  );
+});
+
 test("Claude CLI가 보고한 누적 비용을 그대로 보존한다", () => {
   assert.equal(
     estimateTokenCost({
@@ -166,6 +233,16 @@ test("단가를 모르는 모델은 비용을 꾸며내지 않는다", () => {
   assert.equal(
     estimateTokenCost({
       backend: "codex",
+      model: "unknown",
+      fastMode: false,
+      usage,
+    }),
+    null,
+  );
+
+  assert.equal(
+    estimateTokenCost({
+      backend: "antigravity",
       model: "unknown",
       fastMode: false,
       usage,

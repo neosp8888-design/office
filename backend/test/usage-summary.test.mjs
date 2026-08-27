@@ -266,7 +266,7 @@ test("DB 통계는 공급자별 오늘과 30일 값을 숫자로 정규화한다
     last30DaysTokens: 0,
     costEstimateSupported: true,
   });
-  assert.deepEqual(activity.antigravity, emptyActivityFixture(false));
+  assert.deepEqual(activity.antigravity, emptyActivityFixture());
   assert.match(query.text, /usage_records AS usage/);
   assert.match(query.text, /IN \('claude', 'antigravity'\)/);
   assert.equal(query.values.length, 2);
@@ -320,7 +320,7 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
           last30DaysTokens: 0,
           costEstimateSupported: true,
         },
-        antigravity: emptyActivityFixture(false),
+        antigravity: emptyActivityFixture(),
       };
     },
     now: () => fixedNow,
@@ -372,7 +372,7 @@ test("Claude 한도 조회가 실패해도 직전 값을 유지하고 오류만 
     activityReader: async () => ({
       codex: emptyActivityFixture(),
       claude: emptyActivityFixture(),
-      antigravity: emptyActivityFixture(false),
+      antigravity: emptyActivityFixture(),
     }),
     now: () => current,
   });
@@ -407,7 +407,7 @@ test("Claude 한도 조회가 실패하면 백오프 동안 다시 부르지 않
     activityReader: async () => ({
       codex: emptyActivityFixture(),
       claude: emptyActivityFixture(),
-      antigravity: emptyActivityFixture(false),
+      antigravity: emptyActivityFixture(),
     }),
     now: () => current,
   });
@@ -456,7 +456,7 @@ test("한 공급자 실패는 다른 한도와 DB 통계를 가리지 않는다"
         last30DaysTokens: 8,
         costEstimateSupported: true,
       },
-      antigravity: emptyActivityFixture(false),
+      antigravity: emptyActivityFixture(),
     }),
     now: () => new Date("2026-08-12T00:00:00Z"),
   });

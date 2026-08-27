@@ -4,7 +4,7 @@ import XCTest
 @testable import OfficeGame
 
 final class UsageBoardLayoutTests: XCTestCase {
-    func testUsageCardPresentsTokensAndMarksUnsupportedSubscriptionCost() throws {
+    func testUsageCardPresentsOnlyEstimatedAPICost() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -25,20 +25,52 @@ final class UsageBoardLayoutTests: XCTestCase {
         )
         let card = String(source[start..<end])
 
-        XCTAssertTrue(card.contains("\"토큰 · API 요금 추정\""))
-        XCTAssertTrue(card.contains("label: \"오늘 토큰\""))
-        XCTAssertTrue(card.contains("label: \"30일 토큰\""))
+        XCTAssertTrue(card.contains("\"API 요금 추정\""))
         XCTAssertTrue(card.contains("label: \"오늘 비용\""))
         XCTAssertTrue(card.contains("label: \"30일 비용\""))
-        XCTAssertTrue(
-            card.contains("구독 사용량의 USD 비용 환산은 지원하지 않습니다.")
-        )
+        XCTAssertFalse(card.contains("label: \"오늘 토큰\""))
+        XCTAssertFalse(card.contains("label: \"30일 토큰\""))
     }
 
     func testUsesSingleColumnBelowThreshold() {
         XCTAssertTrue(
             UsageBoardLayout.usesSingleColumn(
                 for: UsageBoardLayout.singleColumnThreshold - 1
+            )
+        )
+    }
+
+    func testAntigravityTranscriptUsesWhiteboardBlueAccent() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
+        let dashboard = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeDashboardPanels.swift"),
+            encoding: .utf8
+        )
+        let transcript = try String(
+            contentsOf: sourceRoot.appending(path: "ClaudeTranscriptView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            dashboard.contains(
+                "tint: DashboardPalette.providerAccent(for: .antigravity)"
+            )
+        )
+        XCTAssertTrue(
+            dashboard.contains("backend: effectiveBackend")
+        )
+        XCTAssertTrue(
+            dashboard.contains(
+                "antigravityAccent = Color(red: 0.19, green: 0.49, blue: 0.88)"
+            )
+        )
+        XCTAssertTrue(
+            transcript.contains(
+                "DashboardPalette.providerAccent(for: backend)"
             )
         )
     }
