@@ -1949,27 +1949,37 @@ private struct ContextCompactionControls: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Label("자동", systemImage: "gauge.with.dots.needle.33percent")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+            if ContextCompactionPresentation.usesAdjustableThreshold(
+                backend: character.backend
+            ) {
+                Label("자동", systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
 
-            Slider(
-                value: $draftPercent,
-                in: 50 ... 95,
-                step: 5,
-                onEditingChanged: thresholdEditingChanged
-            )
-            .frame(width: 92)
-            .tint(DashboardPalette.accent)
-            .disabled(!availability.canAdjustThreshold)
-            .accessibilityLabel("자동 컨텍스트 압축 기준")
-            .accessibilityValue("\(roundedPercent)퍼센트")
-            .help(thresholdHelp)
+                Slider(
+                    value: $draftPercent,
+                    in: 50 ... 95,
+                    step: 5,
+                    onEditingChanged: thresholdEditingChanged
+                )
+                .frame(width: 92)
+                .tint(DashboardPalette.accent)
+                .disabled(!availability.canAdjustThreshold)
+                .accessibilityLabel("자동 컨텍스트 압축 기준")
+                .accessibilityValue("\(roundedPercent)퍼센트")
+                .help(thresholdHelp)
 
-            Text(thresholdText)
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(DashboardPalette.accent)
-                .frame(minWidth: 28, alignment: .trailing)
+                Text(thresholdText)
+                    .font(
+                        .system(
+                            size: 10.5,
+                            weight: .semibold,
+                            design: .monospaced
+                        )
+                    )
+                    .foregroundStyle(DashboardPalette.accent)
+                    .frame(minWidth: 28, alignment: .trailing)
+            }
 
             Button {
                 alert = .confirmation
@@ -2089,6 +2099,10 @@ private struct ContextCompactionControls: View {
 }
 
 enum ContextCompactionPresentation {
+    static func usesAdjustableThreshold(backend: AgentBackend) -> Bool {
+        backend == .claude
+    }
+
     static func confirmationMessage(
         displayName: String,
         backendTitle: String

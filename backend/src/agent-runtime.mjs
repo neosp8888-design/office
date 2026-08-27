@@ -45,9 +45,6 @@ import {
   CodexRolloutCollaborationTracker,
 } from "./codex-rollout-collaboration.mjs";
 import { compactCodexThread } from "./codex-context-compactor.mjs";
-import {
-  resolveCodexContextConfiguration,
-} from "./codex-model-context.mjs";
 import { ClaudePersistentWorker } from "./claude-persistent-worker.mjs";
 import {
   appendLocalImagePreviews,
@@ -151,7 +148,6 @@ export class AgentRuntime {
     rolloutReaderFactory = createRolloutReader,
     claudeWorkerFactory = (options) => new ClaudePersistentWorker(options),
     codexCompactor = compactCodexThread,
-    codexContextResolver = resolveCodexContextConfiguration,
     contextUsageReader = sessionContextUsage,
   }) {
     this.pool = pool;
@@ -163,7 +159,6 @@ export class AgentRuntime {
     this.rolloutReaderFactory = rolloutReaderFactory;
     this.claudeWorkerFactory = claudeWorkerFactory;
     this.codexCompactor = codexCompactor;
-    this.codexContextResolver = codexContextResolver;
     this.contextUsageReader = contextUsageReader;
     this.running = new Map();
     this.claudeWorkers = new Map();
@@ -1206,7 +1201,6 @@ export class AgentRuntime {
       previousSessionID: state.externalSessionID,
       attachments: state.attachments,
       workdir: state.workdir,
-      codexContext: this.codexContextResolver(state.character),
     });
     const child = spawn(executable, cliArguments, {
       cwd: state.workdir,
@@ -1513,15 +1507,11 @@ export class AgentRuntime {
         const worker = this.acquireClaudeWorker(target, executable);
         nativeResult = await worker.compact();
       } else {
-        const codexContext = this.codexContextResolver(target.character);
         nativeResult = await this.codexCompactor({
           executable: locateExecutable(target.character),
           threadID: target.externalSessionID,
           cwd: target.workdir,
           env: executionEnvironment(target.character),
-          contextWindow: codexContext?.contextWindow ?? null,
-          autoCompactTokenLimit:
-            codexContext?.autoCompactTokenLimit ?? null,
         });
       }
       const after = this.contextUsage(target);
@@ -1566,6 +1556,11 @@ export class AgentRuntime {
   }
 
   async maybeAutoCompactAfterTurn(state) {
+    // Codex는 CLI 자체의 기본 컨텍스트 창과 네이티브 자동 압축을 사용한다.
+    // 직원별 퍼센트 기준은 Claude에만 적용한다.
+    if (state.character.backend !== "claude") {
+      return null;
+    }
     const sessionID = String(state.externalSessionID ?? "").trim();
     if (!sessionID || this.draining) {
       return null;
@@ -4320,7 +4315,6 @@ export function buildArguments({
   previousSessionID,
   attachments = [],
   workdir = null,
-  codexContext = null,
 }) {
   return character.backend === "codex"
     ? codexArguments(
@@ -4328,7 +4322,6 @@ export function buildArguments({
       prompt,
       previousSessionID,
       attachments,
-      codexContext,
     )
     : claudeArguments(
       character,
@@ -4408,7 +4401,6 @@ function codexArguments(
   prompt,
   previousSessionID,
   attachments,
-  codexContext,
 ) {
   const argumentsList = ["exec"];
   if (previousSessionID) {
@@ -4418,17 +4410,6 @@ function codexArguments(
   }
   if (character.model) {
     argumentsList.push("-c", `model="${character.model}"`);
-  }
-  if (
-    codexContext?.contextWindow > 0 &&
-    codexContext?.autoCompactTokenLimit > 0
-  ) {
-    argumentsList.push(
-      "-c",
-      `model_context_window=${codexContext.contextWindow}`,
-      "-c",
-      `model_auto_compact_token_limit=${codexContext.autoCompactTokenLimit}`,
-    );
   }
   argumentsList.push(
     "-c",

@@ -45,8 +45,6 @@ test("Codex 수동 압축은 app-server의 네이티브 compact 요청을 사용
     threadID: "thread-1",
     cwd: "/repo",
     env: { TEST: "1" },
-    contextWindow: 872_000,
-    autoCompactTokenLimit: 745_560,
     timeoutMs: 1_000,
     spawnProcess: (executable, argumentsList, options) => {
       spawn = { executable, argumentsList, options };
@@ -73,14 +71,7 @@ test("Codex 수동 압축은 app-server의 네이티브 compact 요청을 사용
   });
 
   assert.equal(spawn.executable, "codex");
-  assert.deepEqual(spawn.argumentsList, [
-    "-c",
-    "model_context_window=872000",
-    "-c",
-    "model_auto_compact_token_limit=745560",
-    "app-server",
-    "--stdio",
-  ]);
+  assert.deepEqual(spawn.argumentsList, ["app-server", "--stdio"]);
   assert.equal(spawn.options.cwd, "/repo");
   assert.deepEqual(
     messages.map((message) => message.method),

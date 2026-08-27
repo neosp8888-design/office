@@ -73,7 +73,7 @@ test("자동 압축 기준은 50~95% 범위와 90% 기본값을 사용한다", (
   assert.equal(normalizeAutoCompactPercent(100), 95);
 });
 
-test("턴 종료 점유가 직원 기준에 도달하면 같은 세션을 자동 압축한다", async () => {
+test("Claude 턴 종료 점유가 직원 기준에 도달하면 같은 세션을 자동 압축한다", async () => {
   const calls = [];
   const runtime = new AgentRuntime({
     pool: {},
@@ -94,16 +94,16 @@ test("턴 종료 점유가 직원 기준에 도달하면 같은 세션을 자동
   await runtime.maybeAutoCompactAfterTurn({
     externalSessionID: "session-1",
     character: {
-      id: "boss",
-      name: "백부장",
-      backend: "codex",
-      model: "gpt-5.6-sol",
+      id: "left-man",
+      name: "클대리",
+      backend: "claude",
+      model: "claude-sonnet-5",
       autoCompactPercent: 90,
     },
   });
 
   assert.deepEqual(calls, [{
-    characterID: "boss",
+    characterID: "left-man",
     options: {
       automatic: true,
       expectedSessionID: "session-1",
@@ -111,7 +111,7 @@ test("턴 종료 점유가 직원 기준에 도달하면 같은 세션을 자동
   }]);
 });
 
-test("턴 종료 점유가 직원 기준 미만이면 자동 압축하지 않는다", async () => {
+test("Claude 턴 종료 점유가 직원 기준 미만이면 자동 압축하지 않는다", async () => {
   const runtime = new AgentRuntime({
     pool: {},
     withTransaction: async (operation) => await operation({}),
@@ -131,11 +131,42 @@ test("턴 종료 점유가 직원 기준 미만이면 자동 압축하지 않는
   await runtime.maybeAutoCompactAfterTurn({
     externalSessionID: "session-1",
     character: {
+      id: "left-man",
+      name: "클대리",
+      backend: "claude",
+      model: "claude-sonnet-5",
+      autoCompactPercent: 90,
+    },
+  });
+
+  assert.equal(called, false);
+});
+
+test("Codex 턴 종료는 CLI 기본 자동 압축에 맡긴다", async () => {
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    contextUsageReader: () => ({
+      usedTokens: 999_999,
+      limitTokens: 1_000_000,
+    }),
+  });
+  let called = false;
+  runtime.compactContext = async () => {
+    called = true;
+  };
+
+  await runtime.maybeAutoCompactAfterTurn({
+    externalSessionID: "session-1",
+    character: {
       id: "boss",
       name: "백부장",
       backend: "codex",
       model: "gpt-5.6-sol",
-      autoCompactPercent: 90,
+      autoCompactPercent: 50,
     },
   });
 
@@ -176,10 +207,6 @@ test("Codex 수동 압축은 활성 세션을 app-server compactor에 전달한�
     repositoryRoot: "/tmp",
     broadcast: (event) => calls.push({ event }),
     contextUsageReader: () => usage.shift(),
-    codexContextResolver: () => ({
-      contextWindow: 872_000,
-      autoCompactTokenLimit: 745_560,
-    }),
     codexCompactor: async (options) => {
       calls.push({ compact: options });
       return { turnID: "turn-compact" };
@@ -195,8 +222,11 @@ test("Codex 수동 압축은 활성 세션을 app-server compactor에 전달한�
   });
   assert.equal(calls[1].compact.threadID, "thread-1");
   assert.equal(calls[1].compact.cwd, "/tmp");
-  assert.equal(calls[1].compact.contextWindow, 872_000);
-  assert.equal(calls[1].compact.autoCompactTokenLimit, 745_560);
+  assert.equal(Object.hasOwn(calls[1].compact, "contextWindow"), false);
+  assert.equal(
+    Object.hasOwn(calls[1].compact, "autoCompactTokenLimit"),
+    false,
+  );
   assert.deepEqual(result, {
     ok: true,
     automatic: false,
@@ -250,10 +280,6 @@ test("압축 실패도 시작과 종료 이벤트를 보내고 점유를 해제�
     contextUsageReader: () => ({
       usedTokens: 230_000,
       limitTokens: 258_400,
-    }),
-    codexContextResolver: () => ({
-      contextWindow: 872_000,
-      autoCompactTokenLimit: 745_560,
     }),
     codexCompactor: async () => {
       throw new Error("압축기 실패");
@@ -723,25 +749,25 @@ test("Codex는 Fast 비활성화도 신규 실행과 재개에 명시한다", ()
   }
 });
 
-test("Codex는 최대 창과 직원별 네이티브 자동 압축 한도를 전달한다", () => {
+test("Codex는 CLI 기본 컨텍스트와 자동 압축 설정을 사용한다", () => {
   for (const previousSessionID of [null, "session-1"]) {
     const argumentsList = buildArguments({
       character: codexCharacter,
       prompt: "긴 컨텍스트로 계속해줘.",
       previousSessionID,
-      codexContext: {
-        contextWindow: 872_000,
-        autoCompactTokenLimit: 745_560,
-      },
     });
 
     assert.equal(
-      argumentsList.includes("model_context_window=872000"),
-      true,
+      argumentsList.some((value) =>
+        value.startsWith("model_context_window=")
+      ),
+      false,
     );
     assert.equal(
-      argumentsList.includes("model_auto_compact_token_limit=745560"),
-      true,
+      argumentsList.some((value) =>
+        value.startsWith("model_auto_compact_token_limit=")
+      ),
+      false,
     );
   }
 });
