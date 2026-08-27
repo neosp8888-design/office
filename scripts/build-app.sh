@@ -189,6 +189,16 @@ npm \
     --ignore-scripts \
     --no-audit \
     --no-fund
+# OFFICESTRA는 Apple Silicon 전용이다. onnxruntime-node가 함께 배포하는
+# 타 운영체제 바이너리는 임시 앱 스테이징에서만 제거해 번들 크기와
+# 불필요한 네이티브 코드를 줄인다.
+ORT_NATIVE_ROOT="$BACKEND_RUNTIME_DIR/node_modules/onnxruntime-node/bin/napi-v6"
+/bin/rm -rf \
+    "$ORT_NATIVE_ROOT/linux" \
+    "$ORT_NATIVE_ROOT/win32"
+ORT_NATIVE_DIR="$ORT_NATIVE_ROOT/darwin/arm64"
+ORT_DYLIB="$ORT_NATIVE_DIR/libonnxruntime.1.24.3.dylib"
+ORT_BINDING="$ORT_NATIVE_DIR/onnxruntime_binding.node"
 "$NODE_EXECUTABLE" \
     "$PROJECT_DIR/scripts/generate-third-party-notices.mjs" \
     "$BACKEND_RUNTIME_DIR/package-lock.json" \
@@ -199,6 +209,10 @@ for packaged_runtime_path in \
     "$BACKEND_RUNTIME_DIR/node_modules/pg/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/ws/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/@slack/bolt/package.json" \
+    "$BACKEND_RUNTIME_DIR/node_modules/@huggingface/tokenizers/package.json" \
+    "$BACKEND_RUNTIME_DIR/node_modules/onnxruntime-node/package.json" \
+    "$ORT_DYLIB" \
+    "$ORT_BINDING" \
     "$RUNTIME_DIR/database/migrations/001_initial.sql" \
     "$RUNTIME_DIR/infra/compose.yaml" \
     "$NODE_RUNTIME_DIR/bin/node" \
@@ -247,7 +261,6 @@ if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
     codesign \
         --force \
         --entitlements "$NODE_ENTITLEMENTS" \
-        --options runtime \
         --sign - \
         "$NODE_RUNTIME_DIR/bin/node"
 else
@@ -258,6 +271,24 @@ else
         --timestamp \
         --sign "$CODESIGN_IDENTITY" \
         "$NODE_RUNTIME_DIR/bin/node"
+fi
+
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+    codesign --force --sign - "$ORT_DYLIB"
+    codesign --force --sign - "$ORT_BINDING"
+else
+    codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --sign "$CODESIGN_IDENTITY" \
+        "$ORT_DYLIB"
+    codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --sign "$CODESIGN_IDENTITY" \
+        "$ORT_BINDING"
 fi
 
 # Developer ID 재서명에서 기존 Node 배포본의 광범위한 entitlement를 무작정

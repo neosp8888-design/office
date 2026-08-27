@@ -506,6 +506,10 @@ export async function syncWorkRecordRAGDocuments(client, {
         title = EXCLUDED.title,
         content = EXCLUDED.content,
         metadata = EXCLUDED.metadata,
+        embedding = NULL,
+        embedding_model = NULL,
+        embedding_updated_at = NULL,
+        embedding_error = NULL,
         updated_at = now()
       WHERE (
         rag_documents.source,

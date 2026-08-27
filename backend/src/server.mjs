@@ -55,7 +55,6 @@ import { migrate } from "./migrate.mjs";
 import {
   reconcileTerminalWorkRecordReviews,
   syncWorkRecordRAGDocuments,
-  workRecordSearchTSQuery,
 } from "./work-record-memory.mjs";
 import {
   TurnFeedbackValidationError,
@@ -76,6 +75,8 @@ import {
   verifyWikiProposal,
 } from "./wiki-knowledge.mjs";
 import { createUsageSummaryReader } from "./usage-summary.mjs";
+import { LocalEmbeddingService } from "./local-embedding.mjs";
+import { searchRAGDocuments } from "./rag-search.mjs";
 import {
   CLIUpdateBusyError,
   CLIUpdateUnknownPackageError,
@@ -94,6 +95,7 @@ let runtime;
 let shuttingDown = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
 const cliUpdateChecker = createCLIUpdateChecker();
+const localEmbeddingService = new LocalEmbeddingService();
 
 async function hasRunningWork(backends) {
   const result = await pool.query(
@@ -1795,6 +1797,10 @@ async function addRAGDocument(response, body) {
   const embedding = Array.isArray(body.embedding)
     ? `[${body.embedding.join(",")}]`
     : null;
+  const embeddingModel = embedding
+    ? String(body.embeddingModel ?? "external:unspecified").trim() ||
+      "external:unspecified"
+    : null;
   const result = await pool.query(
     `
       INSERT INTO rag_documents (
@@ -1802,9 +1808,14 @@ async function addRAGDocument(response, body) {
         title,
         content,
         metadata,
-        embedding
+        embedding,
+        embedding_model,
+        embedding_updated_at
       )
-      VALUES ($1, $2, $3, $4::jsonb, $5::vector)
+      VALUES ($1, $2, $3, $4::jsonb, $5::vector, $6, CASE
+        WHEN $5::vector IS NULL THEN NULL
+        ELSE now()
+      END)
       RETURNING id
     `,
     [
@@ -1813,6 +1824,7 @@ async function addRAGDocument(response, body) {
       content,
       JSON.stringify(body.metadata ?? {}),
       embedding,
+      embeddingModel,
     ],
   );
   send(response, 201, result.rows[0]);
@@ -1947,58 +1959,19 @@ async function wikiProposalActionEndpoint(response, request, route) {
 }
 
 async function searchRAG(response, body) {
-  const limit = Math.max(1, Math.min(Number(body.limit ?? 5), 20));
-  let result;
-
-  if (Array.isArray(body.embedding)) {
-    const embedding = `[${body.embedding.join(",")}]`;
-    result = await pool.query(
-      `
-        SELECT
-          id,
-          id AS "ragDocumentId",
-          source,
-          title,
-          content,
-          metadata,
-          work_record_id AS "workRecordId",
-          1 - (embedding <=> $1::vector) AS score
-        FROM searchable_rag_documents
-        WHERE embedding IS NOT NULL
-        ORDER BY embedding <=> $1::vector
-        LIMIT $2
-      `,
-      [embedding, limit],
-    );
-  } else {
-    const tsQuery = workRecordSearchTSQuery(body.query);
-    if (!tsQuery) {
-      send(response, 200, { documents: [] });
-      return;
-    }
-    result = await pool.query(
-      `
-        SELECT
-          id,
-          id AS "ragDocumentId",
-          source,
-          title,
-          content,
-          metadata,
-          work_record_id AS "workRecordId",
-          ts_rank(
-            search_document,
-            to_tsquery('simple', $1)
-          ) AS score
-        FROM searchable_rag_documents
-        WHERE search_document @@ to_tsquery('simple', $1)
-        ORDER BY score DESC
-        LIMIT $2
-      `,
-      [tsQuery, limit],
+  const result = await searchRAGDocuments(pool, {
+    query: body.query,
+    embedding: body.embedding,
+    limit: body.limit,
+    embeddingService: localEmbeddingService,
+  });
+  if (result.fallbackError) {
+    console.warn(
+      "로컬 벡터 검색에 실패해 전문검색으로 대체했습니다.",
+      result.fallbackError,
     );
   }
-  send(response, 200, { documents: result.rows });
+  send(response, 200, { documents: result.documents });
 }
 
 const server = createServer(async (request, response) => {
@@ -2352,6 +2325,7 @@ try {
     repositoryRoot,
     workspaceManager,
     broadcast,
+    embeddingService: localEmbeddingService,
   });
   await runtime.recoverInterruptedJobs();
   server.listen(port, "127.0.0.1", () => {

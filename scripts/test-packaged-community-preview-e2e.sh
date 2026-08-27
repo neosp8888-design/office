@@ -76,6 +76,8 @@ for required_path in \
     "$NODE_EXECUTABLE" \
     "$BACKEND_DIR/src/server.mjs" \
     "$BACKEND_DIR/node_modules/pg/package.json" \
+    "$BACKEND_DIR/node_modules/@huggingface/tokenizers/package.json" \
+    "$BACKEND_DIR/node_modules/onnxruntime-node/bin/napi-v6/darwin/arm64/onnxruntime_binding.node" \
     "$COMPOSE_FILE" \
     "$RUNTIME/database/migrations/001_initial.sql" \
     "$SOURCE_CONFIG"; do

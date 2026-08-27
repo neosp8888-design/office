@@ -66,6 +66,7 @@ import {
   syncWorkRecordRAGDocuments,
   transitionTurnWorkRecordReview,
 } from "./work-record-memory.mjs";
+import { embedRAGDocumentsBestEffort } from "./rag-embeddings.mjs";
 import { createWikiProposal } from "./wiki-knowledge.mjs";
 
 const MAX_FILE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
@@ -153,6 +154,7 @@ export class AgentRuntime {
     codexCompactor = compactCodexThread,
     codexContextResolver = resolveCodexContextConfiguration,
     contextUsageReader = sessionContextUsage,
+    embeddingService = null,
   }) {
     this.pool = pool;
     this.withTransaction = withTransaction;
@@ -165,6 +167,7 @@ export class AgentRuntime {
     this.codexCompactor = codexCompactor;
     this.codexContextResolver = codexContextResolver;
     this.contextUsageReader = contextUsageReader;
+    this.embeddingService = embeddingService;
     this.running = new Map();
     this.claudeWorkers = new Map();
     this.compactingCharacters = new Set();
@@ -1348,6 +1351,7 @@ export class AgentRuntime {
     this.closeClaudeWorkers(
       new Error("OFFICESTRA 백엔드가 종료됩니다."),
     );
+    this.embeddingService?.close?.();
   }
 
   closeClaudeWorkers(
@@ -2354,7 +2358,6 @@ export class AgentRuntime {
       await this.withTransaction(async (client) => {
         await syncWorkRecordRAGDocuments(client, { workRecordID });
       });
-      return null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(
@@ -2363,6 +2366,32 @@ export class AgentRuntime {
       );
       return message;
     }
+    if (!this.embeddingService) {
+      return null;
+    }
+    let embedding;
+    try {
+      embedding = await embedRAGDocumentsBestEffort(
+        this.pool,
+        this.embeddingService,
+        { workRecordIDs: [workRecordID] },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        "작업 기록은 저장했지만 로컬 임베딩을 나중에 백필합니다.",
+        message,
+      );
+      return message;
+    }
+    if (!embedding.error) {
+      return null;
+    }
+    console.warn(
+      "작업 기록은 저장했지만 로컬 임베딩을 나중에 백필합니다.",
+      embedding.error,
+    );
+    return embedding.error;
   }
 
   async transitionWorkRecordReviewBestEffort(options) {

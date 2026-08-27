@@ -35,26 +35,19 @@ test("RAG 검색어는 일반 지시어를 빼고 의미 토큰을 OR 접두 검
   assert.equal(workRecordSearchTSQuery("계속 진행해 다시 확인해"), "");
 });
 
-test("공개 RAG 검색도 같은 OR 접두 검색을 쓰고 빈 검색은 조회하지 않는다", () => {
-  const serverSource = readFileSync(
-    new URL("../src/server.mjs", import.meta.url),
+test("RAG 전문검색 폴백도 같은 OR 접두 검색을 쓴다", () => {
+  const searchSource = readFileSync(
+    new URL("../src/rag-search.mjs", import.meta.url),
     "utf8",
   );
-  const searchStart = serverSource.indexOf("async function searchRAG");
-  const searchEnd = serverSource.indexOf(
-    "const server = createServer",
-    searchStart,
-  );
-  assert.ok(searchStart >= 0 && searchEnd > searchStart);
-  const searchSource = serverSource.slice(searchStart, searchEnd);
 
   assert.match(
     searchSource,
-    /const tsQuery = workRecordSearchTSQuery\(body\.query\)/,
+    /const tsQuery = workRecordSearchTSQuery\(query\)/,
   );
   assert.match(
     searchSource,
-    /if \(!tsQuery\) \{[\s\S]*documents: \[\][\s\S]*return;/,
+    /if \(!tsQuery\) \{[\s\S]*return \[\];/,
   );
   assert.match(searchSource, /to_tsquery\('simple', \$1\)/);
   assert.doesNotMatch(searchSource, /websearch_to_tsquery/);
@@ -131,6 +124,7 @@ test("RAG 동기화는 부적격 문서를 지운 뒤 승인된 기록만 멱등
   assert.match(queries[0].text, /FROM searchable_work_record_ids/);
   assert.match(queries[1].text, /JOIN searchable_work_record_ids/);
   assert.match(queries[1].text, /ON CONFLICT \(work_record_id\)/);
+  assert.match(queries[1].text, /embedding_model = NULL/);
 });
 
 test("검토 승인 상태 전환은 잠금과 이벤트만 저장하고 RAG를 직접 갱신하지 않는다", async () => {
