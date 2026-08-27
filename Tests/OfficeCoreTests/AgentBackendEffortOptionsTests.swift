@@ -67,4 +67,50 @@ final class AgentBackendEffortOptionsTests: XCTestCase {
         XCTAssertFalse(settings.fastMode)
         XCTAssertEqual(settings.model, "claude-sonnet-5")
     }
+
+    func testAntigravityModelsUseNativeEffortLevelsWithoutFastMode() {
+        XCTAssertEqual(
+            AgentBackend.antigravity.modelOptions,
+            [
+                "gemini-3.7-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-3.1-pro",
+            ]
+        )
+        XCTAssertEqual(
+            AgentBackend.antigravity.effortOptions(
+                for: "gemini-3.7-flash"
+            ),
+            ["low", "medium", "high"]
+        )
+        XCTAssertEqual(
+            AgentBackend.antigravity.effortOptions(
+                for: "gemini-3.1-pro"
+            ),
+            ["low", "high"]
+        )
+        XCTAssertFalse(
+            AgentBackend.antigravity.supportsFastMode(
+                model: "gemini-3.7-flash"
+            )
+        )
+        XCTAssertEqual(AgentBackend.antigravity.executableName, "agy")
+    }
+
+    func testSelectingAntigravityProRepairsUnsupportedMediumEffort() {
+        var settings = CharacterAgentSettings(
+            backend: .antigravity,
+            model: "gemini-3.7-flash",
+            effort: "medium",
+            fastMode: false,
+            permission: .workspaceWrite
+        )
+
+        settings.selectModel("gemini-3.1-pro")
+
+        XCTAssertEqual(settings.effort, "high")
+        settings.setFastMode(true)
+        XCTAssertFalse(settings.fastMode)
+    }
 }

@@ -53,7 +53,118 @@ test("JSON 객체가 아닌 이벤트 행은 무시한다", () => {
   for (const value of ["null", "[]", '"event"', "1", "true"]) {
     assert.equal(parseAgentEvent(value, "codex"), null);
     assert.equal(parseAgentEvent(value, "claude"), null);
+    assert.equal(parseAgentEvent(value, "antigravity"), null);
   }
+});
+
+test("Antigravity 초기화에서 재개 가능한 대화 ID를 추출한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      event: "init",
+      conversation_id: "4df207a4-fbc5-4a28-994d-2e69ca276599",
+      init: { model: "gemini-3.7-flash" },
+    }),
+    "antigravity",
+  );
+
+  assert.deepEqual(event, {
+    sessionID: "4df207a4-fbc5-4a28-994d-2e69ca276599",
+  });
+});
+
+test("Antigravity 응답 조각과 단계별 사용량을 추출한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        conversation_id: "conversation-1",
+        step_index: 3,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "완료했습니다.\n",
+        usage: {
+          input_tokens: 1_200,
+          output_tokens: 30,
+          thinking_tokens: 12,
+          cache_read_tokens: 900,
+          total_tokens: 1_242,
+        },
+      },
+    }),
+    "antigravity",
+  );
+
+  assert.equal(event.responseDelta, "완료했습니다.\n");
+  assert.equal(event.usageIsDelta, true);
+  assert.deepEqual(event.usage, {
+    inputTokens: 1_200,
+    outputTokens: 30,
+    cachedInputTokens: 900,
+    cacheWriteInputTokens: null,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: 12,
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  });
+});
+
+test("Antigravity 명령 도구는 출력 없이 안전한 명령만 공개한다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        conversation_id: "conversation-1",
+        step_index: 2,
+        state: "DONE",
+        step_type: "tool",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          parameters: { CommandLine: "pwd" },
+          output: "/private/tmp/antigravity/scratch\n",
+        },
+      },
+    }),
+    "antigravity",
+  );
+
+  assert.deepEqual(event.activity, {
+    kind: "command",
+    text: "pwd",
+    eventKey: "antigravity:conversation-1:2",
+    status: "completed",
+    preserveText: false,
+    messageScoped: false,
+  });
+  assert.doesNotMatch(JSON.stringify(event), /scratch/);
+});
+
+test("Antigravity 최종 결과 사용량은 단계 사용량이 없을 때만 쓰는 fallback이다", () => {
+  const event = parseAgentEvent(
+    JSON.stringify({
+      event: "result",
+      result: {
+        conversation_id: "conversation-1",
+        status: "SUCCESS",
+        response: "완료했습니다.\n",
+        usage: {
+          input_tokens: 2_000,
+          output_tokens: 50,
+          thinking_tokens: 20,
+          cache_read_tokens: 1_400,
+        },
+      },
+    }),
+    "antigravity",
+  );
+
+  assert.equal(event.sessionID, "conversation-1");
+  assert.equal(event.responseText, "완료했습니다.");
+  assert.equal(event.usage, undefined);
+  assert.equal(event.usageFallback.inputTokens, 2_000);
 });
 
 test("Codex 완료 이벤트에서 토큰 사용량을 추출한다", () => {

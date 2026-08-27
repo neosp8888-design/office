@@ -1,4 +1,4 @@
-// 이 파일은 Codex와 Claude의 JSONL 이벤트를 안전한 말풍선 진행 문구로 변환한다.
+// 이 파일은 직원 CLI JSONL 이벤트를 안전한 말풍선 진행 문구로 변환한다.
 
 import Foundation
 
@@ -20,6 +20,8 @@ public enum AgentProgressEventParser {
             return codexMessage(from: object)
         case .claude:
             return claudeMessage(from: object)
+        case .antigravity:
+            return antigravityMessage(from: object)
         }
     }
 
@@ -130,6 +132,47 @@ public enum AgentProgressEventParser {
             return text
         }
         return nil
+    }
+
+    private static func antigravityMessage(
+        from object: [String: Any]
+    ) -> String? {
+        if object["event"] as? String == "init" {
+            return "업무 세팅 중 🧳"
+        }
+        guard
+            object["event"] as? String == "step_update",
+            let update = object["step_update"] as? [String: Any]
+        else {
+            return nil
+        }
+        let stepType = cleanText(update["step_type"])
+        if stepType == "agent_response" {
+            return concise(update["text_delta"])
+        }
+        guard stepType == "tool" else {
+            return nil
+        }
+        let info = update["tool_info"] as? [String: Any] ?? [:]
+        let name = cleanText(update["tool_name"] ?? info["name"]) ?? "도구"
+        let parameters = info["parameters"] as? [String: Any] ?? [:]
+        if name == "run_command" {
+            let command = safeCommand(
+                parameters["CommandLine"]
+                    ?? parameters["command_line"]
+                    ?? parameters["command"]
+            ) ?? "명령"
+            return "실행 · \(command)"
+        }
+        if let path = cleanText(
+            parameters["TargetFile"]
+                ?? parameters["target_file"]
+                ?? parameters["Path"]
+                ?? parameters["path"]
+        ) {
+            return "도구 · \(name) · \(compactPath(path))"
+        }
+        return "도구 · \(name)"
     }
 
     private static func commandMessage(

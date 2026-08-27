@@ -24,6 +24,7 @@ import {
   AgentDrainingError,
   AgentJobNotFoundError,
   AgentRuntime,
+  accumulatedUsage,
   buildArguments,
   claudePersistentArguments,
   claudePersistentWorkerSignature,
@@ -626,13 +627,16 @@ test("설정 실행 파일은 공급자 이름과 실행 가능한 일반 파일
   const directory = mkdtempSync(join(tmpdir(), "officestra-cli-path-"));
   const codex = join(directory, "codex");
   const claude = join(directory, "claude");
+  const agy = join(directory, "agy");
   const nonExecutableDirectory = join(directory, "non-executable");
   const nonExecutableCodex = join(nonExecutableDirectory, "codex");
   const directoryNamedCodex = join(directory, "directory", "codex");
   writeFileSync(codex, "");
   writeFileSync(claude, "");
+  writeFileSync(agy, "");
   chmodSync(codex, 0o755);
   chmodSync(claude, 0o755);
+  chmodSync(agy, 0o755);
   mkdirSync(nonExecutableDirectory, { recursive: true });
   writeFileSync(nonExecutableCodex, "");
   chmodSync(nonExecutableCodex, 0o644);
@@ -649,6 +653,20 @@ test("설정 실행 파일은 공급자 이름과 실행 가능한 일반 파일
       configuredExecutableForCharacter({
         backend: "codex",
         config: { executablePath: claude },
+      }),
+      null,
+    );
+    assert.equal(
+      configuredExecutableForCharacter({
+        backend: "antigravity",
+        config: { executablePath: agy },
+      }),
+      agy,
+    );
+    assert.equal(
+      configuredExecutableForCharacter({
+        backend: "antigravity",
+        config: { executablePath: codex },
       }),
       null,
     );
@@ -892,6 +910,114 @@ test("Claude 신규와 재개도 DB 업무 지침만 그대로 전달한다", ()
   }
 });
 
+test("Antigravity 신규와 재개는 모델·추론·대화 ID와 업무 폴더를 전달한다", () => {
+  for (const previousSessionID of [null, "conversation-1"]) {
+    const argumentsList = buildArguments({
+      character: {
+        backend: "antigravity",
+        model: "gemini-3.7-flash",
+        effort: "high",
+        fastMode: false,
+        permission: "accept-edits",
+        identityPrompt: "업무 지시를 정확히 이해한다.",
+      },
+      prompt: "상태를 확인해줘.",
+      previousSessionID,
+      workdir: "/repo/project",
+    });
+
+    assert.equal(argumentsList[0], "-p");
+    assert.match(argumentsList[1], /업무 지시를 정확히 이해한다/);
+    assert.match(argumentsList[1], /상태를 확인해줘/);
+    assert.match(argumentsList[1], /\/repo\/project/);
+    assert.equal(
+      argumentsList[argumentsList.indexOf("--add-dir") + 1],
+      "/repo/project",
+    );
+    assert.equal(
+      argumentsList[argumentsList.indexOf("--model") + 1],
+      "gemini-3.7-flash",
+    );
+    assert.equal(
+      argumentsList[argumentsList.indexOf("--effort") + 1],
+      "high",
+    );
+    assert.equal(argumentsList.includes("--sandbox"), true);
+    assert.equal(
+      argumentsList.includes("--dangerously-skip-permissions"),
+      true,
+    );
+    assert.equal(
+      argumentsList.includes("--conversation"),
+      previousSessionID !== null,
+    );
+    assert.equal(argumentsList.includes("service_tier=\"fast\""), false);
+    assert.equal(
+      argumentsList.some((value) =>
+        String(value).startsWith("model_context_window=")
+      ),
+      false,
+    );
+  }
+});
+
+test("Antigravity 공통 권한 3단계를 CLI 안전 모드로 변환한다", () => {
+  const argumentsFor = (permission) => buildArguments({
+    character: {
+      backend: "antigravity",
+      model: "gemini-3.1-pro",
+      effort: "high",
+      fastMode: false,
+      permission,
+      identityPrompt: "정확히 처리한다.",
+    },
+    prompt: "확인해줘.",
+    previousSessionID: null,
+    workdir: "/repo",
+  });
+
+  const readOnly = argumentsFor("plan");
+  assert.deepEqual(
+    readOnly.slice(readOnly.indexOf("--mode")),
+    ["--mode", "plan"],
+  );
+  const workspaceWrite = argumentsFor("accept-edits");
+  assert.equal(workspaceWrite.includes("--sandbox"), true);
+  const fullAccess = argumentsFor("dangerously-skip-permissions");
+  assert.equal(fullAccess.includes("--sandbox"), false);
+  assert.equal(fullAccess.includes("--dangerously-skip-permissions"), true);
+});
+
+test("Antigravity 단계별 사용량은 결과 누적값과 중복하지 않고 합산한다", () => {
+  const first = {
+    inputTokens: 100,
+    outputTokens: 10,
+    cachedInputTokens: 80,
+    reasoningOutputTokens: 3,
+  };
+  const second = {
+    inputTokens: 40,
+    outputTokens: 5,
+    cachedInputTokens: 20,
+    reasoningOutputTokens: 2,
+  };
+
+  assert.deepEqual(accumulatedUsage(first, second), {
+    inputTokens: 140,
+    outputTokens: 15,
+    cachedInputTokens: 100,
+    reasoningOutputTokens: 5,
+    cacheWriteInputTokens: null,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reportedCostUsd: null,
+    reportedSonnet5CostUsd: null,
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+  });
+});
+
 test("Claude 지속 세션은 prompt를 인수가 아닌 stream-json stdin으로 받는다", () => {
   const character = {
     backend: "claude",
@@ -1128,6 +1254,16 @@ test("Claude 실행은 직원별 자동 압축 기준과 명시적 업데이트�
     executionEnvironment({ backend: "codex" }, codexEnvironment),
     codexEnvironment,
   );
+
+  const antigravityEnvironment = executionEnvironment(
+    { backend: "antigravity" },
+    { PATH: "/tmp/bin" },
+  );
+  assert.match(
+    antigravityEnvironment.PLAYWRIGHT_DRIVER_PATH,
+    /playwright-driver-1\.57\.0$/,
+  );
+  assert.ok(antigravityEnvironment.PLAYWRIGHT_NODEJS_PATH);
 });
 
 function startedRuntimeState({
@@ -1318,7 +1454,7 @@ test("Claude 저장 ID는 유지하되 로컬 기록이 없으면 실행 전에 
         sessionID: "session-1",
         workdir,
       }),
-      /저장된 Claude 세션 기록을 찾을 수 없습니다/,
+      /저장된 Claude Code 세션 기록을 찾을 수 없습니다/,
     );
     const argumentsList = buildArguments({
       character: claudeResumeCharacter,
@@ -1459,7 +1595,7 @@ test("Claude 재개는 현재 작업 공간의 다른 분기를 덮어쓰지 않
           workdir,
           previousWorkdir,
         }),
-        /서로 다른 Claude 세션 기록/,
+        /서로 다른 Claude Code 세션 기록/,
       );
       assert.equal(existsSync(source), true);
       assert.equal(readFileSync(target, "utf8").includes("other"), true);
@@ -1488,7 +1624,7 @@ test("Claude 재개는 현재 작업 공간의 다른 부속 기록도 보존한
           workdir,
           previousWorkdir,
         }),
-        /서로 다른 Claude 세션 부속 기록/,
+        /서로 다른 Claude Code 세션 부속 기록/,
       );
       assert.equal(existsSync(target), false);
       assert.equal(readFileSync(join(targetSidecar, "keep.txt"), "utf8"), "보존");
@@ -2773,6 +2909,25 @@ test("첨부 원본을 작업 폴더에 보관한다", () => {
   }
 });
 
+test("Antigravity 첨부도 공통 작업 폴더에 두고 add-dir로 읽는다", () => {
+  const workdir = mkdtempSync(join(tmpdir(), "office-agy-attachment-test-"));
+  const source = join(workdir, "screen.png");
+  writeFileSync(source, "png");
+
+  try {
+    const [attachment] = stageAttachments({
+      attachmentPaths: [source],
+      workdir,
+    });
+
+    assert.equal(existsSync(attachment.path), true);
+    assert.match(attachment.path, /\.office-attachments/);
+    assert.equal(attachment.isCodexImage, true);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("실행 중단은 턴을 interrupted로 저장하고 실행 목록에서 제거한다", async () => {
   const queries = [];
   const broadcasts = [];
@@ -3256,6 +3411,44 @@ test("이미 사용량이 있는 턴은 세션 기록으로 덮어쓰지 않는�
     assert.equal(recoverInterruptedUsage(state), null);
     assert.equal(state.usage, existing);
   });
+});
+
+test("중단된 Antigravity 재개 턴은 로컬 누적값에서 현재 턴만 복구한다", () => {
+  const baseline = {
+    inputTokens: 1_000,
+    outputTokens: 100,
+    cachedInputTokens: 5_000,
+    reasoningOutputTokens: 50,
+  };
+  const recorded = {
+    inputTokens: 1_200,
+    outputTokens: 130,
+    cachedInputTokens: 5_900,
+    reasoningOutputTokens: 62,
+    cacheWriteInputTokens: null,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  };
+  const state = {
+    character: { backend: "antigravity", model: "gemini-3.7-flash" },
+    externalSessionID: "11111111-2222-4333-8444-555555555555",
+    resumedAntigravitySession: true,
+    usageBaseline: baseline,
+    antigravityUsageReader: () => recorded,
+    usage: null,
+  };
+
+  const usage = recoverInterruptedUsage(state);
+
+  assert.equal(usage.inputTokens, 200);
+  assert.equal(usage.outputTokens, 30);
+  assert.equal(usage.cachedInputTokens, 900);
+  assert.equal(usage.reasoningOutputTokens, 12);
+  assert.deepEqual(state.usage, usage);
 });
 
 test("Codex 재개 세션의 누적 사용량을 현재 턴 증분으로 바꾼다", () => {

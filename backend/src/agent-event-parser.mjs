@@ -52,9 +52,16 @@ export function parseAgentEvent(line, backend, workdir = null) {
       : null;
   }
 
-  return backend === "codex"
-    ? parseCodexEvent(object, workdir)
-    : parseClaudeEvent(object, workdir);
+  switch (backend) {
+    case "codex":
+      return parseCodexEvent(object, workdir);
+    case "claude":
+      return parseClaudeEvent(object, workdir);
+    case "antigravity":
+      return parseAntigravityEvent(object, workdir);
+    default:
+      return null;
+  }
 }
 
 export function decodeAgentResponse(value) {
@@ -547,6 +554,170 @@ function parseClaudeEvent(object, workdir) {
   }
 
   return null;
+}
+
+function parseAntigravityEvent(object, workdir) {
+  if (object.event === "init") {
+    return {
+      sessionID: cleanText(
+        object.conversation_id ?? object.init?.conversation_id,
+      ),
+    };
+  }
+
+  if (object.event === "step_update") {
+    const update = object.step_update;
+    if (!update || typeof update !== "object" || Array.isArray(update)) {
+      return null;
+    }
+    const stepType = cleanText(update.step_type)?.toLowerCase();
+    const state = cleanText(update.state)?.toUpperCase();
+    if (stepType === "agent_response") {
+      const delta = String(update.text_delta ?? "");
+      const usage = state === "DONE"
+        ? normalizedAntigravityUsage(update.usage)
+        : null;
+      if (!delta && !usage) {
+        return null;
+      }
+      return {
+        ...(delta ? { responseDelta: delta } : {}),
+        ...(usage ? { usage, usageIsDelta: true } : {}),
+      };
+    }
+    if (stepType === "tool") {
+      const toolInfo = update.tool_info;
+      const name = cleanText(
+        update.tool_name ?? toolInfo?.name,
+      ) ?? "도구";
+      const status = antigravityActivityStatus(state, toolInfo);
+      return {
+        activity: activity(
+          name === "run_command" ? "command" : "tool",
+          antigravityToolActivityText(name, toolInfo, workdir),
+          {
+            eventKey: [
+              "antigravity",
+              cleanText(update.conversation_id),
+              update.step_index,
+            ].filter((value) => value !== null && value !== undefined)
+              .join(":"),
+            status,
+          },
+        ),
+      };
+    }
+    return null;
+  }
+
+  if (object.event === "result") {
+    const result = object.result;
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      return null;
+    }
+    const sessionID = cleanText(
+      result.conversation_id ?? object.conversation_id,
+    );
+    const usageFallback = normalizedAntigravityUsage(result.usage);
+    const status = cleanText(result.status)?.toUpperCase();
+    if (status && status !== "SUCCESS") {
+      return {
+        sessionID,
+        usageFallback,
+        failure: cleanText(result.error ?? result.response) ??
+          "Antigravity 작업이 완료되지 못했습니다.",
+      };
+    }
+    return {
+      sessionID,
+      usageFallback,
+      responseText: cleanText(result.response),
+    };
+  }
+
+  if (object.event === "error") {
+    return {
+      failure: failureText(object.error ?? object.message) ??
+        "Antigravity 작업이 완료되지 못했습니다.",
+    };
+  }
+  if (object.event === "warning") {
+    return { warning: failureText(object.warning ?? object.message) };
+  }
+  return null;
+}
+
+function normalizedAntigravityUsage(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const usage = {
+    inputTokens: tokenCount(value.input_tokens),
+    outputTokens: tokenCount(value.output_tokens),
+    cachedInputTokens: tokenCount(value.cache_read_tokens),
+    cacheWriteInputTokens: null,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: tokenCount(value.thinking_tokens),
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  };
+  return [
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.cachedInputTokens,
+    usage.reasoningOutputTokens,
+  ].some((entry) => entry !== null)
+    ? usage
+    : null;
+}
+
+function antigravityActivityStatus(state, toolInfo) {
+  if (state !== "DONE") {
+    return "running";
+  }
+  if (
+    toolInfo?.error ||
+    ["FAILED", "ERROR", "CANCELLED", "CANCELED"].includes(
+      cleanText(toolInfo?.status)?.toUpperCase(),
+    )
+  ) {
+    return "failed";
+  }
+  return "completed";
+}
+
+function antigravityToolActivityText(name, toolInfo, workdir) {
+  const info = toolInfo && typeof toolInfo === "object" &&
+      !Array.isArray(toolInfo)
+    ? toolInfo
+    : {};
+  const parameters = info.parameters && typeof info.parameters === "object" &&
+      !Array.isArray(info.parameters)
+    ? info.parameters
+    : {};
+  if (name === "run_command") {
+    return safeCommand(
+      parameters.CommandLine ?? parameters.command_line ?? parameters.command,
+    ) ?? "명령";
+  }
+  const path = cleanText(
+    parameters.TargetFile ??
+      parameters.target_file ??
+      parameters.Path ??
+      parameters.path ??
+      parameters.FilePath ??
+      parameters.file_path,
+  );
+  if (path) {
+    return `${name} · ${compactPath(path, workdir)}`;
+  }
+  const query = cleanText(parameters.Query ?? parameters.query);
+  return query
+    ? `${name} · ${safePublicText(query, 220)}`
+    : name;
 }
 
 function normalizedClaudeResultUsage(result) {

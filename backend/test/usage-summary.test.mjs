@@ -9,19 +9,22 @@ import test from "node:test";
 
 import {
   createUsageSummaryReader,
+  parseAntigravityRateLimits,
   parseClaudeRateLimits,
   parseCodexRateLimits,
   readClaudeRateLimits,
   readCodexRateLimits,
+  readAntigravityRateLimits,
   readUsageActivity,
 } from "../src/usage-summary.mjs";
 
-function emptyActivityFixture() {
+function emptyActivityFixture(costEstimateSupported = true) {
   return {
     todayCostUSD: 0,
     recentTokens: 0,
     last30DaysCostUSD: 0,
     last30DaysTokens: 0,
+    costEstimateSupported,
   };
 }
 
@@ -170,6 +173,63 @@ test("Claude 직접 조회는 기존 OAuth 토큰을 읽기 전용으로 전달�
   assert.equal(result.weekly.remaining, 80);
 });
 
+test("Antigravity Gemini 주간 잔량을 실제 quota bucket에서 읽는다", () => {
+  assert.deepEqual(
+    parseAntigravityRateLimits({
+      response: {
+        groups: [
+          {
+            displayName: "Gemini Models",
+            buckets: [
+              {
+                bucketId: "gemini-weekly",
+                window: "weekly",
+                remainingFraction: 0.8529488,
+                resetTime: "2026-09-03T13:44:43Z",
+              },
+            ],
+          },
+        ],
+      },
+    }),
+    {
+      fiveHour: null,
+      weekly: {
+        remaining: 85,
+        resetAt: "2026-09-03T13:44:43.000Z",
+      },
+      plan: null,
+    },
+  );
+});
+
+test("Antigravity 한도 조회는 설정된 agy 실행 파일을 사용한다", async () => {
+  let invocation;
+  const result = await readAntigravityRateLimits({
+    pool: {
+      query: async () => ({ rows: [{ path: "/opt/test/bin/agy" }] }),
+    },
+    quotaProbe: async (options) => {
+      invocation = options;
+      return {
+        response: {
+          groups: [{
+            displayName: "Gemini Models",
+            buckets: [{
+              bucketId: "gemini-weekly",
+              remainingFraction: 0.42,
+              resetTime: null,
+            }],
+          }],
+        },
+      };
+    },
+  });
+
+  assert.equal(invocation.executable, "/opt/test/bin/agy");
+  assert.equal(result.weekly.remaining, 42);
+});
+
 test("DB 통계는 공급자별 오늘과 30일 값을 숫자로 정규화한다", async () => {
   let query;
   const pool = {
@@ -197,21 +257,25 @@ test("DB 통계는 공급자별 오늘과 30일 값을 숫자로 정규화한다
     recentTokens: 1234,
     last30DaysCostUSD: 9.5,
     last30DaysTokens: 9876,
+    costEstimateSupported: true,
   });
   assert.deepEqual(activity.claude, {
     todayCostUSD: 0,
     recentTokens: 0,
     last30DaysCostUSD: 0,
     last30DaysTokens: 0,
+    costEstimateSupported: true,
   });
+  assert.deepEqual(activity.antigravity, emptyActivityFixture(false));
   assert.match(query.text, /usage_records AS usage/);
-  assert.match(query.text, /WHEN[\s\S]*= 'claude'/);
+  assert.match(query.text, /IN \('claude', 'antigravity'\)/);
   assert.equal(query.values.length, 2);
 });
 
 test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는다", async () => {
   let codexReads = 0;
   let claudeReads = 0;
+  let antigravityReads = 0;
   let activityReads = 0;
   const fixedNow = new Date("2026-08-12T00:00:00Z");
   const reader = createUsageSummaryReader({
@@ -232,6 +296,14 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
         plan: "Max",
       };
     },
+    antigravityReader: async () => {
+      antigravityReads += 1;
+      return {
+        fiveHour: null,
+        weekly: { remaining: 85, resetAt: null },
+        plan: null,
+      };
+    },
     activityReader: async () => {
       activityReads += 1;
       return {
@@ -246,7 +318,9 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
           recentTokens: 0,
           last30DaysCostUSD: 0,
           last30DaysTokens: 0,
+          costEstimateSupported: true,
         },
+        antigravity: emptyActivityFixture(false),
       };
     },
     now: () => fixedNow,
@@ -263,7 +337,9 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
   // Claude 한도는 토큰당 호출 간격이 좁아 force여도 캐시 수명 안에서는
   // 업스트림을 다시 부르지 않고 직전 값을 그대로 쓴다.
   assert.equal(claudeReads, 1);
+  assert.equal(antigravityReads, 1);
   assert.equal(forced.claudeFiveHour, 50);
+  assert.equal(forced.antigravityWeekly, 85);
   assert.equal(activityReads, 3);
 });
 
@@ -288,9 +364,15 @@ test("Claude 한도 조회가 실패해도 직전 값을 유지하고 오류만 
       }
       throw new Error("Claude 계정 한도 조회가 실패했습니다 (HTTP 429).");
     },
+    antigravityReader: async () => ({
+      fiveHour: null,
+      weekly: { remaining: 85, resetAt: null },
+      plan: null,
+    }),
     activityReader: async () => ({
       codex: emptyActivityFixture(),
       claude: emptyActivityFixture(),
+      antigravity: emptyActivityFixture(false),
     }),
     now: () => current,
   });
@@ -321,9 +403,11 @@ test("Claude 한도 조회가 실패하면 백오프 동안 다시 부르지 않
       claudeReads += 1;
       throw new Error("Claude 계정 한도 조회가 실패했습니다 (HTTP 429).");
     },
+    antigravityReader: async () => null,
     activityReader: async () => ({
       codex: emptyActivityFixture(),
       claude: emptyActivityFixture(),
+      antigravity: emptyActivityFixture(false),
     }),
     now: () => current,
   });
@@ -353,6 +437,11 @@ test("한 공급자 실패는 다른 한도와 DB 통계를 가리지 않는다"
       weekly: { remaining: 90, resetAt: null },
       plan: "Max",
     }),
+    antigravityReader: async () => ({
+      fiveHour: null,
+      weekly: { remaining: 85, resetAt: null },
+      plan: null,
+    }),
     activityReader: async () => ({
       codex: {
         todayCostUSD: 1,
@@ -365,7 +454,9 @@ test("한 공급자 실패는 다른 한도와 DB 통계를 가리지 않는다"
         recentTokens: 6,
         last30DaysCostUSD: 7,
         last30DaysTokens: 8,
+        costEstimateSupported: true,
       },
+      antigravity: emptyActivityFixture(false),
     }),
     now: () => new Date("2026-08-12T00:00:00Z"),
   });

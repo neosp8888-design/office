@@ -189,4 +189,18 @@ final class AgentProgressEventParserTests: XCTestCase {
             )
         )
     }
+
+    func testAntigravityCommandUsesSafeProgressPresentation() {
+        let line = #"""
+        {"event":"step_update","step_update":{"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"pwd"},"output":"/private/tmp/scratch"}}}
+        """#
+
+        XCTAssertEqual(
+            AgentProgressEventParser.message(
+                fromJSONLine: line,
+                backend: .antigravity
+            ),
+            "실행 · pwd"
+        )
+    }
 }

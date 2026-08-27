@@ -65,7 +65,7 @@
 "닫기" = "Close";
 "저장" = "Save";
 "답변" = "Answer";
-"클대리" = "Claude";
+"클대리" = "Claude Code";
 "로과장" = "Rho";
 "코대리" = "Ko";
 "코과장" = "Koh";
@@ -257,10 +257,10 @@
 "백엔드" = "Backend";
 "Docker 준비" = "Set Up Docker";
 "Codex 준비" = "Set Up Codex";
-"Claude 준비" = "Set Up Claude";
+"Claude Code 준비" = "Set Up Claude Code";
 "로그 열기" = "Open Logs";
 "다시 확인" = "Check Again";
-"Codex 또는 Claude Code 중 하나만 로그인돼도 시작할 수 있습니다." = "You can start after signing in to either Codex or Claude Code.";
+"Antigravity, Claude Code 또는 Codex 중 하나만 로그인돼도 시작할 수 있습니다." = "You can start after signing in to Antigravity, Claude Code, or Codex.";
 "확인 대기" = "Waiting to check";
 "로컬 실행 환경을 확인하는 중" = "Checking the local runtime";
 "앱 리소스 경로를 찾을 수 없습니다." = "The app resource folder could not be found.";
@@ -271,7 +271,7 @@
 "로그인됨" = "Signed in";
 "앱 런타임을 확인하는 중" = "Checking the bundled app runtime";
 "내장 Node와 백엔드" = "Bundled Node and backend";
-"Codex와 Claude Code 로그인을 확인하는 중" = "Checking Codex and Claude Code sign-in";
+"Antigravity, Claude Code, Codex 로그인을 확인하는 중" = "Checking Antigravity, Claude Code, and Codex sign-in";
 "AI CLI 하나 이상에 로그인해야 합니다." = "Sign in to at least one AI CLI.";
 "실행 설정을 저장하지 못했습니다." = "The runtime configuration could not be saved.";
 "기존 백엔드 연결을 확인하는 중" = "Checking the existing backend connection";

@@ -114,6 +114,22 @@ test("동기화할 CLI 경로는 provider 이름과 실행 권한을 모두 확�
   );
   assert.equal(executableChecks.length, 1);
 
+  assert.deepEqual(
+    await characterConfigurationForSync(
+      {
+        id: "google-worker",
+        backend: "antigravity",
+        executablePath: "/Users/example/.local/bin/agy",
+      },
+      accessExecutable,
+    ),
+    {
+      id: "google-worker",
+      backend: "antigravity",
+      executablePath: "/Users/example/.local/bin/agy",
+    },
+  );
+
   for (const character of [
     {
       id: "wrong-provider",

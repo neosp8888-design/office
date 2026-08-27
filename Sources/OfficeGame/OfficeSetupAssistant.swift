@@ -27,6 +27,7 @@ struct OfficeSetupSnapshot: Equatable, Sendable {
     var backend: OfficeSetupCheck = .pending
     var codex: OfficeSetupCheck = .pending
     var claude: OfficeSetupCheck = .pending
+    var antigravity: OfficeSetupCheck = .pending
     var dockerDataSelection: OfficeDockerDataSelection?
     var providerRemapTarget: AgentBackend?
     var backendReplacement: OfficeBackendReplacement?
@@ -386,7 +387,7 @@ enum OfficeCLIInspector {
         backend: AgentBackend,
         environment: [String: String]
     ) async -> OfficeCLIProbe {
-        guard let executable = OfficeToolLocator.locate(backend.rawValue) else {
+        guard let executable = OfficeToolLocator.locate(backend.executableName) else {
             return OfficeCLIProbe(
                 backend: backend,
                 executableURL: nil,
@@ -400,9 +401,15 @@ enum OfficeCLIInspector {
             environment: environment,
             timeout: 8
         )
-        let authenticationArguments = backend == .codex
-            ? ["login", "status"]
-            : ["auth", "status", "--json"]
+        let authenticationArguments: [String]
+        switch backend {
+        case .codex:
+            authenticationArguments = ["login", "status"]
+        case .claude:
+            authenticationArguments = ["auth", "status", "--json"]
+        case .antigravity:
+            authenticationArguments = ["models"]
+        }
         async let authenticationResult = OfficeProcessRunner.run(
             executableURL: executable,
             arguments: authenticationArguments,
@@ -1113,7 +1120,7 @@ enum OfficeSetupAssistant {
         }
 
         let environment = processEnvironment(layout: layout)
-        await progress("Codex와 Claude Code 로그인을 확인하는 중")
+        await progress("AI CLI 로그인을 확인하는 중")
         async let codex = OfficeCLIInspector.inspect(
             backend: .codex,
             environment: environment
@@ -1122,11 +1129,22 @@ enum OfficeSetupAssistant {
             backend: .claude,
             environment: environment
         )
-        let (codexProbe, claudeProbe) = await (codex, claude)
+        async let antigravity = OfficeCLIInspector.inspect(
+            backend: .antigravity,
+            environment: environment
+        )
+        let (codexProbe, claudeProbe, antigravityProbe) = await (
+            codex,
+            claude,
+            antigravity
+        )
         snapshot.codex = OfficeCLIInspector.check(for: codexProbe)
         snapshot.claude = OfficeCLIInspector.check(for: claudeProbe)
+        snapshot.antigravity = OfficeCLIInspector.check(
+            for: antigravityProbe
+        )
 
-        let probes = [codexProbe, claudeProbe]
+        let probes = [codexProbe, claudeProbe, antigravityProbe]
         let authenticated = Set(
             probes.filter(\.authenticated).map(\.backend)
         )
@@ -1523,9 +1541,14 @@ enum OfficeSetupAssistant {
             guard let characterID = OfficeCharacter(rawValue: character.id) else {
                 return nil
             }
-            let effort = backend.effortOptions.contains(character.effort)
+            let effortOptions = backend.effortOptions(
+                for: backend.defaultModel
+            )
+            let effort = effortOptions.contains(character.effort)
                 ? character.effort
-                : backend.effortOptions[0]
+                : (effortOptions.contains("high")
+                    ? "high"
+                    : effortOptions[0])
             let settings = CharacterAgentSettings(
                 backend: backend,
                 model: backend.defaultModel,

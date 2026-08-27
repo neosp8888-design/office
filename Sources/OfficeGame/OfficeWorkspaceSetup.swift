@@ -317,7 +317,7 @@ final class OfficeLaunchCoordinator: ObservableObject {
     }
 
     func openProviderSetup(_ backend: AgentBackend) {
-        guard let executable = OfficeToolLocator.locate(backend.rawValue) else {
+        guard let executable = OfficeToolLocator.locate(backend.executableName) else {
             switch backend {
             case .codex:
                 openWebPage(
@@ -327,6 +327,8 @@ final class OfficeLaunchCoordinator: ObservableObject {
                 openWebPage(
                     "https://docs.anthropic.com/en/docs/claude-code/getting-started"
                 )
+            case .antigravity:
+                openWebPage("https://antigravity.google/")
             }
             return
         }
@@ -347,7 +349,15 @@ final class OfficeLaunchCoordinator: ObservableObject {
             let script = support.appending(
                 path: "login-\(backend.rawValue).command"
             )
-            let arguments = backend == .codex ? "login" : "auth login"
+            let arguments: String
+            switch backend {
+            case .codex:
+                arguments = "login"
+            case .claude:
+                arguments = "auth login"
+            case .antigravity:
+                arguments = ""
+            }
             let source = """
             #!/bin/zsh
             clear
@@ -580,6 +590,7 @@ struct OfficeEnvironmentSetupView: View {
     let openDocker: () -> Void
     let setupCodex: () -> Void
     let setupClaude: () -> Void
+    let setupAntigravity: () -> Void
     let openLogs: () -> Void
 
     var body: some View {
@@ -621,6 +632,10 @@ struct OfficeEnvironmentSetupView: View {
                     title: "Claude Code",
                     state: snapshot.claude
                 )
+                OfficeSetupStatusRow(
+                    title: "Antigravity",
+                    state: snapshot.antigravity
+                )
             }
             .frame(maxWidth: 620)
 
@@ -638,8 +653,14 @@ struct OfficeEnvironmentSetupView: View {
                         .accessibilityIdentifier("officeSetupCodexButton")
                 }
                 if !snapshot.claude.isReady {
-                    Button("Claude 준비", action: setupClaude)
+                    Button("Claude Code 준비", action: setupClaude)
                         .accessibilityIdentifier("officeSetupClaudeButton")
+                }
+                if !snapshot.antigravity.isReady {
+                    Button("Antigravity 준비", action: setupAntigravity)
+                        .accessibilityIdentifier(
+                            "officeSetupAntigravityButton"
+                        )
                 }
                 Button("로그 열기", action: openLogs)
                 if snapshot.dockerDataSelection == .currentAndLegacy {
@@ -687,7 +708,7 @@ struct OfficeEnvironmentSetupView: View {
                     .accessibilityIdentifier("officeSetupRetryButton")
             }
 
-            Text("Codex 또는 Claude Code 중 하나만 로그인돼도 시작할 수 있습니다.")
+            Text("Antigravity, Claude Code 또는 Codex 중 하나만 로그인돼도 시작할 수 있습니다.")
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
             if snapshot.dockerDataSelection == .currentAndLegacy {

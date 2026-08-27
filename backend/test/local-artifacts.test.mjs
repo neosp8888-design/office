@@ -14,8 +14,20 @@ import test from "node:test";
 
 import {
   appendLocalImagePreviews,
+  generatedImageRoot,
   generatedImagesForTurn,
 } from "../src/local-artifacts.mjs";
+
+test("Antigravity 생성 이미지는 전용 brain 디렉터리에서 찾는다", () => {
+  assert.match(
+    generatedImageRoot("antigravity"),
+    /\.gemini\/antigravity-cli\/brain$/,
+  );
+  assert.match(
+    generatedImageRoot("codex"),
+    /\.codex\/generated_images$/,
+  );
+});
 
 test("절대경로 이미지 링크에 미리보기를 추가한다", () => {
   const directory = mkdtempSync(join(tmpdir(), "officellm-artifact-"));

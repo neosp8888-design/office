@@ -46,6 +46,9 @@ private struct OfficeLaunchRootView: View {
                 setupClaude: {
                     coordinator.openProviderSetup(.claude)
                 },
+                setupAntigravity: {
+                    coordinator.openProviderSetup(.antigravity)
+                },
                 openLogs: coordinator.openSetupLogs
             )
         case .ready:
@@ -950,11 +953,15 @@ private struct LiveWorkspaceCommandBar: View {
                         character: character
                     )
 
-                    ContextCompactionControls(
-                        director: director,
-                        character: character
-                    )
-                    .id(character.id)
+                    if ContextCompactionPresentation.supportsManualCompaction(
+                        backend: character.backend
+                    ) {
+                        ContextCompactionControls(
+                            director: director,
+                            character: character
+                        )
+                        .id(character.id)
+                    }
 
                     if PixelOfficeAsset.fullBodyProfileURL(for: character.id) != nil
                         || PixelOfficeAsset.fullBodyProfileVideoURL(
@@ -1351,7 +1358,7 @@ private extension LiveWorkspaceCommandBar {
         panel.allowsOtherFileTypes = true
         panel.prompt = "첨부"
         panel.message =
-            "Codex 또는 Claude Code가 확인할 파일을 선택하세요."
+            "Antigravity, Claude Code 또는 Codex가 확인할 파일을 선택하세요."
 
         guard panel.runModal() == .OK else {
             return
@@ -2099,6 +2106,10 @@ private struct ContextCompactionControls: View {
 }
 
 enum ContextCompactionPresentation {
+    static func supportsManualCompaction(backend: AgentBackend) -> Bool {
+        backend != .antigravity
+    }
+
     static func usesAdjustableThreshold(backend: AgentBackend) -> Bool {
         backend == .claude
     }
@@ -2163,7 +2174,10 @@ private struct AgentQuickSettingsView: View {
                                 backend: backend,
                                 model: backend.defaultModel,
                                 effort: "high",
-                                fastMode: settings.fastMode,
+                                fastMode: settings.fastMode
+                                    && backend.supportsFastMode(
+                                        model: backend.defaultModel
+                                    ),
                                 permission: settings.permission
                             )
                         )
@@ -2211,22 +2225,27 @@ private struct AgentQuickSettingsView: View {
             }
             .disabled(!availability.canChangeCurrentBackendSettings)
 
-            Button {
-                var updated = settings
-                updated.setFastMode(!settings.fastMode)
-                apply(updated)
-            } label: {
-                QuickSettingLabel(
-                    text: settings.fastMode ? "Fast" : "Standard",
-                    systemImage: settings.fastMode ? "bolt.fill" : "bolt"
-                )
+            if settings.backend.supportsFastMode(model: settings.model) {
+                Button {
+                    var updated = settings
+                    updated.setFastMode(!settings.fastMode)
+                    apply(updated)
+                } label: {
+                    QuickSettingLabel(
+                        text: settings.fastMode ? "Fast" : "Standard",
+                        systemImage: settings.fastMode ? "bolt.fill" : "bolt"
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(settings.fastMode ? "Fast 모드 끄기" : "Fast 모드 켜기")
+                .disabled(!availability.canChangeCurrentBackendSettings)
             }
-            .buttonStyle(.plain)
-            .help(settings.fastMode ? "Fast 모드 끄기" : "Fast 모드 켜기")
-            .disabled(!availability.canChangeCurrentBackendSettings)
 
             Menu {
-                ForEach(settings.backend.effortOptions, id: \.self) { effort in
+                ForEach(
+                    settings.backend.effortOptions(for: settings.model),
+                    id: \.self
+                ) { effort in
                     Button {
                         var updated = settings
                         updated.effort = effort
@@ -2509,7 +2528,10 @@ private struct CharacterSettingsEditor: View {
 
                 settingPickerLabel("추론")
                 Picker("추론", selection: $settings.effort) {
-                    ForEach(settings.backend.effortOptions, id: \.self) {
+                    ForEach(
+                        settings.backend.effortOptions(for: settings.model),
+                        id: \.self
+                    ) {
                         Text($0).tag($0)
                     }
                 }
@@ -2536,15 +2558,17 @@ private struct CharacterSettingsEditor: View {
 
                 Spacer()
 
-                Toggle(isOn: fastModeBinding) {
-                    Label(
-                        settings.fastMode ? "Fast" : "Standard",
-                        systemImage: settings.fastMode ? "bolt.fill" : "bolt"
-                    )
-                    .font(.system(size: 11, weight: .semibold))
+                if settings.backend.supportsFastMode(model: settings.model) {
+                    Toggle(isOn: fastModeBinding) {
+                        Label(
+                            settings.fastMode ? "Fast" : "Standard",
+                            systemImage: settings.fastMode ? "bolt.fill" : "bolt"
+                        )
+                        .font(.system(size: 11, weight: .semibold))
+                    }
+                    .toggleStyle(.switch)
+                    .fixedSize()
                 }
-                .toggleStyle(.switch)
-                .fixedSize()
             }
             .controlSize(.small)
         }
@@ -2563,7 +2587,10 @@ private struct CharacterSettingsEditor: View {
                     backend: backend,
                     model: backend.defaultModel,
                     effort: "high",
-                    fastMode: settings.fastMode,
+                    fastMode: settings.fastMode
+                        && backend.supportsFastMode(
+                            model: backend.defaultModel
+                        ),
                     permission: settings.permission
                 )
             }

@@ -1,4 +1,4 @@
-// 이 파일은 Codex와 Claude Code CLI를 실행하고 JSONL 응답을 공통 형식으로 변환한다.
+// 이 파일은 직원 AI CLI를 실행하고 JSONL 응답을 공통 형식으로 변환한다.
 
 import Foundation
 import OfficeCore
@@ -24,7 +24,8 @@ actor AgentCLIRunner {
         let arguments = arguments(
             prompt: prompt,
             character: character,
-            previousSessionID: previousSessionID
+            previousSessionID: previousSessionID,
+            workdir: workdir
         )
         let result = try await launch(
             executable: executable,
@@ -55,13 +56,16 @@ actor AgentCLIRunner {
             return try parseCodex(output)
         case .claude:
             return try parseClaude(output)
+        case .antigravity:
+            return try parseAntigravity(output)
         }
     }
 
     private func arguments(
         prompt: String,
         character: CharacterConfiguration,
-        previousSessionID: String?
+        previousSessionID: String?,
+        workdir: String
     ) -> [String] {
         switch character.backend {
         case .codex:
@@ -75,6 +79,13 @@ actor AgentCLIRunner {
                 prompt: prompt,
                 character: character,
                 previousSessionID: previousSessionID
+            )
+        case .antigravity:
+            return antigravityArguments(
+                prompt: prompt,
+                character: character,
+                previousSessionID: previousSessionID,
+                workdir: workdir
             )
         }
     }
@@ -142,6 +153,60 @@ actor AgentCLIRunner {
         return arguments
     }
 
+    private func antigravityArguments(
+        prompt: String,
+        character: CharacterConfiguration,
+        previousSessionID: String?,
+        workdir: String
+    ) -> [String] {
+        let executionPrompt = """
+        <officestra_identity>
+        \(character.identityPrompt)
+        </officestra_identity>
+        <officestra_execution>
+        업무 폴더는 \(jsonString(workdir))입니다.
+        명령을 실행할 때는 반드시 \(jsonString(workdir))로 이동한 뒤 실행합니다.
+        사용자 요청 범위를 벗어난 파일이나 서비스를 변경하지 않습니다.
+        </officestra_execution>
+        <user_request>
+        \(prompt)
+        </user_request>
+        """
+        var arguments = [
+            "-p",
+            executionPrompt,
+            "--output-format",
+            "stream-json",
+            "--model",
+            character.model ?? character.backend.defaultModel,
+            "--effort",
+            character.effort,
+        ]
+        if let previousSessionID {
+            arguments += ["--conversation", previousSessionID]
+        }
+        // Headless plan에서도 작업 폴더의 첨부와 소스를 읽을 수 있게
+        // 명시적인 workspace root를 전달한다.
+        arguments += ["--add-dir", workdir]
+        switch character.permission {
+        case "plan":
+            arguments += ["--mode", "plan"]
+        case "accept-edits":
+            arguments += [
+                "--mode", "accept-edits", "--sandbox",
+                "--dangerously-skip-permissions",
+            ]
+        case "dangerously-skip-permissions":
+            arguments += [
+                "--mode", "accept-edits",
+                "--dangerously-skip-permissions",
+            ]
+        default:
+            break
+        }
+        return arguments
+    }
+
     private func jsonString(_ value: String) -> String {
         guard
             let data = try? JSONEncoder().encode(value),
@@ -174,6 +239,9 @@ actor AgentCLIRunner {
         process.standardOutput = stdout
         process.standardError = stderr
         process.standardInput = FileHandle.nullDevice
+        if backend == .antigravity {
+            process.environment = antigravityEnvironment()
+        }
 
         let outputTask = Task.detached {
             await StreamingOutputReader.read(
@@ -212,6 +280,40 @@ actor AgentCLIRunner {
             stderr: errorTask.value,
             status: status
         )
+    }
+
+    private func antigravityEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let bundledRuntime = Bundle.main.resourceURL?
+            .appending(path: "OFFICESTRARuntime")
+        let developmentRuntime = OfficeDevelopmentRuntimeLocator.locate()
+        let driverCandidates = [
+            bundledRuntime?
+                .appending(path: "backend/src/playwright-driver-1.57.0"),
+            developmentRuntime?
+                .appending(path: "backend/src/playwright-driver-1.57.0"),
+        ].compactMap { $0 }
+        guard let driver = driverCandidates.first(where: {
+            FileManager.default.fileExists(
+                atPath: $0.appending(path: "package/cli.js").path
+            )
+        }) else {
+            return environment
+        }
+        environment["PLAYWRIGHT_DRIVER_PATH"] =
+            environment["PLAYWRIGHT_DRIVER_PATH"] ?? driver.path
+        let bundledNode = bundledRuntime?
+            .appending(path: "node/bin/node")
+        let node = [bundledNode, OfficeToolLocator.locate("node")]
+            .compactMap { $0 }
+            .first(where: {
+                FileManager.default.isExecutableFile(atPath: $0.path)
+            })
+        if let node {
+            environment["PLAYWRIGHT_NODEJS_PATH"] =
+                environment["PLAYWRIGHT_NODEJS_PATH"] ?? node.path
+        }
+        return environment
     }
 
     private func parseCodex(_ output: String) throws -> AgentCLIResponse {
@@ -297,6 +399,38 @@ actor AgentCLIRunner {
         return response(text: text, sessionID: sessionID)
     }
 
+    private func parseAntigravity(_ output: String) throws -> AgentCLIResponse {
+        var sessionID: String?
+        var responseText: String?
+        for object in jsonObjects(from: output) {
+            let event = object["event"] as? String
+            if event == "init" {
+                sessionID = object["conversation_id"] as? String
+            } else if event == "result",
+                      let result = object["result"] as? [String: Any]
+            {
+                sessionID = sessionID ?? result["conversation_id"] as? String
+                if
+                    let status = result["status"] as? String,
+                    status != "SUCCESS"
+                {
+                    throw AgentCLIError.failed(
+                        failureMessage(from: result["error"])
+                            ?? failureMessage(from: result["response"])
+                            ?? "Antigravity 작업이 실패했습니다."
+                    )
+                }
+                responseText = result["response"] as? String
+            }
+        }
+        guard let responseText, !responseText.isEmpty else {
+            throw AgentCLIError.invalidOutput(
+                "Antigravity 최종 메시지가 없습니다."
+            )
+        }
+        return response(text: responseText, sessionID: sessionID)
+    }
+
     private func structuredFailureMessage(
         in output: String,
         backend: AgentBackend
@@ -319,6 +453,20 @@ actor AgentCLIRunner {
                     object["is_error"] as? Bool == true
                 {
                     return failureMessage(from: object["result"])
+                }
+            case .antigravity:
+                if
+                    object["event"] as? String == "result",
+                    let result = object["result"] as? [String: Any],
+                    let status = result["status"] as? String,
+                    status != "SUCCESS"
+                {
+                    return failureMessage(from: result["error"])
+                        ?? failureMessage(from: result["response"])
+                }
+                if object["event"] as? String == "error" {
+                    lastError = failureMessage(from: object["error"])
+                        ?? failureMessage(from: object["message"])
                 }
             }
         }
@@ -430,7 +578,7 @@ private enum ExecutableLocator {
         backend: AgentBackend,
         configuredPath: String?
     ) throws -> URL {
-        let name = backend.rawValue
+        let name = backend.executableName
         let fileManager = FileManager.default
 
         if

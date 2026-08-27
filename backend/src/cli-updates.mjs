@@ -14,6 +14,7 @@ export const CLI_PACKAGES = Object.freeze([
     backend: "claude",
     executable: "claude",
     versionArguments: ["--version"],
+    updateKind: "npm",
   }),
   Object.freeze({
     id: "codex",
@@ -22,6 +23,18 @@ export const CLI_PACKAGES = Object.freeze([
     backend: "codex",
     executable: "codex",
     versionArguments: ["--version"],
+    updateKind: "npm",
+  }),
+  Object.freeze({
+    id: "antigravity",
+    label: "Antigravity",
+    packageName: "agy",
+    backend: "antigravity",
+    executable: "agy",
+    versionArguments: ["--version"],
+    latestVersionArguments: ["changelog"],
+    updateArguments: ["update"],
+    updateKind: "self",
   }),
 ]);
 
@@ -124,11 +137,17 @@ async function readInstalledVersion(entry, runCommand) {
 
 async function readLatestVersion(entry, runCommand) {
   try {
-    const { stdout } = await runCommand(
-      "npm",
-      ["view", entry.packageName, "version"],
-      COMMAND_OPTIONS,
-    );
+    const { stdout } = entry.updateKind === "self"
+      ? await runCommand(
+          entry.executable,
+          entry.latestVersionArguments,
+          COMMAND_OPTIONS,
+        )
+      : await runCommand(
+          "npm",
+          ["view", entry.packageName, "version"],
+          COMMAND_OPTIONS,
+        );
     return parseInstalledVersion(stdout);
   } catch {
     return null;
@@ -193,7 +212,9 @@ export class CLIUpdateUnknownPackageError extends Error {}
 /// 하나만 고를 수 있어야 한다. 한쪽만 새 버전이 나왔는데 둘 다 건드릴
 /// 이유가 없다.
 export function packageNamesForIdentifier(identifier) {
-  return packagesForIdentifier(identifier).map((entry) => entry.packageName);
+  return packagesForIdentifier(identifier)
+    .filter((entry) => entry.updateKind === "npm")
+    .map((entry) => entry.packageName);
 }
 
 export function packagesForIdentifier(identifier) {
@@ -219,7 +240,9 @@ export function backendsForIdentifier(identifier) {
 /// 한 번의 설치로 둘 다 맞출 수 없으므로 npm 기본 판단에 맡긴다.
 export function sharedInstallPrefix(status, identifier) {
   const wanted = new Set(
-    packagesForIdentifier(identifier).map((entry) => entry.id),
+    packagesForIdentifier(identifier)
+      .filter((entry) => entry.updateKind === "npm")
+      .map((entry) => entry.id),
   );
   const prefixes = new Set(
     (status?.packages ?? [])
@@ -232,29 +255,57 @@ export function sharedInstallPrefix(status, identifier) {
 
 export async function applyCLIUpdates({
   runCommand = execFileAsync,
-  packageNames = CLI_PACKAGES.map((entry) => entry.packageName),
-  backends = CLI_PACKAGES.map((entry) => entry.backend),
+  packages = null,
+  packageNames = null,
+  backends = null,
   prefix = null,
   hasRunningWork,
 } = {}) {
+  const selectedPackages = packages ?? (
+    packageNames
+      ? packageNames.map((packageName) => ({
+          packageName,
+          updateKind: "npm",
+        }))
+      : [...CLI_PACKAGES]
+  );
+  const selectedBackends = backends ?? selectedPackages
+    .map((entry) => entry.backend)
+    .filter(Boolean);
   if (
     typeof hasRunningWork === "function" &&
-    (await hasRunningWork(backends))
+    (await hasRunningWork(selectedBackends))
   ) {
     throw new CLIUpdateBusyError(
       "진행 중인 업무가 끝난 뒤에 업데이트할 수 있습니다.",
     );
   }
-  const installArguments = prefix
-    ? ["install", "-g", "--prefix", prefix, ...packageNames]
-    : ["install", "-g", ...packageNames];
-  const { stdout, stderr } = await runCommand(
-    "npm",
-    installArguments,
-    { timeout: INSTALL_TIMEOUT_MILLISECONDS, cwd: homedir() },
-  );
+  const outputs = [];
+  const npmPackageNames = selectedPackages
+    .filter((entry) => entry.updateKind === "npm")
+    .map((entry) => entry.packageName);
+  if (npmPackageNames.length > 0) {
+    const installArguments = prefix
+      ? ["install", "-g", "--prefix", prefix, ...npmPackageNames]
+      : ["install", "-g", ...npmPackageNames];
+    const { stdout, stderr } = await runCommand(
+      "npm",
+      installArguments,
+      { timeout: INSTALL_TIMEOUT_MILLISECONDS, cwd: homedir() },
+    );
+    outputs.push(String(stdout ?? "").trim() || String(stderr ?? "").trim());
+  }
+  for (const entry of selectedPackages) {
+    if (entry.updateKind !== "self") continue;
+    const { stdout, stderr } = await runCommand(
+      entry.executable,
+      entry.updateArguments,
+      { timeout: INSTALL_TIMEOUT_MILLISECONDS, cwd: homedir() },
+    );
+    outputs.push(String(stdout ?? "").trim() || String(stderr ?? "").trim());
+  }
   return {
     ok: true,
-    output: String(stdout ?? "").trim() || String(stderr ?? "").trim(),
+    output: outputs.filter(Boolean).join("\n"),
   };
 }

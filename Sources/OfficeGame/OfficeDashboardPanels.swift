@@ -555,7 +555,7 @@ private struct UsageBoardContent: View {
         updateStatus = status
     }
 
-    /// 갱신은 npm 설치라 오래 걸린다. 진행 중 업무가 있으면 백엔드가
+    /// CLI별 패키지 설치나 자체 갱신은 오래 걸릴 수 있다. 진행 중 업무가 있으면 백엔드가
     /// 막고 그 사유를 그대로 보여 준다.
     private func applyUpdate(packageID: String) {
         guard updatingPackageID == nil else {
@@ -583,7 +583,7 @@ private struct UsageBoardContent: View {
         _ snapshot: AIUsageSnapshot
     ) -> some View {
         UsageProviderColumn(
-            name: "Claude",
+            name: "Claude Code",
             icon: "sparkles",
             update: updateStatus.package(id: "claude"),
             isUpdating: updatingPackageID == "claude",
@@ -594,6 +594,7 @@ private struct UsageBoardContent: View {
             weeklyResetAt: snapshot.claudeWeeklyResetAt,
             plan: snapshot.claudePlan,
             activity: snapshot.claudeActivity,
+            showsFiveHour: true,
             tint: Color(
                 red: 0.77,
                 green: 0.43,
@@ -612,7 +613,23 @@ private struct UsageBoardContent: View {
             weeklyResetAt: snapshot.codexWeeklyResetAt,
             plan: snapshot.codexPlan,
             activity: snapshot.codexActivity,
+            showsFiveHour: true,
             tint: DashboardPalette.accent
+        )
+        UsageProviderColumn(
+            name: "Antigravity",
+            icon: "wand.and.stars",
+            update: updateStatus.package(id: "antigravity"),
+            isUpdating: updatingPackageID == "antigravity",
+            applyUpdate: { applyUpdate(packageID: "antigravity") },
+            fiveHour: snapshot.antigravityFiveHour,
+            fiveHourResetAt: snapshot.antigravityFiveHourResetAt,
+            weekly: snapshot.antigravityWeekly,
+            weeklyResetAt: snapshot.antigravityWeeklyResetAt,
+            plan: snapshot.antigravityPlan,
+            activity: snapshot.antigravityActivity,
+            showsFiveHour: false,
+            tint: Color(red: 0.19, green: 0.49, blue: 0.88)
         )
     }
 
@@ -651,6 +668,7 @@ private struct UsageProviderColumn: View {
     let weeklyResetAt: Date?
     let plan: String?
     let activity: AIUsageActivitySnapshot?
+    let showsFiveHour: Bool
     let tint: Color
 
     var body: some View {
@@ -666,6 +684,7 @@ private struct UsageProviderColumn: View {
                 weekly: weekly,
                 weeklyResetAt: weeklyResetAt,
                 plan: plan,
+                showsFiveHour: showsFiveHour,
                 tint: tint
             )
             UsageActivityCard(
@@ -688,6 +707,7 @@ private struct UsageProviderCard: View {
     let weekly: Int?
     let weeklyResetAt: Date?
     let plan: String?
+    let showsFiveHour: Bool
     let tint: Color
 
     var body: some View {
@@ -749,12 +769,14 @@ private struct UsageProviderCard: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
             }
-            UsageMeter(
-                label: "5시간",
-                value: fiveHour,
-                resetAt: fiveHourResetAt,
-                tint: tint
-            )
+            if showsFiveHour {
+                UsageMeter(
+                    label: "5시간",
+                    value: fiveHour,
+                    resetAt: fiveHourResetAt,
+                    tint: tint
+                )
+            }
             UsageMeter(
                 label: "7일",
                 value: weekly,
@@ -774,7 +796,8 @@ private struct UsageProviderCard: View {
     }
 
     private var availabilityText: String {
-        guard let lowest = [fiveHour, weekly].compactMap({ $0 }).min()
+        let values = showsFiveHour ? [fiveHour, weekly] : [weekly]
+        guard let lowest = values.compactMap({ $0 }).min()
         else {
             return "정보 없음"
         }
@@ -789,7 +812,9 @@ private struct UsageActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(
-                "API 요금 추정",
+                activity?.costEstimateSupported == false
+                    ? "토큰 사용량"
+                    : "토큰 · API 요금 추정",
                 systemImage: "chart.bar.xaxis"
             )
                 .font(.system(size: 10, weight: .bold))
@@ -798,16 +823,35 @@ private struct UsageActivityCard: View {
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     UsageMetricCell(
-                        label: "오늘 비용",
-                        value: costText(activity?.todayCostUSD),
+                        label: "오늘 토큰",
+                        value: tokenText(activity?.recentTokens),
                         tint: tint
                     )
                     UsageMetricCell(
-                        label: "30일 비용",
-                        value: costText(activity?.last30DaysCostUSD),
+                        label: "30일 토큰",
+                        value: tokenText(activity?.last30DaysTokens),
                         tint: tint
                     )
                 }
+                if activity?.costEstimateSupported != false {
+                    GridRow {
+                        UsageMetricCell(
+                            label: "오늘 비용",
+                            value: costText(activity?.todayCostUSD),
+                            tint: tint
+                        )
+                        UsageMetricCell(
+                            label: "30일 비용",
+                            value: costText(activity?.last30DaysCostUSD),
+                            tint: tint
+                        )
+                    }
+                }
+            }
+            if activity?.costEstimateSupported == false {
+                Text("구독 사용량의 USD 비용 환산은 지원하지 않습니다.")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -826,6 +870,11 @@ private struct UsageActivityCard: View {
             return "–"
         }
         return String(format: "$%.2f", value)
+    }
+
+    private func tokenText(_ value: Int64?) -> String {
+        guard let value else { return "–" }
+        return value.formatted(.number.notation(.compactName))
     }
 
 }
@@ -3957,7 +4006,7 @@ private struct LiveTurnCard: View {
                     switch effectiveBackend {
                     case .codex:
                         codexTranscript
-                    case .claude:
+                    case .claude, .antigravity:
                         claudeTranscript
                     }
                 }

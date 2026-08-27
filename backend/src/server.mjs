@@ -19,6 +19,7 @@ import {
 } from "./git-workspace.mjs";
 import {
   appendLocalImagePreviews,
+  generatedImageRoot,
   generatedImagesForTurn,
 } from "./local-artifacts.mjs";
 import { sessionContextUsage } from "./session-context-usage.mjs";
@@ -51,6 +52,14 @@ import {
   RuntimeCLIPathsValidationError,
   synchronizeRuntimeCLIPaths,
 } from "./runtime-cli-paths.mjs";
+import {
+  AGENT_BACKENDS,
+  backendEfforts,
+  backendModels,
+  backendPermissions,
+  backendSupportsFastMode,
+  normalizedBackendPermission,
+} from "./agent-provider.mjs";
 import { migrate } from "./migrate.mjs";
 import {
   reconcileTerminalWorkRecordReviews,
@@ -83,7 +92,7 @@ import {
   applyCLIUpdates,
   createCLIUpdateChecker,
   backendsForIdentifier,
-  packageNamesForIdentifier,
+  packagesForIdentifier,
   sharedInstallPrefix,
 } from "./cli-updates.mjs";
 
@@ -310,13 +319,13 @@ async function applyCLIUpdatesEndpoint(response, request) {
     const updatedBackends = backendsForIdentifier(body.id);
     const result = await applyCLIUpdates({
       hasRunningWork,
-      packageNames: packageNamesForIdentifier(body.id),
+      packages: packagesForIdentifier(body.id),
       backends: updatedBackends,
       prefix: sharedInstallPrefix(current, body.id),
     });
     if (updatedBackends.includes("claude")) {
       runtime?.closeClaudeWorkers(
-        new Error("Claude CLI가 갱신되어 지속 세션을 다시 시작합니다."),
+        new Error("Claude Code CLI가 갱신되어 지속 세션을 다시 시작합니다."),
       );
     }
     cliUpdateChecker.invalidate();
@@ -457,26 +466,18 @@ async function compactCharacterContext(response, characterID) {
 
 async function updateCharacterSettings(response, characterID, body) {
   const backend = String(body.backend ?? "");
-  const allowedEfforts = backend === "codex"
-    ? ["high", "xhigh", "max", "ultra"]
-    : ["high", "xhigh", "max"];
-  const effort = String(body.effort ?? "");
-
-  if (!["codex", "claude"].includes(backend)) {
+  if (!AGENT_BACKENDS.includes(backend)) {
     send(response, 400, { error: "지원하지 않는 CLI입니다." });
     return;
   }
-  if (!allowedEfforts.includes(effort)) {
-    send(response, 400, { error: "지원하지 않는 추론 레벨입니다." });
+  const model = String(body.model ?? "");
+  if (!backendModels(backend).includes(model)) {
+    send(response, 400, { error: "지원하지 않는 모델입니다." });
     return;
   }
-
-  const allowedModels = backend === "codex"
-    ? ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
-    : ["claude-opus-5", "fable", "claude-sonnet-5"];
-  const model = String(body.model ?? "");
-  if (!allowedModels.includes(model)) {
-    send(response, 400, { error: "지원하지 않는 모델입니다." });
+  const effort = String(body.effort ?? "");
+  if (!backendEfforts(backend, model).includes(effort)) {
+    send(response, 400, { error: "지원하지 않는 추론 레벨입니다." });
     return;
   }
   const fastMode = body.fastMode;
@@ -484,24 +485,21 @@ async function updateCharacterSettings(response, characterID, body) {
     send(response, 400, { error: "Fast 모드 설정은 참 또는 거짓이어야 합니다." });
     return;
   }
-  if (backend === "claude" && fastMode && model !== "claude-opus-5") {
+  if (fastMode && !backendSupportsFastMode(backend, model)) {
     send(response, 400, {
-      error: "Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.",
+      error: "선택한 CLI와 모델은 Fast 모드를 지원하지 않습니다.",
     });
     return;
   }
-  const allowedPermissions = backend === "codex"
-    ? ["read-only", "workspace-write", "danger-full-access"]
-    : ["plan", "auto", "acceptEdits", "bypassPermissions"];
   const requestedPermission = String(body.permission ?? "");
-  if (!allowedPermissions.includes(requestedPermission)) {
+  if (!backendPermissions(backend).includes(requestedPermission)) {
     send(response, 400, { error: "지원하지 않는 권한입니다." });
     return;
   }
-  const permission =
-    backend === "claude" && requestedPermission === "acceptEdits"
-      ? "auto"
-      : requestedPermission;
+  const permission = normalizedBackendPermission(
+    backend,
+    requestedPermission,
+  );
 
   const character = await withCharacterSessionLock(
     characterID,
@@ -1411,6 +1409,8 @@ function withArtifactPreviews(turn, sessionID = turn.externalSessionId) {
     sessionID,
     startedAt: turn.startedAt,
     endedAt: turn.endedAt,
+    backend: turn.backend,
+    generatedRoot: generatedImageRoot(turn.backend),
   });
   return {
     ...turn,
@@ -1669,18 +1669,16 @@ async function recordTurn(response, body) {
   }
   if (
     executionBackend &&
-    !["codex", "claude"].includes(executionBackend)
+    !AGENT_BACKENDS.includes(executionBackend)
   ) {
     send(response, 400, { error: "지원하지 않는 실행 CLI입니다." });
     return;
   }
   if (
     executionEffort &&
-    !(
-      executionBackend === "codex"
-        ? ["high", "xhigh", "max", "ultra"]
-        : ["high", "xhigh", "max"]
-    ).includes(executionEffort)
+    !backendEfforts(executionBackend, executionModel).includes(
+      executionEffort,
+    )
   ) {
     send(response, 400, { error: "지원하지 않는 실행 추론 레벨입니다." });
     return;
@@ -1690,12 +1688,12 @@ async function recordTurn(response, body) {
     return;
   }
   if (
-    executionBackend === "claude" &&
+    executionBackend &&
     executionFastMode === true &&
-    executionModel !== "claude-opus-5"
+    !backendSupportsFastMode(executionBackend, executionModel)
   ) {
     send(response, 400, {
-      error: "Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.",
+      error: "선택한 실행 CLI와 모델은 Fast 모드를 지원하지 않습니다.",
     });
     return;
   }

@@ -7,9 +7,13 @@ import {
 } from "node:fs";
 import { basename, isAbsolute } from "node:path";
 
+import {
+  AGENT_BACKENDS,
+  backendExecutableName,
+} from "./agent-provider.mjs";
 import { withCharacterSessionLocks } from "./character-settings.mjs";
 
-const supportedProviders = ["codex", "claude"];
+const supportedProviders = AGENT_BACKENDS;
 
 export class RuntimeCLIPathsValidationError extends Error {}
 
@@ -61,7 +65,7 @@ export function normalizeRuntimeCLIPaths(body) {
         `${provider} 실행 경로는 절대경로여야 합니다.`,
       );
     }
-    if (basename(executablePath) !== provider) {
+    if (basename(executablePath) !== backendExecutableName(provider)) {
       throw new RuntimeCLIPathsValidationError(
         `${provider} 실행 파일 이름이 올바르지 않습니다.`,
       );

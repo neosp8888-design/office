@@ -5,6 +5,11 @@ import { access, readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  agentProvider,
+  backendExecutableName,
+} from "./agent-provider.mjs";
+
 const backendDirectory = resolve(
   fileURLToPath(new URL("..", import.meta.url)),
   "..",
@@ -47,11 +52,9 @@ export async function characterConfigurationForSync(
   executableAccess = access,
 ) {
   const executablePath = String(character.executablePath ?? "").trim();
-  const expectedExecutable = character.backend === "codex"
-    ? "codex"
-    : character.backend === "claude"
-      ? "claude"
-      : null;
+  const expectedExecutable = agentProvider(character.backend)
+    ? backendExecutableName(character.backend)
+    : null;
   if (
     !executablePath ||
     !expectedExecutable ||

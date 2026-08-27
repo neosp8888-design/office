@@ -11,6 +11,10 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import {
+  antigravityContextUsage,
+} from "./antigravity-local-state.mjs";
+
 const CLAUDE_CONTEXT_WINDOWS = [
   ["claude-fable-5", 1_000_000],
   ["fable", 1_000_000],
@@ -50,10 +54,17 @@ export function sessionContextUsage({
   at,
   claudeRoot = join(homedir(), ".claude", "projects"),
   codexRoot = join(homedir(), ".codex", "sessions"),
+  antigravityRoot = join(
+    homedir(),
+    ".gemini",
+    "antigravity-cli",
+    "conversations",
+  ),
+  antigravityUsageReader = antigravityContextUsage,
   maxReadBytes = MAX_READ_BYTES,
 }) {
   const kind = String(backend ?? "").trim();
-  if (kind !== "claude" && kind !== "codex") {
+  if (!["claude", "codex", "antigravity"].includes(kind)) {
     return null;
   }
   const id = String(sessionID ?? "").trim();
@@ -63,6 +74,14 @@ export function sessionContextUsage({
   const boundary = new Date(at ?? Date.now()).getTime();
   if (!Number.isFinite(boundary)) {
     return null;
+  }
+
+  if (kind === "antigravity") {
+    return antigravityUsageReader({
+      sessionID: id,
+      at: boundary,
+      root: antigravityRoot,
+    });
   }
 
   const path = kind === "claude"

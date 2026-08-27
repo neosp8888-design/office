@@ -122,6 +122,29 @@ test("Codex 기록은 마지막 요청 입력과 모델 한도를 사용한다",
   assert.equal(entry.limitTokens, 258_400);
 });
 
+test("Antigravity 세션은 로컬 대화 메타데이터의 실제 한도를 사용한다", () => {
+  let request;
+  const result = sessionContextUsage({
+    backend: "antigravity",
+    sessionID: "11111111-2222-4333-8444-555555555555",
+    model: "gemini-3.7-flash",
+    at: "2026-08-28T00:00:00Z",
+    antigravityRoot: "/tmp/antigravity-conversations",
+    antigravityUsageReader: (options) => {
+      request = options;
+      return { usedTokens: 58_559, limitTokens: 256_000 };
+    },
+  });
+
+  assert.deepEqual(result, { usedTokens: 58_559, limitTokens: 256_000 });
+  assert.equal(
+    request.sessionID,
+    "11111111-2222-4333-8444-555555555555",
+  );
+  assert.equal(request.root, "/tmp/antigravity-conversations");
+  assert.equal(request.at, Date.parse("2026-08-28T00:00:00Z"));
+});
+
 test("누적 사용량은 컨텍스트 점유로 오인하지 않는다", () => {
   const entry = codexContextEntry(
     codexTokenCountLine({

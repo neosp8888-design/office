@@ -162,6 +162,20 @@ test("symlink 경로는 실제 실행 가능한 일반 파일을 가리킬 때 �
   }
 });
 
+test("Antigravity provider는 agy 실행 파일 경로로 동기화한다", () => {
+  const agy = executableFixture("agy");
+  try {
+    assert.deepEqual(
+      normalizeRuntimeCLIPaths({
+        executables: { antigravity: agy.link },
+      }),
+      { antigravity: agy.link },
+    );
+  } finally {
+    agy.cleanup();
+  }
+});
+
 test("허용되지 않은 키와 안전하지 않은 실행 경로는 모두 거절한다", () => {
   const directory = mkdtempSync(join(tmpdir(), "officestra-runtime-invalid-"));
   const nonExecutableDirectory = join(directory, "blocked");

@@ -41,6 +41,13 @@ import {
   fileChangeActivityText,
   parseAgentEvent,
 } from "./agent-event-parser.mjs";
+import { backendExecutableName } from "./agent-provider.mjs";
+import {
+  antigravityPlaywrightEnvironment,
+} from "./antigravity-playwright.mjs";
+import {
+  antigravitySessionUsage,
+} from "./antigravity-local-state.mjs";
 import {
   CodexRolloutCollaborationTracker,
 } from "./codex-rollout-collaboration.mjs";
@@ -48,6 +55,7 @@ import { compactCodexThread } from "./codex-context-compactor.mjs";
 import { ClaudePersistentWorker } from "./claude-persistent-worker.mjs";
 import {
   appendLocalImagePreviews,
+  generatedImageRoot,
   listGeneratedImages,
 } from "./local-artifacts.mjs";
 import { GitWorkspaceError } from "./git-workspace.mjs";
@@ -150,6 +158,7 @@ export class AgentRuntime {
     claudeWorkerFactory = (options) => new ClaudePersistentWorker(options),
     codexCompactor = compactCodexThread,
     contextUsageReader = sessionContextUsage,
+    antigravityUsageReader = antigravitySessionUsage,
     embeddingService = null,
   }) {
     this.pool = pool;
@@ -162,6 +171,7 @@ export class AgentRuntime {
     this.claudeWorkerFactory = claudeWorkerFactory;
     this.codexCompactor = codexCompactor;
     this.contextUsageReader = contextUsageReader;
+    this.antigravityUsageReader = antigravityUsageReader;
     this.embeddingService = embeddingService;
     this.running = new Map();
     this.claudeWorkers = new Map();
@@ -484,28 +494,35 @@ export class AgentRuntime {
     const resumedCodexSession =
       prepared.character.backend === "codex" &&
       Boolean(prepared.externalSessionID);
+    const resumedAntigravitySession =
+      prepared.character.backend === "antigravity" &&
+      Boolean(prepared.externalSessionID);
     const usageBaseline = resumedCodexSession
       ? latestCodexUsageFromRollout(
-        findRolloutPath(prepared.externalSessionID),
-      )
-      : null;
+          findRolloutPath(prepared.externalSessionID),
+        )
+      : resumedAntigravitySession
+        ? this.antigravityUsageReader(prepared.externalSessionID)
+        : null;
     const state = {
       ...prepared,
       process: null,
       attachments,
       cancelRequested: false,
       initialGeneratedImages: new Set(
-        listGeneratedImages(prepared.externalSessionID),
+        listGeneratedImages(
+          prepared.externalSessionID,
+          generatedImageRoot(prepared.character.backend),
+        ),
       ),
       sequence: 0,
       lastActivity: null,
       activityRecords: new Map(),
       activityWritePromise: null,
       fileChangeSnapshots: new Map(),
-      rolloutReader: this.rolloutReaderFactory(
-        prepared.externalSessionID,
-        true,
-      ),
+      rolloutReader: prepared.character.backend === "codex"
+        ? this.rolloutReaderFactory(prepared.externalSessionID, true)
+        : null,
       rolloutMonitorTimer: null,
       rolloutPollPromise: null,
       hasSeenInitialCodexReasoning: false,
@@ -517,6 +534,8 @@ export class AgentRuntime {
       partialText: "",
       lastPartialPersistedAt: 0,
       resumedCodexSession,
+      resumedAntigravitySession,
+      antigravityUsageReader: this.antigravityUsageReader,
       usageBaseline,
       usage: null,
       warning: null,
@@ -1213,7 +1232,9 @@ export class AgentRuntime {
       detached: process.platform !== "win32",
     });
     state.process = child;
-    this.startCodexRolloutMonitor(state);
+    if (state.character.backend === "codex") {
+      this.startCodexRolloutMonitor(state);
+    }
 
     const outputTask = this.consumeOutput(state, child.stdout);
     const errorTask = collectStream(child.stderr);
@@ -1222,7 +1243,9 @@ export class AgentRuntime {
       [exitCode] = await once(child, "close");
       await outputTask;
     } finally {
-      await this.stopCodexRolloutMonitor(state);
+      if (state.character.backend === "codex") {
+        await this.stopCodexRolloutMonitor(state);
+      }
     }
     const stderr = (await errorTask).trim();
 
@@ -1303,7 +1326,7 @@ export class AgentRuntime {
       return existing;
     }
     existing?.close(
-      new Error("Claude 설정 또는 작업 공간이 바뀌어 지속 세션을 교체합니다."),
+      new Error("Claude Code 설정 또는 작업 공간이 바뀌어 지속 세션을 교체합니다."),
     );
 
     let worker;
@@ -1330,7 +1353,7 @@ export class AgentRuntime {
   closeClaudeWorker(
     characterID,
     expected = null,
-    reason = new Error("Claude 지속 세션을 종료했습니다."),
+    reason = new Error("Claude Code 지속 세션을 종료했습니다."),
   ) {
     const worker = this.claudeWorkers.get(characterID);
     if (!worker || (expected && worker !== expected)) {
@@ -1349,7 +1372,7 @@ export class AgentRuntime {
   }
 
   closeClaudeWorkers(
-    reason = new Error("Claude 지속 세션을 종료했습니다."),
+    reason = new Error("Claude Code 지속 세션을 종료했습니다."),
   ) {
     for (const [characterID, worker] of this.claudeWorkers) {
       this.closeClaudeWorker(
@@ -1510,13 +1533,17 @@ export class AgentRuntime {
         const executable = locateExecutable(target.character);
         const worker = this.acquireClaudeWorker(target, executable);
         nativeResult = await worker.compact();
-      } else {
+      } else if (target.character.backend === "codex") {
         nativeResult = await this.codexCompactor({
           executable: locateExecutable(target.character),
           threadID: target.externalSessionID,
           cwd: target.workdir,
           env: executionEnvironment(target.character),
         });
+      } else {
+        throw new Error(
+          "Antigravity CLI는 수동 컨텍스트 압축을 지원하지 않습니다.",
+        );
       }
       const after = this.contextUsage(target);
       const measuredPostTokens = after?.usedTokens != null &&
@@ -1709,8 +1736,13 @@ export class AgentRuntime {
     if (event.usage) {
       const usage = usageForTurn(state, event.usage);
       if (usage) {
-        state.usage = usage;
+        state.usage = event.usageIsDelta
+          ? accumulatedUsage(state.usage, usage)
+          : usage;
       }
+    }
+    if (event.usageFallback && !state.usage) {
+      state.usage = usageForTurn(state, event.usageFallback);
     }
     this.enrichFileChangeEvent(state, event);
     if (
@@ -2418,6 +2450,7 @@ export class AgentRuntime {
     await this.normalizeCompletedCodexMessageActivity(state, decoded);
     const generatedImages = listGeneratedImages(
       state.externalSessionID,
+      generatedImageRoot(state.character.backend),
     ).filter((path) => !state.initialGeneratedImages.has(path));
     const responseText = appendLocalImagePreviews(
       this.completedResponseText(state, decoded),
@@ -2839,7 +2872,7 @@ export class AgentRuntime {
       this.closeClaudeWorker(
         characterID,
         null,
-        new Error("작업 공간 검토 전에 Claude 세션을 닫습니다."),
+        new Error("작업 공간 검토 전에 Claude Code 세션을 닫습니다."),
       );
       const updated = await this.pool.query(
         `
@@ -3794,20 +3827,36 @@ export function recoverInterruptedUsage(state) {
   if (state.usage || !state.externalSessionID) {
     return null;
   }
+  if (![
+    "codex",
+    "claude",
+    "antigravity",
+  ].includes(state.character?.backend)) {
+    return null;
+  }
   const currentClaudePath = claudeSessionPath(
     state.workdir,
     state.externalSessionID,
   );
-  const recorded = state.character?.backend === "codex"
-    ? latestCodexUsageFromRollout(findRolloutPath(state.externalSessionID))
-    : latestClaudeUsageFromSession(
+  let recorded;
+  if (state.character?.backend === "codex") {
+    recorded = latestCodexUsageFromRollout(
+      findRolloutPath(state.externalSessionID),
+    );
+  } else if (state.character?.backend === "antigravity") {
+    recorded = (
+      state.antigravityUsageReader ?? antigravitySessionUsage
+    )(state.externalSessionID);
+  } else {
+    recorded = latestClaudeUsageFromSession(
       claudeSessionFileMatches(
-          currentClaudePath,
-          state.externalSessionID,
-        )
+        currentClaudePath,
+        state.externalSessionID,
+      )
         ? currentClaudePath
         : findClaudeSessionPath(state.externalSessionID),
     );
+  }
   if (!recorded) {
     return null;
   }
@@ -3818,11 +3867,45 @@ export function recoverInterruptedUsage(state) {
   return usage ?? null;
 }
 
+export function accumulatedUsage(current, delta) {
+  if (!current) {
+    return delta ? { ...delta } : null;
+  }
+  if (!delta) {
+    return { ...current };
+  }
+  const result = { ...current };
+  for (const field of [
+    "inputTokens",
+    "outputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "cacheWrite5mInputTokens",
+    "cacheWrite1hInputTokens",
+    "reasoningOutputTokens",
+    "reportedCostUsd",
+    "reportedSonnet5CostUsd",
+  ]) {
+    const left = current[field];
+    const right = delta[field];
+    result[field] = left == null && right == null
+      ? null
+      : (left ?? 0) + (right ?? 0);
+  }
+  for (const field of ["serviceTier", "speed", "inferenceGeo"]) {
+    result[field] = delta[field] ?? current[field] ?? null;
+  }
+  return result;
+}
+
 function usageForTurn(state, usage) {
-  if (
-    state.character?.backend !== "codex" ||
-    !state.resumedCodexSession
-  ) {
+  const resumedCumulativeSession =
+    (state.character?.backend === "codex" && state.resumedCodexSession) ||
+    (
+      state.character?.backend === "antigravity" &&
+      state.resumedAntigravitySession
+    );
+  if (!resumedCumulativeSession) {
     return usage;
   }
   if (!state.usageBaseline) {
@@ -4160,7 +4243,7 @@ export function prepareClaudeSessionResume({
     : findClaudeSessionPath(sessionID);
   if (!source) {
     throw new Error(
-      "저장된 Claude 세션 기록을 찾을 수 없습니다. " +
+      "저장된 Claude Code 세션 기록을 찾을 수 없습니다. " +
       "대화 이력을 버리고 새 세션으로 바꾸지 않았습니다.",
     );
   }
@@ -4171,7 +4254,7 @@ export function prepareClaudeSessionResume({
   if (existsSync(target)) {
     if (!sameFileIdentity(source, target)) {
       throw new Error(
-        "현재 작업 공간에 서로 다른 Claude 세션 기록이 이미 있습니다. " +
+        "현재 작업 공간에 서로 다른 Claude Code 세션 기록이 이미 있습니다. " +
         "기존 기록을 덮어쓰거나 숨기지 않았습니다.",
       );
     }
@@ -4207,7 +4290,7 @@ function prepareClaudeSessionSidecar(source, target, sessionID) {
   }
   const sourceMetadata = statSync(sourcePath);
   if (!sourceMetadata.isDirectory()) {
-    throw new Error("Claude 세션 부속 기록 경로가 디렉토리가 아닙니다.");
+    throw new Error("Claude Code 세션 부속 기록 경로가 디렉토리가 아닙니다.");
   }
 
   const targetPath = join(dirname(target), sessionID);
@@ -4216,7 +4299,7 @@ function prepareClaudeSessionSidecar(source, target, sessionID) {
       return { created: false, path: targetPath };
     }
     throw new Error(
-      "현재 작업 공간에 서로 다른 Claude 세션 부속 기록이 있습니다. " +
+      "현재 작업 공간에 서로 다른 Claude Code 세션 부속 기록이 있습니다. " +
       "기존 기록을 덮어쓰거나 숨기지 않았습니다.",
     );
   }
@@ -4345,24 +4428,39 @@ export function buildArguments({
   attachments = [],
   workdir = null,
 }) {
-  return character.backend === "codex"
-    ? codexArguments(
-      character,
-      prompt,
-      previousSessionID,
-      attachments,
-    )
-    : claudeArguments(
-      character,
-      prompt,
-      previousSessionID,
-    );
+  switch (character.backend) {
+    case "codex":
+      return codexArguments(
+        character,
+        prompt,
+        previousSessionID,
+        attachments,
+      );
+    case "claude":
+      return claudeArguments(
+        character,
+        prompt,
+        previousSessionID,
+      );
+    case "antigravity":
+      return antigravityArguments(
+        character,
+        prompt,
+        previousSessionID,
+        workdir,
+      );
+    default:
+      throw new Error(`지원하지 않는 직원 백엔드입니다: ${character.backend}`);
+  }
 }
 
 export function executionEnvironment(
   character,
   baseEnvironment = process.env,
 ) {
+  if (character.backend === "antigravity") {
+    return antigravityPlaywrightEnvironment(baseEnvironment);
+  }
   if (character.backend !== "claude") {
     return baseEnvironment;
   }
@@ -4384,7 +4482,7 @@ export function configuredExecutableForCharacter(character) {
     return null;
   }
   const configuredName = basename(configured).toLowerCase();
-  const expectedName = String(character.backend ?? "").toLowerCase();
+  const expectedName = backendExecutableName(character.backend).toLowerCase();
   if (configuredName !== expectedName) {
     return null;
   }
@@ -4404,10 +4502,11 @@ function locateExecutable(character) {
   if (configured) return configured;
 
   const home = homedir();
+  const executableName = backendExecutableName(character.backend);
   const candidates = [
-    join(home, ".local", "bin", character.backend),
-    join("/opt/homebrew/bin", character.backend),
-    join("/usr/local/bin", character.backend),
+    join(home, ".local", "bin", executableName),
+    join("/opt/homebrew/bin", executableName),
+    join("/usr/local/bin", executableName),
   ];
   if (character.backend === "claude") {
     const versionsDirectory = join(home, ".nvm", "versions", "node");
@@ -4422,7 +4521,7 @@ function locateExecutable(character) {
     }
   }
 
-  return candidates.find(existsSync) ?? character.backend;
+  return candidates.find(existsSync) ?? executableName;
 }
 
 function codexArguments(
@@ -4477,7 +4576,7 @@ function claudeArguments(
   previousSessionID,
 ) {
   if (character.fastMode && character.model !== "claude-opus-5") {
-    throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
+    throw new Error("Claude Code Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
   }
   const argumentsList = [
     "-p",
@@ -4510,9 +4609,81 @@ function claudeArguments(
   return argumentsList;
 }
 
+function antigravityArguments(
+  character,
+  prompt,
+  previousSessionID,
+  workdir,
+) {
+  const argumentsList = [
+    "-p",
+    antigravityExecutionPrompt(character, prompt, workdir),
+    "--output-format",
+    "stream-json",
+    "--model",
+    character.model,
+    "--effort",
+    character.effort,
+  ];
+  if (previousSessionID) {
+    argumentsList.push("--conversation", previousSessionID);
+  }
+  // Headless 모드는 --add-dir로 등록된 폴더만 읽기 권한을 자동 승인한다.
+  // cwd만 맞추면 plan 모드의 view_file도 승인 대기 상태로 끝날 수 있다.
+  if (workdir) {
+    argumentsList.push("--add-dir", workdir);
+  }
+  switch (character.permission) {
+    case "plan":
+      argumentsList.push("--mode", "plan");
+      break;
+    case "accept-edits":
+      argumentsList.push(
+        "--mode",
+        "accept-edits",
+        "--sandbox",
+        "--dangerously-skip-permissions",
+      );
+      break;
+    case "dangerously-skip-permissions":
+      argumentsList.push(
+        "--mode",
+        "accept-edits",
+        "--dangerously-skip-permissions",
+      );
+      break;
+    default:
+      throw new Error(
+        `지원하지 않는 Antigravity 권한입니다: ${character.permission}`,
+      );
+  }
+  return argumentsList;
+}
+
+function antigravityExecutionPrompt(character, prompt, workdir) {
+  const resolvedWorkdir = String(workdir ?? "").trim();
+  return [
+    "<officestra_identity>",
+    configuredIdentityPrompt(character),
+    "</officestra_identity>",
+    "<officestra_execution>",
+    resolvedWorkdir
+      ? `업무 폴더는 ${JSON.stringify(resolvedWorkdir)}입니다.`
+      : "현재 업무 폴더 안에서만 파일 작업을 수행합니다.",
+    resolvedWorkdir
+      ? `명령을 실행할 때는 반드시 ${JSON.stringify(resolvedWorkdir)}로 이동한 뒤 실행합니다.`
+      : null,
+    "사용자 요청 범위를 벗어난 파일이나 서비스를 변경하지 않습니다.",
+    "</officestra_execution>",
+    "<user_request>",
+    String(prompt ?? ""),
+    "</user_request>",
+  ].filter((line) => line !== null).join("\n");
+}
+
 export function claudePersistentArguments(character, previousSessionID) {
   if (character.fastMode && character.model !== "claude-opus-5") {
-    throw new Error("Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
+    throw new Error("Claude Code Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
   }
   const argumentsList = [
     "-p",
@@ -4585,7 +4756,10 @@ export function promptWithAttachments(prompt, attachments) {
   ].join("\n");
 }
 
-export function stageAttachments({ attachmentPaths, workdir }) {
+export function stageAttachments({
+  attachmentPaths,
+  workdir,
+}) {
   if (!Array.isArray(attachmentPaths)) {
     throw new Error("첨부 파일 목록이 올바르지 않습니다.");
   }
@@ -4601,11 +4775,7 @@ export function stageAttachments({ attachmentPaths, workdir }) {
     return [];
   }
 
-  const directory = join(
-    workdir,
-    ".office-attachments",
-    randomUUID(),
-  );
+  const directory = join(workdir, ".office-attachments", randomUUID());
   mkdirSync(directory, { recursive: true });
 
   try {

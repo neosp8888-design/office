@@ -56,8 +56,8 @@ export class ClaudePersistentWorker {
       this.fail(
         new Error(
           signal
-            ? `Claude 지속 세션이 ${signal} 신호로 종료됐습니다.${suffix}`
-            : `Claude 지속 세션이 종료 코드 ${code ?? "unknown"}로 끝났습니다.${suffix}`,
+            ? `Claude Code 지속 세션이 ${signal} 신호로 종료됐습니다.${suffix}`
+            : `Claude Code 지속 세션이 종료 코드 ${code ?? "unknown"}로 끝났습니다.${suffix}`,
         ),
       );
     });
@@ -76,12 +76,12 @@ export class ClaudePersistentWorker {
   runTurn({ prompt, onLine }) {
     if (this.closed || this.terminalError) {
       return Promise.reject(
-        this.terminalError ?? new Error("Claude 지속 세션이 종료됐습니다."),
+        this.terminalError ?? new Error("Claude Code 지속 세션이 종료됐습니다."),
       );
     }
     if (this.current) {
       return Promise.reject(
-        new Error("Claude 지속 세션이 이전 업무를 아직 처리 중입니다."),
+        new Error("Claude Code 지속 세션이 이전 업무를 아직 처리 중입니다."),
       );
     }
     return new Promise((resolve, reject) => {
@@ -103,7 +103,7 @@ export class ClaudePersistentWorker {
       };
       try {
         if (!this.child.stdin?.writable) {
-          throw new Error("Claude 지속 세션의 입력 스트림이 닫혔습니다.");
+          throw new Error("Claude Code 지속 세션의 입력 스트림이 닫혔습니다.");
         }
         this.child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
           if (error) {
@@ -136,7 +136,7 @@ export class ClaudePersistentWorker {
           (event.is_error === true || event.subtype !== "success")
         ) {
           resultError = String(
-            event.result ?? event.error ?? "Claude 컨텍스트 압축이 실패했습니다.",
+            event.result ?? event.error ?? "Claude Code 컨텍스트 압축이 실패했습니다.",
           );
         }
       },
@@ -145,7 +145,7 @@ export class ClaudePersistentWorker {
       throw new Error(resultError);
     }
     if (!boundary) {
-      throw new Error("Claude가 압축 완료 경계를 보고하지 않았습니다.");
+      throw new Error("Claude Code가 압축 완료 경계를 보고하지 않았습니다.");
     }
     const metadata = boundary.compact_metadata ??
       boundary.compactMetadata ?? {};
@@ -160,10 +160,10 @@ export class ClaudePersistentWorker {
   }
 
   cancelCurrent() {
-    this.close(new Error("사용자가 Claude 업무를 중단했습니다."));
+    this.close(new Error("사용자가 Claude Code 업무를 중단했습니다."));
   }
 
-  close(reason = new Error("Claude 지속 세션을 종료했습니다.")) {
+  close(reason = new Error("Claude Code 지속 세션을 종료했습니다.")) {
     if (this.closed) {
       return;
     }

@@ -333,8 +333,8 @@ final class OfficeBackendController: ObservableObject {
     }
 
     private nonisolated static func cliSearchPaths() -> [String] {
-        [AgentBackend.codex, .claude].compactMap {
-            OfficeToolLocator.locate($0.rawValue)?
+        AgentBackend.allCases.compactMap {
+            OfficeToolLocator.locate($0.executableName)?
                 .deletingLastPathComponent()
                 .path
         }

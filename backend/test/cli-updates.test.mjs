@@ -10,6 +10,7 @@ import {
   backendsForIdentifier,
   npmPrefixForExecutable,
   packageNamesForIdentifier,
+  packagesForIdentifier,
   sharedInstallPrefix,
   createCLIUpdateChecker,
   isUpdateAvailable,
@@ -22,6 +23,7 @@ test("서로 다른 출력 형식에서 설치 버전만 뽑는다", () => {
     "2.1.220",
   );
   assert.equal(parseInstalledVersion("codex-cli 0.146.0"), "0.146.0");
+  assert.equal(parseInstalledVersion("Antigravity CLI 1.1.22"), "1.1.22");
   assert.equal(
     parseInstalledVersion("codex-cli 0.148.0-alpha.9"),
     "0.148.0-alpha.9",
@@ -65,7 +67,7 @@ test("조회 결과는 캐시하고 강제 조회는 다시 묻는다", async ()
 
   const first = await checker.read();
   assert.equal(first.updateAvailable, true);
-  assert.equal(first.packages.length, 2);
+  assert.equal(first.packages.length, 3);
   const callsAfterFirst = calls;
 
   await checker.read();
@@ -118,7 +120,7 @@ test("진행 중 업무가 있으면 갱신을 거부한다", async () => {
   );
 });
 
-test("업무가 없으면 두 패키지를 한 번에 전역 설치한다", async () => {
+test("업무가 없으면 npm 두 패키지와 Antigravity 자체 업데이트를 실행한다", async () => {
   const commands = [];
   const result = await applyCLIUpdates({
     runCommand: async (command, args) => {
@@ -129,7 +131,7 @@ test("업무가 없으면 두 패키지를 한 번에 전역 설치한다", asyn
   });
 
   assert.equal(result.ok, true);
-  assert.equal(commands.length, 1);
+  assert.equal(commands.length, 2);
   assert.deepEqual(commands[0], [
     "npm",
     "install",
@@ -137,6 +139,7 @@ test("업무가 없으면 두 패키지를 한 번에 전역 설치한다", asyn
     "@anthropic-ai/claude-code",
     "@openai/codex",
   ]);
+  assert.deepEqual(commands[1], ["agy", "update"]);
 });
 
 test("업데이트는 CLI별로 따로 고를 수 있다", () => {
@@ -145,7 +148,9 @@ test("업데이트는 CLI별로 따로 고를 수 있다", () => {
     ["@anthropic-ai/claude-code"],
   );
   assert.deepEqual(packageNamesForIdentifier("codex"), ["@openai/codex"]);
-  // 지정이 없으면 둘 다 갱신한다.
+  assert.deepEqual(packageNamesForIdentifier("antigravity"), []);
+  assert.equal(packagesForIdentifier("antigravity")[0].updateKind, "self");
+  // npm 패키지명 목록에는 npm으로 설치하는 두 CLI만 들어간다.
   assert.deepEqual(packageNamesForIdentifier(null), [
     "@anthropic-ai/claude-code",
     "@openai/codex",
@@ -174,6 +179,19 @@ test("한쪽만 고르면 그 패키지만 설치한다", async () => {
   ]);
 });
 
+test("Antigravity는 agy 자체 업데이트 명령만 사용한다", async () => {
+  const commands = [];
+  await applyCLIUpdates({
+    runCommand: async (command, args) => {
+      commands.push([command, ...args]);
+      return { stdout: "Already on the latest version.\n" };
+    },
+    packages: packagesForIdentifier("antigravity"),
+    hasRunningWork: async () => false,
+  });
+  assert.deepEqual(commands, [["agy", "update"]]);
+});
+
 test("진행 중 업무 거부 문구는 업데이트라는 말을 쓴다", async () => {
   await assert.rejects(
     applyCLIUpdates({
@@ -189,7 +207,12 @@ test("진행 중 업무 거부 문구는 업데이트라는 말을 쓴다", asyn
 test("갱신을 막는 판정은 그 CLI를 쓰는 직원만 본다", async () => {
   assert.deepEqual(backendsForIdentifier("claude"), ["claude"]);
   assert.deepEqual(backendsForIdentifier("codex"), ["codex"]);
-  assert.deepEqual(backendsForIdentifier(null), ["claude", "codex"]);
+  assert.deepEqual(backendsForIdentifier("antigravity"), ["antigravity"]);
+  assert.deepEqual(backendsForIdentifier(null), [
+    "claude",
+    "codex",
+    "antigravity",
+  ]);
 
   // 클로드 직원이 일하는 중이어도 코덱스는 갱신할 수 있어야 한다.
   const asked = [];
@@ -290,9 +313,15 @@ test("조회 실패는 최신 상태와 구분해 표시한다", async () => {
   const status = await checker.read();
   assert.equal(status.checkFailed, true);
   assert.equal(status.updateAvailable, false);
-  for (const entry of status.packages) {
+  for (const entry of status.packages.filter(
+    (item) => item.id !== "antigravity",
+  )) {
     assert.equal(entry.checkFailed, true);
   }
+  assert.equal(
+    status.packages.find((entry) => entry.id === "antigravity")?.checkFailed,
+    false,
+  );
 });
 
 test("정상 조회는 실패로 표시하지 않는다", async () => {

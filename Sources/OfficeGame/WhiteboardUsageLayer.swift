@@ -1,4 +1,4 @@
-// 이 파일은 2D·3D 화이트보드에 Codex와 Claude의 잔여 한도를 실시간 표시한다.
+// 이 파일은 2D·3D 화이트보드에 세 AI CLI의 잔여 한도를 실시간 표시한다.
 
 import Foundation
 import OfficeCore
@@ -83,16 +83,22 @@ struct WhiteboardUsageLayer: View {
                 resetAt: snapshot.codexWeeklyResetAt
             ),
             accessibilityLimitText(
-                provider: "Claude",
+                provider: "Claude Code",
                 window: "5시간",
                 remaining: snapshot.claudeFiveHour,
                 resetAt: snapshot.claudeFiveHourResetAt
             ),
             accessibilityLimitText(
-                provider: "Claude",
+                provider: "Claude Code",
                 window: "주간",
                 remaining: snapshot.claudeWeekly,
                 resetAt: snapshot.claudeWeeklyResetAt
+            ),
+            accessibilityLimitText(
+                provider: "Antigravity",
+                window: "주간",
+                remaining: snapshot.antigravityWeekly,
+                resetAt: snapshot.antigravityWeeklyResetAt
             ),
         ]
         .joined(separator: ", ")
@@ -109,6 +115,7 @@ struct WhiteboardUsageLayer: View {
             snapshot = refreshed
             refreshFailed = refreshed.codexLimitError != nil
                 || refreshed.claudeLimitError != nil
+                || refreshed.antigravityLimitError != nil
         } catch {
             refreshFailed = true
         }
@@ -155,19 +162,35 @@ struct WhiteboardUsageLayer: View {
                 weekly: snapshot.codexWeekly,
                 weeklyResetAt: snapshot.codexWeeklyResetAt,
                 providerY: 0,
+                showsFiveHour: true,
                 context: &context,
                 ink: ink,
                 mutedInk: mutedInk
             )
             drawUsageGroup(
-                provider: "CLAUDE",
+                provider: "CLAUDE CODE",
                 hasUpdate: updateStatus
                     .package(id: "claude")?.updateAvailable == true,
                 fiveHour: snapshot.claudeFiveHour,
                 fiveHourResetAt: snapshot.claudeFiveHourResetAt,
                 weekly: snapshot.claudeWeekly,
                 weeklyResetAt: snapshot.claudeWeeklyResetAt,
-                providerY: 40,
+                providerY: 26,
+                showsFiveHour: true,
+                context: &context,
+                ink: ink,
+                mutedInk: mutedInk
+            )
+            drawUsageGroup(
+                provider: "ANTIGRAVITY",
+                hasUpdate: updateStatus
+                    .package(id: "antigravity")?.updateAvailable == true,
+                fiveHour: snapshot.antigravityFiveHour,
+                fiveHourResetAt: snapshot.antigravityFiveHourResetAt,
+                weekly: snapshot.antigravityWeekly,
+                weeklyResetAt: snapshot.antigravityWeeklyResetAt,
+                providerY: 52,
+                showsFiveHour: false,
                 context: &context,
                 ink: ink,
                 mutedInk: mutedInk
@@ -212,6 +235,7 @@ struct WhiteboardUsageLayer: View {
         weekly: Int?,
         weeklyResetAt: Date?,
         providerY: CGFloat,
+        showsFiveHour: Bool,
         context: inout GraphicsContext,
         ink: Color,
         mutedInk: Color
@@ -220,7 +244,7 @@ struct WhiteboardUsageLayer: View {
             provider,
             in: &context,
             at: CGPoint(x: 0, y: providerY),
-            size: 11,
+            size: 9.5,
             weight: .bold,
             color: ink
         )
@@ -230,33 +254,23 @@ struct WhiteboardUsageLayer: View {
             drawText(
                 "UP",
                 in: &context,
-                at: CGPoint(x: CGFloat(provider.count) * 6.6 + 5, y: providerY + 1),
+                at: CGPoint(x: CGFloat(provider.count) * 5.7 + 4, y: providerY + 1),
                 size: 7.5,
                 weight: .black,
                 color: Color(red: 0.10, green: 0.48, blue: 0.30)
             )
         }
+        let limits = [
+            showsFiveHour
+                ? "5H \(compactPercentText(fiveHour))"
+                : nil,
+            "7D \(compactPercentText(weekly))",
+        ].compactMap { $0 }.joined(separator: "  ")
         drawText(
-            compactLimitText(
-                label: "5H",
-                remaining: fiveHour,
-                resetAt: fiveHourResetAt
-            ),
+            limits,
             in: &context,
-            at: CGPoint(x: 0, y: providerY + 14),
-            size: 9,
-            weight: .semibold,
-            color: mutedInk
-        )
-        drawText(
-            compactLimitText(
-                label: "7D",
-                remaining: weekly,
-                resetAt: weeklyResetAt
-            ),
-            in: &context,
-            at: CGPoint(x: 0, y: providerY + 26),
-            size: 9,
+            at: CGPoint(x: 0, y: providerY + 12),
+            size: 8.5,
             weight: .semibold,
             color: mutedInk
         )
@@ -419,12 +433,19 @@ struct AIUsageSnapshot: Decodable, Equatable, Sendable {
     let claudeFiveHourResetAt: Date?
     let claudeWeekly: Int?
     let claudeWeeklyResetAt: Date?
+    let antigravityFiveHour: Int?
+    let antigravityFiveHourResetAt: Date?
+    let antigravityWeekly: Int?
+    let antigravityWeeklyResetAt: Date?
     let codexPlan: String?
     let claudePlan: String?
+    let antigravityPlan: String?
     let codexActivity: AIUsageActivitySnapshot?
     let claudeActivity: AIUsageActivitySnapshot?
+    let antigravityActivity: AIUsageActivitySnapshot?
     let codexLimitError: String?
     let claudeLimitError: String?
+    let antigravityLimitError: String?
     let fetchedAt: Date
 }
 
@@ -433,4 +454,5 @@ struct AIUsageActivitySnapshot: Decodable, Equatable, Sendable {
     let recentTokens: Int64?
     let last30DaysCostUSD: Double?
     let last30DaysTokens: Int64?
+    let costEstimateSupported: Bool?
 }

@@ -1,6 +1,14 @@
 // 이 파일은 직원 CLI 설정을 검증하고 여러 직원을 원자적으로 전환한다.
 
 import { AgentBusyError } from "./agent-runtime.mjs";
+import {
+  AGENT_BACKENDS,
+  backendEfforts,
+  backendModels,
+  backendPermissions,
+  backendSupportsFastMode,
+  normalizedBackendPermission,
+} from "./agent-provider.mjs";
 import { characterSettingsRequireNewSession } from "./configuration.mjs";
 
 const MAX_BULK_CHARACTER_SETTINGS = 100;
@@ -34,26 +42,19 @@ export function normalizeCharacterSettingsUpdate(body, {
   }
 
   const backend = String(body.backend ?? "");
-  if (!["codex", "claude"].includes(backend)) {
+  if (!AGENT_BACKENDS.includes(backend)) {
     throw new CharacterSettingsValidationError("지원하지 않는 CLI입니다.");
   }
-  const allowedEfforts = backend === "codex"
-    ? ["high", "xhigh", "max", "ultra"]
-    : ["high", "xhigh", "max"];
-  const effort = String(body.effort ?? "");
-  if (!allowedEfforts.includes(effort)) {
-    throw new CharacterSettingsValidationError(
-      "지원하지 않는 추론 레벨입니다.",
-    );
-  }
-
-  const allowedModels = backend === "codex"
-    ? ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
-    : ["claude-opus-5", "fable", "claude-sonnet-5"];
   const model = String(body.model ?? "");
-  if (!allowedModels.includes(model)) {
+  if (!backendModels(backend).includes(model)) {
     throw new CharacterSettingsValidationError(
       "지원하지 않는 모델입니다.",
+    );
+  }
+  const effort = String(body.effort ?? "");
+  if (!backendEfforts(backend, model).includes(effort)) {
+    throw new CharacterSettingsValidationError(
+      "지원하지 않는 추론 레벨입니다.",
     );
   }
 
@@ -63,17 +64,14 @@ export function normalizeCharacterSettingsUpdate(body, {
       "Fast 모드 설정은 참 또는 거짓이어야 합니다.",
     );
   }
-  if (backend === "claude" && fastMode && model !== "claude-opus-5") {
+  if (fastMode && !backendSupportsFastMode(backend, model)) {
     throw new CharacterSettingsValidationError(
-      "Claude Fast 모드는 Opus 5에서만 사용할 수 있습니다.",
+      "선택한 CLI와 모델은 Fast 모드를 지원하지 않습니다.",
     );
   }
 
-  const allowedPermissions = backend === "codex"
-    ? ["read-only", "workspace-write", "danger-full-access"]
-    : ["plan", "auto", "acceptEdits", "bypassPermissions"];
   const requestedPermission = String(body.permission ?? "");
-  if (!allowedPermissions.includes(requestedPermission)) {
+  if (!backendPermissions(backend).includes(requestedPermission)) {
     throw new CharacterSettingsValidationError(
       "지원하지 않는 권한입니다.",
     );
@@ -85,10 +83,7 @@ export function normalizeCharacterSettingsUpdate(body, {
     model,
     effort,
     fastMode,
-    permission:
-      backend === "claude" && requestedPermission === "acceptEdits"
-        ? "auto"
-        : requestedPermission,
+    permission: normalizedBackendPermission(backend, requestedPermission),
   };
 }
 

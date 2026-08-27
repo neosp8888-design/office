@@ -94,7 +94,7 @@ struct OfficeDatabaseClient: Sendable {
         return request
     }
 
-    /// 갱신은 npm 설치라 오래 걸린다. 진행 중 업무가 있으면 백엔드가
+    /// CLI별 패키지 설치나 자체 갱신은 오래 걸릴 수 있다. 진행 중 업무가 있으면 백엔드가
     /// 409로 막고, 그 사유를 그대로 보여 준다.
     @discardableResult
     func applyCLIUpdates(

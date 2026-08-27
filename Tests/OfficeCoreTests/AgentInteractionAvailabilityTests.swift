@@ -133,5 +133,10 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
                 backend: .codex
             )
         )
+        XCTAssertFalse(
+            ContextCompactionPresentation.supportsManualCompaction(
+                backend: .antigravity
+            )
+        )
     }
 }

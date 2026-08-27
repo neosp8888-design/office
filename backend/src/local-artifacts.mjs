@@ -48,11 +48,18 @@ export function listGeneratedImages(
     .sort();
 }
 
+export function generatedImageRoot(backend) {
+  return backend === "antigravity"
+    ? join(homedir(), ".gemini", "antigravity-cli", "brain")
+    : join(homedir(), ".codex", "generated_images");
+}
+
 export function generatedImagesForTurn({
   sessionID,
   startedAt,
   endedAt,
   generatedRoot,
+  backend = "codex",
 }) {
   const start = new Date(startedAt).getTime();
   const end = endedAt ? new Date(endedAt).getTime() : Date.now();
@@ -60,7 +67,10 @@ export function generatedImagesForTurn({
     return [];
   }
 
-  return listGeneratedImages(sessionID, generatedRoot).filter((path) => {
+  return listGeneratedImages(
+    sessionID,
+    generatedRoot ?? generatedImageRoot(backend),
+  ).filter((path) => {
     const modifiedAt = statSync(path).mtimeMs;
     return modifiedAt >= start - 2_000 && modifiedAt <= end + 2_000;
   });

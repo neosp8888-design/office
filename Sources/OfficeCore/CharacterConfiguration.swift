@@ -12,6 +12,7 @@ public enum AgentBackend:
 {
     case codex
     case claude
+    case antigravity
 
     public var id: String {
         rawValue
@@ -23,6 +24,19 @@ public enum AgentBackend:
             "Codex"
         case .claude:
             "Claude Code"
+        case .antigravity:
+            "Antigravity"
+        }
+    }
+
+    public var executableName: String {
+        switch self {
+        case .codex:
+            "codex"
+        case .claude:
+            "claude"
+        case .antigravity:
+            "agy"
         }
     }
 
@@ -32,7 +46,16 @@ public enum AgentBackend:
             ["high", "xhigh", "max", "ultra"]
         case .claude:
             ["high", "xhigh", "max"]
+        case .antigravity:
+            ["low", "medium", "high"]
         }
+    }
+
+    public func effortOptions(for model: String?) -> [String] {
+        if self == .antigravity, model == "gemini-3.1-pro" {
+            return ["low", "high"]
+        }
+        return effortOptions
     }
 
     public var modelOptions: [String] {
@@ -44,6 +67,13 @@ public enum AgentBackend:
                 "claude-opus-5",
                 "fable",
                 "claude-sonnet-5",
+            ]
+        case .antigravity:
+            [
+                "gemini-3.7-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-3.1-pro",
             ]
         }
     }
@@ -58,6 +88,8 @@ public enum AgentBackend:
             true
         case .claude:
             model == "claude-opus-5"
+        case .antigravity:
+            false
         }
     }
 
@@ -75,13 +107,21 @@ public enum AgentBackend:
             "Fable"
         case "claude-sonnet-5":
             "Sonnet 5"
+        case "gemini-3.7-flash":
+            "Gemini 3.7 Flash"
+        case "gemini-3.6-flash":
+            "Gemini 3.6 Flash"
+        case "gemini-3.5-flash":
+            "Gemini 3.5 Flash"
+        case "gemini-3.1-pro":
+            "Gemini 3.1 Pro"
         default:
             model
         }
     }
 }
 
-/// Codex와 Claude의 권한 값이 이름도 단계 수도 달라서 앱 공통 3단계로 다룬다.
+/// 각 CLI의 권한 값이 이름도 단계 수도 달라서 앱 공통 3단계로 다룬다.
 public enum AgentPermission:
     String,
     CaseIterable,
@@ -115,14 +155,20 @@ public enum AgentPermission:
             "read-only"
         case (.readOnly, .claude):
             "plan"
+        case (.readOnly, .antigravity):
+            "plan"
         case (.workspaceWrite, .codex):
             "workspace-write"
         case (.workspaceWrite, .claude):
             "auto"
+        case (.workspaceWrite, .antigravity):
+            "accept-edits"
         case (.fullAccess, .codex):
             "danger-full-access"
         case (.fullAccess, .claude):
             "bypassPermissions"
+        case (.fullAccess, .antigravity):
+            "dangerously-skip-permissions"
         }
     }
 
@@ -130,9 +176,10 @@ public enum AgentPermission:
         switch cliValue {
         case "read-only", "plan":
             self = .readOnly
-        case "danger-full-access", "bypassPermissions":
+        case "danger-full-access", "bypassPermissions",
+             "dangerously-skip-permissions":
             self = .fullAccess
-        case "workspace-write", "auto", "acceptEdits":
+        case "workspace-write", "auto", "acceptEdits", "accept-edits":
             self = .workspaceWrite
         default:
             self = .workspaceWrite
@@ -163,16 +210,20 @@ public struct CharacterAgentSettings: Equatable, Sendable {
 
     public mutating func selectModel(_ model: String) {
         self.model = model
+        let allowedEfforts = backend.effortOptions(for: model)
+        if !allowedEfforts.contains(effort) {
+            effort = allowedEfforts.last ?? "high"
+        }
         if !backend.supportsFastMode(model: model) {
             fastMode = false
         }
     }
 
     public mutating func setFastMode(_ isEnabled: Bool) {
-        fastMode = isEnabled
         if isEnabled && !backend.supportsFastMode(model: model) {
             model = backend.defaultModel
         }
+        fastMode = isEnabled && backend.supportsFastMode(model: model)
     }
 }
 
@@ -345,9 +396,14 @@ public struct OfficeAgentConfiguration: Codable, Sendable {
                     )
                 }
                 let backend = soleBackend ?? character.backend
-                let effort = backend.effortOptions.contains(character.effort)
+                let effortOptions = backend.effortOptions(
+                    for: backend.defaultModel
+                )
+                let effort = effortOptions.contains(character.effort)
                     ? character.effort
-                    : backend.effortOptions[0]
+                    : (effortOptions.contains("high")
+                        ? "high"
+                        : effortOptions[0])
                 let settings = CharacterAgentSettings(
                     backend: backend,
                     model: backend.defaultModel,

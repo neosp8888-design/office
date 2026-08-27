@@ -229,6 +229,48 @@ test("bulk 요청은 모든 항목을 먼저 검증하고 중복 직원을 거�
   );
 });
 
+test("Antigravity 설정은 실제 모델별 추론·권한·Fast 계약을 검증한다", () => {
+  assert.deepEqual(
+    normalizeBulkCharacterSettings({
+      updates: [settings("boss", {
+        backend: "antigravity",
+        model: "gemini-3.7-flash",
+        effort: "medium",
+        fastMode: false,
+        permission: "accept-edits",
+      })],
+    }),
+    [{
+      characterID: "boss",
+      backend: "antigravity",
+      model: "gemini-3.7-flash",
+      effort: "medium",
+      fastMode: false,
+      permission: "accept-edits",
+    }],
+  );
+
+  for (const overrides of [
+    { model: "gemini-3.1-pro", effort: "medium" },
+    { fastMode: true },
+    { permission: "auto" },
+  ]) {
+    assert.throws(
+      () => normalizeBulkCharacterSettings({
+        updates: [settings("boss", {
+          backend: "antigravity",
+          model: "gemini-3.1-pro",
+          effort: "high",
+          fastMode: false,
+          permission: "plan",
+          ...overrides,
+        })],
+      }),
+      CharacterSettingsValidationError,
+    );
+  }
+});
+
 test("bulk 전체 요청 검증은 drain과 DB 잠금보다 먼저 끝난다", async () => {
   const database = fakeDatabase([profile("boss"), profile("right-man")]);
   const runtime = fakeRuntime();

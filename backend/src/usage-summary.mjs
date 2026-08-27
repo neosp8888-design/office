@@ -1,10 +1,14 @@
 // 이 파일은 공급자 계정 한도와 로컬 DB 사용 통계를 직접 합친다.
 
 import { execFile, spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+
+import {
+  antigravityPlaywrightEnvironment,
+} from "./antigravity-playwright.mjs";
 
 const execFileAsync = promisify(execFile);
 const fiveHourMinutes = 300;
@@ -96,6 +100,38 @@ export function parseClaudeRateLimits(payload, plan) {
   };
 }
 
+export function parseAntigravityRateLimits(payload) {
+  const groups = payload?.response?.groups ?? payload?.groups ?? [];
+  const geminiGroup = groups.find((group) =>
+    String(group?.displayName ?? "").toLowerCase().includes("gemini") ||
+    (group?.buckets ?? []).some((bucket) =>
+      String(bucket?.bucketId ?? "").toLowerCase().startsWith("gemini-")
+    )
+  );
+  const buckets = Array.isArray(geminiGroup?.buckets)
+    ? geminiGroup.buckets
+    : [];
+  const parsedBucket = (bucket) => {
+    const fraction = finiteNumber(bucket?.remainingFraction);
+    if (fraction === null) return null;
+    return {
+      remaining: Math.round(Math.min(1, Math.max(0, fraction)) * 100),
+      resetAt: isoDate(bucket?.resetTime),
+    };
+  };
+  const bucketFor = (...keys) => buckets.find((bucket) => {
+    const id = String(bucket?.bucketId ?? "").toLowerCase();
+    const window = String(bucket?.window ?? "").toLowerCase();
+    return keys.some((key) => id.includes(key) || window === key);
+  });
+  const fiveHour = parsedBucket(bucketFor("five-hour", "five_hour", "5h"));
+  const weekly = parsedBucket(bucketFor("weekly", "week"));
+  if (!fiveHour && !weekly) {
+    throw new Error("Antigravity 계정 한도 응답에 Gemini 잔여량이 없습니다.");
+  }
+  return { fiveHour, weekly, plan: null };
+}
+
 function safeError(error, fallback) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const normalized = message.trim();
@@ -114,6 +150,20 @@ async function configuredCodexExecutable(pool) {
     `,
   );
   return String(result.rows?.[0]?.path ?? "").trim() || "codex";
+}
+
+async function configuredAntigravityExecutable(pool) {
+  const result = await pool.query(
+    `
+      SELECT config ->> 'executablePath' AS path
+      FROM characters
+      WHERE backend = 'antigravity'
+        AND NULLIF(config ->> 'executablePath', '') IS NOT NULL
+      ORDER BY updated_at DESC, id
+      LIMIT 1
+    `,
+  );
+  return String(result.rows?.[0]?.path ?? "").trim() || "agy";
 }
 
 export async function readCodexRateLimits({
@@ -215,7 +265,7 @@ function parsedClaudeCredential(raw) {
   if (!accessToken) return null;
   const scopes = Array.isArray(oauth.scopes) ? oauth.scopes : [];
   if (scopes.length > 0 && !scopes.includes("user:profile")) {
-    throw new Error("Claude 계정 한도 조회 권한(user:profile)이 없습니다.");
+    throw new Error("Claude Code 계정 한도 조회 권한(user:profile)이 없습니다.");
   }
   return {
     accessToken,
@@ -244,7 +294,7 @@ async function readClaudeCredential() {
     if (credential) return credential;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error("Claude 로그인 정보를 읽을 수 없습니다.");
+      throw new Error("Claude Code 로그인 정보를 읽을 수 없습니다.");
     }
   }
 
@@ -263,7 +313,7 @@ async function readClaudeCredential() {
     if (credential) return credential;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error("Claude Keychain 로그인 정보를 읽을 수 없습니다.");
+      throw new Error("Claude Code Keychain 로그인 정보를 읽을 수 없습니다.");
     }
   }
   throw new Error("Claude Code 로그인 정보를 찾을 수 없습니다.");
@@ -293,13 +343,13 @@ export async function readClaudeRateLimits({
     );
     if (!response.ok) {
       throw new Error(
-        `Claude 계정 한도 조회가 실패했습니다 (HTTP ${response.status}).`,
+        `Claude Code 계정 한도 조회가 실패했습니다 (HTTP ${response.status}).`,
       );
     }
     return parseClaudeRateLimits(await response.json(), credential.plan);
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error("Claude 계정 한도 조회 시간이 초과됐습니다.");
+      throw new Error("Claude Code 계정 한도 조회 시간이 초과됐습니다.");
     }
     throw error;
   } finally {
@@ -307,12 +357,109 @@ export async function readClaudeRateLimits({
   }
 }
 
-function emptyActivity() {
+export async function readAntigravityRateLimits({
+  pool,
+  timeoutMs = 8_000,
+  quotaProbe = probeAntigravityQuota,
+} = {}) {
+  const executable = await configuredAntigravityExecutable(pool);
+  return parseAntigravityRateLimits(await quotaProbe({
+    executable,
+    timeoutMs,
+  }));
+}
+
+export async function probeAntigravityQuota({
+  executable = "agy",
+  timeoutMs = 8_000,
+  spawnProcess = spawn,
+  fetchImplementation = fetch,
+  now = () => Date.now(),
+} = {}) {
+  const temporaryRoot = await mkdtemp(
+    join(tmpdir(), "officestra-antigravity-quota-"),
+  );
+  const logPath = join(temporaryRoot, "agy.log");
+  let child = null;
+  let processError = null;
+  let processClosed = false;
+  let stderr = "";
+  try {
+    child = spawnProcess(
+      executable,
+      ["--log-file", logPath, "models"],
+      {
+        cwd: homedir(),
+        env: antigravityPlaywrightEnvironment(process.env),
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    child.once("error", (error) => {
+      processError = error;
+    });
+    child.once("close", () => {
+      processClosed = true;
+    });
+    child.stderr?.setEncoding?.("utf8");
+    child.stderr?.on?.("data", (chunk) => {
+      if (stderr.length < 2_048) stderr += chunk;
+    });
+
+    const deadline = now() + timeoutMs;
+    let port = null;
+    while (now() < deadline) {
+      if (processError) {
+        throw new Error("Antigravity CLI를 실행할 수 없습니다.");
+      }
+      if (port === null) {
+        const log = await readFile(logPath, "utf8").catch(() => "");
+        const match = log.match(/random port at (\d+) for HTTP(?:\s|$)/);
+        if (match) port = Number.parseInt(match[1], 10);
+      }
+      if (port !== null) {
+        try {
+          const response = await fetchImplementation(
+            `http://127.0.0.1:${port}` +
+              "/exa.language_server_pb.LanguageServerService/" +
+              "RetrieveUserQuotaSummary",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            },
+          );
+          if (response.ok) {
+            const payload = await response.json();
+            if ((payload?.response?.groups ?? []).length > 0) {
+              return payload;
+            }
+          }
+        } catch {
+          // 언어 서버가 인증을 복원하는 짧은 구간은 다음 poll에서 재시도한다.
+        }
+      }
+      if (processClosed) break;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    }
+    const detail = stderr.trim();
+    throw new Error(
+      detail
+        ? `Antigravity 계정 한도 조회가 실패했습니다: ${detail}`
+        : "Antigravity 계정 한도 조회 시간이 초과됐습니다.",
+    );
+  } finally {
+    child?.kill?.();
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function emptyActivity(costEstimateSupported = true) {
   return {
     todayCostUSD: 0,
     recentTokens: 0,
     last30DaysCostUSD: 0,
     last30DaysTokens: 0,
+    costEstimateSupported,
   };
 }
 
@@ -333,7 +480,7 @@ export async function readUsageActivity(pool, now = new Date()) {
           COALESCE(usage.cost_usd, 0) AS cost_usd,
           CASE
             WHEN COALESCE(NULLIF(turn_record.backend, ''), character.backend)
-              = 'claude'
+              IN ('claude', 'antigravity')
             THEN
               COALESCE(usage.input_tokens, 0)
               + COALESCE(usage.output_tokens, 0)
@@ -373,6 +520,7 @@ export async function readUsageActivity(pool, now = new Date()) {
   const activity = {
     codex: emptyActivity(),
     claude: emptyActivity(),
+    antigravity: emptyActivity(false),
   };
   for (const row of result.rows ?? []) {
     if (!Object.hasOwn(activity, row.provider)) continue;
@@ -383,6 +531,7 @@ export async function readUsageActivity(pool, now = new Date()) {
       last30DaysTokens: Math.round(
         finiteNumber(row.last30DaysTokens) ?? 0,
       ),
+      costEstimateSupported: row.provider !== "antigravity",
     };
   }
   return activity;
@@ -391,9 +540,10 @@ export async function readUsageActivity(pool, now = new Date()) {
 function flattenedLimits(
   codex,
   claude,
+  antigravity,
   errors,
   fetchedAt,
-  stale = { codex: false, claude: false },
+  stale = { codex: false, claude: false, antigravity: false },
 ) {
   return {
     codexFiveHour: codex?.fiveHour?.remaining ?? null,
@@ -404,12 +554,19 @@ function flattenedLimits(
     claudeFiveHourResetAt: claude?.fiveHour?.resetAt ?? null,
     claudeWeekly: claude?.weekly?.remaining ?? null,
     claudeWeeklyResetAt: claude?.weekly?.resetAt ?? null,
+    antigravityFiveHour: antigravity?.fiveHour?.remaining ?? null,
+    antigravityFiveHourResetAt: antigravity?.fiveHour?.resetAt ?? null,
+    antigravityWeekly: antigravity?.weekly?.remaining ?? null,
+    antigravityWeeklyResetAt: antigravity?.weekly?.resetAt ?? null,
     codexPlan: codex?.plan ?? null,
     claudePlan: claude?.plan ?? null,
+    antigravityPlan: antigravity?.plan ?? null,
     codexLimitError: errors.codex,
     claudeLimitError: errors.claude,
+    antigravityLimitError: errors.antigravity,
     codexLimitStale: Boolean(stale.codex),
     claudeLimitStale: Boolean(stale.claude),
+    antigravityLimitStale: Boolean(stale.antigravity),
     fetchedAt: fetchedAt.toISOString(),
   };
 }
@@ -430,6 +587,7 @@ export function createUsageSummaryReader({
   pool,
   codexReader = () => readCodexRateLimits({ pool }),
   claudeReader = () => readClaudeRateLimits(),
+  antigravityReader = () => readAntigravityRateLimits({ pool }),
   activityReader = (now) => readUsageActivity(pool, now),
   now = () => new Date(),
   cacheLifetimeMs = 30_000,
@@ -437,12 +595,16 @@ export function createUsageSummaryReader({
   // 사용자 세션이 같은 토큰을 공유해서 자주 부르면 429가 난다.
   claudeCacheLifetimeMs = 300_000,
   claudeRetryBackoffMs = 90_000,
+  antigravityCacheLifetimeMs = 300_000,
+  antigravityRetryBackoffMs = 90_000,
 }) {
   let cachedLimits = null;
   let inFlightLimits = null;
   let lastGoodCodex = null;
   let lastGoodClaude = null;
+  let lastGoodAntigravity = null;
   let claudeCooldownUntil = 0;
+  let antigravityCooldownUntil = 0;
 
   async function limits(force) {
     const current = now();
@@ -459,9 +621,12 @@ export function createUsageSummaryReader({
       // 성공 후에는 캐시 수명, 실패 후에는 백오프가 끝나야 다시 부른다.
       // force여도 이 간격은 지킨다. 그 사이에는 직전 정상값을 쓴다.
       const claudeDue = current.getTime() >= claudeCooldownUntil;
-      const [codexResult, claudeResult] = await Promise.allSettled([
+      const antigravityDue = current.getTime() >= antigravityCooldownUntil;
+      const [codexResult, claudeResult, antigravityResult] =
+        await Promise.allSettled([
         codexReader(),
         claudeDue ? claudeReader() : Promise.resolve(null),
+        antigravityDue ? antigravityReader() : Promise.resolve(null),
       ]);
       const fetchedAt = now();
       if (claudeDue) {
@@ -469,6 +634,14 @@ export function createUsageSummaryReader({
           Boolean(claudeResult.value);
         claudeCooldownUntil = fetchedAt.getTime() +
           (claudeOK ? claudeCacheLifetimeMs : claudeRetryBackoffMs);
+      }
+      if (antigravityDue) {
+        const antigravityOK = antigravityResult.status === "fulfilled" &&
+          Boolean(antigravityResult.value);
+        antigravityCooldownUntil = fetchedAt.getTime() +
+          (antigravityOK
+            ? antigravityCacheLifetimeMs
+            : antigravityRetryBackoffMs);
       }
 
       const codex = resolvedProviderLimits(
@@ -479,17 +652,32 @@ export function createUsageSummaryReader({
       const claude = resolvedProviderLimits(
         claudeResult,
         lastGoodClaude,
-        "Claude 한도를 확인할 수 없습니다.",
+        "Claude Code 한도를 확인할 수 없습니다.",
+      );
+      const antigravity = resolvedProviderLimits(
+        antigravityResult,
+        lastGoodAntigravity,
+        "Antigravity 한도를 확인할 수 없습니다.",
       );
       lastGoodCodex = codex.value ?? lastGoodCodex;
       lastGoodClaude = claude.value ?? lastGoodClaude;
+      lastGoodAntigravity = antigravity.value ?? lastGoodAntigravity;
 
       const value = flattenedLimits(
         codex.value,
         claude.value,
-        { codex: codex.error, claude: claude.error },
+        antigravity.value,
+        {
+          codex: codex.error,
+          claude: claude.error,
+          antigravity: antigravity.error,
+        },
         fetchedAt,
-        { codex: codex.stale, claude: claude.stale },
+        {
+          codex: codex.stale,
+          claude: claude.stale,
+          antigravity: antigravity.stale,
+        },
       );
       cachedLimits = { cachedAt: fetchedAt.getTime(), value };
       return value;
@@ -511,6 +699,7 @@ export function createUsageSummaryReader({
       ...limitSnapshot,
       codexActivity: activity.codex,
       claudeActivity: activity.claude,
+      antigravityActivity: activity.antigravity,
     };
   };
 }

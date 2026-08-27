@@ -217,6 +217,8 @@ for packaged_runtime_path in \
     "$BACKEND_RUNTIME_DIR/node_modules/@slack/bolt/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/@huggingface/tokenizers/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/onnxruntime-node/package.json" \
+    "$BACKEND_RUNTIME_DIR/node_modules/playwright-core/package.json" \
+    "$BACKEND_RUNTIME_DIR/src/playwright-driver-1.57.0/package/cli.js" \
     "$ORT_DYLIB" \
     "$ORT_BINDING" \
     "$RUNTIME_DIR/database/migrations/001_initial.sql" \

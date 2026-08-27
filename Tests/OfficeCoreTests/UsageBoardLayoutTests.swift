@@ -4,7 +4,7 @@ import XCTest
 @testable import OfficeGame
 
 final class UsageBoardLayoutTests: XCTestCase {
-    func testUsageCardPresentsOnlyEstimatedAPICost() throws {
+    func testUsageCardPresentsTokensAndMarksUnsupportedSubscriptionCost() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -25,10 +25,14 @@ final class UsageBoardLayoutTests: XCTestCase {
         )
         let card = String(source[start..<end])
 
-        XCTAssertTrue(card.contains("\"API 요금 추정\""))
+        XCTAssertTrue(card.contains("\"토큰 · API 요금 추정\""))
+        XCTAssertTrue(card.contains("label: \"오늘 토큰\""))
+        XCTAssertTrue(card.contains("label: \"30일 토큰\""))
         XCTAssertTrue(card.contains("label: \"오늘 비용\""))
         XCTAssertTrue(card.contains("label: \"30일 비용\""))
-        XCTAssertFalse(card.contains("이 사무실 사용 통계"))
+        XCTAssertTrue(
+            card.contains("구독 사용량의 USD 비용 환산은 지원하지 않습니다.")
+        )
     }
 
     func testUsesSingleColumnBelowThreshold() {
