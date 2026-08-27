@@ -21,18 +21,21 @@ export class LocalEmbeddingService {
     workerFactory = null,
     modelLoader = ensureLocalEmbeddingModel,
     environment = process.env,
+    logger = console,
   } = {}) {
     this.idleTimeoutMs = idleTimeoutMs;
     this.requestTimeoutMs = requestTimeoutMs;
     this.workerFactory = workerFactory;
     this.modelLoader = modelLoader;
     this.environment = environment;
+    this.logger = logger;
     this.worker = null;
     this.idleTimer = null;
     this.pending = new Map();
     this.peakWorkerRSSBytes = 0;
     this.lastWorkerRSSBytes = 0;
     this.modelReadyPromise = null;
+    this.lastUnavailableReason = null;
     this.closed = false;
   }
 
@@ -54,6 +57,19 @@ export class LocalEmbeddingService {
       peakWorkerRSSBytes: this.peakWorkerRSSBytes,
       lastWorkerRSSBytes: this.lastWorkerRSSBytes,
     };
+  }
+
+  reportUnavailable(error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason === this.lastUnavailableReason) {
+      return;
+    }
+    this.lastUnavailableReason = reason;
+    this.logger?.warn?.(`임베딩 비활성(사유): ${reason}`);
+  }
+
+  clearUnavailable() {
+    this.lastUnavailableReason = null;
   }
 
   createWorker() {
@@ -80,7 +96,16 @@ export class LocalEmbeddingService {
     this.modelReadyPromise ??= this.modelLoader({
       environment: this.environment,
     });
-    const model = await this.modelReadyPromise;
+    let model;
+    try {
+      model = await this.modelReadyPromise;
+    } catch (error) {
+      // 파일을 나중에 복구하거나 내려받을 수 있으므로 다음 요청은 다시
+      // 준비를 시도한다. 실패 원인은 백엔드 로그에 명시적으로 남긴다.
+      this.modelReadyPromise = null;
+      this.reportUnavailable(error);
+      throw error;
+    }
     if (this.closed) {
       throw new Error("로컬 임베딩 서비스를 종료했습니다.");
     }
@@ -88,7 +113,13 @@ export class LocalEmbeddingService {
     if (this.worker) {
       return this.worker;
     }
-    const worker = this.createWorker();
+    let worker;
+    try {
+      worker = this.createWorker();
+    } catch (error) {
+      this.reportUnavailable(error);
+      throw error;
+    }
     this.worker = worker;
     worker.stderr?.on("data", (data) => {
       const message = String(data ?? "").trim();
@@ -127,10 +158,15 @@ export class LocalEmbeddingService {
         Number(result.maxRSSBytes) || 0,
         this.lastWorkerRSSBytes,
       );
+      this.clearUnavailable();
       pending.resolve(result.vectors ?? []);
       this.scheduleIdleRelease();
     } else {
-      pending.reject(new Error(message.error || "로컬 임베딩에 실패했습니다."));
+      const error = new Error(
+        message.error || "로컬 임베딩에 실패했습니다.",
+      );
+      this.reportUnavailable(error);
+      pending.reject(error);
       this.stopWorker(worker);
     }
   }
@@ -140,6 +176,7 @@ export class LocalEmbeddingService {
       return;
     }
     this.worker = null;
+    this.reportUnavailable(error);
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
     for (const pending of this.pending.values()) {
@@ -189,7 +226,9 @@ export class LocalEmbeddingService {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error("로컬 임베딩 응답 시간이 초과됐습니다."));
+        const error = new Error("로컬 임베딩 응답 시간이 초과됐습니다.");
+        this.reportUnavailable(error);
+        reject(error);
         this.stopWorker(worker);
       }, this.requestTimeoutMs);
       timeout.unref?.();
@@ -204,6 +243,7 @@ export class LocalEmbeddingService {
         }
         this.pending.delete(id);
         clearTimeout(pending.timeout);
+        this.reportUnavailable(error);
         reject(error);
         this.stopWorker(worker);
       });

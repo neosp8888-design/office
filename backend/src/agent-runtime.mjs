@@ -2374,8 +2374,8 @@ export class AgentRuntime {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(
-        "작업 기록은 저장했지만 로컬 임베딩을 나중에 백필합니다.",
-        message,
+        `임베딩 비활성(사유): ${message}. ` +
+          "작업 기록은 저장했고 로컬 임베딩은 나중에 백필합니다.",
       );
       return message;
     }
@@ -2383,8 +2383,8 @@ export class AgentRuntime {
       return null;
     }
     console.warn(
-      "작업 기록은 저장했지만 로컬 임베딩을 나중에 백필합니다.",
-      embedding.error,
+      `임베딩 비활성(사유): ${embedding.error}. ` +
+        "작업 기록은 저장했고 로컬 임베딩은 나중에 백필합니다.",
     );
     return embedding.error;
   }

@@ -8,6 +8,7 @@ DIST_DIR="$PROJECT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/OFFICESTRA.app"
 NODE_ENTITLEMENTS="$PROJECT_DIR/scripts/node-runtime.entitlements"
 BACKEND_RELEASE_ID_TOOL="$PROJECT_DIR/scripts/backend-release-id.py"
+PACKAGED_EMBEDDING_SMOKE="$PROJECT_DIR/scripts/smoke-test-packaged-embedding.mjs"
 
 cd "$PROJECT_DIR"
 HOST_ARCHITECTURE="$(/usr/bin/uname -m)"
@@ -84,6 +85,11 @@ fi
 /usr/bin/plutil -lint "$NODE_ENTITLEMENTS" >/dev/null
 if [[ ! -f "$BACKEND_RELEASE_ID_TOOL" ]]; then
     print -u2 "백엔드 릴리스 식별자 도구가 없습니다. $BACKEND_RELEASE_ID_TOOL"
+    exit 1
+fi
+if [[ ! -f "$PACKAGED_EMBEDDING_SMOKE" ]]; then
+    print -u2 \
+        "패키지 임베딩 스모크 테스트가 없습니다. $PACKAGED_EMBEDDING_SMOKE"
     exit 1
 fi
 
@@ -351,6 +357,9 @@ if (value !== 250000) {
   throw new Error(`Node JIT smoke test failed: ${value}`);
 }
 '
+"$NODE_RUNTIME_DIR/bin/node" \
+    "$PACKAGED_EMBEDDING_SMOKE" \
+    "$BACKEND_RUNTIME_DIR"
 
 # 서명된 Node를 포함해 최종 번들에서 백엔드가 실제로 읽는 파일만 해시한다.
 # Info.plist 자체는 순환 입력이므로 제외하고 계산한 값을 주입한 뒤 재계산한다.

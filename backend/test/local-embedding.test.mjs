@@ -91,3 +91,29 @@ test("동시에 요청해도 모델 준비 후 워커는 하나만 생성한다"
   assert.equal(workers.length, 1);
   service.close();
 });
+
+test("워커 준비 실패는 임베딩 비활성 사유를 로그로 남기고 재시도한다", async () => {
+  const warnings = [];
+  let attempts = 0;
+  const service = new LocalEmbeddingService({
+    requestTimeoutMs: 1000,
+    modelLoader: async () => {
+      attempts += 1;
+      throw new Error("모델 파일 검증 실패");
+    },
+    logger: {
+      warn(message) {
+        warnings.push(message);
+      },
+    },
+  });
+
+  await assert.rejects(service.embed(["첫 질문"]), /모델 파일 검증 실패/);
+  await assert.rejects(service.embed(["둘째 질문"]), /모델 파일 검증 실패/);
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(warnings, [
+    "임베딩 비활성(사유): 모델 파일 검증 실패",
+  ]);
+  service.close();
+});

@@ -1967,8 +1967,8 @@ async function searchRAG(response, body) {
   });
   if (result.fallbackError) {
     console.warn(
-      "로컬 벡터 검색에 실패해 전문검색으로 대체했습니다.",
-      result.fallbackError,
+      `임베딩 비활성(사유): ${result.fallbackError}. ` +
+        "PostgreSQL 전문검색으로 대체했습니다.",
     );
   }
   send(response, 200, { documents: result.documents });

@@ -109,10 +109,19 @@ M4 실측 (`dtype=q8`, 한국어 문장 4개):
 
 최종 검증:
 
-- 최신 main 반영 후 백엔드: 375개 중 371 통과·환경 통합 4개 제외·실패 0
+- 최신 main 반영 후 백엔드: 378개 중 374 통과·환경 통합 4개 제외·실패 0
 - 최신 main 반영 후 Swift: 463개 통과·실패 0
 - Release 앱 빌드와 `codesign --verify --deep --strict` 통과
 - 패키지의 Node 24에서 ONNX 네이티브 모듈을 실제 로드해 1,024차원
   생성 및 유휴 뒤 워커 종료 확인
 - 운영 4317은 PID와 release ID를 바꾸지 않았고 `/health` 정상
 - 운영 앱·4317·launchctl 재시작 없음
+
+서명 정책은 승인 범위를 ad-hoc 빌드로 한정했다. ad-hoc 서명은 Team ID가
+없어 Hardened Runtime을 켠 번들 Node가 별도로 ad-hoc 서명한 ONNX
+네이티브 애드온을 `ERR_DLOPEN_FAILED`로 거부하므로, ad-hoc 앱·Node·애드온은
+Hardened Runtime 없이 서명한다. Node의 JIT용 최소 entitlement 두 개는
+그대로 유지한다. Developer ID 빌드는 Hardened Runtime을 유지하고 Node와
+ONNX 애드온을 모두 같은 개발자 인증서로 서명하므로 기존 배포 정책은
+변경하지 않는다. Release 빌드는 최종 번들 Node로 한국어 문장 1건을 실제
+임베딩해 1,024차원·L2 정규화를 확인한 뒤에만 성공한다.
