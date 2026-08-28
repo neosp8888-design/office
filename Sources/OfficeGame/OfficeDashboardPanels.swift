@@ -1286,10 +1286,10 @@ private struct HostedLiveWorkspaceFeed: View {
             presentationStore
         )
         .environment(\.locale, OfficeLocalization.locale)
-        // 긴 대화의 각 Text에 SelectionOverlay가 붙으면 스크롤 중
-        // AttributeGraph 레이아웃이 끝나지 않을 수 있다. 응답·코드는
-        // 각자의 복사 버튼을 사용하고, 실시간 피드는 선택을 명시적으로
-        // 꺼서 상위 환경에서 다시 켜지는 회귀도 막는다.
+        // 긴 대화 전체의 Text에 SelectionOverlay가 붙으면 스크롤 중
+        // AttributeGraph 레이아웃이 끝나지 않을 수 있다. 피드 경계에서는
+        // 선택을 끄고, 마우스가 올라간 질문·응답 카드 하나만 별도의
+        // 선택 영역으로 켜 같은 CPU 회귀 없이 드래그 복사를 제공한다.
         .textSelection(.disabled)
         .overlay {
             LiveWorkspaceFeedMountReadyReporter(
@@ -2964,7 +2964,8 @@ struct LiveWorkspaceFeed: View, Equatable {
                                         presentation: TaskPromptPresentation(
                                             prompt: turn.prompt
                                         ),
-                                        sentAt: turn.startedAt
+                                        sentAt: turn.startedAt,
+                                        selectionID: turn.id
                                     )
 
                                     EquatableLiveTurnCard(
@@ -3825,6 +3826,7 @@ private struct EquatableLiveTurnCard: View, Equatable {
 struct LiveTurnPromptBlock: View {
     let presentation: TaskPromptPresentation
     var sentAt: Date?
+    var selectionID: String? = nil
 
     @State private var didCopy = false
 
@@ -3845,6 +3847,9 @@ struct LiveTurnPromptBlock: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .fixedSize(horizontal: false, vertical: true)
+        .conversationTextSelectionRegion(
+            "live-prompt-\(selectionID ?? fallbackSelectionID)"
+        )
     }
 
     private var bubble: some View {
@@ -3854,7 +3859,6 @@ struct LiveTurnPromptBlock: View {
                 // 벌어져 오른쪽이 허전해 보인다. 내용 크기로 둔다.
                 Text(presentation.text)
                     .font(.system(size: 13, weight: .semibold))
-                    .textSelection(.enabled)
                     .multilineTextAlignment(.leading)
             }
 
@@ -3912,6 +3916,11 @@ struct LiveTurnPromptBlock: View {
             try? await Task.sleep(for: .seconds(1.6))
             didCopy = false
         }
+    }
+
+    private var fallbackSelectionID: String {
+        let timestamp = sentAt?.timeIntervalSinceReferenceDate ?? 0
+        return "\(presentation.text.hashValue)-\(timestamp)"
     }
 }
 
@@ -4035,6 +4044,7 @@ private struct LiveTurnCard: View {
                     .stroke(Color.primary.opacity(0.07))
             }
         }
+        .conversationTextSelectionRegion("live-turn-\(turn.id)")
     }
 
     private var metadata: some View {

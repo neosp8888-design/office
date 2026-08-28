@@ -15,6 +15,9 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
     func testConversationStaysIdleAfterTransitionAndScroll()
         async throws
     {
+        let selectionCoordinator =
+            ConversationTextSelectionCoordinator.shared
+        selectionCoordinator.reset()
         let director = AgentDirector(startBackgroundTasks: false)
         director.liveFeedStore.replace(with: makeMarkdownHeavyTurns())
         director.liveFeedStore.finishInitialLoading()
@@ -43,20 +46,31 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
             return
         }
         defer {
+            selectionCoordinator.reset()
             container.tearDown()
             window.contentView = nil
         }
 
-        // 사용자 재현과 같은 조합이다. 직원 전환 직후 곧바로 스크롤하고
-        // 타이핑 중인 턴도 함께 자라게 한다.
+        // 사용자 재현과 같은 조합이다. 카드 하나에 실제 선택 환경을 켠
+        // 상태에서 직원 전환 직후 곧바로 선택·스크롤하고, 타이핑 중인
+        // 턴도 함께 자라게 한다.
         let busyCPU = try await measureCPUUtilization {
             for index in 0..<12 {
-                director.selectedCharacterID = OfficeCharacter.allCases[
+                let character = OfficeCharacter.allCases[
                     index % OfficeCharacter.allCases.count
                 ]
-                director.liveFeedStore.replace(
-                    with: makeMarkdownHeavyTurns(streamingStep: index + 1)
+                director.selectedCharacterID = character
+                let turns = makeMarkdownHeavyTurns(
+                    streamingStep: index + 1
                 )
+                director.liveFeedStore.replace(with: turns)
+                if let visibleTurn = turns.first(where: {
+                    $0.characterId == character.rawValue
+                }) {
+                    selectionCoordinator.activate(
+                        "live-turn-\(visibleTurn.id)"
+                    )
+                }
                 rootHost.layoutSubtreeIfNeeded()
                 try await settle(for: .milliseconds(4))
                 guard
@@ -71,6 +85,7 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
                     scrollView,
                     delta: index.isMultiple(of: 2) ? 12 : -12
                 )
+                performTextDrag(in: rootHost)
             }
         }
 
@@ -110,6 +125,24 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
             "마지막 직원 전환이 끝난 뒤에도 로딩 차폐나 이전 host가 남았습니다."
         )
         XCTAssertEqual(container.subviews.count, 1)
+    }
+
+    func testSelectionCoordinatorActivatesOnlyOneConversationRegion() {
+        let coordinator = ConversationTextSelectionCoordinator.shared
+        coordinator.reset()
+        defer { coordinator.reset() }
+
+        coordinator.activate("first")
+        XCTAssertEqual(coordinator.activeRegionID, "first")
+
+        coordinator.activate("second")
+        XCTAssertEqual(coordinator.activeRegionID, "second")
+
+        coordinator.deactivate("first")
+        XCTAssertEqual(coordinator.activeRegionID, "second")
+
+        coordinator.deactivate("second")
+        XCTAssertNil(coordinator.activeRegionID)
     }
 
     // 앱 루트에서 선택을 켜면 입력창을 포함한 전체 화면에 오버레이가
@@ -156,6 +189,30 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
         XCTAssertTrue(
             compactFeed.contains(".textSelection(.disabled)"),
             "분리된 대화 NSHostingView에서 선택을 명시적으로 꺼야 합니다."
+        )
+
+        let promptBlock = try XCTUnwrap(
+            sourceSection(
+                in: dashboardSource,
+                from: "struct LiveTurnPromptBlock",
+                to: "private struct LiveTurnCard"
+            )
+        )
+        XCTAssertTrue(
+            promptBlock.contains("conversationTextSelectionRegion"),
+            "사용자 질문 카드의 드래그 선택 영역이 빠졌습니다."
+        )
+
+        let responseCard = try XCTUnwrap(
+            sourceSection(
+                in: dashboardSource,
+                from: "private struct LiveTurnCard",
+                to: "private struct AgentPromptSuggestionList"
+            )
+        )
+        XCTAssertTrue(
+            responseCard.contains("conversationTextSelectionRegion"),
+            "직원 응답 카드의 드래그 선택 영역이 빠졌습니다."
         )
     }
 
@@ -204,6 +261,49 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
             Double(value.tv_sec) + Double(value.tv_usec) / 1_000_000
         }
         return seconds(usage.ru_utime) + seconds(usage.ru_stime)
+    }
+
+    /// 실제 사용자가 카드 본문을 드래그하는 것과 같은 마우스 이벤트다.
+    private func performTextDrag(in root: NSView) {
+        guard
+            let window = root.window,
+            let scrollView = primaryScrollView(in: root),
+            let documentView = scrollView.documentView
+        else {
+            return
+        }
+        let visible = scrollView.documentVisibleRect
+        guard visible.height > 40 else {
+            return
+        }
+        let start = documentView.convert(
+            NSPoint(x: visible.minX + 80, y: visible.midY - 8),
+            to: nil
+        )
+        let end = documentView.convert(
+            NSPoint(x: visible.maxX - 80, y: visible.midY + 8),
+            to: nil
+        )
+        for (type, location) in [
+            (NSEvent.EventType.leftMouseDown, start),
+            (NSEvent.EventType.leftMouseDragged, end),
+            (NSEvent.EventType.leftMouseUp, end),
+        ] {
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: location,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: type == .leftMouseUp ? 0 : 1
+            ) else {
+                continue
+            }
+            window.sendEvent(event)
+        }
     }
 
     private func makeMarkdownHeavyTurns(

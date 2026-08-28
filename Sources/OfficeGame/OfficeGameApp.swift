@@ -1630,6 +1630,11 @@ private struct BubbleDetailView: View {
                     source: isQuestion ? presentation.question : message,
                     fontSize: 13
                 )
+                    .conversationTextSelectionRegion(
+                        isQuestion
+                            ? "question-dialog"
+                            : "message-dialog"
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
             }

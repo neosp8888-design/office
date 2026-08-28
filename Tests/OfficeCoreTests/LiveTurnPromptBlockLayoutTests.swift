@@ -56,13 +56,19 @@ final class LiveTurnPromptBlockLayoutTests: XCTestCase {
     }
 
     func testPromptBubbleStaysRightAlignedWithinMaximumWidth() {
+        let selectionID = "layout-long-prompt"
+        ConversationTextSelectionCoordinator.shared.activate(
+            "live-prompt-\(selectionID)"
+        )
+        defer { ConversationTextSelectionCoordinator.shared.reset() }
         let presentation = TaskPromptPresentation(
             prompt: String(repeating: "질문이 아주 깁니다. ", count: 40)
         )
         let host = NSHostingView(
             rootView: LiveTurnPromptBlock(
                 presentation: presentation,
-                sentAt: Date(timeIntervalSinceReferenceDate: 60_000)
+                sentAt: Date(timeIntervalSinceReferenceDate: 60_000),
+                selectionID: selectionID
             )
             .frame(width: 900)
         )
@@ -91,10 +97,16 @@ final class LiveTurnPromptBlockLayoutTests: XCTestCase {
     }
 
     func testShortPromptBubbleShrinksToItsContent() {
+        let selectionID = "layout-short-prompt"
+        ConversationTextSelectionCoordinator.shared.activate(
+            "live-prompt-\(selectionID)"
+        )
+        defer { ConversationTextSelectionCoordinator.shared.reset() }
         let host = NSHostingView(
             rootView: LiveTurnPromptBlock(
                 presentation: TaskPromptPresentation(prompt: "넵"),
-                sentAt: Date(timeIntervalSinceReferenceDate: 60_000)
+                sentAt: Date(timeIntervalSinceReferenceDate: 60_000),
+                selectionID: selectionID
             )
             .frame(width: 900)
         )

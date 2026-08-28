@@ -168,6 +168,7 @@ private struct SessionHistoryCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.primary.opacity(0.045))
         )
+        .conversationTextSelectionRegion("history-session-\(session.id)")
     }
 }
 
@@ -515,6 +516,7 @@ private struct ArchiveTurnCard: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.primary.opacity(0.045))
         )
+        .conversationTextSelectionRegion("archive-turn-\(turn.id)")
     }
 
     private var promptPresentation: TaskPromptPresentation {

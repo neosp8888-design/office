@@ -122,6 +122,7 @@ private struct ArchiveRecordTile: View {
         .buttonStyle(.plain)
         .help("\(turn.characterName) · \(recordTitle)")
         .accessibilityLabel(recordAccessibilityLabel)
+        .conversationTextSelectionRegion("archive-tile-\(turn.id)")
     }
 
     private var bookColor: Color {
@@ -207,6 +208,7 @@ struct ArchiveOpenBook: View {
                 endPoint: .bottomTrailing
             )
         )
+        .conversationTextSelectionRegion("archive-book-\(turn.id)")
     }
 
     private var bookToolbar: some View {
