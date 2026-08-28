@@ -1,7 +1,9 @@
 // 이 파일은 CLI가 만든 로컬 이미지를 찾아 Markdown 응답에 미리보기로 첨부한다.
 
+import { createHash } from "node:crypto";
 import {
   existsSync,
+  readFileSync,
   readdirSync,
   statSync,
 } from "node:fs";
@@ -28,6 +30,8 @@ const IMAGE_EXTENSIONS = new Set([
   ".tiff",
   ".webp",
 ]);
+const imageIdentityCache = new Map();
+const IMAGE_IDENTITY_CACHE_LIMIT = 256;
 
 export function listGeneratedImages(
   sessionID,
@@ -79,24 +83,33 @@ export function generatedImagesForTurn({
 export function appendLocalImagePreviews(markdown, candidatePaths = []) {
   const source = String(markdown ?? "").trim();
   const destinations = markdownDestinations(source);
+  const previewedPaths = destinations
+    .filter((destination) => destination.isImage)
+    .map((destination) => localImagePath(destination.value))
+    .filter(Boolean);
   const previewed = new Set(
-    destinations
-      .filter((destination) => destination.isImage)
-      .map((destination) => localImagePath(destination.value))
-      .filter(Boolean),
+    previewedPaths.map(imageContentIdentity),
   );
+  const includedPaths = new Set(previewedPaths);
   const linked = destinations
     .filter((destination) => !destination.isImage)
     .map((destination) => localImagePath(destination.value))
     .filter(Boolean);
 
   const paths = [];
-  for (const value of [...candidatePaths, ...linked]) {
+  // 응답에서 명시한 프로젝트 파일을 생성 임시 원본보다 우선한다.
+  // 경로가 달라도 내용이 같은 이미지는 미리보기를 한 번만 붙인다.
+  for (const value of [...linked, ...candidatePaths]) {
     const path = localImagePath(String(value));
-    if (!path || previewed.has(path)) {
+    if (!path || includedPaths.has(path)) {
       continue;
     }
-    previewed.add(path);
+    const identity = imageContentIdentity(path);
+    if (previewed.has(identity)) {
+      continue;
+    }
+    includedPaths.add(path);
+    previewed.add(identity);
     paths.push(path);
     if (paths.length === 8) {
       break;
@@ -111,6 +124,27 @@ export function appendLocalImagePreviews(markdown, candidatePaths = []) {
     return `[![생성 이미지 ${index + 1}](<${url}>)](<${url}>)`;
   });
   return `${source}\n\n${previews.join("\n\n")}`;
+}
+
+function imageContentIdentity(path) {
+  try {
+    const stats = statSync(path);
+    const cacheKey = `${path}\u001f${stats.size}\u001f${stats.mtimeMs}`;
+    const cached = imageIdentityCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const identity = `${stats.size}:${createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex")}`;
+    imageIdentityCache.set(cacheKey, identity);
+    if (imageIdentityCache.size > IMAGE_IDENTITY_CACHE_LIMIT) {
+      imageIdentityCache.delete(imageIdentityCache.keys().next().value);
+    }
+    return identity;
+  } catch {
+    return `path:${path}`;
+  }
 }
 
 function markdownDestinations(markdown) {

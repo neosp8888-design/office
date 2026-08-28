@@ -160,4 +160,52 @@ final class LocalMarkdownResourceTests: XCTestCase {
             rendered
         )
     }
+
+    func testCopiedImageIsShownOnceAndExplicitProjectLinkWins() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let generated = directory.appending(path: "generated.png")
+        let projectCopy = directory.appending(path: "episode-03.png")
+        let imageBytes = Data("same-image".utf8)
+        try imageBytes.write(to: generated)
+        try imageBytes.write(to: projectCopy)
+        let markdown = """
+        [결과 파일](<\(projectCopy.path)>)
+
+        [![생성 이미지 1](<\(generated.absoluteString)>)](<\(generated.absoluteString)>)
+        """
+
+        XCTAssertEqual(
+            LocalMarkdownResource.imageFileURLs(
+                in: markdown,
+                fallbackDirectory: nil
+            ),
+            [projectCopy.standardizedFileURL]
+        )
+    }
+
+    func testGeneratedPreviewLinksAreRemovedFromVisibleMarkdown() {
+        let markdown = """
+        결과: [episode-03.png](</tmp/episode-03.png>)
+
+        [![생성 이미지 1](<file:///tmp/generated.png>)](<file:///tmp/generated.png>)
+
+        [![생성 이미지 2](<file:///tmp/copied.png>)](<file:///tmp/copied.png>)
+        """
+
+        XCTAssertEqual(
+            LocalMarkdownResource.removingGeneratedImagePreviews(
+                from: markdown
+            ),
+            "결과: [episode-03.png](</tmp/episode-03.png>)"
+        )
+    }
 }

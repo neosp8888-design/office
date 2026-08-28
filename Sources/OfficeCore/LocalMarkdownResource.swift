@@ -1,5 +1,6 @@
 // 이 파일은 Markdown에 포함된 로컬 파일 경로를 안전한 파일 URL과 이미지 미리보기로 변환한다.
 
+import CryptoKit
 import Foundation
 
 public enum LocalMarkdownResource {
@@ -17,6 +18,17 @@ public enum LocalMarkdownResource {
         pattern: #"((?:file://)?/[^\n`<>]*?\.(?:m4v|mov|mp4))(?=$|[\s`>)\]},;:])"#,
         options: [.caseInsensitive]
     )
+    private static let generatedImagePreviewExpression =
+        try? NSRegularExpression(
+            pattern:
+                #"(?m)^[\t ]*\[!\[생성 이미지 [0-9]+\]\((?:<[^>\n]+>|[^\s)\n]+)\)\]\((?:<[^>\n]+>|[^\s)\n]+)\)[\t ]*(?:\n|$)"#
+        )
+    private static let imageIdentityCache: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 128
+        cache.totalCostLimit = 2 * 1_024 * 1_024
+        return cache
+    }()
     private static let imageExtensions: Set<String> = [
         "bmp",
         "gif",
@@ -146,8 +158,8 @@ public enum LocalMarkdownResource {
             expression: bareImageExpression
         )
 
-        var includedPaths = Set<String>()
-        return (embeddedImages + linkedImages + bareImages).compactMap {
+        var includedIdentities = Set<String>()
+        return (linkedImages + embeddedImages + bareImages).compactMap {
             destination in
             guard
                 let url = destinationURL(for: destination),
@@ -155,12 +167,35 @@ public enum LocalMarkdownResource {
                     from: url,
                     fallbackDirectory: fallbackDirectory
                 ),
-                includedPaths.insert(fileURL.path).inserted
+                includedIdentities.insert(
+                    imageContentIdentity(for: fileURL)
+                ).inserted
             else {
                 return nil
             }
             return fileURL
         }
+    }
+
+    public static func removingGeneratedImagePreviews(
+        from markdown: String
+    ) -> String {
+        guard let generatedImagePreviewExpression else {
+            return markdown
+        }
+        let range = NSRange(markdown.startIndex..., in: markdown)
+        let withoutPreviews = generatedImagePreviewExpression
+            .stringByReplacingMatches(
+                in: markdown,
+                range: range,
+                withTemplate: ""
+            )
+        return withoutPreviews.replacingOccurrences(
+            of: #"\n{3,}"#,
+            with: "\n\n",
+            options: .regularExpression
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public static func addingLinkedImagePreviews(
@@ -247,6 +282,39 @@ public enum LocalMarkdownResource {
                 fallbackDirectory: fallbackDirectory
             )
         }?.path
+    }
+
+    private static func imageContentIdentity(for url: URL) -> String {
+        let standardizedURL = url.standardizedFileURL
+        let values = try? standardizedURL.resourceValues(
+            forKeys: [.contentModificationDateKey, .fileSizeKey]
+        )
+        let size = values?.fileSize ?? 0
+        let modifiedAt = values?.contentModificationDate?
+            .timeIntervalSince1970 ?? 0
+        let cacheKey = "\(standardizedURL.path)|\(size)|\(modifiedAt)"
+            as NSString
+        if let cached = imageIdentityCache.object(forKey: cacheKey) {
+            return cached as String
+        }
+        guard
+            let data = try? Data(
+                contentsOf: standardizedURL,
+                options: .mappedIfSafe
+            )
+        else {
+            return "path:\(standardizedURL.path)"
+        }
+        let digest = SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let identity = "\(size):\(digest)"
+        imageIdentityCache.setObject(
+            identity as NSString,
+            forKey: cacheKey,
+            cost: cacheKey.length + identity.utf8.count
+        )
+        return identity
     }
 
     private static func worktreeRelativePathComponents(

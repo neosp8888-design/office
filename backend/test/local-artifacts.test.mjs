@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
   appendLocalImagePreviews,
@@ -63,6 +64,43 @@ test("이미 표시된 이미지는 중복 첨부하지 않는다", () => {
       appendLocalImagePreviews(markdown, [image]),
       markdown,
     );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("프로젝트 복사본과 생성 원본이 같으면 미리보기 하나만 붙인다", () => {
+  const directory = mkdtempSync(join(tmpdir(), "officellm-artifact-"));
+  try {
+    const generated = join(directory, "generated.png");
+    const projectCopy = join(directory, "episode-03.png");
+    writeFileSync(generated, "same-image-bytes");
+    writeFileSync(projectCopy, "same-image-bytes");
+
+    const rendered = appendLocalImagePreviews(
+      `[결과 파일](<${projectCopy}>)`,
+      [generated],
+    );
+
+    assert.equal((rendered.match(/\[!\[생성 이미지/g) ?? []).length, 1);
+    assert.ok(rendered.includes(pathToFileURL(projectCopy).href));
+    assert.ok(!rendered.includes(pathToFileURL(generated).href));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("크기가 같아도 내용이 다른 이미지는 각각 미리보기를 붙인다", () => {
+  const directory = mkdtempSync(join(tmpdir(), "officellm-artifact-"));
+  try {
+    const first = join(directory, "first.png");
+    const second = join(directory, "second.png");
+    writeFileSync(first, "image-a");
+    writeFileSync(second, "image-b");
+
+    const rendered = appendLocalImagePreviews("완료", [first, second]);
+
+    assert.equal((rendered.match(/\[!\[생성 이미지/g) ?? []).length, 2);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

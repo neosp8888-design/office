@@ -192,4 +192,77 @@ final class SelectableMarkdownTextViewTests: XCTestCase {
         }
         XCTAssertFalse(foundAttachment)
     }
+
+    func testLocalMarkdownLinkClickOpensResolvedFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let fileURL = directory.appending(path: "episode 03.png")
+        try Data([0]).write(to: fileURL)
+        let documentView = SelectableMarkdownDocumentView(fontSize: 12)
+        documentView.apply(
+            source: "[결과 파일](<\(fileURL.path)>)",
+            fallbackDirectory: nil,
+            isDark: false
+        )
+
+        var openedURL: URL?
+        documentView.linkOpener = { url in
+            openedURL = url
+            return true
+        }
+        let link = try XCTUnwrap(
+            documentView.textView.textStorage?.attribute(
+                .link,
+                at: 0,
+                effectiveRange: nil
+            )
+        )
+
+        XCTAssertTrue(
+            documentView.textView(
+                documentView.textView,
+                clickedOnLink: link,
+                at: 0
+            )
+        )
+        XCTAssertEqual(openedURL, fileURL.standardizedFileURL)
+    }
+
+    func testWebMarkdownLinkUsesExternalOpener() throws {
+        let documentView = SelectableMarkdownDocumentView(fontSize: 12)
+        documentView.apply(
+            source: "[웹](https://example.com/result)",
+            fallbackDirectory: nil,
+            isDark: false
+        )
+
+        var openedURL: URL?
+        documentView.linkOpener = { url in
+            openedURL = url
+            return true
+        }
+        let link = try XCTUnwrap(
+            documentView.textView.textStorage?.attribute(
+                .link,
+                at: 0,
+                effectiveRange: nil
+            )
+        )
+
+        XCTAssertTrue(
+            documentView.textView(
+                documentView.textView,
+                clickedOnLink: link,
+                at: 0
+            )
+        )
+        XCTAssertEqual(openedURL?.absoluteString, "https://example.com/result")
+    }
 }

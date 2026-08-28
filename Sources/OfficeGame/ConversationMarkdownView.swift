@@ -62,7 +62,11 @@ private struct ConversationMarkdownContent: View, Equatable {
             in: source,
             fallbackDirectory: fallbackDirectory
         )
-        let markdownSegments = SelectableMarkdownSegmenter.split(source)
+        let visibleSource = LocalMarkdownResource
+            .removingGeneratedImagePreviews(from: source)
+        let markdownSegments = visibleSource.isEmpty
+            ? []
+            : SelectableMarkdownSegmenter.split(visibleSource)
 
         let content = VStack(alignment: .leading, spacing: 9) {
             ForEach(Array(markdownSegments.enumerated()), id: \.offset) {
@@ -405,19 +409,28 @@ private struct LocalMarkdownFileImage: View {
     }
 
     var body: some View {
-        Group {
-            if let image {
-                LocalMarkdownThumbnail(image: image)
-            } else {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.primary.opacity(0.035))
-                    .frame(width: 240, height: 160)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
+        Button {
+            if !NSWorkspace.shared.open(url) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } label: {
+            Group {
+                if let image {
+                    LocalMarkdownThumbnail(image: image)
+                } else {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.primary.opacity(0.035))
+                        .frame(width: 240, height: 160)
+                        .overlay {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                }
             }
         }
+        .buttonStyle(.plain)
+        .help("이미지 열기")
+        .accessibilityLabel("이미지 열기")
         .task(id: url) {
             await loadImage()
         }

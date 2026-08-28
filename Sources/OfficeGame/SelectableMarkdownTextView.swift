@@ -2,6 +2,7 @@
 // 가로질러 끊김 없이 선택할 수 있게 한다.
 
 import AppKit
+import OfficeCore
 import SwiftUI
 
 struct SelectableMarkdownTextView: NSViewRepresentable {
@@ -68,8 +69,9 @@ struct SelectableMarkdownTextView: NSViewRepresentable {
 }
 
 @MainActor
-final class SelectableMarkdownDocumentView: NSView {
+final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     let textView = NSTextView()
+    var linkOpener: ((URL) -> Bool)?
 
     private let horizontalClipView = SelectableMarkdownHorizontalClipView()
     private let horizontalScroller = NSScroller()
@@ -227,6 +229,7 @@ final class SelectableMarkdownDocumentView: NSView {
             .foregroundColor: NSColor.systemBlue,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
+        textView.delegate = self
         textView.setAccessibilityIdentifier(
             "conversationSelectableMarkdownText"
         )
@@ -240,6 +243,45 @@ final class SelectableMarkdownDocumentView: NSView {
         horizontalScroller.action = #selector(horizontalScrollerChanged(_:))
         horizontalScroller.isHidden = true
         updateTextViewEmbedding()
+    }
+
+    func textView(
+        _ textView: NSTextView,
+        clickedOnLink link: Any,
+        at charIndex: Int
+    ) -> Bool {
+        guard let url = linkURL(from: link) else {
+            return false
+        }
+        if
+            let fileURL = LocalMarkdownResource.existingFileURL(
+                from: url,
+                fallbackDirectory: fallbackDirectory
+            )
+        {
+            if let linkOpener {
+                return linkOpener(fileURL)
+            }
+            if NSWorkspace.shared.open(fileURL) {
+                return true
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+            return true
+        }
+        if LocalMarkdownResource.fileURL(from: url) != nil {
+            return true
+        }
+        return linkOpener?(url) ?? NSWorkspace.shared.open(url)
+    }
+
+    private func linkURL(from value: Any) -> URL? {
+        if let url = value as? URL {
+            return url
+        }
+        if let string = value as? String {
+            return URL(string: string)
+        }
+        return nil
     }
 
     private var usesHorizontalViewport: Bool {
