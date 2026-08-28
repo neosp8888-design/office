@@ -668,26 +668,21 @@ private struct UsageProviderColumn: View {
     let tint: Color
 
     var body: some View {
-        VStack(spacing: 10) {
-            UsageProviderCard(
-                name: name,
-                icon: icon,
-                update: update,
-                isUpdating: isUpdating,
-                applyUpdate: applyUpdate,
-                fiveHour: fiveHour,
-                fiveHourResetAt: fiveHourResetAt,
-                weekly: weekly,
-                weeklyResetAt: weeklyResetAt,
-                plan: plan,
-                showsFiveHour: showsFiveHour,
-                tint: tint
-            )
-            UsageActivityCard(
-                activity: activity,
-                tint: tint
-            )
-        }
+        UsageProviderCard(
+            name: name,
+            icon: icon,
+            update: update,
+            isUpdating: isUpdating,
+            applyUpdate: applyUpdate,
+            fiveHour: fiveHour,
+            fiveHourResetAt: fiveHourResetAt,
+            weekly: weekly,
+            weeklyResetAt: weeklyResetAt,
+            plan: plan,
+            activity: activity,
+            showsFiveHour: showsFiveHour,
+            tint: tint
+        )
         .frame(maxWidth: .infinity)
     }
 }
@@ -703,6 +698,7 @@ private struct UsageProviderCard: View {
     let weekly: Int?
     let weeklyResetAt: Date?
     let plan: String?
+    let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
     let tint: Color
 
@@ -779,6 +775,10 @@ private struct UsageProviderCard: View {
                 resetAt: weeklyResetAt,
                 tint: tint
             )
+            UsageActivitySummary(
+                activity: activity,
+                tint: tint
+            )
         }
         .padding(13)
         .background(
@@ -801,43 +801,31 @@ private struct UsageProviderCard: View {
     }
 }
 
-private struct UsageActivityCard: View {
+private struct UsageActivitySummary: View {
     let activity: AIUsageActivitySnapshot?
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 4) {
             Label(
                 "API 요금 추정",
                 systemImage: "chart.bar.xaxis"
             )
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(tint)
+            .foregroundStyle(tint)
 
-            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                GridRow {
-                    UsageMetricCell(
-                        label: "오늘 비용",
-                        value: costText(activity?.todayCostUSD),
-                        tint: tint
-                    )
-                    UsageMetricCell(
-                        label: "30일 비용",
-                        value: costText(activity?.last30DaysCostUSD),
-                        tint: tint
-                    )
-                }
-            }
+            Spacer(minLength: 2)
+
+            Text(
+                "오늘 비용 \(costText(activity?.todayCostUSD))"
+                    + " / 30일 비용 \(costText(activity?.last30DaysCostUSD))"
+            )
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
         }
-        .padding(12)
-        .background(
-            Color.primary.opacity(0.022),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(tint.opacity(0.10))
-        }
+        // 현재 한도 초기화 시각과 같은 크기로 카드 하단 한 줄만 쓴다.
+        .font(.system(size: 8.5, weight: .semibold))
+        .accessibilityElement(children: .combine)
     }
 
     private func costText(_ value: Double?) -> String {
@@ -847,32 +835,6 @@ private struct UsageActivityCard: View {
         return String(format: "$%.2f", value)
     }
 
-}
-
-private struct UsageMetricCell: View {
-    let label: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .background(
-            tint.opacity(0.055),
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
-    }
 }
 
 private struct UsageMeter: View {

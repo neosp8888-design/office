@@ -4,7 +4,7 @@ import XCTest
 @testable import OfficeGame
 
 final class UsageBoardLayoutTests: XCTestCase {
-    func testUsageCardPresentsOnlyEstimatedAPICost() throws {
+    func testUsageCardPresentsEstimatedAPICostAsCompactSummary() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -15,21 +15,22 @@ final class UsageBoardLayoutTests: XCTestCase {
             encoding: .utf8
         )
         let start = try XCTUnwrap(
-            source.range(of: "private struct UsageActivityCard")?.lowerBound
+            source.range(of: "private struct UsageActivitySummary")?.lowerBound
         )
         let end = try XCTUnwrap(
             source.range(
-                of: "private struct UsageMetricCell",
+                of: "private struct UsageMeter",
                 range: start..<source.endIndex
             )?.lowerBound
         )
-        let card = String(source[start..<end])
+        let summary = String(source[start..<end])
 
-        XCTAssertTrue(card.contains("\"API 요금 추정\""))
-        XCTAssertTrue(card.contains("label: \"오늘 비용\""))
-        XCTAssertTrue(card.contains("label: \"30일 비용\""))
-        XCTAssertFalse(card.contains("label: \"오늘 토큰\""))
-        XCTAssertFalse(card.contains("label: \"30일 토큰\""))
+        XCTAssertTrue(summary.contains("\"API 요금 추정\""))
+        XCTAssertTrue(summary.contains("오늘 비용"))
+        XCTAssertTrue(summary.contains("30일 비용"))
+        XCTAssertTrue(summary.contains("size: 8.5"))
+        XCTAssertFalse(summary.contains("오늘 토큰"))
+        XCTAssertFalse(summary.contains("30일 토큰"))
     }
 
     func testUsesSingleColumnBelowThreshold() {
@@ -71,6 +72,58 @@ final class UsageBoardLayoutTests: XCTestCase {
         XCTAssertTrue(
             transcript.contains(
                 "DashboardPalette.providerAccent(for: backend)"
+            )
+        )
+    }
+
+    func testConversationFooterUsesSelectedProviderAccent() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
+        let source = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeGameApp.swift"),
+            encoding: .utf8
+        )
+        let compactionStart = try XCTUnwrap(
+            source.range(
+                of: "private struct ContextCompactionControls"
+            )?.lowerBound
+        )
+        let compactionEnd = try XCTUnwrap(
+            source.range(
+                of: "private enum ContextCompactionAlert",
+                range: compactionStart..<source.endIndex
+            )?.lowerBound
+        )
+        let compaction = String(source[compactionStart..<compactionEnd])
+        let profileStart = try XCTUnwrap(
+            source.range(of: "Label(\n                                \"프로필\"")?
+                .lowerBound
+        )
+        let profileEnd = try XCTUnwrap(
+            source.range(
+                of: ".accessibilityLabel(\"직원 프로필\")",
+                range: profileStart..<source.endIndex
+            )?.upperBound
+        )
+        let profile = String(source[profileStart..<profileEnd])
+
+        XCTAssertTrue(
+            compaction.contains(
+                "DashboardPalette.providerAccent(for: character.backend)"
+            )
+        )
+        XCTAssertTrue(compaction.contains(".tint(accent)"))
+        XCTAssertGreaterThanOrEqual(
+            compaction.components(separatedBy: ".foregroundStyle(accent)").count
+                - 1,
+            3
+        )
+        XCTAssertTrue(
+            profile.contains(
+                "DashboardPalette.providerAccent(\n                                for: character.backend"
             )
         )
     }

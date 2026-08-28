@@ -974,7 +974,11 @@ private struct LiveWorkspaceCommandBar: View {
                             .font(.system(size: 11, weight: .semibold))
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(DashboardPalette.accent)
+                        .foregroundStyle(
+                            DashboardPalette.providerAccent(
+                                for: character.backend
+                            )
+                        )
                         .accessibilityLabel("직원 프로필")
                         .help("직원 프로필 보기")
                     }
@@ -1903,6 +1907,10 @@ private struct ContextCompactionControls: View {
         director.contextCompactionNotice(for: character.id)
     }
 
+    private var accent: Color {
+        DashboardPalette.providerAccent(for: character.backend)
+    }
+
     private var thresholdText: String {
         guard let contextLimit else {
             return "\(roundedPercent)%"
@@ -1925,7 +1933,7 @@ private struct ContextCompactionControls: View {
             ) {
                 Label("자동", systemImage: "gauge.with.dots.needle.33percent")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(accent)
 
                 Slider(
                     value: $draftPercent,
@@ -1934,7 +1942,7 @@ private struct ContextCompactionControls: View {
                     onEditingChanged: thresholdEditingChanged
                 )
                 .frame(width: 92)
-                .tint(DashboardPalette.accent)
+                .tint(accent)
                 .disabled(!availability.canAdjustThreshold)
                 .accessibilityLabel("자동 컨텍스트 압축 기준")
                 .accessibilityValue("\(roundedPercent)퍼센트")
@@ -1948,7 +1956,7 @@ private struct ContextCompactionControls: View {
                             design: .monospaced
                         )
                     )
-                    .foregroundStyle(DashboardPalette.accent)
+                    .foregroundStyle(accent)
                     .frame(minWidth: 28, alignment: .trailing)
             }
 
@@ -1971,7 +1979,7 @@ private struct ContextCompactionControls: View {
                 }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(DashboardPalette.accent)
+            .foregroundStyle(accent)
             .disabled(!availability.canCompactNow)
             .accessibilityLabel("컨텍스트 지금 압축")
             .help(
