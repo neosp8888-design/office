@@ -116,6 +116,13 @@ final class LocalMarkdownResourceTests: XCTestCase {
             LocalMarkdownResource.addingLinkedImagePreviews(to: rendered),
             rendered
         )
+        XCTAssertEqual(
+            LocalMarkdownResource.imageFileURLs(
+                in: "\(markdown)\n\n![미리보기](<\(imageURL.path)>)",
+                fallbackDirectory: nil
+            ),
+            [imageURL.standardizedFileURL]
+        )
     }
 
     func testBareLocalImagePathAddsInlinePreview() throws {

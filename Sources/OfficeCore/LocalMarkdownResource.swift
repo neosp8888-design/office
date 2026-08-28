@@ -129,6 +129,40 @@ public enum LocalMarkdownResource {
         }
     }
 
+    public static func imageFileURLs(
+        in markdown: String,
+        fallbackDirectory: URL?
+    ) -> [URL] {
+        let embeddedImages = destinations(
+            in: markdown,
+            expression: existingImageExpression
+        )
+        let linkedImages = destinations(
+            in: markdown,
+            expression: linkedImageExpression
+        )
+        let bareImages = destinations(
+            in: markdown,
+            expression: bareImageExpression
+        )
+
+        var includedPaths = Set<String>()
+        return (embeddedImages + linkedImages + bareImages).compactMap {
+            destination in
+            guard
+                let url = destinationURL(for: destination),
+                let fileURL = imageFileURL(
+                    from: url,
+                    fallbackDirectory: fallbackDirectory
+                ),
+                includedPaths.insert(fileURL.path).inserted
+            else {
+                return nil
+            }
+            return fileURL
+        }
+    }
+
     public static func addingLinkedImagePreviews(
         to markdown: String,
         fallbackDirectory: URL? = nil

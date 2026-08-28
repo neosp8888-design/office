@@ -58,62 +58,25 @@ private struct ConversationMarkdownContent: View, Equatable {
             in: source,
             fallbackDirectory: fallbackDirectory
         )
+        let imageURLs = LocalMarkdownResource.imageFileURLs(
+            in: source,
+            fallbackDirectory: fallbackDirectory
+        )
+        let markdownSegments = SelectableMarkdownSegmenter.split(source)
 
         let content = VStack(alignment: .leading, spacing: 9) {
-            Markdown(
-                ConversationMarkdownCache.shared.content(
-                    for: source,
-                    fallbackDirectory: fallbackDirectory
-                )
-            )
-            .markdownImageProvider(
-                LocalMarkdownImageProvider(
-                    fallbackDirectory: fallbackDirectory
-                )
-            )
-            .markdownInlineImageProvider(.asset)
-            .markdownTextStyle(\.text) {
-                FontSize(fontSize)
-            }
-            .markdownTextStyle(\.code) {
-                FontFamily(.system())
-                FontFamilyVariant(.normal)
-                FontSize(fontSize)
-                BackgroundColor(Color.primary.opacity(0.055))
-            }
-            .markdownCodeSyntaxHighlighter(
-                ConversationCodeSyntaxHighlighter()
-            )
-            .markdownBlockStyle(\.codeBlock) { configuration in
-                ConversationCodeBlockView(
-                    configuration: configuration,
-                    fontSize: fontSize
+            ForEach(Array(markdownSegments.enumerated()), id: \.offset) {
+                _, segment in
+                SelectableMarkdownTextView(
+                    source: segment.source,
+                    fontSize: fontSize,
+                    fileBaseDirectory: fallbackDirectory?.path,
+                    minimumLayoutWidth: segment.minimumLayoutWidth
                 )
             }
-            .markdownBlockStyle(\.image) { configuration in
-                configuration.label
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .markdownMargin(top: 8, bottom: 8)
+            ForEach(Array(imageURLs.prefix(8)), id: \.self) { imageURL in
+                LocalMarkdownFileImage(url: imageURL)
             }
-            .markdownBlockStyle(\.table) { configuration in
-                ScrollView(.horizontal) {
-                    configuration.label
-                        .fixedSize(horizontal: false, vertical: true)
-                        .markdownTableBorderStyle(
-                            .init(color: Color.primary.opacity(0.18))
-                        )
-                        .markdownTableBackgroundStyle(
-                            .alternatingRows(
-                                Color.clear,
-                                Color.primary.opacity(0.035),
-                                header: Color.primary.opacity(0.07)
-                            )
-                        )
-                }
-                .markdownMargin(top: 0, bottom: 16)
-            }
-            .markdownTheme(.gitHub)
             ForEach(Array(videoURLs.prefix(4)), id: \.self) { videoURL in
                 LocalMarkdownFileVideo(url: videoURL)
             }
