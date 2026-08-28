@@ -45,11 +45,14 @@ function normalizedCodexPlan(value) {
   return normalizedPlan(value);
 }
 
-function normalizedClaudePlan(value) {
-  const key = String(value ?? "").trim().toLowerCase();
+/// rateLimitTier는 default_claude_max_5x처럼 배수를 담고 있을 때만 쓸모가
+/// 있다. default_claude_ai처럼 등급이 빠진 값을 그대로 다듬으면 배지에
+/// "Default Claude Ai"가 뜨므로, 그때는 구독 종류를 쓴다.
+function normalizedClaudePlan(tier, subscriptionType) {
+  const key = String(tier ?? "").trim().toLowerCase();
   if (/max[\s_-]*5x/.test(key)) return "Max 5x";
   if (/max[\s_-]*20x/.test(key)) return "Max 20x";
-  return normalizedPlan(value);
+  return normalizedPlan(subscriptionType);
 }
 
 function isoDate(value) {
@@ -92,11 +95,11 @@ function claudeWindow(window) {
   };
 }
 
-export function parseClaudeRateLimits(payload, plan) {
+export function parseClaudeRateLimits(payload, tier, subscriptionType) {
   return {
     fiveHour: claudeWindow(payload?.five_hour),
     weekly: claudeWindow(payload?.seven_day),
-    plan: normalizedClaudePlan(plan),
+    plan: normalizedClaudePlan(tier, subscriptionType),
   };
 }
 
@@ -129,7 +132,9 @@ export function parseAntigravityRateLimits(payload) {
   if (!fiveHour && !weekly) {
     throw new Error("Antigravity 계정 한도 응답에 Gemini 잔여량이 없습니다.");
   }
-  return { fiveHour, weekly, plan: null };
+  // 한도 응답에는 구독 상품명이 실려 오지 않는다. 배지를 비워 두면
+  // Antigravity 칸만 등급 없이 보이므로 무료 사용자로 표시한다.
+  return { fiveHour, weekly, plan: "Free" };
 }
 
 function safeError(error, fallback) {
@@ -270,8 +275,10 @@ function parsedClaudeCredential(raw) {
   return {
     accessToken,
     // subscriptionType은 "max"까지만 알려 주지만 rateLimitTier에는
-    // default_claude_max_5x처럼 실제 배수가 들어 있다.
-    plan: oauth.rateLimitTier ?? oauth.subscriptionType ?? null,
+    // default_claude_max_5x처럼 실제 배수가 들어 있다. 배수가 없는
+    // 티어도 오므로 어느 한쪽으로 합치지 않고 둘 다 넘긴다.
+    tier: oauth.rateLimitTier ?? null,
+    subscriptionType: oauth.subscriptionType ?? null,
   };
 }
 
@@ -280,7 +287,11 @@ async function readClaudeCredential() {
     process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "",
   ).trim();
   if (environmentToken) {
-    return { accessToken: environmentToken, plan: null };
+    return {
+      accessToken: environmentToken,
+      tier: null,
+      subscriptionType: null,
+    };
   }
 
   const credentialPath = resolve(
@@ -346,7 +357,11 @@ export async function readClaudeRateLimits({
         `Claude Code 계정 한도 조회가 실패했습니다 (HTTP ${response.status}).`,
       );
     }
-    return parseClaudeRateLimits(await response.json(), credential.plan);
+    return parseClaudeRateLimits(
+      await response.json(),
+      credential.tier,
+      credential.subscriptionType,
+    );
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new Error("Claude Code 계정 한도 조회 시간이 초과됐습니다.");

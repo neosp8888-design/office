@@ -117,6 +117,7 @@ test("Claude OAuth 사용률은 남은 비율로 변환한다", () => {
           resets_at: "2026-08-13T00:00:00Z",
         },
       },
+      null,
       "max",
     ),
     {
@@ -145,12 +146,34 @@ test("Claude의 구체 한도 등급은 Max 배수를 보존한다", () => {
   assert.equal(parsed.plan, "Max 5x");
 });
 
+test("Claude 한도 등급에 배수가 없으면 구독 종류로 표시한다", () => {
+  const parsed = parseClaudeRateLimits(
+    { five_hour: null, seven_day: null },
+    "default_claude_ai",
+    "pro",
+  );
+
+  // 티어 문자열을 그대로 쓰면 "Default Claude Ai"가 배지에 뜬다.
+  assert.equal(parsed.plan, "Pro");
+});
+
+test("Claude 한도 등급도 구독 종류도 없으면 배지를 비운다", () => {
+  const parsed = parseClaudeRateLimits(
+    { five_hour: null, seven_day: null },
+    "default_claude_ai",
+    null,
+  );
+
+  assert.equal(parsed.plan, null);
+});
+
 test("Claude 직접 조회는 기존 OAuth 토큰을 읽기 전용으로 전달한다", async () => {
   let request;
   const result = await readClaudeRateLimits({
     credentialReader: async () => ({
       accessToken: "test-token",
-      plan: "max",
+      tier: null,
+      subscriptionType: "max",
     }),
     fetchImplementation: async (url, options) => {
       request = { url, options };
@@ -198,7 +221,7 @@ test("Antigravity Gemini 주간 잔량을 실제 quota bucket에서 읽는다", 
         remaining: 85,
         resetAt: "2026-09-03T13:44:43.000Z",
       },
-      plan: null,
+      plan: "Free",
     },
   );
 });
