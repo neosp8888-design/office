@@ -1988,10 +1988,11 @@ export class AgentRuntime {
     return values.join("\n\n");
   }
 
-  async normalizeCompletedCodexMessageActivity(state, decoded) {
-    if (state.character.backend !== "codex") {
-      return;
-    }
+  /// 마지막 공개 메시지에는 [OFFICE_SOURCES] 같은 기계 블록과 [NEED_INPUT]
+  /// 표식이 원문 그대로 남아 있지만 저장하는 응답은 그것을 떼어낸 본문이다.
+  /// 둘이 어긋나면 화면이 같은 답을 활동과 응답으로 두 번 그리므로,
+  /// 백엔드와 상관없이 활동 쪽을 정리된 본문으로 맞춘다.
+  async normalizeCompletedMessageActivity(state, decoded) {
     const finalMessage = state.visibleAgentMessages?.at(-1);
     const eventKey = finalMessage?.key
       ? `message:${finalMessage.key}`
@@ -2447,7 +2448,7 @@ export class AgentRuntime {
     }
     await this.completePendingInitialCodexReasoning(state);
     await this.finalizeRunningActivities(state, "completed");
-    await this.normalizeCompletedCodexMessageActivity(state, decoded);
+    await this.normalizeCompletedMessageActivity(state, decoded);
     const generatedImages = listGeneratedImages(
       state.externalSessionID,
       generatedImageRoot(state.character.backend),

@@ -682,6 +682,85 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
         XCTAssertNil(edits.files[0].additions)
     }
 
+    func testResponseInsideShownMessageIsNotRepeated() throws {
+        // 백엔드는 응답에서 기계 블록을 떼어 저장하지만 메시지 활동에는
+        // 원문이 남는다. 둘을 그대로 두면 같은 답이 두 번 그려진다.
+        let visibleAnswer = "정리했습니다.\n\n표는 위와 같습니다."
+        let rawMessage = visibleAnswer
+            + "\n\n[OFFICE_SOURCES]\n"
+            + #"[{"kind":"file","title":"설정","locator":"a.mjs:1"}]"#
+        let activities = try [
+            makeActivity(
+                id: "message-1",
+                kind: "message",
+                text: rawMessage,
+                status: "completed"
+            )
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: visibleAnswer,
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        let messages = presentation.entries.compactMap { entry -> String? in
+            if case .message(let message) = entry {
+                return message.text
+            }
+            return nil
+        }
+
+        XCTAssertEqual(
+            messages.count,
+            1,
+            "같은 답이 활동과 응답으로 두 번 들어가면 안 됩니다."
+        )
+    }
+
+    func testProgressMessagesStripBeforeFinalAnswerIsDeduplicated() throws {
+        // 진행문이 앞에 있으면 응답에서 그만큼 떼어낸 나머지를 최종
+        // 메시지와 견줘야 한다. 앞부분만 보면 중복을 놓친다.
+        let progress = "확인하겠습니다."
+        let finalAnswer = "정리했습니다.\n\n표는 위와 같습니다."
+        let rawFinal = finalAnswer
+            + "\n\n[OFFICE_SOURCES]\n"
+            + #"[{"kind":"file","title":"설정","locator":"a.mjs:1"}]"#
+        let activities = try [
+            makeActivity(
+                id: "message-1",
+                kind: "message",
+                text: progress,
+                status: "completed"
+            ),
+            makeActivity(
+                id: "message-2",
+                kind: "message",
+                text: rawFinal,
+                status: "completed"
+            ),
+        ]
+
+        let presentation = ClaudeTranscriptPresentation.make(
+            turnID: "turn-1",
+            activities: activities,
+            response: progress + "\n\n" + finalAnswer,
+            responseUpdatedAt: Date(timeIntervalSince1970: 2_000),
+            isRunning: false
+        )
+
+        let messages = presentation.entries.compactMap { entry -> String? in
+            if case .message(let message) = entry {
+                return message.text
+            }
+            return nil
+        }
+
+        XCTAssertEqual(messages, [progress, rawFinal])
+    }
+
     private func makeActivity(
         id: String,
         kind: String,

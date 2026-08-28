@@ -2318,7 +2318,7 @@ test("Codex 답변 필요 표식은 최종 메시지 활동에서도 제거한�
   ]);
 
   await runtime.consumeOutput(state, stream);
-  await runtime.normalizeCompletedCodexMessageActivity(state, {
+  await runtime.normalizeCompletedMessageActivity(state, {
     text: "어느 색으로 할까요?",
     needsInput: true,
   });
@@ -2337,6 +2337,62 @@ test("Codex 답변 필요 표식은 최종 메시지 활동에서도 제거한�
   );
   assert.equal(activityUpdates.length, 1);
   assert.doesNotMatch(activityUpdates[0].text, /occurred_at\s*=/);
+});
+
+test("Claude 최종 메시지 활동도 기계 블록을 뗀 본문으로 맞춘다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+  state.character = { id: "left-woman", backend: "claude" };
+  const rawMessage = "정리했습니다.\n\n[OFFICE_SOURCES]\n"
+    + '[{"kind":"file","title":"설정","locator":"a.mjs:1","excerpt":"확인"}]';
+  const stream = Readable.from([
+    `${JSON.stringify({
+      type: "assistant",
+      message: {
+        id: "msg-1",
+        content: [{ type: "text", text: rawMessage }],
+      },
+    })}\n`,
+    `${JSON.stringify({
+      type: "assistant",
+      message: {
+        id: "msg-2",
+        content: [
+          { type: "tool_use", id: "tool-1", name: "Read", input: {} },
+        ],
+      },
+    })}\n`,
+  ]);
+
+  await runtime.consumeOutput(state, stream);
+  assert.equal(
+    state.activityRecords.get("message:msg-1").text,
+    rawMessage,
+    "정리 전에는 기계 블록이 붙은 원문이 활동으로 남는다",
+  );
+
+  await runtime.normalizeCompletedMessageActivity(state, {
+    text: "정리했습니다.",
+    needsInput: false,
+  });
+
+  // 활동과 응답이 같아야 화면이 같은 답을 두 번 그리지 않는다.
+  assert.equal(
+    state.activityRecords.get("message:msg-1").text,
+    "정리했습니다.",
+  );
+  assert.equal(state.visibleAgentMessages.at(-1).text, "정리했습니다.");
 });
 
 test("Codex 파일 변경 통계는 현재 턴 rollout의 실제 patch diff로 계산한다", async () => {

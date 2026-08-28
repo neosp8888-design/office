@@ -14,6 +14,13 @@ enum AgentTranscriptText {
             if remaining == message {
                 return ""
             }
+            // 저장된 옛 턴에는 [OFFICE_SOURCES] 같은 기계 블록이 붙은 원문이
+            // 메시지 활동으로 남아 있고, 응답에는 그 블록이 빠져 있다.
+            // 이미 보여 준 메시지가 남은 응답을 통째로 품고 있으면
+            // 같은 답을 다시 쓰지 않는다.
+            if !remaining.isEmpty, message.hasPrefix(remaining) {
+                return ""
+            }
 
             let prefix = message + "\n\n"
             guard remaining.hasPrefix(prefix) else {
