@@ -132,9 +132,11 @@ export function parseAntigravityRateLimits(payload) {
   if (!fiveHour && !weekly) {
     throw new Error("Antigravity 계정 한도 응답에 Gemini 잔여량이 없습니다.");
   }
-  // 한도 응답에는 구독 상품명이 실려 오지 않는다. 배지를 비워 두면
-  // Antigravity 칸만 등급 없이 보이므로 무료 사용자로 표시한다.
-  return { fiveHour, weekly, plan: "Free" };
+  // 한도 응답은 상품명을 직접 주지 않는다. 현재 계정 계약에서는 무료
+  // 계정은 주간 한도만, Google AI Pro 계정은 5시간 한도를 함께 받는다.
+  // 제3자 모델 그룹은 Pro 응답에도 포함되므로 Ultra 판별 근거로 쓰지 않는다.
+  const plan = fiveHour ? "Google AI Pro" : "Free";
+  return { fiveHour, weekly, plan };
 }
 
 function safeError(error, fallback) {

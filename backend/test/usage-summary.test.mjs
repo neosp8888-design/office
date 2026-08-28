@@ -226,6 +226,58 @@ test("Antigravity Gemini 주간 잔량을 실제 quota bucket에서 읽는다", 
   );
 });
 
+test("Antigravity 5시간 한도가 있으면 Google AI Pro로 표시한다", () => {
+  const result = parseAntigravityRateLimits({
+    response: {
+      groups: [{
+        displayName: "Gemini Models",
+        buckets: [
+          {
+            bucketId: "gemini-weekly",
+            window: "weekly",
+            remainingFraction: 0.91,
+          },
+          {
+            bucketId: "gemini-5h",
+            window: "5h",
+            remainingFraction: 0.73,
+          },
+        ],
+      }],
+    },
+  });
+
+  assert.equal(result.fiveHour.remaining, 73);
+  assert.equal(result.plan, "Google AI Pro");
+});
+
+test("Antigravity 제3자 모델 그룹도 5시간 한도 계정은 Google AI Pro다", () => {
+  const result = parseAntigravityRateLimits({
+    response: {
+      groups: [
+        {
+          displayName: "Gemini Models",
+          buckets: [{
+            bucketId: "gemini-5h",
+            window: "5h",
+            remainingFraction: 0.96,
+          }],
+        },
+        {
+          displayName: "Claude and GPT models",
+          buckets: [{
+            bucketId: "3p-5h",
+            window: "5h",
+            remainingFraction: 1,
+          }],
+        },
+      ],
+    },
+  });
+
+  assert.equal(result.plan, "Google AI Pro");
+});
+
 test("Antigravity 한도 조회는 설정된 agy 실행 파일을 사용한다", async () => {
   let invocation;
   const result = await readAntigravityRateLimits({

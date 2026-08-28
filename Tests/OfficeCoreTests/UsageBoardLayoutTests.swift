@@ -29,6 +29,10 @@ final class UsageBoardLayoutTests: XCTestCase {
         XCTAssertTrue(summary.contains("오늘 비용"))
         XCTAssertTrue(summary.contains("30일 비용"))
         XCTAssertTrue(summary.contains("size: 8.5"))
+        XCTAssertEqual(
+            summary.components(separatedBy: ".fontWeight(.bold)").count - 1,
+            2
+        )
         XCTAssertFalse(summary.contains("오늘 토큰"))
         XCTAssertFalse(summary.contains("30일 토큰"))
     }
@@ -72,6 +76,52 @@ final class UsageBoardLayoutTests: XCTestCase {
         XCTAssertTrue(
             transcript.contains(
                 "DashboardPalette.providerAccent(for: backend)"
+            )
+        )
+    }
+
+    func testAntigravityFiveHourLimitIsVisibleInBothWhiteboards() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
+        let dashboard = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeDashboardPanels.swift"),
+            encoding: .utf8
+        )
+        let whiteboard = try String(
+            contentsOf: sourceRoot.appending(path: "WhiteboardUsageLayer.swift"),
+            encoding: .utf8
+        )
+
+        let dashboardStart = try XCTUnwrap(
+            dashboard.range(of: "name: \"Antigravity\"")?.lowerBound
+        )
+        let dashboardEnd = try XCTUnwrap(
+            dashboard.range(
+                of: "tint: DashboardPalette.providerAccent(for: .antigravity)",
+                range: dashboardStart..<dashboard.endIndex
+            )?.upperBound
+        )
+        let dashboardBlock = String(dashboard[dashboardStart..<dashboardEnd])
+
+        let whiteboardStart = try XCTUnwrap(
+            whiteboard.range(of: "provider: \"ANTIGRAVITY\"")?.lowerBound
+        )
+        let whiteboardEnd = try XCTUnwrap(
+            whiteboard.range(
+                of: "context: &context",
+                range: whiteboardStart..<whiteboard.endIndex
+            )?.upperBound
+        )
+        let whiteboardBlock = String(whiteboard[whiteboardStart..<whiteboardEnd])
+
+        XCTAssertTrue(dashboardBlock.contains("showsFiveHour: true"))
+        XCTAssertTrue(whiteboardBlock.contains("showsFiveHour: true"))
+        XCTAssertTrue(
+            whiteboard.contains(
+                "provider: \"Antigravity\",\n                window: \"5시간\""
             )
         )
     }

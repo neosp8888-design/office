@@ -96,6 +96,12 @@ struct WhiteboardUsageLayer: View {
             ),
             accessibilityLimitText(
                 provider: "Antigravity",
+                window: "5시간",
+                remaining: snapshot.antigravityFiveHour,
+                resetAt: snapshot.antigravityFiveHourResetAt
+            ),
+            accessibilityLimitText(
+                provider: "Antigravity",
                 window: "주간",
                 remaining: snapshot.antigravityWeekly,
                 resetAt: snapshot.antigravityWeeklyResetAt
@@ -190,7 +196,7 @@ struct WhiteboardUsageLayer: View {
                 weekly: snapshot.antigravityWeekly,
                 weeklyResetAt: snapshot.antigravityWeeklyResetAt,
                 providerY: 52,
-                showsFiveHour: false,
+                showsFiveHour: true,
                 context: &context,
                 ink: ink,
                 mutedInk: mutedInk

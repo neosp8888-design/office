@@ -624,7 +624,7 @@ private struct UsageBoardContent: View {
             weeklyResetAt: snapshot.antigravityWeeklyResetAt,
             plan: snapshot.antigravityPlan,
             activity: snapshot.antigravityActivity,
-            showsFiveHour: false,
+            showsFiveHour: true,
             tint: DashboardPalette.providerAccent(for: .antigravity)
         )
     }
@@ -815,16 +815,21 @@ private struct UsageActivitySummary: View {
 
             Spacer(minLength: 2)
 
-            Text(
-                "오늘 비용 \(costText(activity?.todayCostUSD))"
-                    + " / 30일 비용 \(costText(activity?.last30DaysCostUSD))"
-            )
+            HStack(spacing: 2) {
+                Text("오늘 비용")
+                Text(costText(activity?.todayCostUSD))
+                    .fontWeight(.bold)
+                Text("/")
+                Text("30일 비용")
+                Text(costText(activity?.last30DaysCostUSD))
+                    .fontWeight(.bold)
+            }
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.72)
         }
         // 현재 한도 초기화 시각과 같은 크기로 카드 하단 한 줄만 쓴다.
-        .font(.system(size: 8.5, weight: .semibold))
+        .font(.system(size: 8.5, weight: .medium))
         .accessibilityElement(children: .combine)
     }
 
