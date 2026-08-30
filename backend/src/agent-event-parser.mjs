@@ -2,7 +2,10 @@
 
 import { isAbsolute, relative } from "node:path";
 
-import { normalizeResponseSources } from "./work-record-provenance.mjs";
+import {
+  ProvenanceValidationError,
+  normalizeResponseSources,
+} from "./work-record-provenance.mjs";
 
 const MAX_REASONING_LENGTH = 6_000;
 const MAX_COLLABORATION_PROMPT_LENGTH = 4_000;
@@ -131,8 +134,13 @@ function responseMachineBlocks(text) {
         JSON.parse(unfencedMachineBlock(sourceBlocks[0].encoded)),
         { maximum: 20 },
       );
-    } catch {
-      sourceError = "응답 근거 형식을 읽지 못했습니다.";
+    } catch (error) {
+      // 검증 규칙 위반과 JSON 문법 오류를 같은 문구로 뭉치면 직원이
+      // 무엇을 고쳐야 할지 알 수 없어 다음 턴에도 같은 실수를 한다.
+      // 위반 사유가 있으면 그대로 전한다.
+      sourceError = error instanceof ProvenanceValidationError
+        ? `응답 근거를 저장하지 못했습니다. ${error.message}`
+        : "응답 근거 형식을 읽지 못했습니다.";
     }
   } else if (sourceBlocks.length > 1) {
     sourceError = "응답 근거 블록은 하나만 사용할 수 있습니다.";

@@ -1217,6 +1217,21 @@ test("잘못된 출처 블록도 기계 판독용 내용을 화면에서 숨긴�
   });
 });
 
+test("검증에 걸린 출처 블록은 어긴 규칙을 그대로 알려 준다", () => {
+  const duplicated = JSON.stringify([
+    { kind: "tool", title: "조회", locator: "api/live-feed", excerpt: "가" },
+    { kind: "tool", title: "재조회", locator: "api/live-feed", excerpt: "나" },
+  ]);
+  const response = `완료했습니다.\n[OFFICE_SOURCES]\n${duplicated}`;
+
+  // "형식을 읽지 못했다"로 뭉뚱그리면 직원이 무엇을 고칠지 알 수 없다.
+  assert.equal(
+    decodeAgentResponse(response).sourceError,
+    "응답 근거를 저장하지 못했습니다. 같은 출처가 중복됐습니다.",
+  );
+  assert.deepEqual(decodeAgentResponse(response).sources, []);
+});
+
 test("일반 응답은 빈 위키 수정안 계약 외에는 그대로 유지한다", () => {
   assert.deepEqual(decodeAgentResponse("일반 답변입니다."), {
     text: "일반 답변입니다.",
