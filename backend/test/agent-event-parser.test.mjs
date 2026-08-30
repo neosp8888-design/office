@@ -1232,6 +1232,69 @@ test("검증에 걸린 출처 블록은 어긴 규칙을 그대로 알려 준다
   assert.deepEqual(decodeAgentResponse(response).sources, []);
 });
 
+test("출처 블록 뒤에 글이 더 있으면 자리를 잘못 잡았다고 알린다", () => {
+  const response = [
+    "[OFFICE_SOURCES]",
+    '[{"kind":"file","title":"화면","locator":"a.swift","excerpt":"완료"}]',
+    "빌드까지 모두 끝냈습니다.",
+  ].join("\n");
+
+  // 조용히 지나가면 근거가 사라진 채 마커와 JSON이 화면에 그대로 남는다.
+  const decoded = decodeAgentResponse(response);
+  assert.equal(
+    decoded.sourceError,
+    "응답 근거 블록은 응답 맨 끝에 두고 뒤에 아무것도 쓰지 마십시오.",
+  );
+  assert.deepEqual(decoded.sources, []);
+});
+
+test("같은 내용도 블록을 맨 끝에 두면 그대로 저장한다", () => {
+  const response = [
+    "빌드까지 모두 끝냈습니다.",
+    "",
+    "[OFFICE_SOURCES]",
+    '[{"kind":"file","title":"화면","locator":"a.swift","excerpt":"완료"}]',
+  ].join("\n");
+
+  const decoded = decodeAgentResponse(response);
+  assert.equal(decoded.sourceError, undefined);
+  assert.equal(decoded.sources.length, 1);
+  assert.equal(decoded.text, "빌드까지 모두 끝냈습니다.");
+});
+
+test("정상 블록이 있으면 본문에 적어 둔 형식 설명은 경고하지 않는다", () => {
+  const response = [
+    "형식은 이렇습니다.",
+    "",
+    "[OFFICE_SOURCES]",
+    '[{"kind":"file","title":"예시","locator":"a.mjs","excerpt":"예"}]',
+    "",
+    "위처럼 쓰시면 됩니다.",
+    "",
+    "[OFFICE_SOURCES]",
+    '[{"kind":"file","title":"실제","locator":"b.mjs","excerpt":"실"}]',
+  ].join("\n");
+
+  const decoded = decodeAgentResponse(response);
+  assert.equal(decoded.sourceError, undefined);
+  assert.equal(decoded.sources.length, 1);
+  assert.equal(decoded.sources[0].locator, "b.mjs");
+});
+
+test("위키 수정안 블록도 뒤에 글이 붙으면 자리를 알려 준다", () => {
+  const response = [
+    "[OFFICE_WIKI_PROPOSALS]",
+    '[{"pageKey":"a","kind":"decision","title":"제목","body":"본문",'
+      + '"approvalTier":"user"}]',
+    "확인 부탁드립니다.",
+  ].join("\n");
+
+  assert.equal(
+    decodeAgentResponse(response).wikiProposalError,
+    "위키 수정안 블록은 응답 맨 끝에 두고 뒤에 아무것도 쓰지 마십시오.",
+  );
+});
+
 test("일반 응답은 빈 위키 수정안 계약 외에는 그대로 유지한다", () => {
   assert.deepEqual(decodeAgentResponse("일반 답변입니다."), {
     text: "일반 답변입니다.",

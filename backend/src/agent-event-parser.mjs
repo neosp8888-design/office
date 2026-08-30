@@ -144,6 +144,8 @@ function responseMachineBlocks(text) {
     }
   } else if (sourceBlocks.length > 1) {
     sourceError = "응답 근거 블록은 하나만 사용할 수 있습니다.";
+  } else if (strandedMachineBlockMarker(visibleText, RESPONSE_SOURCES_MARKER)) {
+    sourceError = misplacedBlockMessage("응답 근거");
   }
 
   let proposals = [];
@@ -161,6 +163,8 @@ function responseMachineBlocks(text) {
     }
   } else if (proposalBlocks.length > 1) {
     wikiProposalError = "위키 수정안 블록은 하나만 사용할 수 있습니다.";
+  } else if (strandedMachineBlockMarker(visibleText, WIKI_PROPOSALS_MARKER)) {
+    wikiProposalError = misplacedBlockMessage("위키 수정안");
   }
 
   return {
@@ -170,6 +174,34 @@ function responseMachineBlocks(text) {
     wikiProposalError,
     ...(sourceError ? { sourceError } : {}),
   };
+}
+
+function misplacedBlockMessage(label) {
+  return `${label} 블록은 응답 맨 끝에 두고 뒤에 아무것도 쓰지 마십시오.`;
+}
+
+/// 마커와 JSON을 적은 뒤 인사말을 더 붙이면 블록으로 인식되지 않는다.
+/// 그대로 두면 근거가 조용히 사라지고 마커와 JSON이 화면에 날것으로
+/// 노출되므로, 남은 본문에 그런 마커가 있는지 확인해 알린다. 정상 블록을
+/// 이미 찾은 경우에는 호출하지 않으므로 형식을 설명한 글은 걸리지 않는다.
+function strandedMachineBlockMarker(text, marker) {
+  const pattern = new RegExp(
+    `(?:^|\\n)${marker.replace(/[[\]]/g, "\\$&")}[ \\t]*(?:\\r?\\n|$)`,
+    "g",
+  );
+  let match;
+  let lastMatch = null;
+  while ((match = pattern.exec(text)) !== null) {
+    lastMatch = match;
+  }
+  if (!lastMatch) {
+    return false;
+  }
+  const encoded = text.slice(lastMatch.index + lastMatch[0].length).trim();
+  const payload = unfencedMachineBlock(encoded).trimStart();
+  // 빈 배열은 형식을 설명하려고 적은 예시다. 잃을 내용이 없으므로
+  // 알리지 않는다. 항목이 실제로 들어 있을 때만 사라진 것이 있다.
+  return /^\[\s*\{/.test(payload) || /^\{\s*"/.test(payload);
 }
 
 function trailingResponseMachineBlock(text) {
