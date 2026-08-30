@@ -195,6 +195,7 @@ struct WhiteboardUsageLayer: View {
                 fiveHourResetAt: snapshot.antigravityFiveHourResetAt,
                 weekly: snapshot.antigravityWeekly,
                 weeklyResetAt: snapshot.antigravityWeeklyResetAt,
+                imageResetAt: snapshot.antigravityImageResetAt,
                 providerY: 52,
                 showsFiveHour: true,
                 context: &context,
@@ -240,6 +241,7 @@ struct WhiteboardUsageLayer: View {
         fiveHourResetAt: Date?,
         weekly: Int?,
         weeklyResetAt: Date?,
+        imageResetAt: Date? = nil,
         providerY: CGFloat,
         showsFiveHour: Bool,
         context: inout GraphicsContext,
@@ -264,6 +266,15 @@ struct WhiteboardUsageLayer: View {
                 size: 7.5,
                 weight: .black,
                 color: Color(red: 0.10, green: 0.48, blue: 0.30)
+            )
+        } else if let imageResetAt, imageResetAt > Date() {
+            drawText(
+                "IMG COOL",
+                in: &context,
+                at: CGPoint(x: CGFloat(provider.count) * 5.7 + 4, y: providerY + 1),
+                size: 6.5,
+                weight: .bold,
+                color: Color(red: 0.85, green: 0.45, blue: 0.12)
             )
         }
         let limits = [
@@ -443,6 +454,7 @@ struct AIUsageSnapshot: Decodable, Equatable, Sendable {
     let antigravityFiveHourResetAt: Date?
     let antigravityWeekly: Int?
     let antigravityWeeklyResetAt: Date?
+    let antigravityImageResetAt: Date?
     let codexPlan: String?
     let claudePlan: String?
     let antigravityPlan: String?

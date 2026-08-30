@@ -622,6 +622,7 @@ private struct UsageBoardContent: View {
             fiveHourResetAt: snapshot.antigravityFiveHourResetAt,
             weekly: snapshot.antigravityWeekly,
             weeklyResetAt: snapshot.antigravityWeeklyResetAt,
+            imageResetAt: snapshot.antigravityImageResetAt,
             plan: snapshot.antigravityPlan,
             activity: snapshot.antigravityActivity,
             showsFiveHour: true,
@@ -662,6 +663,7 @@ private struct UsageProviderColumn: View {
     let fiveHourResetAt: Date?
     let weekly: Int?
     let weeklyResetAt: Date?
+    var imageResetAt: Date? = nil
     let plan: String?
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
@@ -678,6 +680,7 @@ private struct UsageProviderColumn: View {
             fiveHourResetAt: fiveHourResetAt,
             weekly: weekly,
             weeklyResetAt: weeklyResetAt,
+            imageResetAt: imageResetAt,
             plan: plan,
             activity: activity,
             showsFiveHour: showsFiveHour,
@@ -697,6 +700,7 @@ private struct UsageProviderCard: View {
     let fiveHourResetAt: Date?
     let weekly: Int?
     let weeklyResetAt: Date?
+    var imageResetAt: Date? = nil
     let plan: String?
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
@@ -775,6 +779,28 @@ private struct UsageProviderCard: View {
                 resetAt: weeklyResetAt,
                 tint: tint
             )
+            if let imageResetAt, imageResetAt > Date() {
+                HStack(spacing: 4) {
+                    Label(
+                        "이미지 쿨다운",
+                        systemImage: "photo.badge.exclamationmark"
+                    )
+                    .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.12))
+                    Spacer()
+                    if let reset = usageResetTimeText(imageResetAt) {
+                        Text("초기화 \(reset)")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.12))
+                    }
+                }
+                .font(.system(size: 8.5, weight: .semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Color(red: 0.85, green: 0.45, blue: 0.12).opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
+            }
             UsageActivitySummary(
                 activity: activity,
                 tint: tint

@@ -1,7 +1,7 @@
 // 이 파일은 공급자 계정 한도와 로컬 DB 사용 통계를 직접 합친다.
 
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -374,16 +374,60 @@ export async function readClaudeRateLimits({
   }
 }
 
+export async function readAntigravityImageCooldown() {
+  try {
+    const filePath = join(
+      homedir(),
+      ".gemini",
+      "antigravity-cli",
+      "image-cooldown.json",
+    );
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const resetAt = parsed?.resetAt ? new Date(parsed.resetAt) : null;
+    if (
+      resetAt &&
+      !Number.isNaN(resetAt.getTime()) &&
+      resetAt.getTime() > Date.now()
+    ) {
+      return resetAt.toISOString();
+    }
+  } catch {
+    // 쿨다운 파일이 없거나 만료되었으면 null
+  }
+  return null;
+}
+
+export async function writeAntigravityImageCooldown(resetAt) {
+  try {
+    const filePath = join(
+      homedir(),
+      ".gemini",
+      "antigravity-cli",
+      "image-cooldown.json",
+    );
+    const payload = JSON.stringify({
+      resetAt: resetAt instanceof Date ? resetAt.toISOString() : resetAt,
+    });
+    await writeFile(filePath, payload, "utf8");
+  } catch {
+    // ignore
+  }
+}
+
 export async function readAntigravityRateLimits({
   pool,
   timeoutMs = 8_000,
   quotaProbe = probeAntigravityQuota,
+  imageCooldownReader = readAntigravityImageCooldown,
 } = {}) {
   const executable = await configuredAntigravityExecutable(pool);
-  return parseAntigravityRateLimits(await quotaProbe({
+  const parsed = parseAntigravityRateLimits(await quotaProbe({
     executable,
     timeoutMs,
   }));
+  const imageResetAt = await imageCooldownReader().catch(() => null);
+  return { ...parsed, imageResetAt };
 }
 
 export async function probeAntigravityQuota({
@@ -575,6 +619,7 @@ function flattenedLimits(
     antigravityFiveHourResetAt: antigravity?.fiveHour?.resetAt ?? null,
     antigravityWeekly: antigravity?.weekly?.remaining ?? null,
     antigravityWeeklyResetAt: antigravity?.weekly?.resetAt ?? null,
+    antigravityImageResetAt: antigravity?.imageResetAt ?? null,
     codexPlan: codex?.plan ?? null,
     claudePlan: claude?.plan ?? null,
     antigravityPlan: antigravity?.plan ?? null,

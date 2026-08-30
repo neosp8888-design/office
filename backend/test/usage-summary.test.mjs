@@ -305,6 +305,31 @@ test("Antigravity 한도 조회는 설정된 agy 실행 파일을 사용한다",
   assert.equal(result.weekly.remaining, 42);
 });
 
+test("Antigravity 이미지 생성 쿨다운이 있으면 리셋 시각을 반영한다", async () => {
+  const result = await readAntigravityRateLimits({
+    pool: {
+      query: async () => ({ rows: [{ path: "/opt/test/bin/agy" }] }),
+    },
+    quotaProbe: async () => ({
+      response: {
+        groups: [{
+          displayName: "Gemini Models",
+          buckets: [{
+            bucketId: "gemini-5h",
+            window: "5h",
+            remainingFraction: 0.95,
+            resetTime: "2026-08-30T16:55:00Z",
+          }],
+        }],
+      },
+    }),
+    imageCooldownReader: async () => "2026-08-30T16:54:02.000Z",
+  });
+
+  assert.equal(result.fiveHour.remaining, 95);
+  assert.equal(result.imageResetAt, "2026-08-30T16:54:02.000Z");
+});
+
 test("DB 통계는 공급자별 오늘과 30일 값을 숫자로 정규화한다", async () => {
   let query;
   const pool = {
