@@ -349,7 +349,7 @@ struct WhiteboardUsageLayer: View {
         resetAt: Date?
     ) -> String {
         let limit = "\(label) \(compactPercentText(remaining))"
-        guard let reset = usageResetTimeText(resetAt) else {
+        guard let reset = usageResetRemainingText(resetAt) else {
             return limit
         }
         return "\(limit) · \(reset)"
@@ -362,49 +362,47 @@ struct WhiteboardUsageLayer: View {
         resetAt: Date?
     ) -> String {
         let limit = "\(provider) \(window) \(percentText(remaining))"
-        guard let reset = usageResetTimeText(resetAt) else {
+        guard let reset = usageResetRemainingText(resetAt) else {
             return limit
         }
-        return "\(limit), 초기화 \(reset)"
+        return "\(limit), 초기화까지 \(reset)"
     }
 }
 
-func usageResetTimeText(
+func usageResetRemainingText(
     _ resetAt: Date?,
-    relativeTo now: Date = Date(),
-    calendar sourceCalendar: Calendar = .autoupdatingCurrent
+    relativeTo now: Date = Date()
 ) -> String? {
-    guard let resetAt else {
-        return nil
-    }
-
-    let calendar = sourceCalendar
-    let time = calendar.dateComponents([.hour, .minute], from: resetAt)
-    guard let hour = time.hour, let minute = time.minute else {
-        return nil
-    }
-    let clock = String(format: "%02d:%02d", hour, minute)
-
-    if calendar.isDate(resetAt, inSameDayAs: now) {
-        return "오늘 \(clock)"
-    }
-    let tomorrow = calendar.date(
-        byAdding: .day,
-        value: 1,
-        to: calendar.startOfDay(for: now)
+    usageResetRemainingText(
+        minutes: usageResetRemainingMinutes(resetAt, relativeTo: now)
     )
-    if
-        let tomorrow,
-        calendar.isDate(resetAt, inSameDayAs: tomorrow)
-    {
-        return "내일 \(clock)"
+}
+
+func usageResetRemainingMinutes(
+    _ resetAt: Date?,
+    relativeTo fetchedAt: Date
+) -> Int? {
+    guard let resetAt, resetAt > fetchedAt else {
+        return nil
     }
 
-    let date = calendar.dateComponents([.month, .day], from: resetAt)
-    guard let month = date.month, let day = date.day else {
-        return clock
+    return max(
+        1,
+        Int(ceil(resetAt.timeIntervalSince(fetchedAt) / 60))
+    )
+}
+
+func usageResetRemainingText(minutes totalMinutes: Int?) -> String? {
+    guard let totalMinutes, totalMinutes > 0 else {
+        return nil
     }
-    return "\(month)/\(day) \(clock)"
+
+    let hours = totalMinutes / 60
+    let minutes = totalMinutes % 60
+    if hours == 0 {
+        return "\(minutes)분"
+    }
+    return "\(hours)시간 \(minutes)분"
 }
 
 /// 직원이 쓰는 CLI의 설치본과 배포 최신본 비교 결과다.

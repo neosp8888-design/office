@@ -592,6 +592,7 @@ private struct UsageBoardContent: View {
             fiveHourResetAt: snapshot.claudeFiveHourResetAt,
             weekly: snapshot.claudeWeekly,
             weeklyResetAt: snapshot.claudeWeeklyResetAt,
+            fetchedAt: snapshot.fetchedAt,
             plan: snapshot.claudePlan,
             activity: snapshot.claudeActivity,
             showsFiveHour: true,
@@ -607,6 +608,7 @@ private struct UsageBoardContent: View {
             fiveHourResetAt: snapshot.codexFiveHourResetAt,
             weekly: snapshot.codexWeekly,
             weeklyResetAt: snapshot.codexWeeklyResetAt,
+            fetchedAt: snapshot.fetchedAt,
             plan: snapshot.codexPlan,
             activity: snapshot.codexActivity,
             showsFiveHour: true,
@@ -623,6 +625,7 @@ private struct UsageBoardContent: View {
             weekly: snapshot.antigravityWeekly,
             weeklyResetAt: snapshot.antigravityWeeklyResetAt,
             imageResetAt: snapshot.antigravityImageResetAt,
+            fetchedAt: snapshot.fetchedAt,
             plan: snapshot.antigravityPlan,
             activity: snapshot.antigravityActivity,
             showsFiveHour: true,
@@ -664,6 +667,7 @@ private struct UsageProviderColumn: View {
     let weekly: Int?
     let weeklyResetAt: Date?
     var imageResetAt: Date? = nil
+    let fetchedAt: Date
     let plan: String?
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
@@ -681,6 +685,7 @@ private struct UsageProviderColumn: View {
             weekly: weekly,
             weeklyResetAt: weeklyResetAt,
             imageResetAt: imageResetAt,
+            fetchedAt: fetchedAt,
             plan: plan,
             activity: activity,
             showsFiveHour: showsFiveHour,
@@ -701,6 +706,7 @@ private struct UsageProviderCard: View {
     let weekly: Int?
     let weeklyResetAt: Date?
     var imageResetAt: Date? = nil
+    let fetchedAt: Date
     let plan: String?
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
@@ -770,6 +776,7 @@ private struct UsageProviderCard: View {
                     label: "5시간",
                     value: fiveHour,
                     resetAt: fiveHourResetAt,
+                    fetchedAt: fetchedAt,
                     tint: tint
                 )
             }
@@ -777,29 +784,41 @@ private struct UsageProviderCard: View {
                 label: "7일",
                 value: weekly,
                 resetAt: weeklyResetAt,
+                fetchedAt: fetchedAt,
                 tint: tint
             )
-            if let imageResetAt, imageResetAt > Date() {
-                HStack(spacing: 4) {
-                    Label(
-                        "이미지 쿨다운",
-                        systemImage: "photo.badge.exclamationmark"
-                    )
-                    .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.12))
-                    Spacer()
-                    if let reset = usageResetTimeText(imageResetAt) {
-                        Text("초기화 \(reset)")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.12))
-                    }
+            if let imageResetAt {
+                UsageResetCountdown(
+                    resetAt: imageResetAt,
+                    fetchedAt: fetchedAt
+                ) { reset in
+                        HStack(spacing: 4) {
+                            Label(
+                                "이미지 쿨다운",
+                                systemImage: "photo.badge.exclamationmark"
+                            )
+                            .foregroundStyle(
+                                Color(red: 0.85, green: 0.45, blue: 0.12)
+                            )
+                            Spacer()
+                            Text("초기화까지 \(reset)")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundStyle(
+                                    Color(red: 0.85, green: 0.45, blue: 0.12)
+                                )
+                        }
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Color(red: 0.85, green: 0.45, blue: 0.12)
+                                .opacity(0.10),
+                            in: RoundedRectangle(
+                                cornerRadius: 6,
+                                style: .continuous
+                            )
+                        )
                 }
-                .font(.system(size: 8.5, weight: .semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Color(red: 0.85, green: 0.45, blue: 0.12).opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                )
             }
             UsageActivitySummary(
                 activity: activity,
@@ -868,10 +887,60 @@ private struct UsageActivitySummary: View {
 
 }
 
+private struct UsageResetCountdown<Content: View>: View {
+    let resetAt: Date?
+    let fetchedAt: Date
+    let content: (String) -> Content
+
+    @State private var remainingMinutes: Int?
+
+    init(
+        resetAt: Date?,
+        fetchedAt: Date,
+        @ViewBuilder content: @escaping (String) -> Content
+    ) {
+        self.resetAt = resetAt
+        self.fetchedAt = fetchedAt
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let text = usageResetRemainingText(minutes: remainingMinutes) {
+                content(text)
+            }
+        }
+        .task(id: fetchedAt) {
+            await countDownFromFetchedSnapshot()
+        }
+    }
+
+    @MainActor
+    private func countDownFromFetchedSnapshot() async {
+        remainingMinutes = usageResetRemainingMinutes(
+            resetAt,
+            relativeTo: fetchedAt
+        )
+
+        while let current = remainingMinutes, current > 0 {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            remainingMinutes = current - 1
+        }
+    }
+}
+
 private struct UsageMeter: View {
     let label: String
     let value: Int?
     let resetAt: Date?
+    let fetchedAt: Date
     let tint: Color
 
     var body: some View {
@@ -903,11 +972,17 @@ private struct UsageMeter: View {
                     .frame(width: 34, alignment: .trailing)
             }
 
-            if let reset = usageResetTimeText(resetAt) {
-                Label("초기화 \(reset)", systemImage: "clock.arrow.circlepath")
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+            UsageResetCountdown(
+                resetAt: resetAt,
+                fetchedAt: fetchedAt
+            ) { reset in
+                Label(
+                    "초기화까지 \(reset)",
+                    systemImage: "clock.arrow.circlepath"
+                )
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }

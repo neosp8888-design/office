@@ -4,6 +4,34 @@ import XCTest
 @testable import OfficeGame
 
 final class UsageBoardLayoutTests: XCTestCase {
+    func testResetCountdownCountsLocallyFromFetchedSnapshot() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
+        let source = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeDashboardPanels.swift"),
+            encoding: .utf8
+        )
+        let start = try XCTUnwrap(
+            source.range(of: "private struct UsageResetCountdown")?.lowerBound
+        )
+        let end = try XCTUnwrap(
+            source.range(
+                of: "private struct UsageMeter",
+                range: start..<source.endIndex
+            )?.lowerBound
+        )
+        let countdown = String(source[start..<end])
+
+        XCTAssertTrue(countdown.contains("VStack(spacing: 0)"))
+        XCTAssertTrue(countdown.contains("relativeTo: fetchedAt"))
+        XCTAssertTrue(countdown.contains("Task.sleep(for: .seconds(60))"))
+        XCTAssertTrue(countdown.contains("remainingMinutes = current - 1"))
+        XCTAssertFalse(countdown.contains("TimelineView"))
+    }
+
     func testUsageCardPresentsEstimatedAPICostAsCompactSummary() throws {
         let sourceRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -186,7 +214,7 @@ final class UsageBoardLayoutTests: XCTestCase {
         )
     }
 
-    func testResetTimeUsesLocalRelativeDate() throws {
+    func testResetTimeUsesRemainingHoursAndMinutes() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Seoul"))
         let now = try XCTUnwrap(
@@ -224,17 +252,39 @@ final class UsageBoardLayoutTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            usageResetTimeText(today, relativeTo: now, calendar: calendar),
-            "오늘 23:30"
+            usageResetRemainingText(today, relativeTo: now),
+            "1시간 30분"
         )
         XCTAssertEqual(
-            usageResetTimeText(tomorrow, relativeTo: now, calendar: calendar),
-            "내일 04:00"
+            usageResetRemainingMinutes(today, relativeTo: now),
+            90
         )
         XCTAssertEqual(
-            usageResetTimeText(later, relativeTo: now, calendar: calendar),
-            "8/13 09:00"
+            usageResetRemainingText(tomorrow, relativeTo: now),
+            "6시간 0분"
         )
+        XCTAssertEqual(
+            usageResetRemainingText(later, relativeTo: now),
+            "131시간 0분"
+        )
+        XCTAssertEqual(
+            usageResetRemainingText(
+                now.addingTimeInterval(1),
+                relativeTo: now
+            ),
+            "1분"
+        )
+        XCTAssertNil(
+            usageResetRemainingText(
+                now.addingTimeInterval(-1),
+                relativeTo: now
+            )
+        )
+        XCTAssertEqual(
+            usageResetRemainingText(minutes: 89),
+            "1시간 29분"
+        )
+        XCTAssertNil(usageResetRemainingText(minutes: 0))
     }
 
     func testUsageSummaryDecodesProviderResetTimestamp() throws {
