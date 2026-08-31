@@ -4755,6 +4755,7 @@ struct CompletedResponseLineTypingView: View {
     let source: String
     let fontSize: CGFloat
     let fileBaseDirectory: String?
+    let compactsChangedFileLists: Bool
     let animates: Bool
     let animatesInitialSource: Bool
     let presentsTyping: Bool
@@ -4772,6 +4773,7 @@ struct CompletedResponseLineTypingView: View {
         source: String,
         fontSize: CGFloat,
         fileBaseDirectory: String?,
+        compactsChangedFileLists: Bool = false,
         animates: Bool,
         animatesInitialSource: Bool,
         presentsTyping: Bool,
@@ -4784,6 +4786,7 @@ struct CompletedResponseLineTypingView: View {
         self.source = source
         self.fontSize = fontSize
         self.fileBaseDirectory = fileBaseDirectory
+        self.compactsChangedFileLists = compactsChangedFileLists
         self.animates = animates
         self.animatesInitialSource = animatesInitialSource
         self.presentsTyping = presentsTyping
@@ -4841,7 +4844,8 @@ struct CompletedResponseLineTypingView: View {
         ConversationMarkdownView(
             source: source,
             fontSize: fontSize,
-            fileBaseDirectory: fileBaseDirectory
+            fileBaseDirectory: fileBaseDirectory,
+            compactsChangedFileLists: compactsChangedFileLists
         )
     }
 
@@ -5055,7 +5059,8 @@ struct LiveTypingResponseView: View {
                 ConversationMarkdownView(
                     source: source,
                     fontSize: Self.responseFontSize,
-                    fileBaseDirectory: fileBaseDirectory
+                    fileBaseDirectory: fileBaseDirectory,
+                    compactsChangedFileLists: true
                 )
             }
         }

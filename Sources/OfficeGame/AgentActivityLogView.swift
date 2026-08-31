@@ -2011,6 +2011,7 @@ private struct CodexMessageView: View {
                     source: message.text,
                     fontSize: 14,
                     fileBaseDirectory: workspaceDirectory,
+                    compactsChangedFileLists: isConclusion,
                     animates: animatesResponse,
                     animatesInitialSource: animatesInitialResponse,
                     presentsTyping: true,
@@ -2063,7 +2064,8 @@ private struct CodexMessageView: View {
         ConversationMarkdownView(
             source: message.text,
             fontSize: 14,
-            fileBaseDirectory: workspaceDirectory
+            fileBaseDirectory: workspaceDirectory,
+            compactsChangedFileLists: isConclusion
         )
     }
 

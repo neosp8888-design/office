@@ -276,7 +276,7 @@ function unfencedMachineBlock(encoded) {
   return encoded;
 }
 
-function normalizedWikiProposals(value) {
+export function normalizedWikiProposals(value) {
   // 이 파서는 직원이 제안한 공개 필드의 형식만 검증한다. pageKey가 실제
   // 프로젝트에 속하는지와 원본 근거가 유효한지는 이후 백엔드 저장 단계 책임이다.
   if (!Array.isArray(value) || value.length > MAX_WIKI_PROPOSALS) {

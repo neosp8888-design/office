@@ -44,6 +44,12 @@ import {
   stageAttachments,
 } from "../src/agent-runtime.mjs";
 import { decodeAgentResponse } from "../src/agent-event-parser.mjs";
+import {
+  STRUCTURED_RESULT_ENV,
+  identityPromptWithStructuredResult,
+  structuredResultToolDirectory,
+  structuredTurnResultPath,
+} from "../src/structured-turn-result.mjs";
 
 
 const codexCharacter = {
@@ -821,7 +827,7 @@ test("Codex 재개는 바뀐 모델·추론·Fast·권한을 같은 세션에 �
   );
 });
 
-test("Codex 신규와 재개는 DB 업무 지침만 그대로 전달한다", () => {
+test("Codex 신규와 재개는 DB 업무 지침과 짧은 결과 통로 안내만 전달한다", () => {
   for (const previousSessionID of [null, "session-1"]) {
     const argumentsList = buildArguments({
       character: {
@@ -838,7 +844,9 @@ test("Codex 신규와 재개는 DB 업무 지침만 그대로 전달한다", () 
     assert.equal(
       instructions,
       `developer_instructions=${JSON.stringify(
-        "업데이트된 역할 지침을 따른다.",
+        identityPromptWithStructuredResult(
+          "업데이트된 역할 지침을 따른다.",
+        ),
       )}`,
     );
     assert.equal(argumentsList.at(-1), "계속해줘.");
@@ -871,7 +879,7 @@ test("Claude는 Fast 설정을 매 실행마다 settings JSON으로 전달한다
   }
 });
 
-test("Claude 신규와 재개도 DB 업무 지침만 그대로 전달한다", () => {
+test("Claude 신규와 재개도 DB 업무 지침과 짧은 결과 통로 안내만 전달한다", () => {
   for (const previousSessionID of [null, "session-1"]) {
     const argumentsList = buildArguments({
       character: {
@@ -893,7 +901,9 @@ test("Claude 신규와 재개도 DB 업무 지침만 그대로 전달한다", ()
     assert.notEqual(identityIndex, -1);
     assert.equal(
       argumentsList[identityIndex + 1],
-      "업데이트된 역할 지침을 따른다.",
+      identityPromptWithStructuredResult(
+        "업데이트된 역할 지침을 따른다.",
+      ),
     );
     assert.equal(argumentsList[permissionIndex + 1], "bypassPermissions");
     assert.equal(
@@ -1042,7 +1052,7 @@ test("Claude 지속 세션은 prompt를 인수가 아닌 stream-json stdin으로
     assert.equal(argumentsList.includes("--prompt-suggestions"), true);
     assert.equal(
       argumentsList[argumentsList.indexOf("--append-system-prompt") + 1],
-      character.identityPrompt,
+      identityPromptWithStructuredResult(character.identityPrompt),
     );
     assert.equal(
       argumentsList.includes("--resume"),
@@ -1264,6 +1274,27 @@ test("Claude 실행은 직원별 자동 압축 기준과 명시적 업데이트�
     /playwright-driver-1\.57\.0$/,
   );
   assert.ok(antigravityEnvironment.PLAYWRIGHT_NODEJS_PATH);
+
+  for (const backend of ["codex", "claude", "antigravity"]) {
+    const character = { id: `${backend}-worker`, backend };
+    const environment = executionEnvironment(
+      character,
+      { PATH: "/tmp/bin" },
+      { workdir: "/repo/project" },
+    );
+    assert.equal(
+      environment[STRUCTURED_RESULT_ENV],
+      structuredTurnResultPath({
+        workdir: "/repo/project",
+        characterID: character.id,
+      }),
+    );
+    assert.equal(
+      environment.PATH.split(":")[0],
+      structuredResultToolDirectory,
+    );
+    assert.match(environment.PATH, /\/tmp\/bin/);
+  }
 });
 
 function startedRuntimeState({
@@ -1394,7 +1425,11 @@ test("CLI 인수는 사용자 요청만 담고 과거 기록 블록을 만들지
   assert.equal(claudeArgumentsList[1], executionPrompt);
   assert.equal(
     claudeArgumentsList[systemIndex + 1],
-    claudeResumeCharacter.identityPrompt,
+    identityPromptWithStructuredResult(claudeResumeCharacter.identityPrompt),
+  );
+  assert.doesNotMatch(
+    claudeArgumentsList[systemIndex + 1],
+    /OFFICE_SOURCES|OFFICE_WIKI_PROPOSALS/,
   );
 });
 

@@ -477,7 +477,8 @@ The Internal Wiki is a separate, user-approved durable-knowledge layer. At the e
 - Approval creates or updates a `synthesis` page linked to the supporting source work record.
 - Only approved pages appear under **Current Knowledge (`현재 지식`)** and in the wiki-specific search index.
 - If a newer version of the same page was published first, a stale proposal ends in conflict instead of overwriting it.
-- Parse and validate evidence actually used from the completed response's `[OFFICE_SOURCES]` block, then store it with the turn.
+- Validate and store evidence through the separate `officestra-result` channel without embedding metadata JSON in the natural-language response.
+- Continue accepting legacy `[OFFICE_SOURCES]` and `[OFFICE_WIKI_PROPOSALS]` responses for existing sessions.
 - Show RAG, database, file, web, tool, and skill evidence in the app, with clickable web URLs and Finder actions for file paths.
 
 Text queries for work records and the Internal Wiki use PostgreSQL full-text search. RAG search also accepts caller-supplied embeddings for vector search, but embeddings are not generated automatically. The Internal Wiki uses the existing bundled Node backend and PostgreSQL database, so it requires no additional installation; startup migrations prepare its schema.

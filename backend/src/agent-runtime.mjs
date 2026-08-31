@@ -26,6 +26,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import {
   basename,
+  delimiter,
   dirname,
   extname,
   isAbsolute,
@@ -61,6 +62,16 @@ import {
 import { GitWorkspaceError } from "./git-workspace.mjs";
 import { estimateTokenCost } from "./token-cost-estimator.mjs";
 import { sessionContextUsage } from "./session-context-usage.mjs";
+import {
+  STRUCTURED_RESULT_ENV,
+  applyStructuredTurnResult,
+  consumeStructuredTurnResult,
+  discardStructuredTurnResult,
+  identityPromptWithStructuredResult,
+  prepareStructuredTurnResult,
+  structuredResultToolDirectory,
+  structuredTurnResultPath,
+} from "./structured-turn-result.mjs";
 import {
   ProvenanceValidationError,
   portableResponseSources,
@@ -469,7 +480,6 @@ export class AgentRuntime {
         recordPrompt,
         attachments,
       );
-      await this.beginPreparedTurn(prepared.turnID, effectivePrompt);
       prepared = {
         ...prepared,
         prompt: effectivePrompt,
@@ -479,7 +489,13 @@ export class AgentRuntime {
         workspaceID: null,
         workdir: this.workdir,
       };
+      prepared.structuredResultPath = prepareStructuredTurnResult({
+        workdir: prepared.workdir,
+        characterID: prepared.character.id,
+      });
+      await this.beginPreparedTurn(prepared.turnID, effectivePrompt);
     } catch (error) {
+      discardStructuredTurnResult(prepared?.structuredResultPath);
       removeStagedAttachments(attachments);
       if (prepared?.turnID) {
         try {
@@ -945,6 +961,8 @@ export class AgentRuntime {
       recoverInterruptedUsage(state);
       await this.persistUsageRecord(this.pool, state);
     } finally {
+      discardStructuredTurnResult(state.structuredResultPath);
+      state.structuredResultPath = null;
       if (this.running.get(characterID) === state) {
         this.running.delete(characterID);
       }
@@ -1226,7 +1244,9 @@ export class AgentRuntime {
     });
     const child = spawn(executable, cliArguments, {
       cwd: state.workdir,
-      env: executionEnvironment(state.character),
+      env: executionEnvironment(state.character, process.env, {
+        workdir: state.workdir,
+      }),
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
       detached: process.platform !== "win32",
@@ -1264,7 +1284,7 @@ export class AgentRuntime {
     }
 
     const candidate = this.finalResponseCandidate(state);
-    const decoded = decodeAgentResponse(candidate);
+    const decoded = this.decodeCompletedResponse(state, candidate);
     if (!decoded.text) {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
@@ -1303,7 +1323,7 @@ export class AgentRuntime {
       throw new Error(state.failure);
     }
     const candidate = this.finalResponseCandidate(state);
-    const decoded = decodeAgentResponse(candidate);
+    const decoded = this.decodeCompletedResponse(state, candidate);
     if (!decoded.text) {
       throw new Error("CLI 최종 메시지가 없습니다.");
     }
@@ -1337,7 +1357,9 @@ export class AgentRuntime {
         state.externalSessionID,
       ),
       cwd: state.workdir,
-      env: executionEnvironment(state.character),
+      env: executionEnvironment(state.character, process.env, {
+        workdir: state.workdir,
+      }),
       signature,
       sessionID: state.externalSessionID,
       onExit: (exitedWorker) => {
@@ -1973,6 +1995,15 @@ export class AgentRuntime {
     return candidates.find(
       (value) => String(value ?? "").trim().length > 0,
     ) ?? "";
+  }
+
+  decodeCompletedResponse(state, candidate) {
+    const decoded = decodeAgentResponse(candidate);
+    const structured = consumeStructuredTurnResult(
+      state.structuredResultPath,
+    );
+    state.structuredResultPath = null;
+    return applyStructuredTurnResult(decoded, structured);
   }
 
   completedResponseText(state, decoded) {
@@ -3404,6 +3435,8 @@ export class AgentRuntime {
     if (this.running.get(state.character.id) !== state) {
       return;
     }
+    discardStructuredTurnResult(state.structuredResultPath);
+    state.structuredResultPath = null;
     await this.completePendingInitialCodexReasoning(state);
     await this.finalizeRunningActivities(state, "failed");
     const message =
@@ -4458,23 +4491,45 @@ export function buildArguments({
 export function executionEnvironment(
   character,
   baseEnvironment = process.env,
+  { workdir = null } = {},
 ) {
+  let environment;
   if (character.backend === "antigravity") {
-    return antigravityPlaywrightEnvironment(baseEnvironment);
+    environment = antigravityPlaywrightEnvironment(baseEnvironment);
+  } else if (character.backend === "claude") {
+    environment = { ...baseEnvironment };
+    delete environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    environment.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(
+      normalizeAutoCompactPercent(character.autoCompactPercent),
+    );
+    // CLI 갱신은 OFFICESTRA의 명시적 업데이트 화면에서만 수행한다.
+    // 업무 사이에 Claude가 바뀌면 긴 재개 세션의 프롬프트 캐시가 한 번
+    // 전부 무효화될 수 있으므로 자식 프로세스의 자동 갱신은 끈다.
+    environment.DISABLE_AUTOUPDATER = "1";
+  } else {
+    environment = baseEnvironment;
   }
-  if (character.backend !== "claude") {
-    return baseEnvironment;
+  if (!workdir) {
+    return environment;
   }
-  const environment = { ...baseEnvironment };
-  delete environment.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-  environment.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(
-    normalizeAutoCompactPercent(character.autoCompactPercent),
-  );
-  // CLI 갱신은 OFFICESTRA의 명시적 업데이트 화면에서만 수행한다.
-  // 업무 사이에 Claude가 바뀌면 긴 재개 세션의 프롬프트 캐시가 한 번
-  // 전부 무효화될 수 있으므로 자식 프로세스의 자동 갱신은 끈다.
-  environment.DISABLE_AUTOUPDATER = "1";
+  environment = { ...environment };
+  environment[STRUCTURED_RESULT_ENV] = structuredTurnResultPath({
+    workdir,
+    characterID: character.id,
+  });
+  environment.PATH = prependPathEntries(environment.PATH, [
+    structuredResultToolDirectory,
+    dirname(process.execPath),
+  ]);
   return environment;
+}
+
+function prependPathEntries(value, entries) {
+  const paths = [
+    ...entries,
+    ...String(value ?? "").split(delimiter),
+  ].filter(Boolean);
+  return [...new Set(paths)].join(delimiter);
 }
 
 export function configuredExecutableForCharacter(character) {
@@ -4736,7 +4791,7 @@ export function claudePersistentWorkerSignature({
 }
 
 function configuredIdentityPrompt(character) {
-  return String(character.identityPrompt ?? "");
+  return identityPromptWithStructuredResult(character.identityPrompt);
 }
 
 export function promptWithAttachments(prompt, attachments) {

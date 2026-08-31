@@ -212,6 +212,7 @@ ORT_BINDING="$ORT_NATIVE_DIR/onnxruntime_binding.node"
 
 for packaged_runtime_path in \
     "$BACKEND_RUNTIME_DIR/src/server.mjs" \
+    "$BACKEND_RUNTIME_DIR/src/officestra-result" \
     "$BACKEND_RUNTIME_DIR/node_modules/pg/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/ws/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/@slack/bolt/package.json" \
@@ -234,6 +235,11 @@ for packaged_runtime_path in \
         exit 1
     fi
 done
+
+if [[ ! -x "$BACKEND_RUNTIME_DIR/src/officestra-result" ]]; then
+    print -u2 "응답 메타데이터 도구에 실행 권한이 없습니다."
+    exit 1
+fi
 
 RUNTIME_CONFIG="$RESOURCES_DIR/OfficeLLM_OfficeCore.bundle/characters.json"
 RUNTIME_WORKDIR="${OFFICESTRA_WORKDIR:-/Users/your-name/Projects}"
@@ -349,6 +355,9 @@ if [[ -z "$NODE_CDHASH" ]]; then
 fi
 /usr/bin/printf '%s\n' "$NODE_CDHASH" > "$NODE_RUNTIME_DIR/CDHASH"
 "$NODE_RUNTIME_DIR/bin/node" --check "$BACKEND_RUNTIME_DIR/src/server.mjs"
+"$NODE_RUNTIME_DIR/bin/node" \
+    "$BACKEND_RUNTIME_DIR/src/officestra-result" \
+    --help >/dev/null
 "$NODE_RUNTIME_DIR/bin/node" -e '
 const increment = new Function("value", "return value + 1");
 let value = 0;

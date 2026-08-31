@@ -6,6 +6,181 @@ import XCTest
 
 @MainActor
 final class SelectableMarkdownTextViewTests: XCTestCase {
+    func testChangedFileMarkdownListBecomesCompactPresentation() {
+        let source = """
+        새 통로를 적용했습니다.
+
+        변경 파일:
+
+        - [structured-turn-result.mjs](</Users/neo/office/backend/src/structured-turn-result.mjs:26>)
+
+        - [officestra-result](</Users/neo/office/backend/src/officestra-result:1>)
+
+        커밋·푸시는 요청이 없어 하지 않았습니다.
+        """
+
+        let presentation = ConversationChangedFileListPresentation(
+            source: source
+        )
+
+        XCTAssertEqual(
+            presentation.leadingMarkdown,
+            "새 통로를 적용했습니다."
+        )
+        XCTAssertEqual(
+            presentation.files,
+            [
+                ConversationChangedFileReference(
+                    id: 0,
+                    title: "structured-turn-result.mjs",
+                    path: "/Users/neo/office/backend/src/structured-turn-result.mjs"
+                ),
+                ConversationChangedFileReference(
+                    id: 1,
+                    title: "officestra-result",
+                    path: "/Users/neo/office/backend/src/officestra-result"
+                ),
+            ]
+        )
+        XCTAssertEqual(
+            presentation.trailingMarkdown,
+            "커밋·푸시는 요청이 없어 하지 않았습니다."
+        )
+    }
+
+    func testChangedFileHeadingWithoutListKeepsOriginalMarkdown() {
+        let source = """
+        변경 파일:
+
+        현재 변경된 파일은 없습니다.
+        """
+        let presentation = ConversationChangedFileListPresentation(
+            source: source
+        )
+
+        XCTAssertEqual(presentation.leadingMarkdown, source)
+        XCTAssertTrue(presentation.files.isEmpty)
+        XCTAssertTrue(presentation.trailingMarkdown.isEmpty)
+    }
+
+    func testEnglishChangedFileListDoesNotTreatWebLinkAsFinderPath() {
+        let presentation = ConversationChangedFileListPresentation(
+            source: """
+            Done.
+
+            ### Changed files
+            - [README](README.md)
+            - [Release notes](https://example.com/release)
+            """
+        )
+
+        XCTAssertEqual(presentation.files.count, 2)
+        XCTAssertEqual(presentation.files[0].path, "README.md")
+        XCTAssertNil(presentation.files[1].path)
+    }
+
+    func testInlineChangedFileSummaryBecomesCompactPresentation() {
+        let source = """
+        깔끔하게 처리했습니다.
+
+        과거 답변에도 적용됩니다.
+        수정 파일: ConversationMarkdownView.swift · AgentActivityLogView.swift · ClaudeTranscriptView.swift
+        """
+
+        let presentation = ConversationChangedFileListPresentation(
+            source: source
+        )
+
+        XCTAssertEqual(
+            presentation.leadingMarkdown,
+            """
+            깔끔하게 처리했습니다.
+
+            과거 답변에도 적용됩니다.
+            """
+        )
+        XCTAssertEqual(
+            presentation.files,
+            [
+                ConversationChangedFileReference(
+                    id: 0,
+                    title: "ConversationMarkdownView.swift",
+                    path: "ConversationMarkdownView.swift"
+                ),
+                ConversationChangedFileReference(
+                    id: 1,
+                    title: "AgentActivityLogView.swift",
+                    path: "AgentActivityLogView.swift"
+                ),
+                ConversationChangedFileReference(
+                    id: 2,
+                    title: "ClaudeTranscriptView.swift",
+                    path: "ClaudeTranscriptView.swift"
+                ),
+            ]
+        )
+        XCTAssertTrue(presentation.trailingMarkdown.isEmpty)
+    }
+
+    func testInlineChangedFileSummaryWithNoFilesStaysUnmodified() {
+        let source = "수정 파일: 없음"
+        let presentation = ConversationChangedFileListPresentation(
+            source: source
+        )
+
+        XCTAssertEqual(presentation.leadingMarkdown, source)
+        XCTAssertTrue(presentation.files.isEmpty)
+    }
+
+    func testNaturalKoreanFileReportWithLocalLinksBecomesCompactPresentation() {
+        let source = """
+        이제 제가 쓴 `수정 파일: A · B · C` 형식도 접힌 카드로 표시됩니다. 과거 답변에도 적용됩니다.
+
+        Swift 테스트 490개 전부 통과했고 앱 재빌드·서명도 완료했습니다. 앱을 완전히 종료 후 다시 열면 확인됩니다. 4317 백엔드는 재시작하지 않았습니다.
+
+        이번 보완 파일은 [ConversationMarkdownView.swift](/Users/neo/office/Sources/OfficeGame/ConversationMarkdownView.swift)와 [SelectableMarkdownTextViewTests.swift](/Users/neo/office/Tests/OfficeCoreTests/SelectableMarkdownTextViewTests.swift)입니다.
+        """
+
+        let presentation = ConversationChangedFileListPresentation(
+            source: source
+        )
+
+        XCTAssertEqual(
+            presentation.leadingMarkdown,
+            """
+            이제 제가 쓴 `수정 파일: A · B · C` 형식도 접힌 카드로 표시됩니다. 과거 답변에도 적용됩니다.
+
+            Swift 테스트 490개 전부 통과했고 앱 재빌드·서명도 완료했습니다. 앱을 완전히 종료 후 다시 열면 확인됩니다. 4317 백엔드는 재시작하지 않았습니다.
+            """
+        )
+        XCTAssertEqual(
+            presentation.files,
+            [
+                ConversationChangedFileReference(
+                    id: 0,
+                    title: "ConversationMarkdownView.swift",
+                    path: "/Users/neo/office/Sources/OfficeGame/ConversationMarkdownView.swift"
+                ),
+                ConversationChangedFileReference(
+                    id: 1,
+                    title: "SelectableMarkdownTextViewTests.swift",
+                    path: "/Users/neo/office/Tests/OfficeCoreTests/SelectableMarkdownTextViewTests.swift"
+                ),
+            ]
+        )
+        XCTAssertTrue(presentation.trailingMarkdown.isEmpty)
+    }
+
+    func testOrdinaryLocalFileLinkWithoutReportCueStaysUnmodified() {
+        let source = "자세한 내용은 [README](README.md)를 확인하세요."
+        let presentation = ConversationChangedFileListPresentation(
+            source: source
+        )
+
+        XCTAssertEqual(presentation.leadingMarkdown, source)
+        XCTAssertTrue(presentation.files.isEmpty)
+    }
+
     func testSelectionCrossesParagraphsAndTableCells() throws {
         let source = """
         첫 문단입니다.

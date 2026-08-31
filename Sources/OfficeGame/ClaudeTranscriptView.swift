@@ -997,7 +997,8 @@ private struct ClaudeMessageView: View {
                 ConversationMarkdownView(
                     source: message.text,
                     fontSize: 14,
-                    fileBaseDirectory: workspaceDirectory
+                    fileBaseDirectory: workspaceDirectory,
+                    compactsChangedFileLists: isConclusion
                 )
             }
 

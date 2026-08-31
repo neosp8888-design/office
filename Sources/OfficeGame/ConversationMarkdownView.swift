@@ -24,22 +24,26 @@ struct ConversationMarkdownView: View {
     let source: String
     let fontSize: CGFloat
     let fileBaseDirectory: String?
+    let compactsChangedFileLists: Bool
 
     init(
         source: String,
         fontSize: CGFloat = 12,
-        fileBaseDirectory: String? = nil
+        fileBaseDirectory: String? = nil,
+        compactsChangedFileLists: Bool = false
     ) {
         self.source = source
         self.fontSize = fontSize
         self.fileBaseDirectory = fileBaseDirectory
+        self.compactsChangedFileLists = compactsChangedFileLists
     }
 
     var body: some View {
         ConversationMarkdownContent(
             source: source,
             fontSize: fontSize,
-            fileBaseDirectory: fileBaseDirectory
+            fileBaseDirectory: fileBaseDirectory,
+            compactsChangedFileLists: compactsChangedFileLists
         )
         .equatable()
     }
@@ -49,40 +53,38 @@ private struct ConversationMarkdownContent: View, Equatable {
     let source: String
     let fontSize: CGFloat
     let fileBaseDirectory: String?
+    let compactsChangedFileLists: Bool
 
     var body: some View {
         let fallbackDirectory = fileBaseDirectory.flatMap {
             $0.isEmpty ? nil : URL(fileURLWithPath: $0)
         }
-        let videoURLs = LocalMarkdownResource.videoFileURLs(
-            in: source,
-            fallbackDirectory: fallbackDirectory
-        )
-        let imageURLs = LocalMarkdownResource.imageFileURLs(
-            in: source,
-            fallbackDirectory: fallbackDirectory
-        )
-        let visibleSource = LocalMarkdownResource
-            .removingGeneratedImagePreviews(from: source)
-        let markdownSegments = visibleSource.isEmpty
-            ? []
-            : SelectableMarkdownSegmenter.split(visibleSource)
+        let presentation = compactsChangedFileLists
+            ? ConversationChangedFileListPresentation(source: source)
+            : ConversationChangedFileListPresentation.unmodified(source)
 
         let content = VStack(alignment: .leading, spacing: 9) {
-            ForEach(Array(markdownSegments.enumerated()), id: \.offset) {
-                _, segment in
-                SelectableMarkdownTextView(
-                    source: segment.source,
+            if !presentation.leadingMarkdown.isEmpty {
+                ConversationMarkdownSection(
+                    source: presentation.leadingMarkdown,
                     fontSize: fontSize,
-                    fileBaseDirectory: fallbackDirectory?.path,
-                    minimumLayoutWidth: segment.minimumLayoutWidth
+                    fallbackDirectory: fallbackDirectory
                 )
             }
-            ForEach(Array(imageURLs.prefix(8)), id: \.self) { imageURL in
-                LocalMarkdownFileImage(url: imageURL)
+
+            if !presentation.files.isEmpty {
+                ConversationChangedFilesView(
+                    files: presentation.files,
+                    workspaceDirectory: fallbackDirectory?.path ?? ""
+                )
             }
-            ForEach(Array(videoURLs.prefix(4)), id: \.self) { videoURL in
-                LocalMarkdownFileVideo(url: videoURL)
+
+            if !presentation.trailingMarkdown.isEmpty {
+                ConversationMarkdownSection(
+                    source: presentation.trailingMarkdown,
+                    fontSize: fontSize,
+                    fallbackDirectory: fallbackDirectory
+                )
             }
         }
             .environment(
@@ -110,6 +112,484 @@ private struct ConversationMarkdownContent: View, Equatable {
 
         content
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ConversationMarkdownSection: View {
+    let source: String
+    let fontSize: CGFloat
+    let fallbackDirectory: URL?
+
+    var body: some View {
+        let videoURLs = LocalMarkdownResource.videoFileURLs(
+            in: source,
+            fallbackDirectory: fallbackDirectory
+        )
+        let imageURLs = LocalMarkdownResource.imageFileURLs(
+            in: source,
+            fallbackDirectory: fallbackDirectory
+        )
+        let visibleSource = LocalMarkdownResource
+            .removingGeneratedImagePreviews(from: source)
+        let markdownSegments = visibleSource.isEmpty
+            ? []
+            : SelectableMarkdownSegmenter.split(visibleSource)
+
+        VStack(alignment: .leading, spacing: 9) {
+            ForEach(Array(markdownSegments.enumerated()), id: \.offset) {
+                _, segment in
+                SelectableMarkdownTextView(
+                    source: segment.source,
+                    fontSize: fontSize,
+                    fileBaseDirectory: fallbackDirectory?.path,
+                    minimumLayoutWidth: segment.minimumLayoutWidth
+                )
+            }
+            ForEach(Array(imageURLs.prefix(8)), id: \.self) { imageURL in
+                LocalMarkdownFileImage(url: imageURL)
+            }
+            ForEach(Array(videoURLs.prefix(4)), id: \.self) { videoURL in
+                LocalMarkdownFileVideo(url: videoURL)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct ConversationChangedFileReference: Identifiable, Equatable {
+    let id: Int
+    let title: String
+    let path: String?
+}
+
+struct ConversationChangedFileListPresentation: Equatable {
+    let leadingMarkdown: String
+    let files: [ConversationChangedFileReference]
+    let trailingMarkdown: String
+
+    init(source: String) {
+        let lines = source.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        if
+            let header = lines.enumerated().compactMap({ index, line in
+                Self.headerValue(from: line).map { value in
+                    (index: index, value: value)
+                }
+            }).first
+        {
+            let headerIndex = header.index
+
+            if !header.value.isEmpty {
+                guard
+                    let inlineValues = Self.inlineFileValues(from: header.value),
+                    !inlineValues.isEmpty
+                else {
+                    self = Self.unmodified(source)
+                    return
+                }
+                let parsedFiles = inlineValues.enumerated().compactMap {
+                    index, value in
+                    Self.fileReference(fromContent: value, id: index)
+                }
+                guard parsedFiles.count == inlineValues.count else {
+                    self = Self.unmodified(source)
+                    return
+                }
+
+                leadingMarkdown = Self.joined(lines[..<headerIndex])
+                files = parsedFiles
+                trailingMarkdown = Self.joined(lines[(headerIndex + 1)...])
+                return
+            }
+
+            var cursor = headerIndex + 1
+            var parsedFiles: [ConversationChangedFileReference] = []
+            var suffixIndex = cursor
+            while cursor < lines.count {
+                if lines[cursor].trimmingCharacters(in: .whitespaces).isEmpty {
+                    cursor += 1
+                    continue
+                }
+                guard
+                    let file = Self.fileReference(
+                        from: lines[cursor],
+                        id: parsedFiles.count
+                    )
+                else {
+                    break
+                }
+                parsedFiles.append(file)
+                cursor += 1
+                suffixIndex = cursor
+            }
+
+            guard !parsedFiles.isEmpty else {
+                self = Self.unmodified(source)
+                return
+            }
+            while suffixIndex < lines.count,
+                lines[suffixIndex]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
+            {
+                suffixIndex += 1
+            }
+
+            leadingMarkdown = Self.joined(lines[..<headerIndex])
+            files = parsedFiles
+            trailingMarkdown = Self.joined(lines[suffixIndex...])
+            return
+        }
+
+        guard
+            let report = lines.enumerated().compactMap({ index, line in
+                Self.proseFileReferences(from: line).map { files in
+                    (index: index, files: files)
+                }
+            }).first
+        else {
+            self = Self.unmodified(source)
+            return
+        }
+
+        leadingMarkdown = Self.joined(lines[..<report.index])
+        files = report.files
+        trailingMarkdown = Self.joined(lines[(report.index + 1)...])
+    }
+
+    static func unmodified(_ source: String)
+        -> ConversationChangedFileListPresentation
+    {
+        ConversationChangedFileListPresentation(
+            leadingMarkdown: source,
+            files: [],
+            trailingMarkdown: ""
+        )
+    }
+
+    private init(
+        leadingMarkdown: String,
+        files: [ConversationChangedFileReference],
+        trailingMarkdown: String
+    ) {
+        self.leadingMarkdown = leadingMarkdown
+        self.files = files
+        self.trailingMarkdown = trailingMarkdown
+    }
+
+    private static func headerValue(from line: String) -> String? {
+        var normalized = line.trimmingCharacters(in: .whitespaces)
+        while normalized.hasPrefix("#") {
+            normalized.removeFirst()
+            normalized = normalized.trimmingCharacters(in: .whitespaces)
+        }
+        let lowered = normalized.lowercased()
+        let labels = [
+            "변경 파일",
+            "수정 파일",
+            "changed files",
+            "files changed",
+        ]
+        for label in labels where lowered.hasPrefix(label) {
+            var remainder = String(normalized.dropFirst(label.count))
+                .trimmingCharacters(in: .whitespaces)
+            if remainder.isEmpty {
+                return ""
+            }
+            guard remainder.hasPrefix(":") || remainder.hasPrefix("：") else {
+                continue
+            }
+            remainder.removeFirst()
+            return remainder.trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    private static func inlineFileValues(from value: String) -> [String]? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let noChangedFiles = [
+            "없음",
+            "없습니다",
+            "없습니다.",
+            "해당 없음",
+            "변경 없음",
+            "none",
+            "no changes",
+        ]
+        guard !noChangedFiles.contains(trimmed.lowercased()) else {
+            return nil
+        }
+
+        let values = trimmed.components(
+            separatedBy: CharacterSet(charactersIn: "·•")
+        ).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter {
+            !$0.isEmpty
+        }
+        return values.isEmpty ? nil : values
+    }
+
+    private static func proseFileReferences(
+        from line: String
+    ) -> [ConversationChangedFileReference]? {
+        let lowered = line.lowercased()
+        let reportCues = [
+            "변경 파일",
+            "수정 파일",
+            "보완 파일",
+            "손댄 곳",
+            "changed files",
+            "files changed",
+            "modified files",
+        ]
+        guard reportCues.contains(where: lowered.contains) else {
+            return nil
+        }
+
+        let pattern = #"\[([^\]]+)\]\((<?[^)\n]+>?)\)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let sourceRange = NSRange(line.startIndex..<line.endIndex, in: line)
+        let matches = expression.matches(in: line, range: sourceRange)
+        guard !matches.isEmpty else {
+            return nil
+        }
+
+        let references: [ConversationChangedFileReference] = matches
+            .enumerated().compactMap { index, match in
+            guard
+                let titleRange = Range(match.range(at: 1), in: line),
+                let targetRange = Range(match.range(at: 2), in: line)
+            else {
+                return nil
+            }
+            let title = cleanLabel(String(line[titleRange]))
+            let target = String(line[targetRange])
+            guard let path = localPath(from: target) else {
+                return nil
+            }
+            return ConversationChangedFileReference(
+                id: index,
+                title: title.isEmpty ? cleanLabel(target) : title,
+                path: path
+            )
+        }
+        guard references.count == matches.count else {
+            return nil
+        }
+        return references
+    }
+
+    private static func fileReference(
+        from line: String,
+        id: Int
+    ) -> ConversationChangedFileReference? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let bulletPrefixes = ["- ", "* ", "+ ", "• "]
+        guard let prefix = bulletPrefixes.first(where: trimmed.hasPrefix) else {
+            return nil
+        }
+        let content = String(trimmed.dropFirst(prefix.count))
+            .trimmingCharacters(in: .whitespaces)
+        return fileReference(fromContent: content, id: id)
+    }
+
+    private static func fileReference(
+        fromContent content: String,
+        id: Int
+    ) -> ConversationChangedFileReference? {
+        let content = content.trimmingCharacters(in: .whitespaces)
+        guard !content.isEmpty else {
+            return nil
+        }
+
+        if
+            content.hasPrefix("["),
+            content.hasSuffix(")"),
+            let separator = content.range(of: "](")
+        {
+            let titleStart = content.index(after: content.startIndex)
+            let title = cleanLabel(String(content[titleStart..<separator.lowerBound]))
+            let target = String(content[separator.upperBound..<content.index(before: content.endIndex)])
+            return ConversationChangedFileReference(
+                id: id,
+                title: title.isEmpty ? cleanLabel(target) : title,
+                path: localPath(from: target)
+            )
+        }
+
+        let title = cleanLabel(content)
+        return ConversationChangedFileReference(
+            id: id,
+            title: title,
+            path: localPath(from: title)
+        )
+    }
+
+    private static func cleanLabel(_ value: String) -> String {
+        value.trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(
+                CharacterSet(charactersIn: "`<>")
+            )
+        )
+    }
+
+    private static func localPath(from value: String) -> String? {
+        var target = cleanLabel(value)
+        guard !target.isEmpty else {
+            return nil
+        }
+        if let decoded = target.removingPercentEncoding {
+            target = decoded
+        }
+        if let url = URL(string: target), url.isFileURL {
+            target = url.path
+        } else if target.contains("://") {
+            return nil
+        }
+        if let range = target.range(
+            of: #":\d+(?:-\d+)?$"#,
+            options: .regularExpression
+        ) {
+            target.removeSubrange(range)
+        }
+        return target.isEmpty ? nil : target
+    }
+
+    private static func joined<S>(_ lines: S) -> String
+    where S: Collection, S.Element == String {
+        lines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct ConversationChangedFilesView: View {
+    let files: [ConversationChangedFileReference]
+    let workspaceDirectory: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+    @State private var copied = false
+    @State private var copyResetTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(
+                        reduceMotion ? nil : .easeInOut(duration: 0.16)
+                    ) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.badge.gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                Color.accentColor.opacity(0.10),
+                                in: RoundedRectangle(
+                                    cornerRadius: 7,
+                                    style: .continuous
+                                )
+                            )
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("변경 파일 \(files.count)개")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Text(previewText)
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+
+                        Spacer(minLength: 6)
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    isExpanded ? "변경 파일 목록 접기" : "변경 파일 목록 펼치기"
+                )
+
+                Button(action: copyFiles) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(
+                            copied ? Color.accentColor : Color.secondary
+                        )
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help(copied ? "파일 목록 복사됨" : "파일 목록 복사")
+                .accessibilityLabel(
+                    copied ? "파일 목록 복사됨" : "파일 목록 복사"
+                )
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(files) { file in
+                        WorkspaceFileRevealButton(
+                            title: file.title,
+                            path: file.path,
+                            workspaceDirectory: workspaceDirectory,
+                            foregroundColor: .secondary,
+                            accessibilityIdentifier:
+                                "responseChangedFile-\(file.id)"
+                        )
+                    }
+                }
+                .padding(.leading, 32)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(9)
+        .background(
+            Color.primary.opacity(0.035),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+        .onDisappear {
+            copyResetTask?.cancel()
+        }
+    }
+
+    private var previewText: String {
+        let visible = files.prefix(2).map(\.title).joined(separator: " · ")
+        let remaining = files.count - min(files.count, 2)
+        return remaining > 0 ? "\(visible) 외 \(remaining)개" : visible
+    }
+
+    private func copyFiles() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            files.map { $0.path ?? $0.title }.joined(separator: "\n"),
+            forType: .string
+        )
+        copied = true
+        copyResetTask?.cancel()
+        copyResetTask = Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            if !Task.isCancelled {
+                copied = false
+            }
+        }
     }
 }
 

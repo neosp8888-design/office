@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+
+import {
+  STRUCTURED_RESULT_ENV,
+  inspectStructuredTurnResult,
+  submitStructuredResponseSource,
+  submitStructuredWikiProposal,
+} from "./structured-turn-result.mjs";
+
+const HELP = `OFFICESTRA 응답 메타데이터 제출
+
+자연어 답변은 평소처럼 작성하고, 실제로 사용한 근거나 위키 제안만 이 명령으로
+별도 제출합니다. 답변 본문에는 JSON이나 OFFICE_* 마커를 쓰지 않습니다.
+
+사용법:
+  officestra-result source --kind KIND --title TITLE [--locator LOCATOR]
+    [--excerpt TEXT] [--rag-document-id UUID] [--work-record-id UUID]
+  officestra-result wiki --page-key SLUG --kind KIND --title TITLE --body BODY
+  officestra-result show
+
+source 규칙:
+  KIND: rag, database, file, web, tool, skill
+  실제 답변의 결론에 사용한 근거만 제출하며 최대 20개입니다.
+  rag는 --rag-document-id가 필수이고 locator 생략 시 rag_documents:UUID가 됩니다.
+  work_records DB는 --work-record-id가 필수이고 locator 생략 시 work_records:UUID가 됩니다.
+  tool locator는 원시 인자나 응답이 아니라 도구 식별자만 사용합니다.
+
+wiki 규칙:
+  KIND: decision, constraint, incident
+  명시적인 지속 선호·확정 결정·중대 사고 재발 방지만 최대 3개 제안합니다.
+  BODY는 승인 후 게시할 완전한 본문이어야 하며 승인 등급은 user로 고정됩니다.
+  직원은 위키 제안을 직접 승인하거나 거절하지 않습니다.
+
+예:
+  officestra-result source --kind file --title README --locator README.md:12
+  officestra-result source --kind rag --title 과거기록 --rag-document-id UUID --excerpt "0.65 1위"
+  officestra-result wiki --page-key release-policy --kind decision --title "배포 정책" --body "완전한 본문"
+`;
+
+try {
+  run(process.argv.slice(2));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}
+
+function run(argumentsList) {
+  const command = argumentsList[0];
+  if (!command || command === "--help" || command === "-h" || command === "help") {
+    process.stdout.write(HELP);
+    return;
+  }
+  const path = process.env[STRUCTURED_RESULT_ENV];
+  if (!path) {
+    throw new Error(`${STRUCTURED_RESULT_ENV}가 없습니다. OFFICESTRA 업무 안에서 실행하세요.`);
+  }
+  if (command === "show") {
+    process.stdout.write(`${JSON.stringify(inspectStructuredTurnResult(path), null, 2)}\n`);
+    return;
+  }
+  const options = parseOptions(argumentsList.slice(1));
+  if (command === "source") {
+    const kind = required(options, "kind");
+    const ragDocumentId = options.ragDocumentId;
+    const workRecordId = options.workRecordId;
+    const locator = options.locator ?? (
+      kind === "rag" && ragDocumentId
+        ? `rag_documents:${ragDocumentId}`
+        : kind === "database" && workRecordId
+          ? `work_records:${workRecordId}`
+          : null
+    );
+    if (!locator) {
+      throw new Error("--locator가 필요합니다.");
+    }
+    const count = submitStructuredResponseSource(path, {
+      kind,
+      title: required(options, "title"),
+      locator,
+      ...(options.excerpt ? { excerpt: options.excerpt } : {}),
+      ...(ragDocumentId ? { ragDocumentId } : {}),
+      ...(workRecordId ? { workRecordId } : {}),
+    });
+    process.stdout.write(`응답 근거 ${count}개가 별도 제출됐습니다.\n`);
+    return;
+  }
+  if (command === "wiki") {
+    const count = submitStructuredWikiProposal(path, {
+      pageKey: required(options, "pageKey"),
+      kind: required(options, "kind"),
+      title: required(options, "title"),
+      body: required(options, "body"),
+      approvalTier: "user",
+    });
+    process.stdout.write(`위키 제안 ${count}개가 별도 제출됐습니다.\n`);
+    return;
+  }
+  throw new Error(`지원하지 않는 명령입니다: ${command}`);
+}
+
+function parseOptions(argumentsList) {
+  const options = {};
+  for (let index = 0; index < argumentsList.length; index += 2) {
+    const flag = argumentsList[index];
+    const value = argumentsList[index + 1];
+    if (!flag?.startsWith("--") || value === undefined) {
+      throw new Error(`옵션은 --이름 값 형식이어야 합니다: ${flag ?? ""}`);
+    }
+    const name = flag
+      .slice(2)
+      .replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+    if (Object.hasOwn(options, name)) {
+      throw new Error(`같은 옵션을 두 번 사용할 수 없습니다: ${flag}`);
+    }
+    options[name] = value;
+  }
+  return options;
+}
+
+function required(options, name) {
+  const value = String(options[name] ?? "").trim();
+  if (!value) throw new Error(`--${name.replace(/[A-Z]/g, (value) => `-${value.toLowerCase()}`)}가 필요합니다.`);
+  return value;
+}

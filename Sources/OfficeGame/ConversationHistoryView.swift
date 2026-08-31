@@ -261,7 +261,10 @@ private struct TurnDisclosure: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
-            ConversationMarkdownView(source: text)
+            ConversationMarkdownView(
+                source: text,
+                compactsChangedFileLists: true
+            )
         }
     }
 }
@@ -547,7 +550,10 @@ private struct ArchiveTurnCard: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
-            ConversationMarkdownView(source: text)
+            ConversationMarkdownView(
+                source: text,
+                compactsChangedFileLists: true
+            )
         }
     }
 }
