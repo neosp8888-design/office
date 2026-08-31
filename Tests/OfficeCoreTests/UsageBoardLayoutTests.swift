@@ -107,6 +107,16 @@ final class UsageBoardLayoutTests: XCTestCase {
             1
         )
         XCTAssertTrue(source.contains("if let subscriptionExpiresAt"))
+        let activityPosition = try XCTUnwrap(
+            source.range(of: "UsageActivitySummary(")?.lowerBound
+        )
+        let expirationPosition = try XCTUnwrap(
+            source.range(
+                of: "if let subscriptionExpiresAt",
+                range: activityPosition..<source.endIndex
+            )?.lowerBound
+        )
+        XCTAssertLessThan(activityPosition, expirationPosition)
     }
 
     func testUsesSingleColumnBelowThreshold() {

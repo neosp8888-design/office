@@ -826,16 +826,16 @@ private struct UsageProviderCard: View {
                         )
                 }
             }
+            UsageActivitySummary(
+                activity: activity,
+                tint: tint
+            )
             if let subscriptionExpiresAt {
                 UsageSubscriptionSummary(
                     expiresAt: subscriptionExpiresAt,
                     tint: tint
                 )
             }
-            UsageActivitySummary(
-                activity: activity,
-                tint: tint
-            )
         }
         .padding(13)
         .background(
