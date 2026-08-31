@@ -87,6 +87,46 @@ export function parseCodexRateLimits(result) {
   };
 }
 
+function decodedJWTPayload(token) {
+  const parts = String(token ?? "").split(".");
+  if (parts.length < 2 || !parts[1]) return null;
+  try {
+    return JSON.parse(
+      Buffer.from(parts[1], "base64url").toString("utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function parseCodexSubscriptionExpiration(raw) {
+  try {
+    const credential = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const claims = decodedJWTPayload(credential?.tokens?.id_token);
+    return isoDate(
+      claims?.["https://api.openai.com/auth"]
+        ?.chatgpt_subscription_active_until,
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function readCodexSubscriptionExpiration() {
+  const configuredHome = String(process.env.CODEX_HOME ?? "").trim();
+  const credentialPath = resolve(
+    configuredHome || join(homedir(), ".codex"),
+    "auth.json",
+  );
+  try {
+    return parseCodexSubscriptionExpiration(
+      await readFile(credentialPath, "utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
+
 function claudeWindow(window) {
   if (!window || typeof window !== "object") return null;
   return {
@@ -177,6 +217,7 @@ export async function readCodexRateLimits({
   pool,
   timeoutMs = 8_000,
   spawnProcess = spawn,
+  subscriptionExpirationReader = readCodexSubscriptionExpiration,
 }) {
   const executable = await configuredCodexExecutable(pool);
   const result = await new Promise((resolveResult, rejectResult) => {
@@ -262,7 +303,18 @@ export async function readCodexRateLimits({
       params: null,
     })}\n`);
   });
-  return parseCodexRateLimits(result);
+  let subscriptionExpiresAt = null;
+  try {
+    subscriptionExpiresAt = isoDate(
+      await subscriptionExpirationReader(),
+    );
+  } catch {
+    // 구독 만료 정보를 못 읽어도 계정 한도는 그대로 보여 준다.
+  }
+  return {
+    ...parseCodexRateLimits(result),
+    subscriptionExpiresAt,
+  };
 }
 
 function parsedClaudeCredential(raw) {
@@ -623,6 +675,7 @@ function flattenedLimits(
     codexPlan: codex?.plan ?? null,
     claudePlan: claude?.plan ?? null,
     antigravityPlan: antigravity?.plan ?? null,
+    codexSubscriptionExpiresAt: codex?.subscriptionExpiresAt ?? null,
     codexLimitError: errors.codex,
     claudeLimitError: errors.claude,
     antigravityLimitError: errors.antigravity,

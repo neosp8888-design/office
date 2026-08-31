@@ -594,6 +594,7 @@ private struct UsageBoardContent: View {
             weeklyResetAt: snapshot.claudeWeeklyResetAt,
             fetchedAt: snapshot.fetchedAt,
             plan: snapshot.claudePlan,
+            subscriptionExpiresAt: nil,
             activity: snapshot.claudeActivity,
             showsFiveHour: true,
             tint: DashboardPalette.providerAccent(for: .claude)
@@ -610,6 +611,7 @@ private struct UsageBoardContent: View {
             weeklyResetAt: snapshot.codexWeeklyResetAt,
             fetchedAt: snapshot.fetchedAt,
             plan: snapshot.codexPlan,
+            subscriptionExpiresAt: snapshot.codexSubscriptionExpiresAt,
             activity: snapshot.codexActivity,
             showsFiveHour: true,
             tint: DashboardPalette.providerAccent(for: .codex)
@@ -627,6 +629,7 @@ private struct UsageBoardContent: View {
             imageResetAt: snapshot.antigravityImageResetAt,
             fetchedAt: snapshot.fetchedAt,
             plan: snapshot.antigravityPlan,
+            subscriptionExpiresAt: nil,
             activity: snapshot.antigravityActivity,
             showsFiveHour: true,
             tint: DashboardPalette.providerAccent(for: .antigravity)
@@ -669,6 +672,7 @@ private struct UsageProviderColumn: View {
     var imageResetAt: Date? = nil
     let fetchedAt: Date
     let plan: String?
+    let subscriptionExpiresAt: Date?
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
     let tint: Color
@@ -687,6 +691,7 @@ private struct UsageProviderColumn: View {
             imageResetAt: imageResetAt,
             fetchedAt: fetchedAt,
             plan: plan,
+            subscriptionExpiresAt: subscriptionExpiresAt,
             activity: activity,
             showsFiveHour: showsFiveHour,
             tint: tint
@@ -708,6 +713,7 @@ private struct UsageProviderCard: View {
     var imageResetAt: Date? = nil
     let fetchedAt: Date
     let plan: String?
+    let subscriptionExpiresAt: Date?
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
     let tint: Color
@@ -820,6 +826,12 @@ private struct UsageProviderCard: View {
                         )
                 }
             }
+            if let subscriptionExpiresAt {
+                UsageSubscriptionSummary(
+                    expiresAt: subscriptionExpiresAt,
+                    tint: tint
+                )
+            }
             UsageActivitySummary(
                 activity: activity,
                 tint: tint
@@ -844,6 +856,46 @@ private struct UsageProviderCard: View {
         }
         return lowest > 25 ? "사용 가능" : "잔여량 낮음"
     }
+}
+
+private struct UsageSubscriptionSummary: View {
+    let expiresAt: Date?
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Label(
+                "상품 만료",
+                systemImage: "calendar.badge.clock"
+            )
+            .foregroundStyle(tint)
+
+            Spacer(minLength: 2)
+
+            Text(expirationText)
+                .fontWeight(.bold)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .font(.system(size: 8.5, weight: .medium))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var expirationText: String {
+        guard let expiresAt else {
+            return "–"
+        }
+        return Self.expirationFormatter.string(from: expiresAt)
+    }
+
+    private static let expirationFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateFormat = "M/d HH:mm"
+        return formatter
+    }()
 }
 
 private struct UsageActivitySummary: View {

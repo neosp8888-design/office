@@ -456,6 +456,7 @@ struct AIUsageSnapshot: Decodable, Equatable, Sendable {
     let codexPlan: String?
     let claudePlan: String?
     let antigravityPlan: String?
+    let codexSubscriptionExpiresAt: Date?
     let codexActivity: AIUsageActivitySnapshot?
     let claudeActivity: AIUsageActivitySnapshot?
     let antigravityActivity: AIUsageActivitySnapshot?

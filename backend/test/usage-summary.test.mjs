@@ -12,6 +12,7 @@ import {
   parseAntigravityRateLimits,
   parseClaudeRateLimits,
   parseCodexRateLimits,
+  parseCodexSubscriptionExpiration,
   readClaudeRateLimits,
   readCodexRateLimits,
   readAntigravityRateLimits,
@@ -59,6 +60,25 @@ test("Codex app-server 한도는 창 길이로 5시간과 7일을 구분한다",
   );
 });
 
+test("Codex 인증 claim에서 구독 만료 시각만 읽는다", () => {
+  const payload = Buffer.from(JSON.stringify({
+    "https://api.openai.com/auth": {
+      chatgpt_subscription_active_until: "2026-08-31T14:54:17+00:00",
+    },
+    exp: 1_900_000_000,
+  })).toString("base64url");
+  const raw = JSON.stringify({
+    tokens: { id_token: `header.${payload}.signature` },
+  });
+
+  assert.equal(
+    parseCodexSubscriptionExpiration(raw),
+    "2026-08-31T14:54:17.000Z",
+  );
+  assert.equal(parseCodexSubscriptionExpiration("{}"), null);
+  assert.equal(parseCodexSubscriptionExpiration("not-json"), null);
+});
+
 test("Codex 직접 조회는 백엔드 작업 폴더와 무관한 홈에서 실행한다", async () => {
   let invocation;
   const child = new EventEmitter();
@@ -91,6 +111,8 @@ test("Codex 직접 조회는 백엔드 작업 폴더와 무관한 홈에서 실�
 
   const result = await readCodexRateLimits({
     pool,
+    subscriptionExpirationReader: async () =>
+      "2026-08-31T14:54:17.000Z",
     spawnProcess: (executable, arguments_, options) => {
       invocation = { executable, arguments_, options };
       return child;
@@ -102,6 +124,10 @@ test("Codex 직접 조회는 백엔드 작업 폴더와 무관한 홈에서 실�
   assert.equal(invocation.options.cwd, homedir());
   assert.equal(result.weekly.remaining, 66);
   assert.equal(result.plan, "Pro 20x");
+  assert.equal(
+    result.subscriptionExpiresAt,
+    "2026-08-31T14:54:17.000Z",
+  );
 });
 
 test("Claude OAuth 사용률은 남은 비율로 변환한다", () => {
@@ -386,6 +412,7 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
         fiveHour: { remaining: 70, resetAt: null },
         weekly: { remaining: 60, resetAt: null },
         plan: "Pro",
+        subscriptionExpiresAt: "2026-08-31T14:54:17.000Z",
       };
     },
     claudeReader: async () => {
@@ -431,6 +458,10 @@ test("한도는 짧게 캐시하고 DB 통계는 매 요청 최신값을 읽는�
   const forced = await reader({ force: true });
 
   assert.equal(first.codexFiveHour, 70);
+  assert.equal(
+    first.codexSubscriptionExpiresAt,
+    "2026-08-31T14:54:17.000Z",
+  );
   assert.equal(second.codexActivity.todayCostUSD, 2);
   assert.equal(forced.codexActivity.todayCostUSD, 3);
   assert.equal(codexReads, 2);

@@ -65,6 +65,50 @@ final class UsageBoardLayoutTests: XCTestCase {
         XCTAssertFalse(summary.contains("30일 토큰"))
     }
 
+    func testUsageCardPresentsSubscriptionExpirationAsCompactSummary() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/OfficeGame", directoryHint: .isDirectory)
+        let source = try String(
+            contentsOf: sourceRoot.appending(path: "OfficeDashboardPanels.swift"),
+            encoding: .utf8
+        )
+        let start = try XCTUnwrap(
+            source.range(of: "private struct UsageSubscriptionSummary")?
+                .lowerBound
+        )
+        let end = try XCTUnwrap(
+            source.range(
+                of: "private struct UsageActivitySummary",
+                range: start..<source.endIndex
+            )?.lowerBound
+        )
+        let summary = String(source[start..<end])
+
+        XCTAssertTrue(summary.contains("\"상품 만료\""))
+        XCTAssertTrue(summary.contains("calendar.badge.clock"))
+        XCTAssertTrue(summary.contains("size: 8.5"))
+        XCTAssertTrue(summary.contains("dateFormat = \"M/d HH:mm\""))
+        XCTAssertEqual(
+            summary.components(separatedBy: ".fontWeight(.bold)").count - 1,
+            1
+        )
+        XCTAssertTrue(
+            source.contains(
+                "subscriptionExpiresAt: snapshot.codexSubscriptionExpiresAt"
+            )
+        )
+        XCTAssertEqual(
+            source.components(
+                separatedBy: "subscriptionExpiresAt: snapshot."
+            ).count - 1,
+            1
+        )
+        XCTAssertTrue(source.contains("if let subscriptionExpiresAt"))
+    }
+
     func testUsesSingleColumnBelowThreshold() {
         XCTAssertTrue(
             UsageBoardLayout.usesSingleColumn(
@@ -289,7 +333,7 @@ final class UsageBoardLayoutTests: XCTestCase {
 
     func testUsageSummaryDecodesProviderResetTimestamp() throws {
         let data = Data(
-            #"{"codexFiveHour":90,"codexFiveHourResetAt":"2026-08-07T19:00:00.000Z","codexWeekly":null,"codexWeeklyResetAt":null,"claudeFiveHour":null,"claudeFiveHourResetAt":null,"claudeWeekly":null,"claudeWeeklyResetAt":null,"codexPlan":"Pro","claudePlan":null,"codexActivity":null,"claudeActivity":null,"codexLimitError":null,"claudeLimitError":null,"fetchedAt":"2026-08-07T18:00:00.000Z"}"#
+            #"{"codexFiveHour":90,"codexFiveHourResetAt":"2026-08-07T19:00:00.000Z","codexWeekly":null,"codexWeeklyResetAt":null,"claudeFiveHour":null,"claudeFiveHourResetAt":null,"claudeWeekly":null,"claudeWeeklyResetAt":null,"codexPlan":"Pro","claudePlan":null,"codexSubscriptionExpiresAt":"2026-08-31T14:54:17.000Z","codexActivity":null,"claudeActivity":null,"codexLimitError":null,"claudeLimitError":null,"fetchedAt":"2026-08-07T18:00:00.000Z"}"#
                 .utf8
         )
         let client = OfficeDatabaseClient(
@@ -300,6 +344,10 @@ final class UsageBoardLayoutTests: XCTestCase {
 
         XCTAssertEqual(snapshot.codexFiveHour, 90)
         XCTAssertEqual(snapshot.codexPlan, "Pro")
+        XCTAssertEqual(
+            snapshot.codexSubscriptionExpiresAt,
+            ISO8601DateFormatter().date(from: "2026-08-31T14:54:17Z")
+        )
         XCTAssertEqual(
             snapshot.codexFiveHourResetAt,
             ISO8601DateFormatter().date(from: "2026-08-07T19:00:00Z")
