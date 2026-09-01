@@ -1729,7 +1729,7 @@ final class AgentDirector: ObservableObject {
         guard !isUpdatingConfiguration else {
             throw AgentContextCompactionError.configurationBusy
         }
-        let normalized = min(95, max(50, percent))
+        let normalized = min(95, max(20, percent))
         isUpdatingConfiguration = true
         defer { isUpdatingConfiguration = false }
         let stored = try await database.updateAutoCompactPercent(

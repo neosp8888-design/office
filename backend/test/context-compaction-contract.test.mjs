@@ -22,6 +22,14 @@ const claudeInstructions = readFileSync(
   new URL("../../CLAUDE.md", import.meta.url),
   "utf8",
 );
+const directorSource = readFileSync(
+  new URL("../../Sources/OfficeGame/AgentDirector.swift", import.meta.url),
+  "utf8",
+);
+const appSource = readFileSync(
+  new URL("../../Sources/OfficeGame/OfficeGameApp.swift", import.meta.url),
+  "utf8",
+);
 
 test("컨텍스트 설정과 수동 압축 API를 신뢰된 로컬 JSON 경로로 연결한다", () => {
   assert.match(serverSource, /function routeCharacterContextSettings/);
@@ -56,6 +64,22 @@ test("자동 압축 기준 migration은 90% 기본값과 50~95% 제약을 둔다
     lowerBoundMigrationSource,
     /auto_compact_percent BETWEEN 20 AND 95/,
   );
+});
+
+// 하한을 내릴 때 저장 경로의 클램프를 빠뜨리면 사용자가 고른 값이 조용히
+// 되돌아가므로, 앱 쪽 세 지점이 모두 같은 하한을 쓰는지 함께 검사한다.
+test("앱의 자동 압축 기준 클램프와 슬라이더는 20% 하한을 함께 쓴다", () => {
+  assert.equal(directorSource.includes("max(50,"), false);
+  assert.equal(
+    directorSource.match(/min\(95, max\(20, percent\)\)/g)?.length,
+    1,
+  );
+  assert.equal(
+    directorSource.match(/max\(20, autoCompactPercents\[character\] \?\? 90\)/g)
+      ?.length,
+    1,
+  );
+  assert.match(appSource, /in: 20 \.\.\. 95,/);
 });
 
 test("Codex와 Claude 압축 지침은 직원 호칭 없이 내용을 보존한다", () => {
