@@ -225,6 +225,69 @@ final class SelectableMarkdownTextViewTests: XCTestCase {
         XCTAssertTrue(copied.contains("마지막 문단입니다."))
     }
 
+    func testRepeatedHeightRequestsReuseTextKitLayoutUntilInputChanges() {
+        let documentView = SelectableMarkdownDocumentView(fontSize: 12)
+        documentView.apply(
+            source: String(
+                repeating: "긴 Markdown 문단입니다. **선택 가능**해야 합니다.\n\n",
+                count: 40
+            ),
+            fallbackDirectory: nil,
+            isDark: false
+        )
+
+        let firstHeight = documentView.heightThatFits(width: 520)
+        let firstMeasurementCount = documentView.textLayoutMeasurementCount
+        XCTAssertGreaterThan(firstHeight, 0)
+        XCTAssertEqual(firstMeasurementCount, 1)
+
+        documentView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: 520,
+            height: firstHeight
+        )
+        for _ in 0..<50 {
+            XCTAssertEqual(
+                documentView.heightThatFits(width: 520),
+                firstHeight
+            )
+            documentView.layout()
+        }
+        XCTAssertEqual(
+            documentView.textLayoutMeasurementCount,
+            firstMeasurementCount,
+            "같은 내용과 폭의 SwiftUI 재배치는 TextKit 전체 측정을 반복하면 안 됩니다."
+        )
+
+        _ = documentView.heightThatFits(width: 360)
+        XCTAssertEqual(
+            documentView.textLayoutMeasurementCount,
+            firstMeasurementCount + 1,
+            "폭이 달라지면 새 레이아웃 높이를 한 번 측정해야 합니다."
+        )
+
+        documentView.apply(
+            source: "교체된 본문\n\n| 항목 | 상태 |\n| --- | --- |\n| 캐시 | 갱신 |",
+            fallbackDirectory: nil,
+            isDark: false
+        )
+        let changedSourceMeasurementCount =
+            documentView.textLayoutMeasurementCount
+        XCTAssertEqual(
+            changedSourceMeasurementCount,
+            firstMeasurementCount + 2,
+            "본문이 달라지면 현재 폭으로 새 높이를 측정해야 합니다."
+        )
+
+        _ = documentView.heightThatFits(width: 360)
+        XCTAssertEqual(
+            documentView.textLayoutMeasurementCount,
+            changedSourceMeasurementCount,
+            "변경된 본문도 첫 측정 뒤 같은 폭에서는 캐시를 재사용해야 합니다."
+        )
+    }
+
     func testTableUsesNativeTextTableBlocks() {
         let rendered = SelectableMarkdownAttributedRenderer.render(
             source: """

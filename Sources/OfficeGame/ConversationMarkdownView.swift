@@ -3,6 +3,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import ImageIO
 import MarkdownUI
 import OfficeCore
 import SwiftUI
@@ -669,15 +670,31 @@ private struct LocalMarkdownFileVideo: View {
     @Environment(\.liveWorkspaceFeedPresentationStore)
     private var feedPresentationStore
     @State private var isPlaying = false
+    @State private var hasPreparedPlayer = false
     @State private var aspectRatio =
         ConversationMarkdownVideoLayout.fallbackAspectRatio
 
     var body: some View {
         ZStack {
-            LocalMarkdownVideoSurface(
-                url: url,
-                isPlaying: isPlaying
-            )
+            Group {
+                if hasPreparedPlayer {
+                    LocalMarkdownVideoSurface(
+                        url: url,
+                        isPlaying: isPlaying
+                    )
+                } else {
+                    RoundedRectangle(
+                        cornerRadius: 10,
+                        style: .continuous
+                    )
+                    .fill(.black.opacity(0.82))
+                    .overlay {
+                        Image(systemName: "film")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.48))
+                    }
+                }
+            }
             .aspectRatio(aspectRatio, contentMode: .fit)
             .frame(maxWidth: ConversationMarkdownVideoLayout.maximumWidth)
             .clipShape(
@@ -685,7 +702,12 @@ private struct LocalMarkdownFileVideo: View {
             )
 
             Button {
-                isPlaying.toggle()
+                if isPlaying {
+                    isPlaying = false
+                } else {
+                    hasPreparedPlayer = true
+                    isPlaying = true
+                }
             } label: {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 15, weight: .bold))
@@ -923,18 +945,47 @@ private struct LocalMarkdownFileImage: View {
             return
         }
 
-        let data = await Task.detached(priority: .utility) {
-            try? Data(contentsOf: url, options: .mappedIfSafe)
+        let thumbnail = await Task.detached(priority: .utility) {
+            LocalMarkdownThumbnailLoader.loadCGImage(at: url)
         }.value
         guard
             !Task.isCancelled,
-            let data,
-            let loadedImage = NSImage(data: data)
+            let thumbnail
         else {
             return
         }
+        let loadedImage = NSImage(
+            cgImage: thumbnail,
+            size: NSSize(
+                width: thumbnail.width,
+                height: thumbnail.height
+            )
+        )
         LocalMarkdownImageCache.shared.store(loadedImage, at: url)
         image = loadedImage
+    }
+}
+
+enum LocalMarkdownThumbnailLoader {
+    static let maximumPixelDimension = 640
+
+    nonisolated static func loadCGImage(at url: URL) -> CGImage? {
+        guard
+            let source = CGImageSourceCreateWithURL(url as CFURL, nil)
+        else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixelDimension,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        )
     }
 }
 

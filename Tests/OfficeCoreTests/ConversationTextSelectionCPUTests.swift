@@ -1,6 +1,7 @@
 // 이 파일은 직원 전환과 스크롤 뒤 대화 화면이 유휴 상태로 돌아오는지 검증한다.
 
 import AppKit
+import Combine
 import Darwin
 import OfficeCore
 import SwiftUI
@@ -143,6 +144,47 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
 
         coordinator.deactivate("second")
         XCTAssertNil(coordinator.activeRegionID)
+    }
+
+    func testLiveScrollCoalescesHoverSelectionChanges() {
+        let coordinator = ConversationTextSelectionCoordinator.shared
+        coordinator.reset()
+        defer { coordinator.reset() }
+
+        coordinator.activate("before-scroll")
+        var publishedChanges = 0
+        let observation = coordinator.objectWillChange.sink {
+            publishedChanges += 1
+        }
+        defer { observation.cancel() }
+
+        let scrollView = NSScrollView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 300)
+        )
+        coordinator.beginLiveScroll(in: scrollView)
+
+        var hoveredRegion = "before-scroll"
+        for index in 0..<100 {
+            coordinator.handleHover(false, in: hoveredRegion)
+            hoveredRegion = "turn-\(index)"
+            coordinator.handleHover(true, in: hoveredRegion)
+        }
+
+        XCTAssertEqual(coordinator.activeRegionID, "before-scroll")
+        XCTAssertEqual(
+            publishedChanges,
+            0,
+            "스크롤 중 카드 경계를 지날 때마다 전체 선택 영역을 발행하면 안 됩니다."
+        )
+
+        coordinator.endLiveScroll(in: scrollView)
+
+        XCTAssertEqual(coordinator.activeRegionID, "turn-99")
+        XCTAssertEqual(
+            publishedChanges,
+            1,
+            "스크롤 종료 뒤 최종 호버 카드만 한 번 반영해야 합니다."
+        )
     }
 
     // 앱 루트에서 선택을 켜면 입력창을 포함한 전체 화면에 오버레이가

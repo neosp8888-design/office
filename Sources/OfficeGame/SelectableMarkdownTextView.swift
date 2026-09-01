@@ -82,6 +82,9 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     private var isDark = false
     private var measuredHeight = CGFloat.zero
     private var measuredWidth = CGFloat.zero
+    private var measuredUsedRect = NSRect.zero
+    private var hasValidTextMeasurement = false
+    private(set) var textLayoutMeasurementCount = 0
 
     init(
         fontSize: CGFloat,
@@ -155,6 +158,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         self.source = source
         self.fallbackDirectory = standardizedDirectory
         self.isDark = isDark
+        invalidateTextMeasurement()
 
         let previousSelection = textView.selectedRange()
         textView.textStorage?.setAttributedString(
@@ -186,6 +190,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         minimumLayoutWidth = normalized
         updateTextViewEmbedding()
         measuredWidth = 0
+        invalidateTextMeasurement()
         invalidateIntrinsicContentSize()
         needsLayout = true
     }
@@ -195,6 +200,9 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
             return minimumTextHeight
         }
         updateTextContainerWidth(layoutWidth(for: width))
+        if hasValidTextMeasurement {
+            return max(measuredHeight, minimumTextHeight)
+        }
         let height = measuredTextHeight()
         measuredHeight = height
         return height
@@ -309,6 +317,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
             return
         }
         measuredWidth = width
+        invalidateTextMeasurement()
         textView.textContainer?.containerSize = NSSize(
             width: width,
             height: 100_000
@@ -320,14 +329,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     }
 
     private func updateDocumentFrame() {
-        guard
-            let layoutManager = textView.layoutManager,
-            let textContainer = textView.textContainer
-        else {
-            return
-        }
-        layoutManager.ensureLayout(for: textContainer)
-        let usedRect = layoutManager.usedRect(for: textContainer)
+        let usedRect = measuredTextUsedRect()
         let layoutWidth = layoutWidth(for: bounds.width)
         textView.frame = NSRect(
             x: 0,
@@ -404,21 +406,41 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     }
 
     private func measuredTextHeight() -> CGFloat {
+        max(
+            minimumTextHeight,
+            ceil(measuredTextUsedRect().height)
+        )
+    }
+
+    private func measuredTextUsedRect() -> NSRect {
+        if hasValidTextMeasurement {
+            return measuredUsedRect
+        }
         guard
             let layoutManager = textView.layoutManager,
             let textContainer = textView.textContainer
         else {
-            return minimumTextHeight
+            return .zero
         }
         layoutManager.ensureLayout(for: textContainer)
-        return max(
-            minimumTextHeight,
-            ceil(layoutManager.usedRect(for: textContainer).height)
-        )
+        measuredUsedRect = layoutManager.usedRect(for: textContainer)
+        hasValidTextMeasurement = true
+        textLayoutMeasurementCount += 1
+        return measuredUsedRect
+    }
+
+    private func invalidateTextMeasurement() {
+        hasValidTextMeasurement = false
+        measuredUsedRect = .zero
     }
 
     private func updateMeasuredHeight(force: Bool = false) {
         guard measuredWidth > 0 else {
+            return
+        }
+        if force {
+            invalidateTextMeasurement()
+        } else if hasValidTextMeasurement {
             return
         }
         let updatedHeight = measuredTextHeight()
