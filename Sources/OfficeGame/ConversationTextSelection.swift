@@ -11,18 +11,24 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
     @Published private(set) var activeRegionID: String?
     private let activeLiveScrollViews = NSHashTable<NSScrollView>.weakObjects()
     private var pendingHoveredRegionID: String?
+    private var liveScrollIdleTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    // 일부 사용자 스크롤은 willStart/didEnd 알림 쌍 없이 didLive만 온다.
+    // 마지막 갱신 뒤 짧은 유휴 구간을 종료로 간주해 선택이 영구 정지하지
+    // 않게 한다. 관성 스크롤 중에는 새 didLive가 이 타이머를 계속 미룬다.
+    private static let liveScrollIdleDelayNanoseconds: UInt64 = 120_000_000
 
     private override init() {
         super.init()
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(liveScrollDidBeginOrUpdate(_:)),
+            selector: #selector(liveScrollDidBegin(_:)),
             name: NSScrollView.willStartLiveScrollNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(liveScrollDidBeginOrUpdate(_:)),
+            selector: #selector(liveScrollDidUpdate(_:)),
             name: NSScrollView.didLiveScrollNotification,
             object: nil
         )
@@ -35,6 +41,7 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
     }
 
     deinit {
+        liveScrollIdleTasks.values.forEach { $0.cancel() }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -53,6 +60,8 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
     }
 
     func reset() {
+        liveScrollIdleTasks.values.forEach { $0.cancel() }
+        liveScrollIdleTasks.removeAll()
         activeRegionID = nil
         pendingHoveredRegionID = nil
         activeLiveScrollViews.removeAllObjects()
@@ -94,6 +103,8 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
     }
 
     func endLiveScroll(in scrollView: NSScrollView) {
+        let scrollViewID = ObjectIdentifier(scrollView)
+        liveScrollIdleTasks.removeValue(forKey: scrollViewID)?.cancel()
         activeLiveScrollViews.remove(scrollView)
         guard activeLiveScrollViews.allObjects.isEmpty else {
             return
@@ -108,11 +119,20 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
     }
 
     @objc
-    private func liveScrollDidBeginOrUpdate(_ notification: Notification) {
+    private func liveScrollDidBegin(_ notification: Notification) {
         guard let scrollView = notification.object as? NSScrollView else {
             return
         }
         beginLiveScroll(in: scrollView)
+    }
+
+    @objc
+    private func liveScrollDidUpdate(_ notification: Notification) {
+        guard let scrollView = notification.object as? NSScrollView else {
+            return
+        }
+        beginLiveScroll(in: scrollView)
+        scheduleIdleEnd(for: scrollView)
     }
 
     @objc
@@ -121,6 +141,26 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
             return
         }
         endLiveScroll(in: scrollView)
+    }
+
+    private func scheduleIdleEnd(for scrollView: NSScrollView) {
+        let scrollViewID = ObjectIdentifier(scrollView)
+        liveScrollIdleTasks.removeValue(forKey: scrollViewID)?.cancel()
+        liveScrollIdleTasks[scrollViewID] = Task {
+            @MainActor [weak self] in
+            do {
+                try await Task.sleep(
+                    nanoseconds: Self.liveScrollIdleDelayNanoseconds
+                )
+            } catch {
+                return
+            }
+            guard let self else {
+                return
+            }
+            self.liveScrollIdleTasks.removeValue(forKey: scrollViewID)
+            self.endLiveScroll(in: scrollView)
+        }
     }
 }
 

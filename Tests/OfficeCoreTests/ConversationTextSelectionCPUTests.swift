@@ -187,6 +187,33 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
         )
     }
 
+    func testUnpairedLiveScrollUpdateSettlesAfterIdle() async throws {
+        let coordinator = ConversationTextSelectionCoordinator.shared
+        coordinator.reset()
+        defer { coordinator.reset() }
+
+        coordinator.activate("before-scroll")
+        let scrollView = NSScrollView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 300)
+        )
+
+        // 레거시 마우스 등을 통한 사용자 스크롤은 willStart/didEnd 없이
+        // didLive만 올 수 있다. 이때도 마지막 호버가 영구 보류되면 안 된다.
+        NotificationCenter.default.post(
+            name: NSScrollView.didLiveScrollNotification,
+            object: scrollView
+        )
+        coordinator.handleHover(true, in: "after-scroll")
+
+        XCTAssertEqual(coordinator.activeRegionID, "before-scroll")
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(
+            coordinator.activeRegionID,
+            "after-scroll",
+            "종료 알림이 없어도 스크롤 유휴 뒤 선택 영역을 반영해야 합니다."
+        )
+    }
+
     // 앱 루트에서 선택을 켜면 입력창을 포함한 전체 화면에 오버레이가
     // 생긴다. 실시간 피드는 분리된 NSHostingView에서도 선택을 명시적으로
     // 꺼야 상위 환경 변경으로 같은 문제가 되살아나지 않는다.
