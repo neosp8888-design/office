@@ -1689,7 +1689,7 @@ final class AgentDirector: ObservableObject {
     }
 
     func autoCompactPercent(for character: OfficeCharacter) -> Int {
-        min(95, max(50, autoCompactPercents[character] ?? 90))
+        min(95, max(20, autoCompactPercents[character] ?? 90))
     }
 
     func hasActiveSession(for character: OfficeCharacter) -> Bool {
@@ -1998,7 +1998,7 @@ final class AgentDirector: ObservableObject {
                     )
                     restoredAutoCompactPercents[character] = min(
                         95,
-                        max(50, stored.autoCompactPercent ?? 90)
+                        max(20, stored.autoCompactPercent ?? 90)
                     )
                 }
                 autoCompactPercents = restoredAutoCompactPercents

@@ -10,6 +10,10 @@ const migrationSource = readFileSync(
   new URL("../../database/migrations/025_context_compaction.sql", import.meta.url),
   "utf8",
 );
+const lowerBoundMigrationSource = readFileSync(
+  new URL("../../database/migrations/032_auto_compact_lower_bound.sql", import.meta.url),
+  "utf8",
+);
 const agentsInstructions = readFileSync(
   new URL("../../AGENTS.md", import.meta.url),
   "utf8",
@@ -26,7 +30,7 @@ test("컨텍스트 설정과 수동 압축 API를 신뢰된 로컬 JSON 경로�
   assert.equal(serverSource.includes("context\\/compact$/"), true);
   assert.match(
     serverSource,
-    /updateCharacterContextSettings[\s\S]*autoCompactPercent < 50[\s\S]*autoCompactPercent > 95/,
+    /updateCharacterContextSettings[\s\S]*autoCompactPercent < 20[\s\S]*autoCompactPercent > 95/,
   );
   assert.match(
     serverSource,
@@ -47,6 +51,10 @@ test("자동 압축 기준 migration은 90% 기본값과 50~95% 제약을 둔다
   assert.match(
     migrationSource,
     /auto_compact_percent BETWEEN 50 AND 95/,
+  );
+  assert.match(
+    lowerBoundMigrationSource,
+    /auto_compact_percent BETWEEN 20 AND 95/,
   );
 });
 

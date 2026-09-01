@@ -1942,7 +1942,7 @@ private struct ContextCompactionControls: View {
 
                 Slider(
                     value: $draftPercent,
-                    in: 50 ... 95,
+                    in: 20 ... 95,
                     step: 5,
                     onEditingChanged: thresholdEditingChanged
                 )

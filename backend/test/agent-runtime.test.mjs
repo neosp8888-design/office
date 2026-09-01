@@ -73,9 +73,10 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test("자동 압축 기준은 50~95% 범위와 90% 기본값을 사용한다", () => {
+test("자동 압축 기준은 20~95% 범위와 90% 기본값을 사용한다", () => {
   assert.equal(normalizeAutoCompactPercent(undefined), 90);
-  assert.equal(normalizeAutoCompactPercent(42), 50);
+  assert.equal(normalizeAutoCompactPercent(42), 42);
+  assert.equal(normalizeAutoCompactPercent(12), 20);
   assert.equal(normalizeAutoCompactPercent(93.6), 94);
   assert.equal(normalizeAutoCompactPercent(100), 95);
 });

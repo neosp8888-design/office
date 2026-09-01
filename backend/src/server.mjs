@@ -419,11 +419,11 @@ async function updateCharacterContextSettings(response, characterID, body) {
   const autoCompactPercent = Number(body.autoCompactPercent);
   if (
     !Number.isInteger(autoCompactPercent) ||
-    autoCompactPercent < 50 ||
+    autoCompactPercent < 20 ||
     autoCompactPercent > 95
   ) {
     send(response, 400, {
-      error: "자동 압축 기준은 50% 이상 95% 이하의 정수여야 합니다.",
+      error: "자동 압축 기준은 20% 이상 95% 이하의 정수여야 합니다.",
     });
     return;
   }

@@ -3592,7 +3592,7 @@ export function normalizeAutoCompactPercent(value) {
   if (!Number.isFinite(percent)) {
     return 90;
   }
-  return Math.min(95, Math.max(50, Math.round(percent)));
+  return Math.min(95, Math.max(20, Math.round(percent)));
 }
 
 function workspaceReviewPayload(workspace, diff) {
