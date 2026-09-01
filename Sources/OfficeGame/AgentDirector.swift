@@ -687,6 +687,43 @@ struct CharacterIdentitySettingsDraft: Equatable, Sendable {
     }
 }
 
+struct ActiveSessionRestoreState: Equatable {
+    let conversationIDs: [OfficeCharacter: UUID]
+    let sessionIDs: [OfficeCharacter: String]
+
+    init(activeSessions: [StoredActiveSession]) {
+        var restoredConversationIDs: [OfficeCharacter: UUID] = [:]
+        var restoredSessionIDs: [OfficeCharacter: String] = [:]
+
+        for storedSession in activeSessions {
+            guard
+                let character = OfficeCharacter(
+                    rawValue: storedSession.characterId
+                ),
+                let externalSessionID = storedSession.externalSessionId?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                !externalSessionID.isEmpty
+            else {
+                continue
+            }
+            restoredConversationIDs[character] = storedSession.conversationId
+            restoredSessionIDs[character] = externalSessionID
+        }
+
+        conversationIDs = restoredConversationIDs
+        sessionIDs = restoredSessionIDs
+    }
+}
+
+enum CharacterSessionInvalidationPolicy {
+    static func requiresNewSession(
+        previous: CharacterAgentSettings,
+        updated: CharacterAgentSettings
+    ) -> Bool {
+        previous.backend != updated.backend
+    }
+}
+
 @MainActor
 final class AgentDirector: ObservableObject {
     @Published private(set) var characters: [CharacterConfiguration]
@@ -1311,6 +1348,7 @@ final class AgentDirector: ObservableObject {
                     attachmentPaths: attachmentPaths
                 )
                 conversationIDs[character.id] = started.conversationId
+                await synchronizeActiveSession(for: character.id)
                 liveFeedStore.beginResponseAnimation(
                     for: started.turnId,
                     characterID: character.id.rawValue,
@@ -2004,29 +2042,9 @@ final class AgentDirector: ObservableObject {
                 autoCompactPercents = restoredAutoCompactPercents
 
                 let activeSessions = try await database.fetchActiveSessions()
-                var restoredConversationIDs:
-                    [OfficeCharacter: UUID] = [:]
-                var restoredSessionIDs: [OfficeCharacter: String] = [:]
-                for storedSession in activeSessions {
-                    guard
-                        let character = OfficeCharacter(
-                            rawValue: storedSession.characterId
-                        ),
-                        let externalSessionID =
-                            storedSession.externalSessionId?
-                            .trimmingCharacters(
-                                in: .whitespacesAndNewlines
-                            ),
-                        !externalSessionID.isEmpty
-                    else {
-                        continue
-                    }
-                    restoredConversationIDs[character] =
-                        storedSession.conversationId
-                    restoredSessionIDs[character] = externalSessionID
-                }
-                conversationIDs = restoredConversationIDs
-                sessionIDs = restoredSessionIDs
+                applyActiveSessionRestoreState(
+                    ActiveSessionRestoreState(activeSessions: activeSessions)
+                )
                 sessionRestoreError = nil
                 isReadyForSubmissions = true
                 return
@@ -2043,6 +2061,29 @@ final class AgentDirector: ObservableObject {
                 }
             }
         }
+    }
+
+    private func synchronizeActiveSession(for character: OfficeCharacter) async {
+        guard let activeSessions = try? await database.fetchActiveSessions()
+        else {
+            return
+        }
+        let restored = ActiveSessionRestoreState(activeSessions: activeSessions)
+        guard
+            let conversationID = restored.conversationIDs[character],
+            let sessionID = restored.sessionIDs[character]
+        else {
+            return
+        }
+        conversationIDs[character] = conversationID
+        sessionIDs[character] = sessionID
+    }
+
+    private func applyActiveSessionRestoreState(
+        _ restored: ActiveSessionRestoreState
+    ) {
+        conversationIDs = restored.conversationIDs
+        sessionIDs = restored.sessionIDs
     }
 
     private func startRealtimeUpdates() {
@@ -2340,6 +2381,12 @@ final class AgentDirector: ObservableObject {
     ) async -> Bool {
         do {
             let turn = try await database.fetchLiveFeedTurn(id: turnID)
+            if let character = OfficeCharacter(rawValue: turn.characterId) {
+                // session.changed는 활성 세션을 DB에 확정한 뒤 전송된다.
+                // 새 CLI 세션의 ID가 작업 시작 응답보다 늦게 도착해도
+                // 여기서 다시 동기화한다.
+                await synchronizeActiveSession(for: character)
+            }
             var turns = liveTurns.filter { $0.id != turn.id }
             turns.append(turn)
             turns.sort {
@@ -2610,7 +2657,10 @@ final class AgentDirector: ObservableObject {
             return
         }
         let previous = characters[index]
-        if previous.agentSettings != settings {
+        if CharacterSessionInvalidationPolicy.requiresNewSession(
+            previous: previous.agentSettings,
+            updated: settings
+        ) {
             invalidateSession(for: character)
         }
         characters[index] = previous.applying(settings)
@@ -2629,7 +2679,6 @@ final class AgentDirector: ObservableObject {
         guard previous.identityPrompt != identityPrompt else {
             return
         }
-        invalidateSession(for: character)
         characters[index] = previous.applying(identityPrompt: identityPrompt)
     }
 

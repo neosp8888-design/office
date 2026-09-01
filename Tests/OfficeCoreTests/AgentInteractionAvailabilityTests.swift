@@ -1,3 +1,5 @@
+import Foundation
+import OfficeCore
 import XCTest
 @testable import OfficeGame
 
@@ -107,6 +109,73 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
         )
 
         XCTAssertEqual(profile.autoCompactPercent, 95)
+    }
+
+    func testActiveSessionRestoreStateUsesOnlyKnownNonemptySessions() {
+        let bossConversationID = UUID()
+        let state = ActiveSessionRestoreState(
+            activeSessions: [
+                StoredActiveSession(
+                    characterId: OfficeCharacter.boss.rawValue,
+                    externalSessionId: "  codex-thread-1  ",
+                    conversationId: bossConversationID
+                ),
+                StoredActiveSession(
+                    characterId: "unknown-character",
+                    externalSessionId: "unknown-session",
+                    conversationId: UUID()
+                ),
+                StoredActiveSession(
+                    characterId: OfficeCharacter.leftMan.rawValue,
+                    externalSessionId: "  ",
+                    conversationId: UUID()
+                )
+            ]
+        )
+
+        XCTAssertEqual(state.conversationIDs, [.boss: bossConversationID])
+        XCTAssertEqual(state.sessionIDs, [.boss: "codex-thread-1"])
+    }
+
+    func testOnlyBackendChangesRequireANewSession() {
+        let previous = CharacterAgentSettings(
+            backend: .codex,
+            model: "gpt-5.6-sol",
+            effort: "high",
+            fastMode: false,
+            permission: .workspaceWrite
+        )
+        var modelChange = previous
+        modelChange.model = "gpt-5.6-terra"
+        var effortChange = previous
+        effortChange.effort = "max"
+        var fastModeChange = previous
+        fastModeChange.fastMode = true
+        var permissionChange = previous
+        permissionChange.permission = .fullAccess
+
+        for updated in [
+            modelChange,
+            effortChange,
+            fastModeChange,
+            permissionChange
+        ] {
+            XCTAssertFalse(
+                CharacterSessionInvalidationPolicy.requiresNewSession(
+                    previous: previous,
+                    updated: updated
+                )
+            )
+        }
+
+        var backendChange = previous
+        backendChange.backend = .claude
+        XCTAssertTrue(
+            CharacterSessionInvalidationPolicy.requiresNewSession(
+                previous: previous,
+                updated: backendChange
+            )
+        )
     }
 
     func testContextCompactionConfirmationUsesConfiguredDisplayName() {
