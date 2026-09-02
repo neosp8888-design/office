@@ -50,7 +50,7 @@ import {
   antigravitySessionUsage,
 } from "./antigravity-local-state.mjs";
 import {
-  antigravityStepReasoning,
+  antigravityStepReasonings,
 } from "./antigravity-reasoning.mjs";
 import {
   CodexRolloutCollaborationTracker,
@@ -93,6 +93,7 @@ const MAX_TURN_SNAPSHOT_BYTES = 24 * 1024 * 1024;
 const ROLLOUT_TAIL_CHUNK_BYTES = 64 * 1024;
 const MAX_WORKSPACE_DIFF_BYTES = 512 * 1024;
 const CODEX_ROLLOUT_MONITOR_INTERVAL_MS = 400;
+const ANTIGRAVITY_REASONING_MONITOR_INTERVAL_MS = 400;
 const rolloutPathCache = new Map();
 
 const BLOCKED_WORKSPACE_STATUSES = new Set([
@@ -173,7 +174,7 @@ export class AgentRuntime {
     codexCompactor = compactCodexThread,
     contextUsageReader = sessionContextUsage,
     antigravityUsageReader = antigravitySessionUsage,
-    antigravityReasoningReader = antigravityStepReasoning,
+    antigravityReasoningReader = antigravityStepReasonings,
     embeddingService = null,
   }) {
     this.pool = pool;
@@ -555,6 +556,9 @@ export class AgentRuntime {
         : null,
       rolloutMonitorTimer: null,
       rolloutPollPromise: null,
+      reasoningMonitorTimer: null,
+      reasoningPollPromise: null,
+      emittedReasoning: new Map(),
       hasSeenInitialCodexReasoning: false,
       pendingInitialCodexReasoning: null,
       pendingAgentMessage: null,
@@ -1269,6 +1273,9 @@ export class AgentRuntime {
     if (state.character.backend === "codex") {
       this.startCodexRolloutMonitor(state);
     }
+    if (state.character.backend === "antigravity") {
+      this.startAntigravityReasoningMonitor(state);
+    }
 
     const outputTask = this.consumeOutput(state, child.stdout);
     const errorTask = collectStream(child.stderr);
@@ -1279,6 +1286,9 @@ export class AgentRuntime {
     } finally {
       if (state.character.backend === "codex") {
         await this.stopCodexRolloutMonitor(state);
+      }
+      if (state.character.backend === "antigravity") {
+        await this.stopAntigravityReasoningMonitor(state);
       }
     }
     const stderr = (await errorTask).trim();
@@ -2128,45 +2138,96 @@ export class AgentRuntime {
     }
   }
 
-  // agy는 추론 요약을 stdout으로 내보내지 않으므로, 단계가 끝났다는 신호를
-  // 받은 시점에 대화 SQLite에서 그 단계의 추론만 읽어 활동으로 올린다.
-  antigravityReasoningActivities(state, event) {
+  // agy는 추론을 stdout으로 내보내지 않지만 대화 SQLite에는 진행 중에도 조금씩
+  // 쌓는다. Codex 기록과 같은 주기로 읽어 추론 카드를 자라게 한다.
+  startAntigravityReasoningMonitor(state) {
     if (
       state.character.backend !== "antigravity" ||
-      !Number.isInteger(event.reasoningStepIndex)
+      state.reasoningMonitorTimer
     ) {
-      return [];
+      return;
     }
-    const conversationID = event.reasoningConversationID ??
-      state.externalSessionID;
-    if (!conversationID) {
-      return [];
+    state.reasoningMonitorTimer = setInterval(() => {
+      void this.consumeAntigravityReasoning(state).catch((error) => {
+        console.warn(
+          "Antigravity 추론 기록을 읽지 못했습니다.",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    }, ANTIGRAVITY_REASONING_MONITOR_INTERVAL_MS);
+    state.reasoningMonitorTimer.unref?.();
+  }
+
+  async stopAntigravityReasoningMonitor(state) {
+    if (state.reasoningMonitorTimer) {
+      clearInterval(state.reasoningMonitorTimer);
+      state.reasoningMonitorTimer = null;
     }
-    let text = null;
+    if (state.reasoningPollPromise) {
+      try {
+        await state.reasoningPollPromise;
+      } catch {
+        // 마지막 직접 읽기에서 한 번 더 복구를 시도한다.
+      }
+    }
     try {
-      text = this.antigravityReasoningReader(
-        conversationID,
-        event.reasoningStepIndex,
-      );
+      // 진행 중으로 남은 카드가 없도록 마지막 상태를 확정한다.
+      await this.consumeAntigravityReasoning(state, { final: true });
     } catch (error) {
       console.warn(
-        "Antigravity 추론 기록을 읽지 못했습니다.",
+        "Antigravity 추론 기록의 마지막 갱신을 읽지 못했습니다.",
         error instanceof Error ? error.message : String(error),
       );
-      return [];
     }
-    if (!text) {
-      return [];
+  }
+
+  async consumeAntigravityReasoning(state, { final = false } = {}) {
+    if (
+      state.character.backend !== "antigravity" ||
+      !state.externalSessionID
+    ) {
+      return;
     }
-    return [{
-      kind: "thinking",
-      text,
-      eventKey:
-        `antigravity:${conversationID}:${event.reasoningStepIndex}:thinking`,
-      status: "completed",
-      preserveText: false,
-      messageScoped: false,
-    }];
+    if (state.reasoningPollPromise) {
+      return state.reasoningPollPromise;
+    }
+    const conversationID = state.externalSessionID;
+    const poll = (async () => {
+      const reasonings = this.antigravityReasoningReader(conversationID);
+      const emitted = state.emittedReasoning ??= new Map();
+      const activities = [];
+      for (const { stepIndex, text, done } of reasonings) {
+        const status = done || final ? "completed" : "running";
+        const previous = emitted.get(stepIndex);
+        if (previous?.text === text && previous?.status === status) {
+          continue;
+        }
+        emitted.set(stepIndex, { text, status });
+        activities.push({
+          kind: "thinking",
+          text,
+          eventKey: `antigravity:${conversationID}:${stepIndex}:thinking`,
+          status,
+          preserveText: false,
+          messageScoped: false,
+        });
+      }
+      if (activities.length === 0) {
+        return;
+      }
+      await this.promotePendingAgentMessage(state);
+      for (const activity of activities) {
+        await this.addParsedActivity(state, this.scopedActivity(state, activity));
+      }
+    })();
+    state.reasoningPollPromise = poll;
+    try {
+      await poll;
+    } finally {
+      if (state.reasoningPollPromise === poll) {
+        state.reasoningPollPromise = null;
+      }
+    }
   }
 
   async consumeCodexRolloutActivities(state) {
@@ -2260,7 +2321,6 @@ export class AgentRuntime {
     const activities = [
       ...(Array.isArray(event.activities) ? event.activities : []),
       ...(event.activity ? [event.activity] : []),
-      ...this.antigravityReasoningActivities(state, event),
     ];
     const pendingReasoningBeforeEvent = activities.length > 0
       ? state.pendingInitialCodexReasoning

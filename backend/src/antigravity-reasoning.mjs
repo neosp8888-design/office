@@ -18,31 +18,44 @@ const REASONING_FIELD = 3;
 const MAX_PAYLOAD_BYTES = 256 * 1024;
 // 다른 백엔드의 추론 활동과 같은 상한을 쓴다.
 const MAX_REASONING_LENGTH = 6_000;
+// agy는 단계가 끝나야 status를 3으로 바꾼다. 그 전까지는 추론이 자라는 중이다.
+const STEP_STATUS_DONE = 3;
 
-export function antigravityStepReasoning(sessionID, stepIndex, { root } = {}) {
+// 추론은 단계가 끝날 때가 아니라 진행 중에도 조금씩 쌓이므로,
+// 지금까지 쌓인 단계별 추론을 통째로 돌려주고 호출자가 갱신 여부를 판단한다.
+export function antigravityStepReasonings(sessionID, { root } = {}) {
   const path = antigravityConversationPath(sessionID, root);
-  const index = Number(stepIndex);
-  if (!path || !Number.isInteger(index) || index < 0 || !existsSync(path)) {
-    return null;
+  if (!path || !existsSync(path)) {
+    return [];
   }
   let database;
   try {
     const { DatabaseSync } = require("node:sqlite");
     database = new DatabaseSync(path, { readOnly: true });
-    const row = database.prepare(
+    const rows = database.prepare(
       `
-        SELECT step_payload
+        SELECT idx, status, step_payload
         FROM steps
-        WHERE idx = ?
-          AND step_type = ?
+        WHERE step_type = ?
           AND step_payload IS NOT NULL
           AND length(step_payload) <= ?
+        ORDER BY idx
       `,
-    ).get(index, AGENT_RESPONSE_STEP_TYPE, MAX_PAYLOAD_BYTES);
-    return row ? antigravityStepPayloadReasoning(row.step_payload) : null;
+    ).all(AGENT_RESPONSE_STEP_TYPE, MAX_PAYLOAD_BYTES);
+    const reasonings = [];
+    for (const row of rows) {
+      const text = antigravityStepPayloadReasoning(row.step_payload);
+      if (!text) continue;
+      reasonings.push({
+        stepIndex: Number(row.idx),
+        text,
+        done: Number(row.status) === STEP_STATUS_DONE,
+      });
+    }
+    return reasonings;
   } catch {
-    // 대화 파일이 갱신되는 도중의 읽기 실패는 다음 단계에서 회복한다.
-    return null;
+    // 대화 파일이 갱신되는 도중의 읽기 실패는 다음 폴링에서 회복한다.
+    return [];
   } finally {
     try {
       database?.close();

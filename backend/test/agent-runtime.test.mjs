@@ -5377,52 +5377,82 @@ test("대화 보관함은 전체 검색을 12건 페이지로 요청한다", () 
   assert.match(querySource, /includesCharacterMinimums: false/);
 });
 
-test("Antigravity 단계가 끝나면 대화 DB의 추론을 활동으로 올린다", () => {
-  const calls = [];
-  const runtime = new AgentRuntime({
-    pool: {},
-    withTransaction: async (operation) => await operation({}),
-    workdir: "/repo",
-    repositoryRoot: "/repo",
-    broadcast: () => {},
-    antigravityReasoningReader: (conversationID, stepIndex) => {
-      calls.push({ conversationID, stepIndex });
-      return stepIndex === 1 ? "도구 선택을 먼저 검토했다." : null;
-    },
-  });
-  const state = {
-    character: { id: "right-man", backend: "antigravity" },
-    externalSessionID: "conversation-1",
-  };
+// 추론은 단계가 끝나기 전부터 자란다. 폴링할 때마다 자란 만큼 카드가 갱신되고,
+// 끝나기 전에는 진행 중으로 남아야 화면에서 실시간으로 보인다.
+test("Antigravity 추론은 자라는 도중에도 진행 중 카드로 갱신된다", async () => {
+  const added = [];
+  const runtime = antigravityReasoningRuntime([
+    [{ stepIndex: 1, text: "상자 수를 센다.", done: false }],
+    [{ stepIndex: 1, text: "상자 수를 센다. 검산한다.", done: false }],
+    [{ stepIndex: 1, text: "상자 수를 센다. 검산한다.", done: true }],
+  ], added);
+  const state = antigravityReasoningState();
 
-  assert.deepEqual(
-    runtime.antigravityReasoningActivities(state, {
-      reasoningStepIndex: 1,
-      reasoningConversationID: "conversation-1",
-    }),
-    [{
+  await runtime.consumeAntigravityReasoning(state);
+  await runtime.consumeAntigravityReasoning(state);
+  await runtime.consumeAntigravityReasoning(state);
+
+  assert.deepEqual(added, [
+    {
       kind: "thinking",
-      text: "도구 선택을 먼저 검토했다.",
+      text: "상자 수를 센다.",
+      eventKey: "antigravity:conversation-1:1:thinking",
+      status: "running",
+      preserveText: false,
+      messageScoped: false,
+    },
+    {
+      kind: "thinking",
+      text: "상자 수를 센다. 검산한다.",
+      eventKey: "antigravity:conversation-1:1:thinking",
+      status: "running",
+      preserveText: false,
+      messageScoped: false,
+    },
+    {
+      kind: "thinking",
+      text: "상자 수를 센다. 검산한다.",
       eventKey: "antigravity:conversation-1:1:thinking",
       status: "completed",
       preserveText: false,
       messageScoped: false,
-    }],
-  );
-  assert.deepEqual(
-    runtime.antigravityReasoningActivities(state, {
-      reasoningStepIndex: 3,
-      reasoningConversationID: "conversation-1",
-    }),
-    [],
-  );
-  assert.deepEqual(calls, [
-    { conversationID: "conversation-1", stepIndex: 1 },
-    { conversationID: "conversation-1", stepIndex: 3 },
+    },
   ]);
 });
 
-test("추론 읽기는 Antigravity 이외의 백엔드와 단계 정보 없는 이벤트를 건너뛴다", () => {
+test("내용과 상태가 그대로면 같은 추론을 다시 올리지 않는다", async () => {
+  const added = [];
+  const runtime = antigravityReasoningRuntime([
+    [{ stepIndex: 1, text: "같은 추론", done: false }],
+    [{ stepIndex: 1, text: "같은 추론", done: false }],
+  ], added);
+  const state = antigravityReasoningState();
+
+  await runtime.consumeAntigravityReasoning(state);
+  await runtime.consumeAntigravityReasoning(state);
+
+  assert.equal(added.length, 1);
+});
+
+test("턴이 끝나면 진행 중이던 추론 카드를 완료로 확정한다", async () => {
+  const added = [];
+  const runtime = antigravityReasoningRuntime([
+    [{ stepIndex: 2, text: "끝내 완료 표시가 오지 않았다.", done: false }],
+    [{ stepIndex: 2, text: "끝내 완료 표시가 오지 않았다.", done: false }],
+  ], added);
+  const state = antigravityReasoningState();
+
+  await runtime.consumeAntigravityReasoning(state);
+  await runtime.stopAntigravityReasoningMonitor(state);
+
+  assert.deepEqual(added.map((activity) => activity.status), [
+    "running",
+    "completed",
+  ]);
+});
+
+test("추론 폴링은 Antigravity 이외의 백엔드와 대화 ID 없는 상태를 건너뛴다", async () => {
+  const added = [];
   let reads = 0;
   const runtime = new AgentRuntime({
     pool: {},
@@ -5432,34 +5462,27 @@ test("추론 읽기는 Antigravity 이외의 백엔드와 단계 정보 없는 �
     broadcast: () => {},
     antigravityReasoningReader: () => {
       reads += 1;
-      return "읽으면 안 된다.";
+      return [{ stepIndex: 1, text: "읽으면 안 된다.", done: true }];
     },
   });
+  runtime.addParsedActivity = async (_state, activity) => {
+    added.push(activity);
+  };
 
-  assert.deepEqual(
-    runtime.antigravityReasoningActivities(
-      {
-        character: { id: "left-man", backend: "claude" },
-        externalSessionID: "session-1",
-      },
-      { reasoningStepIndex: 1 },
-    ),
-    [],
-  );
-  assert.deepEqual(
-    runtime.antigravityReasoningActivities(
-      {
-        character: { id: "right-man", backend: "antigravity" },
-        externalSessionID: "conversation-1",
-      },
-      { responseDelta: "진행 중" },
-    ),
-    [],
-  );
+  await runtime.consumeAntigravityReasoning({
+    character: { id: "left-man", backend: "claude" },
+    externalSessionID: "session-1",
+  });
+  await runtime.consumeAntigravityReasoning({
+    character: { id: "right-man", backend: "antigravity" },
+    externalSessionID: null,
+  });
+
   assert.equal(reads, 0);
+  assert.equal(added.length, 0);
 });
 
-test("추론 읽기가 실패해도 턴 진행을 막지 않는다", () => {
+test("추론 읽기가 실패해도 턴 종료를 막지 않는다", async () => {
   const runtime = new AgentRuntime({
     pool: {},
     withTransaction: async (operation) => await operation({}),
@@ -5471,14 +5494,35 @@ test("추론 읽기가 실패해도 턴 진행을 막지 않는다", () => {
     },
   });
 
-  assert.deepEqual(
-    runtime.antigravityReasoningActivities(
-      {
-        character: { id: "right-man", backend: "antigravity" },
-        externalSessionID: "conversation-1",
-      },
-      { reasoningStepIndex: 2 },
-    ),
-    [],
-  );
+  await runtime.stopAntigravityReasoningMonitor(antigravityReasoningState());
 });
+
+function antigravityReasoningRuntime(readings, added) {
+  let call = 0;
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    antigravityReasoningReader: () => readings[
+      Math.min(call++, readings.length - 1)
+    ],
+  });
+  runtime.promotePendingAgentMessage = async () => {};
+  runtime.scopedActivity = (_state, activity) => activity;
+  runtime.addParsedActivity = async (_state, activity) => {
+    added.push(activity);
+  };
+  return runtime;
+}
+
+function antigravityReasoningState() {
+  return {
+    character: { id: "right-man", backend: "antigravity" },
+    externalSessionID: "conversation-1",
+    reasoningMonitorTimer: null,
+    reasoningPollPromise: null,
+    emittedReasoning: new Map(),
+  };
+}

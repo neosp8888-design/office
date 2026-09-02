@@ -9,7 +9,7 @@ import test from "node:test";
 
 import {
   antigravityStepPayloadReasoning,
-  antigravityStepReasoning,
+  antigravityStepReasonings,
 } from "../src/antigravity-reasoning.mjs";
 
 const sessionID = "9dc0e8e9-427e-43a8-9803-345c9cda9d2c";
@@ -41,7 +41,7 @@ test("추론이 길면 다른 백엔드와 같은 6,000자 상한으로 자른�
   assert.equal(text.endsWith("…"), true);
 });
 
-test("대화 DB에서 해당 단계의 추론만 골라 읽는다", () => {
+test("대화 DB에서 응답 단계의 추론만 골라 진행 여부와 함께 읽는다", () => {
   const root = mkdtempSync(join(tmpdir(), "officestra-agy-reasoning-"));
   const database = new DatabaseSync(join(root, `${sessionID}.db`));
   try {
@@ -49,26 +49,60 @@ test("대화 DB에서 해당 단계의 추론만 골라 읽는다", () => {
       CREATE TABLE steps (
         idx INTEGER PRIMARY KEY,
         step_type INTEGER,
+        status INTEGER,
         step_payload BLOB
       );
     `);
     const insert = database.prepare(
-      "INSERT INTO steps (idx, step_type, step_payload) VALUES (?, ?, ?)",
+      "INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?, ?, ?, ?)",
     );
-    insert.run(0, 14, stepPayload({ answer: "사용자 입력" }));
-    insert.run(1, 15, stepPayload({ reasoning: "먼저 파일을 만들기로 했다." }));
-    insert.run(2, 132, stepPayload({ reasoning: "도구 단계는 무시한다." }));
-    insert.run(3, 15, stepPayload({ answer: "작업을 마쳤습니다." }));
+    insert.run(0, 14, 3, stepPayload({ answer: "사용자 입력" }));
+    insert.run(1, 15, 3, stepPayload({ reasoning: "먼저 파일을 만들기로 했다." }));
+    insert.run(2, 132, 3, stepPayload({ reasoning: "도구 단계는 무시한다." }));
+    insert.run(3, 15, 8, stepPayload({ reasoning: "검산을 시작한다." }));
+    insert.run(4, 15, 3, stepPayload({ answer: "작업을 마쳤습니다." }));
     database.close();
 
-    assert.equal(
-      antigravityStepReasoning(sessionID, 1, { root }),
-      "먼저 파일을 만들기로 했다.",
-    );
-    assert.equal(antigravityStepReasoning(sessionID, 2, { root }), null);
-    assert.equal(antigravityStepReasoning(sessionID, 3, { root }), null);
-    assert.equal(antigravityStepReasoning(sessionID, 99, { root }), null);
+    assert.deepEqual(antigravityStepReasonings(sessionID, { root }), [
+      { stepIndex: 1, text: "먼저 파일을 만들기로 했다.", done: true },
+      { stepIndex: 3, text: "검산을 시작한다.", done: false },
+    ]);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 같은 단계를 여러 번 읽으면 그동안 자란 추론이 그대로 보여야 한다.
+test("진행 중인 단계의 추론이 자라면 늘어난 원문을 읽는다", () => {
+  const root = mkdtempSync(join(tmpdir(), "officestra-agy-reasoning-"));
+  const path = join(root, `${sessionID}.db`);
+  const database = new DatabaseSync(path);
+  try {
+    database.exec(`
+      CREATE TABLE steps (
+        idx INTEGER PRIMARY KEY,
+        step_type INTEGER,
+        status INTEGER,
+        step_payload BLOB
+      );
+    `);
+    database.prepare(
+      "INSERT INTO steps (idx, step_type, status, step_payload) VALUES (1, 15, 8, ?)",
+    ).run(stepPayload({ reasoning: "상자 수를 센다." }));
+
+    assert.deepEqual(antigravityStepReasonings(sessionID, { root }), [
+      { stepIndex: 1, text: "상자 수를 센다.", done: false },
+    ]);
+
+    database.prepare(
+      "UPDATE steps SET status = 3, step_payload = ? WHERE idx = 1",
+    ).run(stepPayload({ reasoning: "상자 수를 센다. 그리고 검산했다." }));
+
+    assert.deepEqual(antigravityStepReasonings(sessionID, { root }), [
+      { stepIndex: 1, text: "상자 수를 센다. 그리고 검산했다.", done: true },
+    ]);
+  } finally {
+    database.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -76,9 +110,8 @@ test("대화 DB에서 해당 단계의 추론만 골라 읽는다", () => {
 test("세션 ID나 대화 파일이 없으면 조용히 건너뛴다", () => {
   const root = mkdtempSync(join(tmpdir(), "officestra-agy-reasoning-"));
   try {
-    assert.equal(antigravityStepReasoning("세션 아님", 1, { root }), null);
-    assert.equal(antigravityStepReasoning(sessionID, 1, { root }), null);
-    assert.equal(antigravityStepReasoning(sessionID, -1, { root }), null);
+    assert.deepEqual(antigravityStepReasonings("세션 아님", { root }), []);
+    assert.deepEqual(antigravityStepReasonings(sessionID, { root }), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

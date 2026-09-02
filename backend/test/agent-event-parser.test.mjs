@@ -165,46 +165,6 @@ test("Antigravity 응답 조각과 함께 전달된 thinking도 활동으로 추
   ]);
 });
 
-// agy는 추론 요약을 stdout에 싣지 않는다. 실제 스트림에는 text_delta조차 없는
-// 응답 단계가 오므로, 그 단계 번호를 넘겨 대화 DB에서 읽어올 수 있어야 한다.
-test("Antigravity 응답 단계가 끝나면 추론을 읽을 단계 번호를 전달한다", () => {
-  const event = parseAgentEvent(
-    JSON.stringify({
-      event: "step_update",
-      step_update: {
-        conversation_id: "conversation-1",
-        step_index: 1,
-        state: "DONE",
-        step_type: "agent_response",
-        usage: { input_tokens: 10, output_tokens: 0, thinking_tokens: 367 },
-      },
-    }),
-    "antigravity",
-  );
-
-  assert.equal(event.reasoningStepIndex, 1);
-  assert.equal(event.reasoningConversationID, "conversation-1");
-});
-
-test("Antigravity 응답 단계가 진행 중이면 추론 단계 번호를 넘기지 않는다", () => {
-  const event = parseAgentEvent(
-    JSON.stringify({
-      event: "step_update",
-      step_update: {
-        conversation_id: "conversation-1",
-        step_index: 5,
-        state: "ACTIVE",
-        step_type: "agent_response",
-        text_delta: "정리 중입니다.",
-      },
-    }),
-    "antigravity",
-  );
-
-  assert.equal(event.responseDelta, "정리 중입니다.");
-  assert.equal(event.reasoningStepIndex, undefined);
-});
-
 test("Antigravity 명령 도구는 출력 없이 안전한 명령만 공개한다", () => {
   const event = parseAgentEvent(
     JSON.stringify({

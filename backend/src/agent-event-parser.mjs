@@ -662,23 +662,13 @@ function parseAntigravityEvent(object, workdir) {
             }),
           ]
         : [];
-      // agy는 추론 요약을 stdout에 싣지 않고 대화 SQLite에만 남긴다.
-      // 단계가 끝난 시점을 런타임에 알려 그때 읽어오게 한다.
-      const reasoningStep = state === "DONE" &&
-          Number.isInteger(update.step_index)
-        ? {
-          reasoningStepIndex: update.step_index,
-          reasoningConversationID: cleanText(update.conversation_id),
-        }
-        : null;
-      if (!delta && !usage && activities.length === 0 && !reasoningStep) {
+      if (!delta && !usage && activities.length === 0) {
         return null;
       }
       return {
         ...(delta ? { responseDelta: delta } : {}),
         ...(usage ? { usage, usageIsDelta: true } : {}),
         ...(activities.length > 0 ? { activities } : {}),
-        ...(reasoningStep ?? {}),
       };
     }
     if (stepType === "tool") {
