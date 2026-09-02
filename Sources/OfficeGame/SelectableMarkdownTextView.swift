@@ -85,6 +85,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     private var measuredUsedRect = NSRect.zero
     private var hasValidTextMeasurement = false
     private(set) var textLayoutMeasurementCount = 0
+    private(set) var textLayoutCacheHitCount = 0
 
     init(
         fontSize: CGFloat,
@@ -416,6 +417,21 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         if hasValidTextMeasurement {
             return measuredUsedRect
         }
+        if
+            let cached = SelectableMarkdownLayoutMeasurementCache.shared
+                .usedRect(
+                    source: source,
+                    fontSize: fontSize,
+                    fallbackDirectory: fallbackDirectory,
+                    isDark: isDark,
+                    layoutWidth: measuredWidth
+                )
+        {
+            measuredUsedRect = cached
+            hasValidTextMeasurement = true
+            textLayoutCacheHitCount += 1
+            return cached
+        }
         guard
             let layoutManager = textView.layoutManager,
             let textContainer = textView.textContainer
@@ -426,6 +442,14 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         measuredUsedRect = layoutManager.usedRect(for: textContainer)
         hasValidTextMeasurement = true
         textLayoutMeasurementCount += 1
+        SelectableMarkdownLayoutMeasurementCache.shared.store(
+            measuredUsedRect,
+            source: source,
+            fontSize: fontSize,
+            fallbackDirectory: fallbackDirectory,
+            isDark: isDark,
+            layoutWidth: measuredWidth
+        )
         return measuredUsedRect
     }
 
@@ -450,6 +474,91 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         measuredHeight = updatedHeight
         invalidateIntrinsicContentSize()
         superview?.needsLayout = true
+    }
+}
+
+@MainActor
+final class SelectableMarkdownLayoutMeasurementCache {
+    private final class Entry {
+        let usedRect: NSRect
+
+        init(usedRect: NSRect) {
+            self.usedRect = usedRect
+        }
+    }
+
+    static let shared = SelectableMarkdownLayoutMeasurementCache()
+
+    private let storage = NSCache<NSString, Entry>()
+
+    private init() {
+        storage.countLimit = 160
+        storage.totalCostLimit = 512 * 1_024
+    }
+
+    func usedRect(
+        source: String,
+        fontSize: CGFloat,
+        fallbackDirectory: URL?,
+        isDark: Bool,
+        layoutWidth: CGFloat
+    ) -> NSRect? {
+        guard layoutWidth > 0 else {
+            return nil
+        }
+        return storage.object(
+            forKey: key(
+                source: source,
+                fontSize: fontSize,
+                fallbackDirectory: fallbackDirectory,
+                isDark: isDark,
+                layoutWidth: layoutWidth
+            )
+        )?.usedRect
+    }
+
+    func store(
+        _ usedRect: NSRect,
+        source: String,
+        fontSize: CGFloat,
+        fallbackDirectory: URL?,
+        isDark: Bool,
+        layoutWidth: CGFloat
+    ) {
+        guard layoutWidth > 0 else {
+            return
+        }
+        storage.setObject(
+            Entry(usedRect: usedRect),
+            forKey: key(
+                source: source,
+                fontSize: fontSize,
+                fallbackDirectory: fallbackDirectory,
+                isDark: isDark,
+                layoutWidth: layoutWidth
+            ),
+            cost: max(1, source.utf8.count / 8)
+        )
+    }
+
+    func removeAll() {
+        storage.removeAllObjects()
+    }
+
+    private func key(
+        source: String,
+        fontSize: CGFloat,
+        fallbackDirectory: URL?,
+        isDark: Bool,
+        layoutWidth: CGFloat
+    ) -> NSString {
+        [
+            source,
+            String(format: "%.2f", fontSize),
+            fallbackDirectory?.standardizedFileURL.path ?? "",
+            isDark ? "dark" : "light",
+            String(format: "%.2f", layoutWidth),
+        ].joined(separator: "\u{1F}") as NSString
     }
 }
 

@@ -214,6 +214,74 @@ final class ConversationTextSelectionCPUTests: XCTestCase {
         )
     }
 
+    func testSelectionActivationReusesMarkdownLayoutMeasurement()
+        async throws
+    {
+        let coordinator = ConversationTextSelectionCoordinator.shared
+        coordinator.reset()
+        SelectableMarkdownLayoutMeasurementCache.shared.removeAll()
+        defer {
+            coordinator.reset()
+            SelectableMarkdownLayoutMeasurementCache.shared.removeAll()
+        }
+
+        let host = NSHostingView(
+            rootView: ConversationMarkdownView(
+                source: String(
+                    repeating: "선택 상태가 바뀌어도 다시 측정하면 안 되는 본문입니다.\n\n",
+                    count: 80
+                )
+            )
+            .conversationTextSelectionRegion("layout-cache-regression")
+            .frame(width: 720)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 900)
+        let window = NSWindow(
+            contentRect: host.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        defer { window.contentView = nil }
+
+        host.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(80))
+        let before = try XCTUnwrap(
+            allDescendants(of: host)
+                .compactMap { $0 as? SelectableMarkdownDocumentView }
+                .first
+        )
+
+        coordinator.activate("layout-cache-regression")
+        host.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(80))
+        let after = try XCTUnwrap(
+            allDescendants(of: host)
+                .compactMap { $0 as? SelectableMarkdownDocumentView }
+                .first
+        )
+
+        if before !== after {
+            XCTAssertEqual(
+                after.textLayoutMeasurementCount,
+                0,
+                "선택 상태 변경으로 다시 만들어진 본문이 TextKit 전체 높이를 "
+                    + "또 측정하면 안 됩니다."
+            )
+            XCTAssertGreaterThan(
+                after.textLayoutCacheHitCount,
+                0,
+                "새 본문 뷰는 직전 레이아웃 측정값을 재사용해야 합니다."
+            )
+        } else {
+            XCTAssertEqual(
+                after.textLayoutMeasurementCount,
+                before.textLayoutMeasurementCount
+            )
+        }
+    }
+
     // 앱 루트에서 선택을 켜면 입력창을 포함한 전체 화면에 오버레이가
     // 생긴다. 실시간 피드는 분리된 NSHostingView에서도 선택을 명시적으로
     // 꺼야 상위 환경 변경으로 같은 문제가 되살아나지 않는다.
