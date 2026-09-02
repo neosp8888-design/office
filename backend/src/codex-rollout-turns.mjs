@@ -77,7 +77,7 @@ function textContent(content) {
   const values = [];
   for (const item of Array.isArray(content) ? content : []) {
     const type = String(item?.type ?? "").toLowerCase();
-    if (type === "text") {
+    if (["text", "input_text", "output_text"].includes(type)) {
       const text = String(item?.text ?? "").trim();
       if (text) values.push(text);
     } else if (type === "local_image") {
@@ -100,8 +100,10 @@ export async function readCodexRolloutTurn(path, turnID) {
   let startedAt = null;
   let completedAt = null;
   let taskComplete = null;
-  const prompts = [];
-  const finalAnswers = [];
+  const eventPrompts = [];
+  const eventFinalAnswers = [];
+  const responseItemPrompts = [];
+  const responseItemFinalAnswers = [];
 
   let stream;
   try {
@@ -126,6 +128,22 @@ export async function readCodexRolloutTurn(path, turnID) {
         cwd = String(payload.cwd ?? "").trim() || null;
         continue;
       }
+      if (record?.type === "response_item" && payload.type === "message") {
+        const metadataTurnID = String(
+          payload.internal_chat_message_metadata_passthrough?.turn_id ?? "",
+        ).trim();
+        if (metadataTurnID !== wantedTurnID) continue;
+        const role = String(payload.role ?? "").toLowerCase();
+        if (role === "user") {
+          responseItemPrompts.push(...textContent(payload.content));
+        } else if (
+          role === "assistant" &&
+          String(payload.phase ?? "").toLowerCase() === "final_answer"
+        ) {
+          responseItemFinalAnswers.push(...textContent(payload.content));
+        }
+        continue;
+      }
       if (record?.type !== "event_msg" || payload.turn_id !== wantedTurnID) {
         continue;
       }
@@ -143,12 +161,12 @@ export async function readCodexRolloutTurn(path, turnID) {
       const item = payload.item ?? {};
       const type = itemType(item);
       if (type === "usermessage") {
-        prompts.push(...textContent(item.content));
+        eventPrompts.push(...textContent(item.content));
       } else if (
         type === "agentmessage" &&
         String(item.phase ?? "").toLowerCase() === "final_answer"
       ) {
-        finalAnswers.push(...textContent(item.content));
+        eventFinalAnswers.push(...textContent(item.content));
       }
     }
   } catch (error) {
@@ -159,6 +177,12 @@ export async function readCodexRolloutTurn(path, turnID) {
   }
 
   if (!taskComplete) return null;
+  const prompts = responseItemPrompts.length > 0
+    ? responseItemPrompts
+    : eventPrompts;
+  const finalAnswers = responseItemFinalAnswers.length > 0
+    ? responseItemFinalAnswers
+    : eventFinalAnswers;
   return {
     rolloutPath: path,
     source,
@@ -183,12 +207,15 @@ async function canonicalPath(value) {
 }
 
 function notifyPrompt(payload) {
-  return (Array.isArray(payload?.["input-messages"])
+  const messages = (Array.isArray(payload?.["input-messages"])
     ? payload["input-messages"]
     : [])
     .map((value) => String(value ?? "").trim())
-    .filter(Boolean)
-    .join("\n");
+    .filter(Boolean);
+  // resume 세션의 notify는 현재 입력뿐 아니라 과거 사용자 입력 전체를
+  // input-messages에 실어 줄 수 있다. rollout 원문을 읽지 못한 최후의
+  // 대체 경로에서는 마지막 입력만 현재 턴으로 취급한다.
+  return messages.at(-1) ?? "";
 }
 
 export class CodexTerminalTurnGate {

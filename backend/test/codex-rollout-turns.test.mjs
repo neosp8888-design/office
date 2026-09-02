@@ -27,13 +27,30 @@ function rolloutLines({ source = "exec", actualCwd = cwd } = {}) {
   ];
 }
 
+function responseItemRolloutLines() {
+  const metadata = {
+    turn_id: turnID,
+    create_time: 1_788_347_511,
+  };
+  return [
+    { type: "session_meta", payload: { id: threadID, source: "exec", cwd: "/old" } },
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnID, started_at: 1_788_347_510 } },
+    { type: "response_item", payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "내부 지침" }], internal_chat_message_metadata_passthrough: metadata } },
+    { type: "turn_context", payload: { turn_id: turnID, cwd } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "오 이제 보이네" }], internal_chat_message_metadata_passthrough: metadata } },
+    { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "확인했습니다." }], internal_chat_message_metadata_passthrough: metadata } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: turnID, last_agent_message: "확인했습니다.", started_at: 1_788_347_510, completed_at: 1_788_347_513 } },
+  ];
+}
+
 async function fixture(options = {}) {
   const root = await mkdtemp(join(tmpdir(), "codex-rollout-turns-"));
   const day = join(root, "2026", "09", "02");
   await mkdir(day, { recursive: true });
   await mkdir(cwd, { recursive: true });
   const path = join(day, `rollout-measure-${threadID}.jsonl`);
-  await writeFile(path, rolloutLines(options).map(JSON.stringify).join("\n") + "\n");
+  const lines = options.lines ?? rolloutLines(options);
+  await writeFile(path, lines.map(JSON.stringify).join("\n") + "\n");
   return { root, path };
 }
 
@@ -62,6 +79,45 @@ test("rollout의 정식 turn_context와 task_complete를 읽는다", async () =>
   assert.equal(turn.response, "정식 답변");
   assert.equal(turn.startedAt, 1_788_347_510);
   assert.equal(turn.completedAt, 1_788_347_513);
+});
+
+test("현재 Codex response_item 형식에서 해당 턴 사용자 입력만 읽는다", async () => {
+  const { root, path } = await fixture({ lines: responseItemRolloutLines() });
+  const turn = await readCodexRolloutTurn(path, turnID);
+  assert.equal(turn.prompt, "오 이제 보이네");
+  assert.equal(turn.response, "확인했습니다.");
+
+  const gate = new CodexTerminalTurnGate({
+    cwd,
+    externalSessionID: threadID,
+    sessionsRoot: root,
+    retryCount: 1,
+  });
+  const accepted = await gate.accept({
+    ...realNotify,
+    "input-messages": ["과거 질문 1", "링크드인 과거 질문", "오 이제 보이네"],
+  });
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.turn.prompt, "오 이제 보이네");
+});
+
+test("rollout에 사용자 본문이 없으면 notify의 마지막 입력만 쓴다", async () => {
+  const lines = rolloutLines().filter((record) =>
+    record?.payload?.type !== "item_completed"
+  );
+  const { root } = await fixture({ lines });
+  const gate = new CodexTerminalTurnGate({
+    cwd,
+    externalSessionID: threadID,
+    sessionsRoot: root,
+    retryCount: 1,
+  });
+  const accepted = await gate.accept({
+    ...realNotify,
+    "input-messages": ["과거 질문", "현재 질문"],
+  });
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.turn.prompt, "현재 질문");
 });
 
 test("정식 notify만 받고 rollout 없는 제목 생성 notify는 버린다", async () => {
