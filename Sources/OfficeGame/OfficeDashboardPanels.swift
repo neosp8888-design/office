@@ -1099,14 +1099,59 @@ struct LiveWorkspaceFeedSubmissionScrollPolicy: Equatable {
 }
 
 struct LiveWorkspaceFeedPagingPolicy: Equatable {
-    // 직원 전환 때 NSHostingView를 새로 만드는 CPU 방어는 유지한다.
-    // 다만 첫 화면을 두 건으로 좁히면 스냅샷이 보유한 최근 10턴이
-    // 대부분 "위로 더 올리면 이전 N건 추가"로 숨겨져, 평소 대화가
-    // 두 건만 보인다. 첫 mount 표시를 스냅샷 보유량과 같은 10건으로
-    // 맞춰 정상 상황에서는 숨김 안내가 뜨지 않게 한다.
+    // 평소 대화는 스냅샷이 보유한 최근 10턴을 그대로 보여준다.
+    // 다만 긴 프롬프트와 수백 개 활동이 섞인 직원은 첫 mount에서
+    // TextKit이 모든 카드를 한꺼번에 측정하며 CPU를 오래 점유한다.
+    // 그런 피드만 최근 턴부터 작은 창으로 시작하고, 기존 상단
+    // 페이지 불러오기로 나머지를 동일하게 열 수 있게 한다.
     static let initialVisibleTurnCount = 10
+    static let minimumInitialVisibleTurnCount = 2
+    static let initialLayoutWeightBudget = 64_000
+    static let activityLayoutOverhead = 240
     static let pageSize = 10
     static let maximumVisibleTurnCount = 30
+
+    static func initialVisibleTurnCount(
+        for turnsNewestFirst: [LiveFeedTurn]
+    ) -> Int {
+        let weights = turnsNewestFirst
+            .prefix(initialVisibleTurnCount)
+            .map { turn in
+                turn.prompt.utf8.count
+                    + turn.response.utf8.count
+                    + turn.activities.reduce(0) { partialResult, activity in
+                        partialResult
+                            + activity.text.utf8.count
+                            + activityLayoutOverhead
+                    }
+            }
+        return initialVisibleTurnCount(layoutWeightsNewestFirst: weights)
+    }
+
+    static func initialVisibleTurnCount(
+        layoutWeightsNewestFirst: [Int]
+    ) -> Int {
+        guard !layoutWeightsNewestFirst.isEmpty else {
+            return initialVisibleTurnCount
+        }
+
+        let boundedWeights = layoutWeightsNewestFirst.prefix(
+            initialVisibleTurnCount
+        )
+        var visibleCount = 0
+        var accumulatedWeight = 0
+        for rawWeight in boundedWeights {
+            let weight = max(0, rawWeight)
+            if visibleCount >= minimumInitialVisibleTurnCount,
+               accumulatedWeight + weight > initialLayoutWeightBudget
+            {
+                break
+            }
+            accumulatedWeight += weight
+            visibleCount += 1
+        }
+        return visibleCount
+    }
 
     static func includesTurn(
         at index: Int,
@@ -1137,8 +1182,14 @@ struct LiveWorkspaceFeedPagingPolicy: Equatable {
 // 삽입·ID 교체 중에도 전부 창에 포함시킨다.
 struct LiveWorkspaceFeedDisplayAnchor: Equatable {
     private(set) var oldestVisibleTurnID: String?
-    private(set) var lastKnownLimit =
-        LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
+    private(set) var lastKnownLimit: Int
+
+    init(
+        initialLimit: Int =
+            LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
+    ) {
+        lastKnownLimit = max(1, initialLimit)
+    }
 
     func effectiveLimit(turnIDsNewestFirst: [String]) -> Int {
         guard
@@ -2888,7 +2939,7 @@ struct LiveWorkspaceFeed: View, Equatable {
         (String, TurnResponseFeedback?) async -> Void
     @State private var followState = LiveWorkspaceFeedFollowState()
     @State private var scrollMetrics = LiveWorkspaceFeedScrollMetrics()
-    @State private var displayAnchor = LiveWorkspaceFeedDisplayAnchor()
+    @State private var displayAnchor: LiveWorkspaceFeedDisplayAnchor
     @State private var didPerformInitialScroll = false
     @State private var isLoadingOlderTurns = false
     @State private var topLoadGate = LiveWorkspaceFeedTopLoadGate()
@@ -2909,6 +2960,14 @@ struct LiveWorkspaceFeed: View, Equatable {
         )
         _characterFeedStore = ObservedObject(
             wrappedValue: characterFeedStore
+        )
+        _displayAnchor = State(
+            initialValue: LiveWorkspaceFeedDisplayAnchor(
+                initialLimit:
+                    LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount(
+                        for: characterFeedStore.turns
+                    )
+            )
         )
         characterFeedRevision = characterFeedStore.mountReadinessRevision
         self.director = director

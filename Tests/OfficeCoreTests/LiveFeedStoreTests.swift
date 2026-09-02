@@ -1080,6 +1080,55 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
+    func testHeavyFeedStartsWithSmallAdaptiveWindow() {
+        let visibleCount = LiveWorkspaceFeedPagingPolicy
+            .initialVisibleTurnCount(
+                layoutWeightsNewestFirst: [
+                    28_000,
+                    14_000,
+                    35_000,
+                    18_000,
+                    2_000,
+                ]
+            )
+
+        XCTAssertEqual(
+            visibleCount,
+            LiveWorkspaceFeedPagingPolicy.minimumInitialVisibleTurnCount,
+            "무거운 세 번째 턴은 첫 mount에서 미루어야 합니다."
+        )
+        let anchor = LiveWorkspaceFeedDisplayAnchor(
+            initialLimit: visibleCount
+        )
+        XCTAssertEqual(
+            anchor.effectiveLimit(
+                turnIDsNewestFirst: ["t5", "t4", "t3", "t2", "t1"]
+            ),
+            2
+        )
+    }
+
+    func testNormalFeedStillShowsTenTurnsInitially() {
+        let visibleCount = LiveWorkspaceFeedPagingPolicy
+            .initialVisibleTurnCount(
+                layoutWeightsNewestFirst: Array(repeating: 2_000, count: 12)
+            )
+
+        XCTAssertEqual(
+            visibleCount,
+            LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount
+        )
+    }
+
+    func testAdaptiveWindowAlwaysKeepsLatestTwoTurns() {
+        XCTAssertEqual(
+            LiveWorkspaceFeedPagingPolicy.initialVisibleTurnCount(
+                layoutWeightsNewestFirst: [100_000, 100_000, 1]
+            ),
+            2
+        )
+    }
+
     func testDisplayAnchorGrowsWindowWhenNewTurnArrivesInFront() {
         var anchor = LiveWorkspaceFeedDisplayAnchor()
         anchor = anchor.pinning(turnIDsNewestFirst: ["t2", "t1"])
