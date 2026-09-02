@@ -133,6 +133,24 @@ public enum OfficeArtStyle:
     }
 }
 
+public enum OfficeConversationMode:
+    String,
+    CaseIterable,
+    Codable,
+    Identifiable,
+    Hashable,
+    Sendable
+{
+    case chat
+    case terminal
+
+    public static let defaultValue: OfficeConversationMode = .chat
+
+    public var id: String {
+        rawValue
+    }
+}
+
 public enum OfficeCharacter:
     String,
     CaseIterable,

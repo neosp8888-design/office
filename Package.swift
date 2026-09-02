@@ -16,6 +16,10 @@ let package = Package(
         .package(
             url: "https://github.com/gonzalezreal/swift-markdown-ui",
             exact: "2.4.1"
+        ),
+        .package(
+            url: "https://github.com/migueldeicaza/SwiftTerm",
+            exact: "1.20.0"
         )
     ],
     targets: [
@@ -47,6 +51,10 @@ let package = Package(
                 .product(
                     name: "MarkdownUI",
                     package: "swift-markdown-ui"
+                ),
+                .product(
+                    name: "SwiftTerm",
+                    package: "SwiftTerm"
                 )
             ],
             resources: [

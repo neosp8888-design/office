@@ -6,6 +6,15 @@ import XCTest
 @testable import OfficeCore
 
 final class PixelOfficeAssetTests: XCTestCase {
+    func testConversationModeRawValuesAndDefault() {
+        XCTAssertEqual(OfficeConversationMode.chat.rawValue, "chat")
+        XCTAssertEqual(OfficeConversationMode.terminal.rawValue, "terminal")
+        XCTAssertEqual(OfficeConversationMode.defaultValue, .chat)
+        XCTAssertEqual(
+            OfficeConversationMode(rawValue: "unknown") ?? .defaultValue,
+            .chat
+        )
+    }
     func testArtStyleMetadataAndSupportedThemesAreStable() {
         XCTAssertEqual(OfficeArtStyle.twoD.rawValue, "2d")
         XCTAssertEqual(OfficeArtStyle.threeD.rawValue, "3d")

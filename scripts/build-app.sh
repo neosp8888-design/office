@@ -213,6 +213,7 @@ ORT_BINDING="$ORT_NATIVE_DIR/onnxruntime_binding.node"
 for packaged_runtime_path in \
     "$BACKEND_RUNTIME_DIR/src/server.mjs" \
     "$BACKEND_RUNTIME_DIR/src/officestra-result" \
+    "$BACKEND_RUNTIME_DIR/src/officestra-terminal-hook" \
     "$BACKEND_RUNTIME_DIR/node_modules/pg/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/ws/package.json" \
     "$BACKEND_RUNTIME_DIR/node_modules/@slack/bolt/package.json" \
@@ -238,6 +239,10 @@ done
 
 if [[ ! -x "$BACKEND_RUNTIME_DIR/src/officestra-result" ]]; then
     print -u2 "응답 메타데이터 도구에 실행 권한이 없습니다."
+    exit 1
+fi
+if [[ ! -x "$BACKEND_RUNTIME_DIR/src/officestra-terminal-hook" ]]; then
+    print -u2 "터미널 이벤트 훅에 실행 권한이 없습니다."
     exit 1
 fi
 

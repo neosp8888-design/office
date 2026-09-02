@@ -174,6 +174,11 @@ struct RealtimeFeedEvent: Decodable, Equatable {
     }
 }
 
+struct TerminalRestartRequest: Equatable, Sendable {
+    let character: OfficeCharacter
+    let revision: Int
+}
+
 extension RealtimeFeedEvent {
     var officeCharacter: OfficeCharacter? {
         characterId.flatMap(OfficeCharacter.init(rawValue:))
@@ -769,6 +774,9 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var latestTerminalTurnID: String?
     @Published private(set) var isRealtimeConnected = false
     @Published private(set) var realtimeConnectionError: String?
+    @Published private(set) var terminalSessionRevision = 0
+    @Published private(set) var terminalRestartRequest:
+        TerminalRestartRequest?
 
     let liveFeedStore = LiveFeedStore()
     let archiveFeedStore = ArchiveFeedStore()
@@ -795,6 +803,17 @@ final class AgentDirector: ObservableObject {
 
     var databaseBaseURL: URL {
         configuration.databaseBaseURL
+    }
+
+    func fetchTerminalSessions() async throws -> [StoredTerminalSession] {
+        try await database.fetchTerminalSessions()
+    }
+
+    func requestTerminalRestart(for character: OfficeCharacter) {
+        terminalRestartRequest = TerminalRestartRequest(
+            character: character,
+            revision: (terminalRestartRequest?.revision ?? 0) + 1
+        )
     }
 
     private let configuration: OfficeAgentConfiguration
@@ -2245,6 +2264,10 @@ final class AgentDirector: ObservableObject {
                 for: character,
                 autoDismiss: false
             )
+            return true
+
+        case "terminal.changed":
+            terminalSessionRevision &+= 1
             return true
 
         default:

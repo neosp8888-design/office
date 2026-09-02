@@ -4235,6 +4235,19 @@ private struct LiveTurnCard: View {
                         : Color(nsColor: .secondaryLabelColor)
                 )
 
+            if turn.origin == "terminal" {
+                Text("터미널")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(DashboardPalette.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        DashboardPalette.accent.opacity(0.10),
+                        in: Capsule()
+                    )
+                    .accessibilityIdentifier("terminalTurnBadge")
+            }
+
             Spacer()
 
             if !turn.status.isRunning {

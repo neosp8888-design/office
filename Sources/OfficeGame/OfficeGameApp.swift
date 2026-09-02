@@ -194,6 +194,7 @@ enum OfficePanelControl {
     case theme
     case backend
     case artStyle
+    case terminal
 }
 
 enum OfficePanelControlLayout {
@@ -207,6 +208,22 @@ enum OfficePanelControlLayout {
             .bottomLeading
         case .artStyle:
             .bottomTrailing
+        case .terminal:
+            .topTrailing
+        }
+    }
+}
+
+private enum TerminalModeAlert: Identifiable {
+    case confirmRunningTurn
+    case statusError(String)
+
+    var id: String {
+        switch self {
+        case .confirmRunningTurn:
+            "confirm-running-turn"
+        case .statusError(let message):
+            "status-error:\(message)"
         }
     }
 }
@@ -222,10 +239,14 @@ private struct OfficeGameView: View {
     @State private var artStyleRevealProgress: CGFloat = 1
     @State private var splitDragStartLeftWidth: CGFloat?
     @State private var splitDragStartTopHeight: CGFloat?
+    @State private var terminalModeAlert: TerminalModeAlert?
     @AppStorage("officeTheme") private var selectedThemeRawValue =
         OfficeTheme.modernDay.rawValue
     @AppStorage("officeArtStyle") private var selectedArtStyleRawValue =
         OfficeArtStyle.twoD.rawValue
+    @AppStorage("officeConversationMode")
+    private var selectedConversationModeRawValue =
+        OfficeConversationMode.defaultValue.rawValue
     @AppStorage("officeLeftColumnFraction") private var leftColumnFraction =
         0.5
     @AppStorage("officeTopRowFraction") private var topRowFraction = 0.5
@@ -361,6 +382,29 @@ private struct OfficeGameView: View {
             }
             bubbleDetail = nil
         }
+        .alert(item: $terminalModeAlert) { alert in
+            switch alert {
+            case .confirmRunningTurn:
+                Alert(
+                    title: Text("터미널을 종료할까요?"),
+                    message: Text(
+                        "응답 중인 터미널이 있습니다. 대화 모드로 돌아가면 " +
+                        "해당 CLI 프로세스가 종료됩니다."
+                    ),
+                    primaryButton: .cancel(Text("계속 사용")),
+                    secondaryButton: .destructive(Text("대화로 전환")) {
+                        selectedConversationModeRawValue =
+                            OfficeConversationMode.chat.rawValue
+                    }
+                )
+            case .statusError(let message):
+                Alert(
+                    title: Text("터미널 상태를 확인하지 못했습니다"),
+                    message: Text(message),
+                    dismissButton: .default(Text("확인"))
+                )
+            }
+        }
     }
 
     private func updateLeftColumnFraction(
@@ -479,6 +523,12 @@ private struct OfficeGameView: View {
             artStyleToggle
                 .padding(12)
         }
+        .overlay(
+            alignment: OfficePanelControlLayout.alignment(for: .terminal)
+        ) {
+            conversationModeToggle
+                .padding(12)
+        }
         .officePanelStyle()
         .onAppear {
             backendController.activate(
@@ -490,19 +540,29 @@ private struct OfficeGameView: View {
 
     private var liveWorkspacePanel: some View {
         VStack(spacing: 0) {
-            LiveWorkspaceHeader(director: director)
+            LiveWorkspaceHeader(
+                director: director,
+                conversationMode: conversationMode
+            )
 
             Divider()
                 .opacity(0.55)
 
-            CachedLiveWorkspaceFeeds(director: director)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Group {
+                if conversationMode == .terminal {
+                    CachedTerminalWorkspaces(director: director)
+                } else {
+                    CachedLiveWorkspaceFeeds(director: director)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
                 .opacity(0.55)
 
             LiveWorkspaceCommandBar(
                 director: director,
+                conversationMode: conversationMode,
                 onShowProfile: { profileCharacter = $0 }
             )
         }
@@ -519,6 +579,12 @@ private struct OfficeGameView: View {
     private var artStyle: OfficeArtStyle {
         OfficeArtStyle(rawValue: selectedArtStyleRawValue)
             ?? .twoD
+    }
+
+    private var conversationMode: OfficeConversationMode {
+        OfficeConversationMode(
+            rawValue: selectedConversationModeRawValue
+        ) ?? .defaultValue
     }
 
     @ViewBuilder
@@ -642,6 +708,69 @@ private struct OfficeGameView: View {
         .accessibilityValue(theme.title)
         .accessibilityIdentifier("officeThemeMenu")
         .help(theme.isNight ? "낮 테마로 전환" : "밤 테마로 전환")
+    }
+
+    private var conversationModeToggle: some View {
+        Button(action: toggleConversationMode) {
+            Image(
+                systemName: conversationMode == .terminal
+                    ? "bubble.left.and.text.bubble.right"
+                    : "terminal"
+            )
+            .font(.system(size: 15, weight: .semibold))
+            .frame(width: 20, height: 20)
+        }
+        .buttonStyle(.plain)
+        .environment(\.colorScheme, theme.isNight ? .dark : .light)
+        .foregroundStyle(theme.isNight ? Color.white : Color.black.opacity(0.72))
+        .padding(.horizontal, 8)
+        .frame(height: 32)
+        .background(
+            theme.isNight
+                ? Color.black.opacity(0.72)
+                : Color.white.opacity(0.92),
+            in: Capsule()
+        )
+        .overlay {
+            Capsule().stroke(
+                theme.isNight
+                    ? Color.white.opacity(0.25)
+                    : Color.black.opacity(0.08)
+            )
+        }
+        .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
+        .fixedSize()
+        .accessibilityLabel("대화 표시 방식")
+        .accessibilityValue(
+            conversationMode == .terminal ? "터미널" : "대화"
+        )
+        .accessibilityIdentifier("officeConversationModeToggle")
+        .help(
+            conversationMode == .terminal
+                ? "대화 모드로 전환"
+                : "터미널 모드로 전환"
+        )
+    }
+
+    private func toggleConversationMode() {
+        guard conversationMode == .terminal else {
+            selectedConversationModeRawValue =
+                OfficeConversationMode.terminal.rawValue
+            return
+        }
+        Task {
+            do {
+                let sessions = try await director.fetchTerminalSessions()
+                if sessions.contains(where: { $0.runningTurnId != nil }) {
+                    terminalModeAlert = .confirmRunningTurn
+                } else {
+                    selectedConversationModeRawValue =
+                        OfficeConversationMode.chat.rawValue
+                }
+            } catch {
+                terminalModeAlert = .statusError(error.localizedDescription)
+            }
+        }
     }
 
     private var artStyleToggle: some View {
@@ -780,9 +909,14 @@ private struct LiveWorkspaceHeader: View {
     @ObservedObject private var director: AgentDirector
     @ObservedObject private var characterSelectionStore:
         CharacterSelectionStore
+    let conversationMode: OfficeConversationMode
 
-    init(director: AgentDirector) {
+    init(
+        director: AgentDirector,
+        conversationMode: OfficeConversationMode
+    ) {
         self.director = director
+        self.conversationMode = conversationMode
         _characterSelectionStore = ObservedObject(
             wrappedValue: director.characterSelectionStore
         )
@@ -790,7 +924,11 @@ private struct LiveWorkspaceHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+            Image(
+                systemName: conversationMode == .terminal
+                    ? "terminal.fill"
+                    : "bubble.left.and.text.bubble.right.fill"
+            )
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(DashboardPalette.accent)
                 .frame(width: 36, height: 36)
@@ -805,14 +943,7 @@ private struct LiveWorkspaceHeader: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("실시간 대화")
                     .font(.system(size: 17, weight: .bold))
-                Text(
-                    String(
-                        format: OfficeLocalization.string(
-                            "%@의 대화와 진행 기록"
-                        ),
-                        selectedName
-                    )
-                )
+                Text(subtitle)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -848,6 +979,19 @@ private struct LiveWorkspaceHeader: View {
         }
         return director.displayName(for: characterID)
     }
+
+    private var subtitle: String {
+        if conversationMode == .terminal {
+            return String(
+                format: OfficeLocalization.string("%@의 터미널"),
+                selectedName
+            )
+        }
+        return String(
+            format: OfficeLocalization.string("%@의 대화와 진행 기록"),
+            selectedName
+        )
+    }
 }
 
 private struct LiveWorkspaceCommandBar: View {
@@ -858,16 +1002,21 @@ private struct LiveWorkspaceCommandBar: View {
     @State private var attachmentSelectionError: String?
     @State private var isPreparingAttachments = false
     @State private var identitySettingsCharacter: OfficeCharacter?
+    @State private var terminalRestartRequiredCharacters:
+        Set<OfficeCharacter> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
     let onShowProfile: (OfficeCharacter) -> Void
+    let conversationMode: OfficeConversationMode
 
     init(
         director: AgentDirector,
+        conversationMode: OfficeConversationMode,
         onShowProfile: @escaping (OfficeCharacter) -> Void
     ) {
         self.director = director
+        self.conversationMode = conversationMode
         self.onShowProfile = onShowProfile
         _characterSelectionStore = ObservedObject(
             wrappedValue: director.characterSelectionStore
@@ -911,11 +1060,11 @@ private struct LiveWorkspaceCommandBar: View {
         VStack(alignment: .leading, spacing: 9) {
             characterSelector
 
-            if !attachments.isEmpty {
+            if conversationMode == .chat, !attachments.isEmpty {
                 attachmentStrip
             }
 
-            if let attachmentSelectionError {
+            if conversationMode == .chat, let attachmentSelectionError {
                 Label(
                     attachmentSelectionError,
                     systemImage: "exclamationmark.triangle.fill"
@@ -927,30 +1076,43 @@ private struct LiveWorkspaceCommandBar: View {
                 )
             }
 
-            if let selectedCharacterID {
+            if conversationMode == .chat, let selectedCharacterID {
                 QueuedCommandStrip(
                     director: director,
                     character: selectedCharacterID
                 )
             }
 
-            CommandEntryRow(
-                director: director,
-                placeholder: commandPlaceholder,
-                attachmentCount: attachments.count,
-                isPreparingAttachments: isPreparingAttachments,
-                onChooseAttachments: chooseAttachments,
-                onSubmit: submitCommand
-            )
+            if conversationMode == .terminal {
+                terminalInputHint
+            } else {
+                CommandEntryRow(
+                    director: director,
+                    placeholder: commandPlaceholder,
+                    attachmentCount: attachments.count,
+                    isPreparingAttachments: isPreparingAttachments,
+                    onChooseAttachments: chooseAttachments,
+                    onSubmit: submitCommand
+                )
+            }
 
             if let character = selectedCharacter {
                 HStack {
                     AgentQuickSettingsView(
                         director: director,
-                        character: character
+                        character: character,
+                        onChanged: {
+                            guard conversationMode == .terminal else {
+                                return
+                            }
+                            terminalRestartRequiredCharacters.insert(
+                                character.id
+                            )
+                        }
                     )
 
-                    if ContextCompactionPresentation.supportsManualCompaction(
+                    if conversationMode == .chat,
+                        ContextCompactionPresentation.supportsManualCompaction(
                         backend: character.backend
                     ) {
                         ContextCompactionControls(
@@ -1000,10 +1162,56 @@ private struct LiveWorkspaceCommandBar: View {
 
                     Spacer(minLength: 0)
                 }
+
+                if
+                    conversationMode == .terminal,
+                    terminalRestartRequiredCharacters.contains(character.id)
+                {
+                    terminalRestartNotice(for: character.id)
+                }
             }
 
         }
         .padding(14)
+    }
+
+    private var terminalInputHint: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "terminal")
+                .foregroundStyle(.secondary)
+            Text("터미널에서 직접 입력하세요")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 44)
+        .background(Color.primary.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityIdentifier("terminalCommandInputHint")
+    }
+
+    private func terminalRestartNotice(
+        for character: OfficeCharacter
+    ) -> some View {
+        HStack(spacing: 8) {
+            Label(
+                "변경한 설정은 터미널을 다시 시작해야 적용됩니다.",
+                systemImage: "arrow.clockwise.circle"
+            )
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+
+            Button("다시 시작") {
+                terminalRestartRequiredCharacters.remove(character)
+                director.requestTerminalRestart(for: character)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .accessibilityIdentifier("terminalRestartRequiredNotice")
     }
 
     private var attachmentStrip: some View {
@@ -2126,6 +2334,7 @@ private func compactTokenCount(_ value: Int) -> String {
 private struct AgentQuickSettingsView: View {
     @ObservedObject var director: AgentDirector
     let character: CharacterConfiguration
+    var onChanged: (() -> Void)? = nil
 
     private var settings: CharacterAgentSettings {
         director.agentSettings(for: character.id)
@@ -2280,6 +2489,9 @@ private struct AgentQuickSettingsView: View {
                 settings,
                 for: character.id
             )
+            if director.agentSettings(for: character.id) == settings {
+                onChanged?()
+            }
         }
     }
 }

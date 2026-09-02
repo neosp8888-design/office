@@ -28,6 +28,55 @@ struct OfficeDatabaseClient: Sendable {
         return payload.sessions
     }
 
+    func fetchTerminalSessions() async throws -> [StoredTerminalSession] {
+        let url = baseURL.appending(path: "api/terminal-sessions")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response, data: data)
+        return try historyDecoder()
+            .decode(TerminalSessionListResponse.self, from: data)
+            .sessions
+    }
+
+    func openTerminalSession(
+        character: OfficeCharacter
+    ) async throws -> TerminalLaunchSpecification {
+        var request = URLRequest(
+            url: baseURL.appending(path: "api/terminal-sessions")
+        )
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            TerminalSessionOpenRequest(characterId: character.rawValue)
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try historyDecoder().decode(
+            TerminalLaunchSpecification.self,
+            from: data
+        )
+    }
+
+    func closeTerminalSession(
+        character: OfficeCharacter
+    ) async throws {
+        var request = URLRequest(
+            url: baseURL
+                .appending(path: "api/terminal-sessions")
+                .appending(path: character.rawValue)
+        )
+        request.httpMethod = "DELETE"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = Data("{}".utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+    }
+
     func usageSummaryURL(force: Bool = false) -> URL {
         let endpoint = baseURL
             .appending(path: "api")
@@ -772,6 +821,14 @@ private struct ActiveSessionListResponse: Decodable {
     let sessions: [StoredActiveSession]
 }
 
+private struct TerminalSessionListResponse: Decodable {
+    let sessions: [StoredTerminalSession]
+}
+
+private struct TerminalSessionOpenRequest: Encodable {
+    let characterId: String
+}
+
 private struct WikiPagesResponse: Decodable {
     let pages: [WikiPage]
 }
@@ -851,6 +908,29 @@ struct StoredActiveSession: Decodable, Sendable {
     let conversationId: UUID
 }
 
+struct StoredTerminalSession: Decodable, Identifiable, Equatable, Sendable {
+    let terminalSessionId: String
+    let characterId: String
+    let backend: AgentBackend
+    let externalSessionId: String?
+    let conversationId: String
+    let runningTurnId: String?
+    let startedAt: Date
+
+    var id: String { terminalSessionId }
+}
+
+struct TerminalLaunchSpecification: Decodable, Equatable, Sendable {
+    let terminalSessionId: String
+    let executable: String
+    let args: [String]
+    let cwd: String
+    let env: [String: String]
+    let externalSessionId: String?
+    let conversationId: String
+    let backend: AgentBackend
+}
+
 struct CharacterSettingsBulkUpdate: Encodable, Equatable, Sendable {
     let characterId: String
     let backend: AgentBackend
@@ -908,6 +988,7 @@ struct HistoryTurn: Decodable, Identifiable, Sendable {
     let executionModel: String?
     let executionEffort: String?
     let executionFastMode: Bool?
+    let origin: String?
     let conversationWorkdir: String?
     let responseSourceWarning: String?
     let wikiProposalWarning: String?
@@ -928,6 +1009,7 @@ struct GlobalHistoryTurn: Decodable, Identifiable, Sendable {
     let executionModel: String?
     let executionEffort: String?
     let executionFastMode: Bool?
+    let origin: String?
     let externalSessionId: String?
     let conversationWorkdir: String?
     let prompt: String
@@ -1226,6 +1308,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let model: String?
     let effort: String?
     let fastMode: Bool?
+    let origin: String?
     let externalSessionId: String?
     let conversationWorkdir: String?
     let prompt: String
@@ -1245,6 +1328,64 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
     let sources: [LiveFeedSource]?
     let workspace: TurnWorkspaceReview?
 
+    init(
+        id: String,
+        characterId: String,
+        characterName: String,
+        characterBackend: AgentBackend,
+        backend: AgentBackend?,
+        model: String?,
+        effort: String?,
+        fastMode: Bool?,
+        origin: String? = nil,
+        externalSessionId: String?,
+        conversationWorkdir: String?,
+        prompt: String,
+        response: String,
+        feedback: TurnResponseFeedback?,
+        status: LiveTurnStatus,
+        needsInput: Bool,
+        errorMessage: String?,
+        responseSourceWarning: String?,
+        wikiProposalWarning: String?,
+        startedAt: Date,
+        endedAt: Date?,
+        updatedAt: Date,
+        estimatedCostUsd: Double?,
+        sessionContext: SessionContextUsage?,
+        activities: [LiveFeedActivity],
+        sources: [LiveFeedSource]?,
+        workspace: TurnWorkspaceReview?
+    ) {
+        self.id = id
+        self.characterId = characterId
+        self.characterName = characterName
+        self.characterBackend = characterBackend
+        self.backend = backend
+        self.model = model
+        self.effort = effort
+        self.fastMode = fastMode
+        self.origin = origin
+        self.externalSessionId = externalSessionId
+        self.conversationWorkdir = conversationWorkdir
+        self.prompt = prompt
+        self.response = response
+        self.feedback = feedback
+        self.status = status
+        self.needsInput = needsInput
+        self.errorMessage = errorMessage
+        self.responseSourceWarning = responseSourceWarning
+        self.wikiProposalWarning = wikiProposalWarning
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.updatedAt = updatedAt
+        self.estimatedCostUsd = estimatedCostUsd
+        self.sessionContext = sessionContext
+        self.activities = activities
+        self.sources = sources
+        self.workspace = workspace
+    }
+
     var responseSources: [LiveFeedSource] {
         sources ?? []
     }
@@ -1259,6 +1400,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             model: model,
             effort: effort,
             fastMode: fastMode,
+            origin: origin,
             externalSessionId: externalSessionId,
             conversationWorkdir: conversationWorkdir,
             prompt: prompt,
@@ -1292,6 +1434,7 @@ struct LiveFeedTurn: Decodable, Identifiable, Equatable, Sendable {
             model: model,
             effort: effort,
             fastMode: fastMode,
+            origin: origin,
             externalSessionId: externalSessionId,
             conversationWorkdir: conversationWorkdir,
             prompt: prompt,

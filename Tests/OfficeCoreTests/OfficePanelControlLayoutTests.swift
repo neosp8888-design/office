@@ -26,6 +26,13 @@ final class OfficePanelControlLayoutTests: XCTestCase {
         )
     }
 
+    func testTerminalControlUsesTopTrailingCorner() {
+        XCTAssertEqual(
+            OfficePanelControlLayout.alignment(for: .terminal),
+            .topTrailing
+        )
+    }
+
     func testBackendControlWarnsOnlyWhenStopped() {
         XCTAssertFalse(OfficeBackendStatus.running.showsStoppedWarning)
         XCTAssertFalse(OfficeBackendStatus.changing.showsStoppedWarning)

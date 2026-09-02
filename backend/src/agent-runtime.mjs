@@ -190,7 +190,12 @@ export class AgentRuntime {
     this.preparingCharacters = new Set();
     this.preparingJobs = new Set();
     this.postProcessingJobs = new Set();
+    this.terminalSessionRegistry = null;
     this.draining = false;
+  }
+
+  setTerminalSessionRegistry(registry) {
+    this.terminalSessionRegistry = registry;
   }
 
   get acceptingJobs() {
@@ -201,7 +206,8 @@ export class AgentRuntime {
     return this.preparingJobs.size +
       this.running.size +
       this.compactingCharacters.size +
-      this.postProcessingJobs.size;
+      this.postProcessingJobs.size +
+      (this.terminalSessionRegistry?.size ?? 0);
   }
 
   maintenanceStatus() {
@@ -418,6 +424,9 @@ export class AgentRuntime {
     }
 
     const characterID = String(options?.characterID ?? "");
+    if (this.terminalSessionRegistry?.has(characterID)) {
+      throw new AgentBusyError("터미널 모드에서 사용 중입니다.");
+    }
     if (
       this.compactingCharacters.has(characterID) ||
       this.preparingCharacters.has(characterID)
@@ -1403,6 +1412,429 @@ export class AgentRuntime {
         reason,
       );
     }
+  }
+
+  async prepareTerminalLaunch(characterID) {
+    const id = String(characterID ?? "").trim();
+    if (this.draining) {
+      throw new AgentDrainingError(
+        "백엔드가 안전한 전환을 준비 중이라 터미널을 열 수 없습니다.",
+      );
+    }
+    if (
+      !id ||
+      this.running.has(id) ||
+      this.preparingCharacters.has(id) ||
+      this.compactingCharacters.has(id)
+    ) {
+      throw new AgentBusyError(
+        "이 직원의 현재 업무가 끝난 뒤 터미널을 여세요.",
+      );
+    }
+
+    const launch = await this.withTransaction(async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [`officestra:character:${id}`],
+      );
+      const characterResult = await client.query(
+        `
+          SELECT
+            id,
+            name,
+            seat,
+            backend,
+            model,
+            effort,
+            fast_mode AS "fastMode",
+            auto_compact_percent AS "autoCompactPercent",
+            permission,
+            identity_prompt AS "identityPrompt",
+            config
+          FROM characters
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [id],
+      );
+      if (characterResult.rowCount === 0) {
+        throw new CharacterNotFoundError("캐릭터를 찾을 수 없습니다.");
+      }
+      const busy = await client.query(
+        `
+          SELECT turn.id
+          FROM turns AS turn
+          JOIN cli_sessions AS session
+            ON session.id = turn.cli_session_id
+          WHERE session.character_id = $1
+            AND turn.status IN ('pending', 'running')
+          LIMIT 1
+        `,
+        [id],
+      );
+      if (busy.rowCount > 0) {
+        throw new AgentBusyError("이 직원은 이미 업무를 처리하고 있습니다.");
+      }
+
+      const activeResult = await client.query(
+        `
+          SELECT
+            session.id,
+            session.external_id AS "externalSessionID",
+            session.conversation_id AS "conversationID",
+            conversation.workdir AS "conversationWorkdir",
+            session_scope.repository_root AS "sessionRepositoryRoot",
+            resume_workspace.execution_workdir AS "resumeExecutionWorkdir"
+          FROM active_cli_sessions AS active
+          JOIN cli_sessions AS session
+            ON session.id = active.cli_session_id
+          JOIN conversations AS conversation
+            ON conversation.id = session.conversation_id
+          LEFT JOIN LATERAL (
+            SELECT candidate.repository_root
+            FROM task_workspaces AS candidate
+            WHERE candidate.cli_session_id = session.id
+              AND candidate.repository_root IS NOT NULL
+            ORDER BY candidate.updated_at DESC, candidate.id DESC
+            LIMIT 1
+          ) AS session_scope ON true
+          LEFT JOIN LATERAL (
+            SELECT candidate.execution_workdir
+            FROM turns AS completed_turn
+            JOIN task_workspaces AS candidate
+              ON candidate.id = completed_turn.task_workspace_id
+            WHERE completed_turn.cli_session_id = session.id
+              AND completed_turn.status = 'completed'
+              AND candidate.execution_workdir IS NOT NULL
+            ORDER BY completed_turn.ended_at DESC NULLS LAST
+            LIMIT 1
+          ) AS resume_workspace ON true
+          WHERE active.character_id = $1
+            AND session.ended_at IS NULL
+          LIMIT 1
+        `,
+        [id],
+      );
+      const activeCandidate = activeResult.rows[0] ?? null;
+      const active = activeSessionMatchesRuntime(activeCandidate, {
+        workdir: this.workdir,
+        repositoryRoot: this.repositoryRoot,
+      }) ? activeCandidate : null;
+
+      let sessionID = active?.id ?? null;
+      let conversationID = active?.conversationID ?? null;
+      if (!sessionID) {
+        conversationID = randomUUID();
+        await client.query(
+          `
+            INSERT INTO conversations (id, title, workdir)
+            VALUES ($1, '터미널 대화', $2)
+          `,
+          [conversationID, this.workdir],
+        );
+        const previous = await client.query(
+          `
+            SELECT id
+            FROM cli_sessions
+            WHERE character_id = $1
+            ORDER BY started_at DESC, id DESC
+            LIMIT 1
+          `,
+          [id],
+        );
+        const inserted = await client.query(
+          `
+            INSERT INTO cli_sessions (
+              conversation_id,
+              character_id,
+              previous_session_id
+            )
+            VALUES ($1, $2, $3)
+            RETURNING id
+          `,
+          [conversationID, id, previous.rows[0]?.id ?? null],
+        );
+        sessionID = inserted.rows[0].id;
+        await client.query(
+          `
+            INSERT INTO active_cli_sessions (character_id, cli_session_id)
+            VALUES ($1, $2)
+            ON CONFLICT (character_id) DO UPDATE
+            SET cli_session_id = EXCLUDED.cli_session_id, updated_at = now()
+          `,
+          [id, sessionID],
+        );
+      }
+      return {
+        character: characterResult.rows[0],
+        sessionID,
+        conversationID,
+        externalSessionID: active?.externalSessionID ?? null,
+        resumeExecutionWorkdir: active?.resumeExecutionWorkdir ?? null,
+        workdir: this.workdir,
+      };
+    });
+
+    if (launch.character.backend === "claude") {
+      this.closeClaudeWorker(
+        id,
+        null,
+        new Error("터미널 모드가 같은 Claude Code 세션을 이어갑니다."),
+      );
+      if (launch.externalSessionID) {
+        prepareClaudeSessionResume({
+          sessionID: launch.externalSessionID,
+          workdir: launch.workdir,
+          previousWorkdir: launch.resumeExecutionWorkdir,
+        });
+      }
+    }
+    return launch;
+  }
+
+  async bindTerminalExternalSession({
+    characterID,
+    sessionID,
+    externalSessionID,
+  }) {
+    const externalID = String(externalSessionID ?? "").trim();
+    if (!externalID) throw new Error("CLI 세션 ID가 비어 있습니다.");
+    await this.withTransaction(async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [`officestra:character:${characterID}`],
+      );
+      const updated = await client.query(
+        `
+          UPDATE cli_sessions
+          SET external_id = $3, ended_at = NULL
+          WHERE id = $1
+            AND character_id = $2
+            AND (external_id IS NULL OR external_id = $3)
+          RETURNING id
+        `,
+        [sessionID, characterID, externalID],
+      );
+      if (updated.rowCount === 0) {
+        throw new AgentSessionNotFoundError(
+          "터미널의 CLI 세션을 현재 직원에게 연결할 수 없습니다.",
+        );
+      }
+      await client.query(
+        `
+          UPDATE cli_sessions
+          SET ended_at = COALESCE(ended_at, now())
+          WHERE character_id = $1 AND id <> $2 AND ended_at IS NULL
+        `,
+        [characterID, sessionID],
+      );
+      await client.query(
+        `
+          INSERT INTO active_cli_sessions (character_id, cli_session_id)
+          VALUES ($1, $2)
+          ON CONFLICT (character_id) DO UPDATE
+          SET cli_session_id = EXCLUDED.cli_session_id, updated_at = now()
+        `,
+        [characterID, sessionID],
+      );
+    });
+    this.broadcast({ type: "session.changed", characterId: characterID });
+  }
+
+  async beginTerminalTurn({
+    characterID,
+    sessionID,
+    prompt,
+    startedAt = new Date(),
+    execution = null,
+  }) {
+    const cleanPrompt = String(prompt ?? "").trim();
+    if (!cleanPrompt) throw new Error("터미널 프롬프트가 비어 있습니다.");
+    const turnID = randomUUID();
+    const result = await this.withTransaction(async (client) => {
+      const session = await client.query(
+        `
+          SELECT
+            session.id,
+            character.backend,
+            character.model,
+            character.effort,
+            character.fast_mode AS "fastMode"
+          FROM cli_sessions AS session
+          JOIN characters AS character ON character.id = session.character_id
+          WHERE session.id = $1 AND session.character_id = $2
+          FOR UPDATE OF session, character
+        `,
+        [sessionID, characterID],
+      );
+      if (session.rowCount === 0) {
+        throw new AgentSessionNotFoundError("터미널 세션을 찾을 수 없습니다.");
+      }
+      const busy = await client.query(
+        `
+          SELECT turn.id
+          FROM turns AS turn
+          JOIN cli_sessions AS owner ON owner.id = turn.cli_session_id
+          WHERE owner.character_id = $1
+            AND turn.status IN ('pending', 'running')
+          LIMIT 1
+        `,
+        [characterID],
+      );
+      if (busy.rowCount > 0) {
+        throw new AgentBusyError("터미널의 이전 응답이 아직 끝나지 않았습니다.");
+      }
+      const settings = execution ?? session.rows[0];
+      await client.query(
+        `
+          INSERT INTO turns (
+            id, cli_session_id, backend, model, effort, fast_mode,
+            origin, prompt, status, started_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'terminal', $7, 'running', $8, now())
+        `,
+        [
+          turnID,
+          sessionID,
+          settings.backend,
+          settings.model,
+          settings.effort,
+          settings.fastMode,
+          cleanPrompt,
+          startedAt,
+        ],
+      );
+      await client.query(
+        `
+          INSERT INTO messages (turn_id, role, text)
+          VALUES ($1, 'user', $2), ($1, 'assistant', '')
+        `,
+        [turnID, cleanPrompt],
+      );
+      return settings;
+    });
+    this.broadcast({ type: "feed.changed", turnId: turnID, characterId: characterID });
+    return { turnID, prompt: cleanPrompt, settings: result };
+  }
+
+  async completeTerminalTurn({
+    characterID,
+    turnID,
+    response,
+    endedAt = new Date(),
+    usage = null,
+    initialGeneratedImages = new Set(),
+    structured = null,
+  }) {
+    const result = await this.pool.query(
+      `
+        SELECT
+          turn.id,
+          turn.cli_session_id AS "sessionID",
+          turn.prompt,
+          turn.backend AS "executionBackend",
+          turn.model AS "executionModel",
+          turn.effort AS "executionEffort",
+          turn.fast_mode AS "executionFastMode",
+          session.conversation_id AS "conversationID",
+          session.external_id AS "externalSessionID",
+          character.id AS "characterID",
+          character.name,
+          character.seat,
+          character.backend,
+          character.model,
+          character.effort,
+          character.fast_mode AS "fastMode",
+          character.auto_compact_percent AS "autoCompactPercent",
+          character.permission,
+          character.identity_prompt AS "identityPrompt",
+          character.config
+        FROM turns AS turn
+        JOIN cli_sessions AS session ON session.id = turn.cli_session_id
+        JOIN characters AS character ON character.id = session.character_id
+        WHERE turn.id = $1
+          AND session.character_id = $2
+          AND turn.origin = 'terminal'
+          AND turn.status = 'running'
+      `,
+      [turnID, characterID],
+    );
+    if (result.rowCount === 0) {
+      throw new AgentJobNotFoundError("완료할 터미널 턴을 찾을 수 없습니다.");
+    }
+    const row = result.rows[0];
+    const decoded = applyStructuredTurnResult(
+      decodeAgentResponse(String(response ?? "")),
+      structured,
+    );
+    if (!decoded.text) throw new Error("터미널 최종 메시지가 없습니다.");
+    const state = {
+      turnID,
+      sessionID: row.sessionID,
+      conversationID: row.conversationID,
+      externalSessionID: row.externalSessionID,
+      character: {
+        id: row.characterID,
+        name: row.name,
+        seat: row.seat,
+        backend: row.executionBackend,
+        model: row.executionModel,
+        effort: row.executionEffort,
+        fastMode: row.executionFastMode,
+        autoCompactPercent: row.autoCompactPercent,
+        permission: row.permission,
+        identityPrompt: row.identityPrompt,
+        config: row.config,
+      },
+      prompt: row.prompt,
+      recordPrompt: row.prompt,
+      workdir: this.workdir,
+      workspace: null,
+      workspaceID: null,
+      initialGeneratedImages,
+      generatedImages: [],
+      sequence: 0,
+      lastActivity: null,
+      activityRecords: new Map(),
+      activityWritePromise: null,
+      visibleAgentMessages: [],
+      pendingInitialCodexReasoning: null,
+      responseText: decoded.text,
+      partialText: decoded.text,
+      usage,
+      endedAt,
+      cancelRequested: false,
+      structuredResultPath: null,
+    };
+    await this.complete(state, decoded);
+  }
+
+  async interruptTerminalTurn(characterID, turnID) {
+    if (!turnID) return false;
+    const result = await this.pool.query(
+      `
+        UPDATE turns AS turn
+        SET
+          status = 'interrupted',
+          needs_input = false,
+          error_message = '터미널 프로세스가 응답 완료 전에 종료됐습니다.',
+          ended_at = now(),
+          updated_at = now()
+        FROM cli_sessions AS session
+        WHERE turn.id = $1
+          AND turn.cli_session_id = session.id
+          AND session.character_id = $2
+          AND turn.origin = 'terminal'
+          AND turn.status = 'running'
+        RETURNING turn.id
+      `,
+      [turnID, characterID],
+    );
+    if (result.rowCount > 0) {
+      this.broadcast({ type: "feed.changed", turnId: turnID, characterId: characterID });
+      return true;
+    }
+    return false;
   }
 
   async compactionTarget(characterID) {
@@ -2542,11 +2974,16 @@ export class AgentRuntime {
             response_source_warning = $3,
             wiki_proposal_warning = NULL,
             error_message = NULL,
-            ended_at = now(),
+            ended_at = COALESCE($4::timestamptz, now()),
             updated_at = now()
           WHERE id = $1
         `,
-        [state.turnID, decoded.needsInput, sourceWarning],
+        [
+          state.turnID,
+          decoded.needsInput,
+          sourceWarning,
+          state.endedAt ?? null,
+        ],
       );
       await this.persistUsageRecord(client, state);
       const storedRecord = await persistCompletedTurnWorkRecord(client, {
@@ -4553,7 +4990,7 @@ export function configuredExecutableForCharacter(character) {
   }
 }
 
-function locateExecutable(character) {
+export function locateExecutable(character) {
   const configured = configuredExecutableForCharacter(character);
   if (configured) return configured;
 

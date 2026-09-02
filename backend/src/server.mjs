@@ -95,12 +95,14 @@ import {
   packagesForIdentifier,
   sharedInstallPrefix,
 } from "./cli-updates.mjs";
+import { TerminalSessionManager } from "./terminal-sessions.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const liveFeedMinimumTurnsPerCharacter = 10;
 const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
+let terminalSessions;
 let shuttingDown = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
 const cliUpdateChecker = createCLIUpdateChecker();
@@ -218,6 +220,18 @@ function routeCharacterHistory(pathname) {
 function routeAgentJob(pathname) {
   const match = pathname.match(/^\/api\/agent-jobs\/([^/]+)$/);
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+function routeTerminalSession(pathname) {
+  const match = pathname.match(
+    /^\/api\/terminal-sessions\/([^/]+)(?:\/(events))?$/,
+  );
+  return match
+    ? {
+      characterID: decodeURIComponent(match[1]),
+      events: match[2] === "events",
+    }
+    : null;
 }
 
 function routeLiveFeedTurn(pathname) {
@@ -675,6 +689,7 @@ async function characterHistory(response, characterID) {
         t.model AS "executionModel",
         t.effort AS "executionEffort",
         t.fast_mode AS "executionFastMode",
+        t.origin,
         COALESCE(
           CASE
             WHEN history_workspace.status IN ('merged', 'closed')
@@ -757,6 +772,7 @@ async function globalHistory(response, url) {
         t.model AS "executionModel",
         t.effort AS "executionEffort",
         t.fast_mode AS "executionFastMode",
+        t.origin,
         s.external_id AS "externalSessionId",
         COALESCE(
           CASE
@@ -1105,6 +1121,7 @@ async function queryTurnFeed({
         t.model,
         t.effort,
         t.fast_mode AS "fastMode",
+        t.origin,
         s.external_id AS "externalSessionId",
         conversation.workdir AS "conversationWorkdir",
         t.prompt,
@@ -1452,6 +1469,63 @@ async function startAgentJob(response, body) {
   }
 }
 
+async function openTerminalSession(response, body) {
+  if (!terminalSessions) {
+    send(response, 503, { error: "터미널 실행기가 준비되지 않았습니다." });
+    return;
+  }
+  try {
+    send(
+      response,
+      201,
+      await terminalSessions.open(String(body.characterId ?? "")),
+    );
+  } catch (error) {
+    if (error instanceof AgentDrainingError) {
+      send(response, 503, { error: error.message });
+      return;
+    }
+    if (error instanceof CharacterNotFoundError) {
+      send(response, 404, { error: error.message });
+      return;
+    }
+    if (error instanceof AgentBusyError) {
+      send(response, 409, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function closeTerminalSession(response, characterID) {
+  if (!terminalSessions) {
+    send(response, 503, { error: "터미널 실행기가 준비되지 않았습니다." });
+    return;
+  }
+  const closed = await terminalSessions.close(characterID);
+  send(response, closed ? 200 : 404, closed
+    ? { ok: true }
+    : { error: "열린 터미널 세션을 찾을 수 없습니다." });
+}
+
+async function recordTerminalEvent(response, characterID, body) {
+  if (!terminalSessions) {
+    send(response, 503, { error: "터미널 실행기가 준비되지 않았습니다." });
+    return;
+  }
+  try {
+    send(response, 202, await terminalSessions.handleEvent(characterID, body));
+  } catch (error) {
+    if (error instanceof AgentBusyError) {
+      send(response, 409, { error: error.message });
+      return;
+    }
+    send(response, 404, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function cancelAgentJob(response, characterID) {
   if (!runtime) {
     send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
@@ -1750,11 +1824,12 @@ async function recordTurn(response, body) {
           model,
           effort,
           fast_mode,
+          origin,
           prompt,
           started_at,
           ended_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, 'gui', $7, $8, $9)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
       `,
@@ -1988,6 +2063,7 @@ const server = createServer(async (request, response) => {
     );
     const historyCharacterID = routeCharacterHistory(url.pathname);
     const jobCharacterID = routeAgentJob(url.pathname);
+    const terminalSessionRoute = routeTerminalSession(url.pathname);
     const liveFeedTurnID = routeLiveFeedTurn(url.pathname);
     const turnSourcesID = routeTurnSources(url.pathname);
     const turnFeedbackID = routeTurnFeedback(url.pathname);
@@ -2142,6 +2218,38 @@ const server = createServer(async (request, response) => {
     ) {
       await recordTurn(response, await readJSON(request));
     } else if (
+      request.method === "GET" &&
+      url.pathname === "/api/terminal-sessions"
+    ) {
+      send(response, 200, { sessions: terminalSessions?.list() ?? [] });
+    } else if (
+      request.method === "POST" &&
+      url.pathname === "/api/terminal-sessions"
+    ) {
+      if (!trustedJSONMutation(request, response)) return;
+      await openTerminalSession(response, await readJSON(request));
+    } else if (
+      request.method === "POST" &&
+      terminalSessionRoute?.events
+    ) {
+      if (!trustedJSONMutation(request, response)) return;
+      await recordTerminalEvent(
+        response,
+        terminalSessionRoute.characterID,
+        await readJSON(request),
+      );
+    } else if (
+      request.method === "DELETE" &&
+      terminalSessionRoute &&
+      !terminalSessionRoute.events
+    ) {
+      if (!trustedJSONMutation(request, response)) return;
+      await readJSON(request);
+      await closeTerminalSession(
+        response,
+        terminalSessionRoute.characterID,
+      );
+    } else if (
       request.method === "POST" &&
       url.pathname === "/api/agent-jobs"
     ) {
@@ -2253,6 +2361,7 @@ async function shutdown(signal) {
   }
   shuttingDown = true;
   console.log(`${signal} 신호를 받아 사무실 백엔드를 종료합니다.`);
+  await terminalSessions?.shutdown();
   runtime?.shutdown();
   for (const socket of sockets) {
     socket.terminate();
@@ -2325,6 +2434,12 @@ try {
     broadcast,
     embeddingService: localEmbeddingService,
   });
+  terminalSessions = new TerminalSessionManager({
+    runtime,
+    broadcast,
+    port,
+  });
+  runtime.setTerminalSessionRegistry(terminalSessions);
   await runtime.recoverInterruptedJobs();
   server.listen(port, "127.0.0.1", () => {
     console.log(`사무실 백엔드 실행 중 http://127.0.0.1:${port}`);

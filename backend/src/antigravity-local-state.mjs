@@ -207,27 +207,27 @@ function usagePayload(usage) {
   };
 }
 
-function nestedFields(fields, number) {
+export function nestedFields(fields, number) {
   const value = fields.find(
     (field) => field.number === number && Buffer.isBuffer(field.value),
   )?.value;
   return value ? protobufFields(value) : [];
 }
 
-function utf8Field(fields, number) {
+export function utf8Field(fields, number) {
   const value = fields.find(
     (field) => field.number === number && Buffer.isBuffer(field.value),
   )?.value;
   return value?.toString("utf8").trim() ?? "";
 }
 
-function numberField(fields, number) {
+export function numberField(fields, number) {
   return fields.find(
     (field) => field.number === number && typeof field.value === "number",
   )?.value ?? 0;
 }
 
-function protobufFields(value) {
+export function protobufFields(value) {
   const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value ?? []);
   const fields = [];
   let offset = 0;

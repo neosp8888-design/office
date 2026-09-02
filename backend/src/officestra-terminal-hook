@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+
+// Claude Code hook(stdin)와 Codex notify(argv)를 같은 로컬 수신 API로 전달한다.
+// 기록 실패가 CLI 입력 자체를 막아서는 안 되므로 모든 실패는 종료 코드 0이다.
+
+async function readStandardInput() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function main() {
+  const url = String(process.env.OFFICESTRA_TERMINAL_EVENTS_URL ?? "").trim();
+  if (!url) return;
+  const argument = String(process.argv[2] ?? "").trim();
+  const source = argument ? "codex" : "claude";
+  const raw = argument || await readStandardInput();
+  if (!raw) return;
+  const payload = JSON.parse(raw);
+  const event = source === "claude"
+    ? String(payload.hook_event_name ?? "")
+    : String(payload.type ?? "");
+  await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source, event, payload }),
+    signal: AbortSignal.timeout(2_500),
+  });
+}
+
+try {
+  await main();
+} catch (error) {
+  console.error(
+    "OFFICESTRA 터미널 이벤트 전달 실패:",
+    error instanceof Error ? error.message : String(error),
+  );
+}
+process.exitCode = 0;
