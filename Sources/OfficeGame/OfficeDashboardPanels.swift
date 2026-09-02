@@ -1108,7 +1108,7 @@ struct LiveWorkspaceFeedPagingPolicy: Equatable {
     static let minimumInitialVisibleTurnCount = 2
     static let initialLayoutWeightBudget = 64_000
     static let activityLayoutOverhead = 240
-    static let pageSize = 10
+    static let pageSize = 3
     static let maximumVisibleTurnCount = 30
 
     static func initialVisibleTurnCount(
@@ -3048,23 +3048,12 @@ struct LiveWorkspaceFeed: View, Equatable {
         }
     }
 
-    private var hiddenTurnCount: Int {
-        max(0, selectedTurns.count - displayTurns.count)
-    }
-
     private var canLoadOlderTurns: Bool {
         visibleTurnLimit
             < min(
                 LiveWorkspaceFeedPagingPolicy.maximumVisibleTurnCount,
                 selectedTurns.count
             )
-    }
-
-    private var nextArchivedTurnCount: Int {
-        min(
-            LiveWorkspaceFeedPagingPolicy.pageSize,
-            hiddenTurnCount
-        )
     }
 
     private var initialLayoutRevision:
@@ -3161,10 +3150,6 @@ struct LiveWorkspaceFeed: View, Equatable {
                             // SwiftUI 경로가 생긴다. 바깥 목록은 eager로 두고
                             // 카드 안의 접힌 긴 이력만 lazy 렌더링한다.
                             VStack(spacing: 14) {
-                                if hiddenTurnCount > 0 {
-                                    archivedTurnsNotice
-                                }
-
                                 ForEach(displayItems) { item in
                                     let turn = item.turn
                                     // 질문은 직원 카드 밖에 세운다. 카드
@@ -3572,30 +3557,6 @@ struct LiveWorkspaceFeed: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityLabel("맨 아래로 이동")
         .help("맨 아래로 이동")
-    }
-
-    private var archivedTurnsNotice: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "books.vertical")
-            if canLoadOlderTurns {
-                Text(
-                    "위로 더 올리면 이전 "
-                        + "\(nextArchivedTurnCount)건 추가"
-                )
-            } else {
-                Text(
-                    "이전 \(hiddenTurnCount)건은 대화 책꽂이에서 확인"
-                )
-            }
-        }
-        .font(.system(size: 10, weight: .bold))
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity)
-        .frame(height: 30)
-        .background(
-            Color.primary.opacity(0.035),
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
     }
 
     private func markAtBottom() {

@@ -1211,16 +1211,16 @@ final class LiveFeedStoreTests: XCTestCase {
             current: anchor.effectiveLimit(turnIDsNewestFirst: ids),
             total: ids.count
         )
-        XCTAssertEqual(nextLimit, 20)
+        XCTAssertEqual(nextLimit, 13)
         anchor = anchor.pinning(
             limit: nextLimit,
             turnIDsNewestFirst: ids
         )
         XCTAssertEqual(
             anchor.effectiveLimit(turnIDsNewestFirst: ids),
-            20
+            13
         )
-        XCTAssertEqual(anchor.oldestVisibleTurnID, ids[19])
+        XCTAssertEqual(anchor.oldestVisibleTurnID, ids[12])
     }
 
     func testFreshEmployeeMountShowsSnapshotWindowWithoutArchivedNotice() {
@@ -1265,7 +1265,8 @@ final class LiveFeedStoreTests: XCTestCase {
         )
     }
 
-    func testFirstTopLoadRestoresRemainingTenTurnSnapshot() {
+    func testTopLoadAddsThreeTurnsAtATime() {
+        XCTAssertEqual(LiveWorkspaceFeedPagingPolicy.pageSize, 3)
         XCTAssertEqual(
             LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
                 current:
@@ -1279,7 +1280,7 @@ final class LiveFeedStoreTests: XCTestCase {
                 current: 10,
                 total: 30
             ),
-            20
+            13
         )
         XCTAssertEqual(
             LiveWorkspaceFeedPagingPolicy.nextVisibleTurnLimit(
