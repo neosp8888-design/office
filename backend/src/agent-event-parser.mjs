@@ -612,17 +612,73 @@ function parseAntigravityEvent(object, workdir) {
     }
     const stepType = cleanText(update.step_type)?.toLowerCase();
     const state = cleanText(update.state)?.toUpperCase();
+    if (
+      stepType === "thinking" ||
+      stepType === "thought" ||
+      stepType === "reasoning"
+    ) {
+      const text = reasoningText(
+        update.thinking ??
+          update.thought ??
+          update.text ??
+          update.text_delta ??
+          update.reasoning,
+      );
+      if (!text) {
+        return null;
+      }
+      return {
+        activity: activity("thinking", text, {
+          eventKey: [
+            "antigravity",
+            cleanText(update.conversation_id),
+            update.step_index,
+            "thinking",
+          ]
+            .filter((value) => value !== null && value !== undefined)
+            .join(":"),
+          status: antigravityActivityStatus(state),
+        }),
+      };
+    }
     if (stepType === "agent_response") {
       const delta = String(update.text_delta ?? "");
       const usage = state === "DONE"
         ? normalizedAntigravityUsage(update.usage)
         : null;
-      if (!delta && !usage) {
+      const thinking = cleanText(update.thinking ?? update.thought);
+      const activities = thinking
+        ? [
+            activity("thinking", reasoningText(thinking), {
+              eventKey: [
+                "antigravity",
+                cleanText(update.conversation_id),
+                update.step_index,
+                "thinking",
+              ]
+                .filter((value) => value !== null && value !== undefined)
+                .join(":"),
+              status: antigravityActivityStatus(state),
+            }),
+          ]
+        : [];
+      // agy는 추론 요약을 stdout에 싣지 않고 대화 SQLite에만 남긴다.
+      // 단계가 끝난 시점을 런타임에 알려 그때 읽어오게 한다.
+      const reasoningStep = state === "DONE" &&
+          Number.isInteger(update.step_index)
+        ? {
+          reasoningStepIndex: update.step_index,
+          reasoningConversationID: cleanText(update.conversation_id),
+        }
+        : null;
+      if (!delta && !usage && activities.length === 0 && !reasoningStep) {
         return null;
       }
       return {
         ...(delta ? { responseDelta: delta } : {}),
         ...(usage ? { usage, usageIsDelta: true } : {}),
+        ...(activities.length > 0 ? { activities } : {}),
+        ...(reasoningStep ?? {}),
       };
     }
     if (stepType === "tool") {

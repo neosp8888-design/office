@@ -50,6 +50,9 @@ import {
   antigravitySessionUsage,
 } from "./antigravity-local-state.mjs";
 import {
+  antigravityStepReasoning,
+} from "./antigravity-reasoning.mjs";
+import {
   CodexRolloutCollaborationTracker,
 } from "./codex-rollout-collaboration.mjs";
 import { compactCodexThread } from "./codex-context-compactor.mjs";
@@ -170,6 +173,7 @@ export class AgentRuntime {
     codexCompactor = compactCodexThread,
     contextUsageReader = sessionContextUsage,
     antigravityUsageReader = antigravitySessionUsage,
+    antigravityReasoningReader = antigravityStepReasoning,
     embeddingService = null,
   }) {
     this.pool = pool;
@@ -183,6 +187,7 @@ export class AgentRuntime {
     this.codexCompactor = codexCompactor;
     this.contextUsageReader = contextUsageReader;
     this.antigravityUsageReader = antigravityUsageReader;
+    this.antigravityReasoningReader = antigravityReasoningReader;
     this.embeddingService = embeddingService;
     this.running = new Map();
     this.claudeWorkers = new Map();
@@ -2123,6 +2128,47 @@ export class AgentRuntime {
     }
   }
 
+  // agy는 추론 요약을 stdout으로 내보내지 않으므로, 단계가 끝났다는 신호를
+  // 받은 시점에 대화 SQLite에서 그 단계의 추론만 읽어 활동으로 올린다.
+  antigravityReasoningActivities(state, event) {
+    if (
+      state.character.backend !== "antigravity" ||
+      !Number.isInteger(event.reasoningStepIndex)
+    ) {
+      return [];
+    }
+    const conversationID = event.reasoningConversationID ??
+      state.externalSessionID;
+    if (!conversationID) {
+      return [];
+    }
+    let text = null;
+    try {
+      text = this.antigravityReasoningReader(
+        conversationID,
+        event.reasoningStepIndex,
+      );
+    } catch (error) {
+      console.warn(
+        "Antigravity 추론 기록을 읽지 못했습니다.",
+        error instanceof Error ? error.message : String(error),
+      );
+      return [];
+    }
+    if (!text) {
+      return [];
+    }
+    return [{
+      kind: "thinking",
+      text,
+      eventKey:
+        `antigravity:${conversationID}:${event.reasoningStepIndex}:thinking`,
+      status: "completed",
+      preserveText: false,
+      messageScoped: false,
+    }];
+  }
+
   async consumeCodexRolloutActivities(state) {
     if (state.character.backend !== "codex") {
       return;
@@ -2214,6 +2260,7 @@ export class AgentRuntime {
     const activities = [
       ...(Array.isArray(event.activities) ? event.activities : []),
       ...(event.activity ? [event.activity] : []),
+      ...this.antigravityReasoningActivities(state, event),
     ];
     const pendingReasoningBeforeEvent = activities.length > 0
       ? state.pendingInitialCodexReasoning

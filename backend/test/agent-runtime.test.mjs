@@ -5376,3 +5376,109 @@ test("대화 보관함은 전체 검색을 12건 페이지로 요청한다", () 
   assert.match(querySource, /ILIKE '%' \|\| \$1 \|\| '%'/);
   assert.match(querySource, /includesCharacterMinimums: false/);
 });
+
+test("Antigravity 단계가 끝나면 대화 DB의 추론을 활동으로 올린다", () => {
+  const calls = [];
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    antigravityReasoningReader: (conversationID, stepIndex) => {
+      calls.push({ conversationID, stepIndex });
+      return stepIndex === 1 ? "도구 선택을 먼저 검토했다." : null;
+    },
+  });
+  const state = {
+    character: { id: "right-man", backend: "antigravity" },
+    externalSessionID: "conversation-1",
+  };
+
+  assert.deepEqual(
+    runtime.antigravityReasoningActivities(state, {
+      reasoningStepIndex: 1,
+      reasoningConversationID: "conversation-1",
+    }),
+    [{
+      kind: "thinking",
+      text: "도구 선택을 먼저 검토했다.",
+      eventKey: "antigravity:conversation-1:1:thinking",
+      status: "completed",
+      preserveText: false,
+      messageScoped: false,
+    }],
+  );
+  assert.deepEqual(
+    runtime.antigravityReasoningActivities(state, {
+      reasoningStepIndex: 3,
+      reasoningConversationID: "conversation-1",
+    }),
+    [],
+  );
+  assert.deepEqual(calls, [
+    { conversationID: "conversation-1", stepIndex: 1 },
+    { conversationID: "conversation-1", stepIndex: 3 },
+  ]);
+});
+
+test("추론 읽기는 Antigravity 이외의 백엔드와 단계 정보 없는 이벤트를 건너뛴다", () => {
+  let reads = 0;
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    antigravityReasoningReader: () => {
+      reads += 1;
+      return "읽으면 안 된다.";
+    },
+  });
+
+  assert.deepEqual(
+    runtime.antigravityReasoningActivities(
+      {
+        character: { id: "left-man", backend: "claude" },
+        externalSessionID: "session-1",
+      },
+      { reasoningStepIndex: 1 },
+    ),
+    [],
+  );
+  assert.deepEqual(
+    runtime.antigravityReasoningActivities(
+      {
+        character: { id: "right-man", backend: "antigravity" },
+        externalSessionID: "conversation-1",
+      },
+      { responseDelta: "진행 중" },
+    ),
+    [],
+  );
+  assert.equal(reads, 0);
+});
+
+test("추론 읽기가 실패해도 턴 진행을 막지 않는다", () => {
+  const runtime = new AgentRuntime({
+    pool: {},
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+    antigravityReasoningReader: () => {
+      throw new Error("대화 DB가 잠겨 있습니다.");
+    },
+  });
+
+  assert.deepEqual(
+    runtime.antigravityReasoningActivities(
+      {
+        character: { id: "right-man", backend: "antigravity" },
+        externalSessionID: "conversation-1",
+      },
+      { reasoningStepIndex: 2 },
+    ),
+    [],
+  );
+});
