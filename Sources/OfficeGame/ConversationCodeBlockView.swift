@@ -30,6 +30,9 @@ struct ConversationCodeBlockView: View {
                         .foregroundStyle(Color.white.opacity(0.27))
                         .multilineTextAlignment(.trailing)
                         .lineSpacing(3)
+                        .accessibilityIdentifier(
+                            "conversationCodeBlockLineNumbers"
+                        )
 
                     Rectangle()
                         .fill(Color.white.opacity(0.08))
@@ -100,6 +103,7 @@ struct ConversationCodeBlockView: View {
             }
             .buttonStyle(.plain)
             .help("코드 복사")
+            .accessibilityIdentifier("conversationCodeBlockCopyButton")
         }
         .padding(.horizontal, 13)
         .frame(height: 34)
@@ -107,25 +111,15 @@ struct ConversationCodeBlockView: View {
     }
 
     private var displayLanguage: String {
-        let language = configuration.language?
-            .split(whereSeparator: \.isWhitespace)
-            .first
-            .map(String.init)
-
-        return (language ?? "code").uppercased()
+        ConversationCodeBlockPresentation.displayLanguage(
+            for: configuration.language
+        )
     }
 
     private var lineNumbers: String {
-        let count = max(
-            1,
-            configuration.content.split(
-                separator: "\n",
-                omittingEmptySubsequences: false
-            ).count
+        ConversationCodeBlockPresentation.lineNumbers(
+            for: configuration.content
         )
-        return (1...count)
-            .map(String.init)
-            .joined(separator: "\n")
     }
 
     private func copyCode() {
@@ -145,6 +139,29 @@ struct ConversationCodeBlockView: View {
                 didCopy = false
             }
         }
+    }
+}
+
+enum ConversationCodeBlockPresentation {
+    static func displayLanguage(for language: String?) -> String {
+        let languageName = language?
+            .split(whereSeparator: \.isWhitespace)
+            .first
+            .map(String.init)
+        return (languageName ?? "code").uppercased()
+    }
+
+    static func lineNumbers(for content: String) -> String {
+        let count = max(
+            1,
+            content.split(
+                separator: "\n",
+                omittingEmptySubsequences: false
+            ).count
+        )
+        return (1...count)
+            .map(String.init)
+            .joined(separator: "\n")
     }
 }
 

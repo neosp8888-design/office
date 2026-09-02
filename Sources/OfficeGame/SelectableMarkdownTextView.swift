@@ -479,6 +479,7 @@ struct SelectableMarkdownSegment: Equatable {
     enum Kind: Equatable {
         case prose
         case table(columnCount: Int)
+        case codeBlock
     }
 
     let source: String
@@ -498,23 +499,84 @@ enum SelectableMarkdownSegmenter {
             separator: "\n",
             omittingEmptySubsequences: false
         ).map(String.init)
-        var maximumTableColumnCount: Int?
+        var segments: [SelectableMarkdownSegment] = []
+        var proseStart = 0
         var index = 0
-        var openFence: Character?
 
         while index < lines.count {
-            if let fenceCharacter = fenceCharacter(in: lines[index]) {
-                if openFence == fenceCharacter {
-                    openFence = nil
-                } else if openFence == nil {
-                    openFence = fenceCharacter
-                }
+            guard let openingFence = fence(in: lines[index]) else {
                 index += 1
                 continue
             }
 
+            appendProse(
+                lines[proseStart..<index],
+                to: &segments
+            )
+
+            var codeEnd = index + 1
+            while codeEnd < lines.count {
+                if isClosingFence(
+                    lines[codeEnd],
+                    matching: openingFence
+                ) {
+                    codeEnd += 1
+                    break
+                }
+                codeEnd += 1
+            }
+
+            segments.append(
+                SelectableMarkdownSegment(
+                    source: lines[index..<codeEnd].joined(separator: "\n"),
+                    kind: .codeBlock
+                )
+            )
+            proseStart = codeEnd
+            index = codeEnd
+        }
+
+        appendProse(lines[proseStart...], to: &segments)
+        if segments.isEmpty {
+            return [SelectableMarkdownSegment(source: source, kind: .prose)]
+        }
+        return segments
+    }
+
+    private struct Fence: Equatable {
+        let character: Character
+        let length: Int
+    }
+
+    private static func appendProse(
+        _ lines: ArraySlice<String>,
+        to segments: inout [SelectableMarkdownSegment]
+    ) {
+        let source = lines.joined(separator: "\n")
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+        segments.append(
+            SelectableMarkdownSegment(
+                source: source,
+                kind: proseKind(in: source)
+            )
+        )
+    }
+
+    private static func proseKind(
+        in source: String
+    ) -> SelectableMarkdownSegment.Kind {
+        let lines = source.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        var maximumTableColumnCount: Int?
+        var index = 0
+
+        while index < lines.count {
             guard
-                openFence == nil,
                 lines.indices.contains(index + 1),
                 let columnCount = tableColumnCount(
                     header: lines[index],
@@ -546,7 +608,7 @@ enum SelectableMarkdownSegmenter {
         let kind = maximumTableColumnCount.map {
             SelectableMarkdownSegment.Kind.table(columnCount: $0)
         } ?? .prose
-        return [SelectableMarkdownSegment(source: source, kind: kind)]
+        return kind
     }
 
     private static func tableColumnCount(
@@ -604,13 +666,32 @@ enum SelectableMarkdownSegmenter {
         }
     }
 
-    private static func fenceCharacter(in line: String) -> Character? {
+    private static func fence(in line: String) -> Fence? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard let first = trimmed.first, first == "`" || first == "~" else {
             return nil
         }
         let prefixLength = trimmed.prefix { $0 == first }.count
-        return prefixLength >= 3 ? first : nil
+        guard prefixLength >= 3 else {
+            return nil
+        }
+        return Fence(character: first, length: prefixLength)
+    }
+
+    private static func isClosingFence(
+        _ line: String,
+        matching openingFence: Fence
+    ) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let prefixLength = trimmed.prefix {
+            $0 == openingFence.character
+        }.count
+        guard prefixLength >= openingFence.length else {
+            return false
+        }
+        return trimmed.dropFirst(prefixLength)
+            .trimmingCharacters(in: .whitespaces)
+            .isEmpty
     }
 }
 

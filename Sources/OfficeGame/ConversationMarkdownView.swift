@@ -139,12 +139,21 @@ private struct ConversationMarkdownSection: View {
         VStack(alignment: .leading, spacing: 9) {
             ForEach(Array(markdownSegments.enumerated()), id: \.offset) {
                 _, segment in
-                SelectableMarkdownTextView(
-                    source: segment.source,
-                    fontSize: fontSize,
-                    fileBaseDirectory: fallbackDirectory?.path,
-                    minimumLayoutWidth: segment.minimumLayoutWidth
-                )
+                switch segment.kind {
+                case .codeBlock:
+                    ConversationCodeBlockSegmentView(
+                        source: segment.source,
+                        fontSize: fontSize,
+                        fallbackDirectory: fallbackDirectory
+                    )
+                case .prose, .table:
+                    SelectableMarkdownTextView(
+                        source: segment.source,
+                        fontSize: fontSize,
+                        fileBaseDirectory: fallbackDirectory?.path,
+                        minimumLayoutWidth: segment.minimumLayoutWidth
+                    )
+                }
             }
             ForEach(Array(imageURLs.prefix(8)), id: \.self) { imageURL in
                 LocalMarkdownFileImage(url: imageURL)
@@ -153,6 +162,31 @@ private struct ConversationMarkdownSection: View {
                 LocalMarkdownFileVideo(url: videoURL)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ConversationCodeBlockSegmentView: View {
+    let source: String
+    let fontSize: CGFloat
+    let fallbackDirectory: URL?
+
+    var body: some View {
+        Markdown(
+            source,
+            baseURL: fallbackDirectory,
+            imageBaseURL: fallbackDirectory
+        )
+        .markdownCodeSyntaxHighlighter(
+            ConversationCodeSyntaxHighlighter()
+        )
+        .markdownBlockStyle(\.codeBlock) { configuration in
+            ConversationCodeBlockView(
+                configuration: configuration,
+                fontSize: fontSize
+            )
+        }
+        .markdownTheme(.gitHub)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

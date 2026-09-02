@@ -383,6 +383,86 @@ final class SelectableMarkdownTextViewTests: XCTestCase {
         XCTAssertTrue(segments[0].source.contains("마지막 문단"))
     }
 
+    func testSegmenterExtractsFencedCodeBlockFromSelectableProse() {
+        let segments = SelectableMarkdownSegmenter.split(
+            """
+            첫 문단입니다.
+
+            둘째 문단도 같은 선택 문서입니다.
+
+            ```swift
+            let answer = 42
+            print(answer)
+            ```
+
+            | 항목 | 상태 | 비고 |
+            | --- | --- | --- |
+            | 카드 | 연결 | 완료 |
+
+            마지막 문단입니다.
+            """
+        )
+
+        XCTAssertEqual(segments.count, 3)
+        XCTAssertEqual(segments[0].kind, .prose)
+        XCTAssertTrue(segments[0].source.contains("첫 문단"))
+        XCTAssertTrue(segments[0].source.contains("둘째 문단"))
+        XCTAssertEqual(segments[1].kind, .codeBlock)
+        XCTAssertEqual(
+            segments[1].source,
+            """
+            ```swift
+            let answer = 42
+            print(answer)
+            ```
+            """
+        )
+        XCTAssertEqual(segments[2].kind, .table(columnCount: 3))
+        XCTAssertTrue(segments[2].source.contains("| 항목 | 상태 | 비고 |"))
+        XCTAssertTrue(segments[2].source.contains("마지막 문단"))
+    }
+
+    func testSegmenterTreatsUnclosedFenceAsCodeBlockThroughEnd() {
+        let segments = SelectableMarkdownSegmenter.split(
+            """
+            설명입니다.
+
+            ~~~json
+            {"enabled": true}
+            """
+        )
+
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].kind, .prose)
+        XCTAssertEqual(segments[1].kind, .codeBlock)
+        XCTAssertEqual(
+            segments[1].source,
+            """
+            ~~~json
+            {"enabled": true}
+            """
+        )
+    }
+
+    func testCodeBlockPresentationProvidesLanguageAndLineNumbers() {
+        XCTAssertEqual(
+            ConversationCodeBlockPresentation.displayLanguage(
+                for: "swift linenums"
+            ),
+            "SWIFT"
+        )
+        XCTAssertEqual(
+            ConversationCodeBlockPresentation.displayLanguage(for: nil),
+            "CODE"
+        )
+        XCTAssertEqual(
+            ConversationCodeBlockPresentation.lineNumbers(
+                for: "let answer = 42\nprint(answer)\nreturn"
+            ),
+            "1\n2\n3"
+        )
+    }
+
     func testTableViewportDoesNotAddNestedScrollView() {
         let documentView = SelectableMarkdownDocumentView(
             fontSize: 12,
