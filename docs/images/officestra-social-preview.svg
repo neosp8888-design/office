@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title description">
+  <title id="title">OFFICESTRA — One office. Every AI.</title>
+  <desc id="description">A local-first macOS control room for Claude Code, Codex, and Antigravity.</desc>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071717"/>
+      <stop offset="0.55" stop-color="#0d171a"/>
+      <stop offset="1" stop-color="#151522"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.72" cy="0.42" r="0.58">
+      <stop offset="0" stop-color="#26d0b4" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#26d0b4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#36d7be"/>
+      <stop offset="1" stop-color="#4ca4ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.46"/>
+    </filter>
+    <clipPath id="dayFrame"><rect x="774" y="60" width="420" height="249" rx="22"/></clipPath>
+    <clipPath id="nightFrame"><rect x="638" y="246" width="526" height="311" rx="24"/></clipPath>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#background)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <path d="M0 0H1280V8H0Z" fill="url(#accent)"/>
+
+  <g transform="translate(64 58)">
+    <rect width="56" height="56" rx="16" fill="#173b3b" stroke="#2f8379"/>
+    <path d="M15 17h27v17H28l-7 7v-7h-6z" fill="none" stroke="#42d7bd" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="22" cy="26" r="2.2" fill="#42d7bd"/>
+    <circle cx="29" cy="26" r="2.2" fill="#42d7bd"/>
+    <circle cx="36" cy="26" r="2.2" fill="#42d7bd"/>
+    <text x="74" y="39" fill="#eefcf9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="34" font-weight="750" letter-spacing="2">OFFICESTRA</text>
+  </g>
+
+  <g transform="translate(64 170)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text fill="#ffffff" font-size="70" font-weight="800" letter-spacing="-2">
+      <tspan x="0" y="0">ONE OFFICE.</tspan>
+      <tspan x="0" y="79" fill="url(#accent)">EVERY AI.</tspan>
+    </text>
+    <text x="2" y="188" fill="#aec2c0" font-size="25" font-weight="500">
+      <tspan x="2" dy="0">Independent AI sessions.</tspan>
+      <tspan x="2" dy="36">One local control room.</tspan>
+    </text>
+
+    <g transform="translate(0 278)" font-size="17" font-weight="700">
+      <rect width="150" height="44" rx="22" fill="#2a1c18" stroke="#9e5636"/>
+      <circle cx="23" cy="22" r="6" fill="#e57c4e"/>
+      <text x="39" y="28" fill="#f3b28f">Claude Code</text>
+
+      <rect x="162" width="102" height="44" rx="22" fill="#102e2b" stroke="#258f82"/>
+      <circle cx="185" cy="22" r="6" fill="#36d7be"/>
+      <text x="201" y="28" fill="#77ead8">Codex</text>
+
+      <rect x="276" width="152" height="44" rx="22" fill="#10233a" stroke="#2e70b8"/>
+      <circle cx="299" cy="22" r="6" fill="#4ca4ff"/>
+      <text x="315" y="28" fill="#89c4ff">Antigravity</text>
+    </g>
+
+    <text x="2" y="368" fill="#78908e" font-size="18" font-weight="600" letter-spacing="0.4">LOCAL-FIRST · macOS · NATIVE CLI SESSIONS</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="762" y="48" width="444" height="273" rx="28" fill="#262b30" stroke="#465057" stroke-width="2"/>
+    <image x="774" y="60" width="420" height="249" preserveAspectRatio="xMidYMid slice" clip-path="url(#dayFrame)" xlink:href="officestra-3d-day.jpg"/>
+
+    <rect x="626" y="234" width="550" height="335" rx="30" fill="#20272a" stroke="#4b5b5d" stroke-width="2"/>
+    <image x="638" y="246" width="526" height="311" preserveAspectRatio="xMidYMid slice" clip-path="url(#nightFrame)" xlink:href="officestra-2d-night.jpg"/>
+  </g>
+
+  <g transform="translate(894 515)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <rect width="240" height="38" rx="19" fill="#081312" fill-opacity="0.88" stroke="#3a6863"/>
+    <circle cx="23" cy="19" r="5" fill="#42d7bd"/>
+    <text x="39" y="25" fill="#d9f7f1" font-size="15" font-weight="700">5 AI coworkers · live</text>
+  </g>
+</svg>

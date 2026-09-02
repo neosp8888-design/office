@@ -2,573 +2,193 @@
 
 **한국어** | [English](README.en.md)
 
-> 로컬 Codex CLI와 Claude Code를 다섯 명의 AI 직원처럼 운영하는 macOS 업무실.
+> Claude Code, Codex, Antigravity를 한 사무실에서 움직이세요.
+
+**한 모델을 고르는 앱이 아닙니다. 서로 다른 AI 세션을 한 팀처럼 운영하는 앱입니다.**
+
+OFFICESTRA는 Claude Code, Codex, Antigravity 같은 AI 코딩 에이전트를 직원처럼
+배치하는 로컬 우선 멀티 AI 오케스트레이션 macOS 앱입니다. 각 직원은 자신만의
+프로바이더, 모델, 역할과 대화 세션을 유지합니다. 사용자는 여러 터미널과 대화창을
+오가는 대신 한 화면에서 일을 나누고, 진행 상황을 보고, 다음 직원을 이어서 투입할 수
+있습니다.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-14%2B%20Apple%20Silicon-111111?logo=apple" alt="macOS 14+ Apple Silicon">
-  <img src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white" alt="Swift 5.10">
-  <img src="https://img.shields.io/badge/Local--first-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="Local-first PostgreSQL">
-  <img src="https://img.shields.io/badge/Agents-Codex%20%2B%20Claude-12A594" alt="Codex and Claude Code">
-  <a href="https://github.com/neosp8888-design/office/releases/tag/v1.3.3"><img src="https://img.shields.io/badge/Release-v1.3.3-2F6FEB" alt="Latest release v1.3.3"></a>
+  <img src="docs/images/officestra-social-preview.png" alt="Claude Code, Codex, Antigravity를 한곳에서 운영하는 OFFICESTRA" width="100%">
 </p>
-
-OFFICESTRA는 여러 CLI 세션을 터미널 창마다 따로 관리하는 대신, 하나의
-오피스 화면에서 직원을 선택하고 업무를 맡기며 진행 상태와 결과를 확인하는
-로컬 우선 데스크톱 앱이다. 각 직원은 독립된 역할 지침·CLI·모델·추론
-단계·Fast 또는 Standard 모드·권한·대화 세션을 갖고, 백엔드는 앱 창이
-닫혀도 업무를 계속 실행한다.
-
-_Local-first macOS command center for running Codex CLI and Claude Code as a
-five-person AI team._
 
 <p align="center">
-  <img src="docs/images/officestra-full.png" alt="OFFICESTRA 전체 앱 화면" width="100%">
+  <strong>세 개의 AI 프로바이더 · 다섯 개의 독립 세션 · 하나의 로컬 제어실</strong>
 </p>
-<p align="center"><sub>OFFICESTRA 전체 앱 화면.</sub></p>
 
-## 핵심 경험
+## 여러 AI를 쓰는 일이 왜 더 복잡해야 할까요?
 
-- 다섯 명의 직원에게 필요한 업무만 각각 배정하거나 누구에게든 협업이나 업무 분배를 요청하면, 해당 직원이 로컬 API로 다른 직원에게 프롬프트를 넣고 진행 상황을 모니터링한 뒤 종합해 보고한다.
-- 직원마다 Codex 또는 Claude Code, 모델, Fast·Standard, 추론 단계와 파일 권한을 선택한다.
-- 실행 중인 직원에게 다음 업무를 최대 3개까지 예약하고 순서를 바꾸거나 즉시 적용한다.
-- 입력 즉시 `생각 중` 상태부터 메시지·추론·명령·도구·파일 변경을 실제 순서로 확인한다.
-- Codex 공개 메시지를 각각 복사하고 파일 변경 결과를 발생 위치에서 확인한다.
-- 앱을 닫았다 다시 열어도 PostgreSQL 상태와 CLI 세션을 복구한다.
-- 파일을 최대 20개까지 첨부하고 이미지 썸네일·생성 이미지·Markdown 결과를 본다.
-- 직원별 기록과 전체 보관함을 Fast·Standard까지 포함해 검색한다.
-- 실제 세션 컨텍스트 잔량을 확인하고 직원별 자동 압축 기준을 조절하거나 즉시 압축한다. 압축 시작·완료·실패는 직원 말풍선과 상태 아이콘으로 실시간 표시한다.
-- Claude Code가 제공하는 다음 질문 추천을 바로 실행하고, 완료 응답에 좋아요·싫어요 평가를 남긴다.
-- 과거 업무 기록을 RAG로 자동 덧붙이지 않고 필요할 때만 명시적으로 검색하며, 오래 유지할 결정·제약·사건 교훈은 사용자 승인 뒤 사내 위키에 축적한다.
-- 2D·3D 오피스와 낮·밤 테마를 전환하며 실제 업무 상태를 캐릭터 애니메이션으로 본다.
+Claude Code의 대화는 Claude Code에, Codex의 작업은 Codex에, Antigravity의 세션은
+Antigravity에 남아 있습니다. OFFICESTRA는 이 세션들을 억지로 하나로 합치지 않습니다.
+각 AI의 흐름은 그대로 살리고, 운영 화면만 하나로 모읍니다.
 
-## 화면 구성
+## 가장 강력한 기능
 
-| 영역 | 하는 일 |
-| --- | --- |
-| 실시간 오피스 | 다섯 직원 선택, 업무 상태 확인, 2D·3D 및 낮·밤 전환 |
-| 직원 모니터 | 해당 직원의 대화와 세션 기록 열기 |
-| 캐비닛 | 모든 직원의 업무 기록 검색 및 상세 보기 |
-| 화이트보드 | Codex·Claude 계정 잔여량, 오늘·30일 API 요금 추정, CLI 업데이트 확인 |
-| 사내 위키 | 승인된 지속 지식 검색, 직원이 제안한 지식의 승인·거절 |
-| 실시간 업무실 | 선택한 직원의 진행 이벤트와 최종 응답을 시간순으로 확인 |
-| 하단 입력창 | 직원·CLI·모델·Fast·Standard·추론·권한 선택, 파일 첨부, 업무 실행·중단 |
+### 다섯 명의 AI, 다섯 개의 독립 세션
 
-오피스 장면은 장식용 배경이 아니다. 캐릭터, 모니터, 캐비닛과 화이트보드가
-각각 실제 선택·기록·사용량 화면으로 연결되는 인터랙티브 인터페이스다.
+직원마다 Claude Code, Codex, Antigravity 중 하나를 선택하고 서로 다른 역할과 모델을
+줄 수 있습니다. 각 대화는 섞이지 않으며, 나중에 돌아와도 자신의 세션에서 계속됩니다.
 
-## 주요 기능
+### 동시에 맡기고 한눈에 지켜보기
 
-### 직원과 CLI
+여러 직원에게 서로 다른 일을 맡기고 동시에 진행할 수 있습니다. 누가 생각 중인지,
+어떤 명령과 도구를 쓰는지, 무엇을 바꿨고 어떤 답을 냈는지 한 화면에서 확인합니다.
 
-- 직원별 이름과 역할·업무 지침 설정
-- Codex CLI와 Claude Code를 직원마다 독립적으로 선택
-- 모델·Fast 또는 Standard·추론 단계·읽기/쓰기 권한 설정
-- 선택 모드와 실제 실행 모드를 직원 설정과 각 업무 기록에 별도로 저장
-- 직원별 외부 CLI 세션 저장과 후속 업무 재개
-- Claude Code는 같은 설정·세션·작업 폴더에서 지속 프로세스를 재사용하고, Codex는 기존 스레드를 재개
-- 같은 CLI의 모델·Fast·추론·권한·역할 변경은 기존 세션을 유지하고,
-  Codex ↔ Claude 전환만 새 실행 세션 시작(세션이 초기화되어도 DB를 통해 이전작업을 이어갈수 있음)
-- 사용자 판단이 필요한 질문을 같은 세션에서 이어서 답변
-- 같은 직원의 중복 업무 차단과 실행 중 업무 취소
-- 직원별 실제 컨텍스트 한도·잔량 표시, 50~95% 자동 압축 기준과 수동 압축
-- 자동·수동 압축의 진행·완료·실패 상태를 WebSocket으로 동기화하고 재연결 시 진행 상태 복구
-- 모델 한도 소진과 일반 실행 실패를 다른 상태로 표시
+### 결과를 다음 AI에게 이어주기
 
-### 실시간 업무
+한 직원이 조사하고, 다른 직원이 검토하고, 또 다른 직원이 마무리하도록 업무를 나눌 수
+있습니다. 각자의 대화는 독립적으로 유지하면서도 하나의 작업 흐름으로 운영할 수 있습니다.
 
-- Node.js 백엔드가 CLI 자식 프로세스의 실행과 종료를 소유
-- PostgreSQL에 업무·응답·공개 진행 이벤트를 먼저 저장
-- WebSocket 변경 알림과 REST 스냅샷을 조합한 재연결
-- 업무 전송 즉시 임시 카드와 움직이는 `생각 중` 상태 표시
-- 실행 중인 직원에게 다음 업무를 최대 3개까지 예약하고 취소·순서 변경·즉시 적용
-- DB 발생 순서대로 진행 설명·추론·메시지·명령·도구를 배치하고 연속 작업만 그룹화
-- 실행 중 활동을 같은 이벤트 행에서 완료·실패 상태로 갱신해 중복 표시 방지
-- 공개 메시지마다 개별 복사 버튼과 마지막 결론 구분 제공
-- 공급자가 제안한 다음 질문을 후속 업무로 바로 전송하고 완료 응답에 좋아요·싫어요 평가 저장
-- Codex 파일 변경 시작 카드를 같은 타임라인 위치에서 완료·실패와 경로로 갱신하고 가능한 추가·삭제 통계 표시
-- Claude Code는 도구 이름 배지와 셸 명령, 파일 편집 카드, 할 일 체크리스트, 접히는 사고 블록으로 구분해 표시
-- 추론·명령·도구 작업 그룹은 기본 닫힘이며 필요할 때 펼침
-- 최신 대화를 자동 추적하되 사용자가 위로 스크롤하면 추적을 멈추고 버튼으로 재개
-- 최근 10건부터 시작해 상단에서 10건씩, 최대 30건까지 이전 업무를 읽던 위치 그대로 추가
-- 진행 중이거나 최근 종료된 업무는 기본 30건 화면 창 밖에서도 결과가 사라지지 않게 유지
-- 화면 창보다 오래된 기록은 직원 모니터와 전체 대화 보관함에서 조회
-- Claude 스트리밍 출력과 Codex 완성 메시지, GitHub Flavored Markdown 렌더링
-- 코드 블록, 표, 제목, 목록, 링크와 로컬 생성 이미지 미리보기
-- 업무당 최대 20개 파일 첨부, 이미지 썸네일과 Finder 열기
+### GUI와 실제 터미널을 오가기
 
-### 기록·사내 위키와 사용량
+필요할 때는 직원의 현재 세션을 실제 CLI 터미널로 열어 직접 대화할 수 있습니다. 다시
+GUI로 돌아오면 터미널에서 진행한 내용도 같은 직원의 기록으로 이어집니다.
 
-- 직원명·업무·응답·세션 ID·모델·추론 단계·Fast·Standard를 한 번에 검색
-- 실행 당시 CLI·모델·추론·Fast 또는 Standard 설정과 외부 세션 ID 보존
-- 실시간 카드, 직원별 기록과 전체 대화 보관함에서 실행 모드를 항상 표시
-- 공급자 계정에서 직접 받은 Codex·Claude의 5시간·7일 잔여량과 요금제 표시
-- 이 OFFICESTRA가 기록한 오늘·최근 30일 API 요금 추정 표시
-- Codex·Claude CLI의 설치 버전과 사용 가능한 업데이트를 확인하고 선택한 CLI만 갱신
-- 완료 업무를 PostgreSQL `work_records` 원본으로 저장하고 검색 가능한 기록을
-  `rag_documents` 파생 검색 자료로 동기화
-- 별도 RAG 검색으로 찾은 과거 업무 기록을 새 프롬프트에 자동 주입하지 않고,
-  필요할 때 직원이 `GET /api/work-records` 또는 `POST /api/rag/search`로
-  명시적으로 조회. 같은 CLI 세션의 대화 연속성은 그대로 유지
-- 지속적인 결정·제약·중대한 사건 교훈을 직원이 사내 위키에 제안하고 사용자가
-  `확인 대기`에서 직접 승인하거나 거절
-- 승인된 제안만 `현재 지식`에 게시·검색하고 근거가 된 원본 업무 기록을 함께 표시
-- 실제 사용한 RAG·DB·파일·웹·도구·스킬 근거를 응답과 함께 표시하고 웹은
-  클릭, 파일은 Finder로 열기
+### 대화, 작업 기록, 한도를 한곳에
 
-## 동작 구조
+완료된 업무와 대화는 로컬에 쌓입니다. 직원별 기록을 다시 찾고, 각 CLI의 남은 한도와
+컨텍스트 상태를 보며 다음에 어떤 AI를 투입할지 판단할 수 있습니다.
 
-```mermaid
-flowchart LR
-    UI["OFFICESTRA macOS 앱"] <-->|"REST · WebSocket"| API["Node.js 백엔드"]
-    API --> CX["Codex CLI"]
-    API --> CL["Claude Code CLI"]
-    API <-->|"세션 · 업무 · 활동 · 응답"| DB["PostgreSQL · pgvector"]
-    API --> FS["로컬 작업 폴더 · 첨부 파일"]
-```
+## 원하는 모습으로 운영하세요
 
-1. 앱이 `POST /api/agent-jobs`로 직원과 업무를 지정한다.
-2. 앱은 임시 턴을 즉시 표시하고 백엔드는 선택된 직원의 CLI를 공유 작업
-   폴더에서 시작한다. 서로 다른 직원의 업무는 동시에 실행될 수 있다.
-3. 백엔드가 반환한 `turnId`로 임시 턴을 실제 저장 기록과 합친다.
-4. 순번과 이벤트 키가 있는 진행 활동·응답 초안을 PostgreSQL에 먼저 저장한다.
-5. `/ws`가 변경 사실을 알리면 앱은 `GET /api/live-feed/:turnId`로 최신 상태만 읽는다.
-6. `completed`, `failed`, `interrupted` 상태가 되면 최종 결과를 표시한다.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/officestra-2d-night.jpg" alt="OFFICESTRA 2D 야간 사무실" width="100%"><br>
+      <strong>2D 야간 사무실</strong><br>
+      <sub>작업 상태를 한눈에 보는 집중형 화면</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/officestra-3d-day.jpg" alt="OFFICESTRA 3D 주간 사무실" width="100%"><br>
+      <strong>3D 주간 사무실</strong><br>
+      <sub>같은 AI 팀을 다른 분위기로 시각화</sub>
+    </td>
+  </tr>
+</table>
 
-백엔드가 계속 실행 중이면 앱 창을 닫아도 직원 업무는 이어진다. 앱을 다시
-열면 저장된 스냅샷을 읽고 WebSocket에 재연결한다.
+대화형 GUI와 실제 CLI 터미널을 오가고, 직원별 진행 상태·사용 한도·대화 기록을 같은
+화면에서 관리합니다. 화면 스타일을 바꿔도 각 AI의 세션과 작업 흐름은 그대로 유지됩니다.
 
-## Slack에서 직원 호출
+## 이런 분을 위한 앱입니다
 
-Slack Socket Mode를 켜면 4317 포트를 외부에 공개하지 않고도 모바일 Slack에서
-다섯 직원을 호출할 수 있다. `/office`로 기본 직원을 선택하고 봇에게 DM을
-보내거나 채널에서 봇을 멘션하면 해당 직원의 CLI 업무가 시작된다.
+- Claude Code, Codex, Antigravity를 함께 쓰지만 창과 세션 관리에 지친 사람
+- 하나의 거대한 대화보다 역할별로 분리된 AI 세션을 선호하는 사람
+- 복잡한 시스템을 직접 만들지 않고 멀티 AI 오케스트레이션을 경험하고 싶은 사람
+- 여러 AI가 실제로 무엇을 하고 있는지 한눈에 보고 싶은 사람
 
-- 직원 이름과 선택 버튼은 PostgreSQL의 현재 설정을 사용한다.
-- Slack 스레드마다 OFFICESTRA 대화 ID를 보존해 후속 답변을 같은 대화로 전달한다.
-- 진행 중인 활동은 한 상태 메시지에서 갱신하고 최종 응답은 같은 스레드에 남긴다.
-- 사용자 답변이 필요한 업무는 같은 스레드에 답하면 기존 직원 세션으로 이어진다.
-- 허용된 Slack 사용자 ID만 CLI 업무를 시작할 수 있다.
+## 지원하는 CLI
 
-설정 방법은 다음과 같다.
+- OpenAI Codex CLI
+- Anthropic Claude Code
+- Google Antigravity CLI
 
-1. Slack 앱 생성 화면에서 `integrations/slack/manifest.yaml`을 가져온다.
-2. 앱을 워크스페이스에 설치해 `xoxb-` Bot Token을 발급한다.
-3. `connections:write` App Token을 만들어 `xapp-` 값을 발급한다.
-4. `integrations/slack/slack.env.example`을 참고해
-   `~/.officestra/slack.env`를 만들고 파일 권한을 `600`으로 설정한다.
-5. 백엔드를 재시작한 뒤 로그에서 `OFFICESTRA Slack Socket Mode 연결 완료`를 확인한다.
+사용 가능한 모델과 추론 단계, 한도 정보는 각 계정과 설치된 CLI 버전에 따라 달라집니다.
 
-토큰 파일은 저장소 밖에 두며 Git에 커밋하지 않는다. 토큰이 없으면 Slack 기능만
-비활성화되고 macOS 앱과 기존 백엔드는 그대로 동작한다.
+## 시작하기
 
-## 공유 작업 폴더와 Git 운영
+### 가장 쉬운 방법: AI에게 맡기기
 
-모든 새 업무는 설정된 `workdir`를 함께 사용한다. Git 프로젝트라면 별도 branch나
-worktree를 만들지 않고 현재 선택된 branch(일반적으로 `main`)에서 그대로 실행한다.
+이미 사용 중인 Codex, Claude Code 또는 Antigravity에 아래 문장을 그대로 보내세요.
 
-서로 다른 직원에게 보낸 업무는 같은 폴더에서 동시에 실행될 수 있다. 각 직원은
-현재 작업 트리의 파일과 변경을 그대로 보므로, 서로 다른 파일의 수정은 한 작업
-트리에 함께 쌓인다. 같은 파일이나 같은 줄을 동시에 고치면 나중 수정이 앞선 수정을
-덮을 수 있으므로 각 업무에서 `git status`와 `git diff`로 기존 변경을 확인한다.
-백엔드를 재시작하면 실행 중이거나 준비 중이던 턴은 `interrupted`로 닫히며 자동
-재실행하지 않는다.
+> “`https://github.com/neosp8888-design/office.git`을 이 Mac에 내려받고 OFFICESTRA를
+> 실행해줘. 기존 AI CLI 로그인과 프로젝트는 건드리지 말고, 먼저 환경을 확인한 뒤 빠진
+> 의존성만 설치해. 앱과 로컬 백엔드가 정상 실행되는 것까지 확인해줘.”
 
-OFFICESTRA 백엔드는 자동 commit·merge·rebase·push를 하지 않는다. 각 CLI는 같은
-작업 트리의 현재 변경과 이전 커밋을 직접 확인하므로, 수정·테스트·커밋까지 한
-업무에서 마치도록 지시할 수 있다. push가 필요할 때만 사용자 지시에 포함한다.
-충돌이나 dirty 상태가 있으면 해당 업무에서 확인하고 해결한 뒤 계속한다.
-
-직원 간 또는 외부 터미널·IDE와의 파일 잠금은 제공하지 않는다. 커밋 전에 함께
-쌓인 변경을 검토하고, 겹친 수정이나 충돌이 있으면 해당 업무에서 해결한다.
-
-## 설치
-
-OFFICESTRA는 Apple Silicon(M1 이상)과 macOS 14 이상을 지원한다. Intel Mac은
-지원하지 않는다. 최신 공개 빌드는 **v1.3.3 Community Preview**이며 DMG에는
-Apple Silicon용 앱, Node.js와 로컬 백엔드가 포함된다. Docker Desktop과 로그인된
-Codex CLI 또는 Claude Code CLI 하나는 사용자가 준비해야 한다. `main`에는 최신
-릴리스 뒤에 푸시된 변경이 포함될 수 있다.
-
-모델 목록과 실제 사용 가능 여부는 설치된 CLI 버전과 계정 권한에 따라 달라진다.
-
-### 가장 쉬운 방법
-
-1. [OFFICESTRA v1.3.3 릴리스](https://github.com/neosp8888-design/office/releases/tag/v1.3.3)에서
-   `OFFICESTRA-v1.3.3-macOS-arm64.dmg`를 받는다.
-2. DMG를 열고 `OFFICESTRA.app`을 **Applications**로 끌어다 놓는다.
-3. 첫 실행은 앱을 우클릭해 **열기**를 선택한다. 현재 공개 빌드는 ad-hoc
-   서명이며 Apple 공증을 받지 않아 일반 더블클릭을 macOS가 막을 수 있다.
-4. 첫 실행 도우미에서 Docker·CLI 상태를 확인하고 직원들이 함께 사용할 프로젝트
-   폴더를 선택한다.
-
-릴리스 페이지에는 버전 `1.3.3`(빌드 6), arm64 아키텍처와 DMG SHA-256이 함께
-게시된다. 현재 `main`을 직접 실행하려는 개발자는 아래 소스 빌드 절차를 사용한다.
+OFFICESTRA는 아직 최신 DMG를 제공하지 않습니다. 현재는 저장소를 내려받아 실행하는
+방식이 기준입니다.
 
 <details>
-<summary><strong>현재 main을 소스에서 직접 실행하는 개발자용 명령 보기</strong></summary>
+<summary><strong>직접 설치하기 — 숙련자용</strong></summary>
 
-### 새 Mac에서 직접 설치하기
+### 1. 준비할 것
 
-아래 명령은 macOS의 **터미널** 앱에 한 블록씩 붙여 넣는다. 터미널은 Finder의
-`응용 프로그램 → 유틸리티 → 터미널`에서 열 수 있다.
+- Apple silicon Mac과 macOS 14 이상
+- Git과 Swift 5.10 이상을 포함한 Xcode Command Line Tools
+- Node.js 20 이상과 npm
+- Docker Desktop
+- Codex, Claude Code, Antigravity 중 로그인된 CLI 하나 이상
 
-#### 1. Apple 개발 도구 설치
+Apple 개발 도구를 설치합니다.
 
 ```sh
 xcode-select --install
 ```
 
-설치 창이 나타나면 **설치**를 누르고 약관에 동의한다. 완료된 뒤 터미널을 다시
-열고 다음 두 명령이 버전을 출력하는지 확인한다.
-
-```sh
-git --version
-swift --version
-```
-
-Swift가 5.10보다 낮으면 `시스템 설정 → 일반 → 소프트웨어 업데이트`를 먼저
-실행한다. 그래도 낮으면 App Store에서 최신 Xcode를 설치한다.
-
-#### 2. Homebrew와 Node.js 설치
-
-[Homebrew 공식 사이트](https://brew.sh/)의 설치 명령을 실행한다.
-
-```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-설치 마지막에 `Next steps`가 나오면 표시된 두 줄도 그대로 실행한다. 새 터미널을
-열어 `brew --version`이 보이면 Node.js를 설치한다.
+[Homebrew](https://brew.sh/)가 준비돼 있다면 Node.js와 Docker Desktop을 설치하고
+Docker를 실행합니다.
 
 ```sh
 brew install node
-node --version
-npm --version
-```
-
-#### 3. Docker Desktop 설치
-
-```sh
 brew install --cask docker
 open -a Docker
 ```
 
-Docker 첫 화면에서 약관에 동의하고 **Use recommended settings**를 선택한다.
-메뉴 막대의 고래 아이콘이 준비 상태가 될 때까지 기다린 뒤 확인한다.
+### 2. 사용할 AI CLI 설치와 로그인
+
+세 가지를 모두 설치할 필요는 없습니다. 사용할 CLI만 설치하고, 처음 실행할 때 각
+서비스 계정으로 로그인하세요. 아래 명령 묶음 중 필요한 것만 실행합니다.
+
+**OpenAI Codex CLI** — [공식 안내](https://developers.openai.com/codex/cli/)
 
 ```sh
-docker compose version
-docker info
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+codex
 ```
 
-설치 화면으로 진행하고 싶다면 [Docker의 Mac 설치 안내](https://docs.docker.com/desktop/setup/install/mac-install/)에서
-Apple 칩용 설치 파일을 받아도 된다.
-
-#### 4. 사용할 AI CLI 확인
-
-이미 사용하는 CLI가 있으면 다시 설치할 필요가 없다.
+**Anthropic Claude Code** — [공식 안내](https://code.claude.com/docs/en/getting-started)
 
 ```sh
-codex --version
-claude --version
-```
-
-둘 다 없을 때만 원하는 하나를 설치하고 로그인한다. Codex는 브라우저에서
-ChatGPT 로그인을 마치며, Claude Code는 처음 `claude`를 실행할 때 안내에 따라
-계정을 선택한다.
-
-```sh
-# Codex를 사용할 경우
-npm install -g @openai/codex
-codex login
-
-# Claude Code를 사용할 경우
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://claude.ai/install.sh | bash
 claude
 ```
 
-공식 안내는 [Codex CLI 설치](https://help.openai.com/en/articles/11096431)와
-[Claude Code 설정](https://docs.anthropic.com/en/docs/claude-code/getting-started)에서
-확인할 수 있다.
-
-#### 5. OFFICESTRA 내려받기
-
-아래 clone 명령은 `~/OFFICESTRA` 폴더가 없을 때만 실행한다. 이미 있다면 삭제하거나
-덮어쓰지 말고 Codex나 Claude에게 기존 설치 상태 확인을 맡긴다.
-이 명령은 현재 기본 브랜치의 최신 소스를 내려받는다.
+**Google Antigravity CLI** — [공식 안내](https://codelabs.developers.google.com/antigravity-cli-hands-on)
 
 ```sh
-git clone --depth 1 \
-  https://github.com/neosp8888-design/office.git \
-  "$HOME/OFFICESTRA"
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy
+```
+
+Docker 설치에 문제가 있으면 [Docker Desktop 공식 안내](https://docs.docker.com/desktop/setup/install/mac-install/)를
+확인하세요.
+
+### 3. 저장소 내려받기
+
+```sh
+git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
-git rev-parse HEAD
 ```
 
-직원들이 작업할 폴더를 하나 만든 뒤 공개 예시 경로를 자신의 경로로 바꾼다.
+같은 위치에 기존 설치가 있다면 덮어쓰거나 지우지 말고 먼저 상태를 확인하세요.
 
-```sh
-mkdir -p "$HOME/Projects"
-sed -i '' "s#/Users/your-name/Projects#$HOME/Projects#" Sources/OfficeCore/Resources/characters.json
-grep '"workdir"' Sources/OfficeCore/Resources/characters.json
-```
+### 4. 백엔드와 앱 실행
 
-다른 폴더를 쓰려면 `$HOME/Projects` 대신 그 폴더의 절대 경로를 넣는다. 모든
-직원은 선택한 폴더의 현재 파일과 변경을 함께 사용한다.
-
-#### 6. 백엔드와 앱 실행
-
-첫 번째 터미널에서 다음 명령을 실행하고 창을 열어 둔다.
+첫 번째 터미널에서 로컬 데이터베이스와 백엔드를 시작합니다.
 
 ```sh
 cd "$HOME/OFFICESTRA"
 ./scripts/start-backend.sh
 ```
 
-처음 실행할 때 PostgreSQL 이미지와 Node 패키지를 받으므로 시간이 걸릴 수 있다.
-시작 스크립트는 PostgreSQL이 실제로 요청을 받을 수 있을 때까지 기다린 뒤 DB
-마이그레이션과 백엔드를 실행한다. 다른 터미널 탭에서 상태를 확인했을 때
-응답에 `"ok":true`와 `"service":"officestra-backend"`가 나오면 준비된 것이다.
-
-```sh
-curl -fsS http://127.0.0.1:4317/health
-```
-
-두 번째 터미널에서 앱을 실행한다.
+첫 실행은 Docker 이미지와 패키지를 받아 시간이 걸릴 수 있습니다. 준비가 끝나면 두 번째
+터미널에서 앱을 실행합니다.
 
 ```sh
 cd "$HOME/OFFICESTRA"
 swift run OfficeLLM
 ```
 
-첫 빌드는 수 분 걸릴 수 있다. 사용자에게 보이는 앱 이름은 `OFFICESTRA`지만
-SwiftPM 제품명은 호환성을 위해 `OfficeLLM`을 유지한다. AI CLI를 하나만
-설치했다면 앱 우측 상단 설정에서 다섯 직원 모두 그 CLI와 사용 가능한 모델로
-바꾼 뒤 업무를 시작한다.
+앱이 열리면 첫 실행 도우미에서 작업 폴더를 선택하고, 로그인해 둔 CLI를 직원에게
+배정하면 됩니다.
 
 </details>
 
-### 종료와 다시 실행
+> [!WARNING]
+> OFFICESTRA는 아직 프리뷰입니다. 중요한 작업은 백업과 함께 진행하세요. 대화와 작업
+> 기록을 외부에 공유하기 전에는 민감한 정보가 없는지 확인하세요.
 
-앱과 백엔드를 실행한 각 터미널에서 `Control + C`를 누르면 종료된다. PostgreSQL
-컨테이너까지 멈추되 대화 데이터는 보존하려면 OFFICESTRA 폴더에서 실행한다.
-
-```sh
-docker compose -f infra/compose.yaml down
-```
-
-`down -v`는 저장된 대화 DB까지 삭제하므로 초기화를 원할 때만 사용한다. 다시
-실행할 때는 Docker Desktop을 먼저 열고, 위의 백엔드 명령과 앱 명령을 각각 다시
-실행한다.
-
-
-### 막힐 때 확인할 것
-
-- `command not found: brew`가 나오면 터미널을 닫았다 다시 열고 Homebrew 설치
-  마지막의 `Next steps` 두 줄을 실행한다.
-- `Cannot connect to the Docker daemon`이 나오면 Docker Desktop을 열고 준비가
-  끝날 때까지 기다린다.
-- `4317` 또는 `54329` 포트를 이미 사용 중이라는 메시지가 나오면 모르는
-  프로세스를 종료하지 말고 Codex나 Claude에게 해당 포트의 소유자 확인을 맡긴다.
-- 앱은 열리지만 직원 업무가 실패하면 선택한 CLI의 `--version`과 로그인 상태를
-  확인하고, 설치되지 않은 CLI로 지정된 직원 설정을 바꾼다.
-- 백엔드가 시작되지 않으면 첫 번째 터미널의 마지막 오류 전체를 AI에게 전달한다.
-
-## 직원 실행 설정
-
-| CLI | 모델 선택지 | 추론 단계 | Fast 지원 |
-| --- | --- | --- | --- |
-| Codex | 5.6 Sol, 5.6 Terra, 5.6 Luna | `high`, `xhigh`, `max`, `ultra` | 모든 표시 모델 |
-| Claude Code | Opus 5, Fable, Sonnet 5 | `high`, `xhigh`, `max` | Opus 5 전용 |
-
-Fast를 켜거나 끌 때마다 Codex에는 `fast` 또는 `default` 서비스 등급을,
-Claude Code에는 `fastMode` 설정을 명시적으로 전달한다. 앱에서 Claude Fast를
-켤 때 현재 모델이 지원되지 않으면 Opus 5로 맞추며, 잘못 조합한 직접 API
-요청은 거절한다. Fable이나 Sonnet 5를 선택하면 Standard로 돌아간다. 실행
-모드는 추론 단계와 독립적으로 저장되며 과거 값이 없는 업무는 보관함에서
-Standard로 표시한다.
-
-권한은 두 CLI의 서로 다른 값을 앱의 공통 3단계로 표시한다.
-
-| 앱 표시 | Codex | Claude Code |
-| --- | --- | --- |
-| 읽기 전용 | `read-only` | `plan` |
-| 작업 폴더 쓰기 | `workspace-write` | `auto` |
-| 전체 허용 | `danger-full-access` | `bypassPermissions` |
-
-`전체 허용`은 작업 폴더 밖의 파일과 시스템 명령에도 영향을 줄 수 있다.
-역할 지침과 `workdir`를 확인한 뒤 필요한 직원에게만 사용한다.
-
-직원 프로필의 컨텍스트 제어에서 실제 세션 최대치와 잔량을 확인할 수 있다.
-자동 압축 기준은 50~95%에서 조절하며 기본값은 90%다. `지금 압축`은 활성
-Codex 스레드의 네이티브 compact 또는 Claude Code의 `/compact`를 사용한다.
-압축 중에는 해당 직원의 새 업무와 모델·권한 변경을 잠그고, 완료·실패 결과를
-말풍선과 직원 선택기 상태 아이콘에 남긴다.
-
-## 로컬 API
-
-기본 주소는 `http://127.0.0.1:4317`이다. 이 API는 앱과 같은 Mac에서 쓰는
-로컬 제어면이며 인증을 제공하지 않는다.
-
-| 목적 | 메서드와 경로 |
-| --- | --- |
-| 상태 확인 | `GET /health` |
-| 직원 목록 | `GET /api/characters` |
-| 활성 세션 | `GET /api/active-sessions` |
-| 사용량·요금 추정 | `GET /api/usage-summary` |
-| CLI 업데이트 확인·적용 | `GET /api/cli-updates`, `POST /api/cli-updates/apply` |
-| 전체·직원별 기록 | `GET /api/history`, `GET /api/characters/:id/history` |
-| 실시간 피드 | `GET /api/live-feed`, `GET /api/live-feed/:turnId` |
-| 전체 보관함 피드 | `GET /api/archive-feed` |
-| 변경 알림 | `WS /ws` |
-| 직원 설정 | `PUT /api/characters/:id/name`, `PUT /api/characters/:id/settings` |
-| 역할 지침 | `PUT /api/characters/:id/identity-prompt` |
-| 자동 압축 기준 | `PUT /api/characters/:id/context-settings` |
-| 컨텍스트 즉시 압축 | `POST /api/characters/:id/context/compact` |
-| 업무 실행 | `POST /api/agent-jobs` |
-| 업무 중단 | `DELETE /api/agent-jobs/:characterId` |
-| 완료 응답 평가 | `PUT /api/turns/:turnId/feedback` |
-| 업무 기록 원본 검색 | `GET /api/work-records` |
-| 턴 응답 근거 | `GET /api/turns/:turnId/sources`, `PUT /api/turns/:turnId/sources` |
-| RAG 문서·검색 | `POST /api/rag/documents`, `POST /api/rag/search` |
-| 승인된 사내 위키 | `GET /api/wiki/pages`, `GET /api/wiki/pages/:pageId` |
-| 사내 위키 제안 | `GET /api/wiki/proposals`, `POST /api/wiki/proposals` |
-| 위키 제안 승인·거절 | `POST /api/wiki/proposals/:proposalId/approve`, `POST /api/wiki/proposals/:proposalId/reject` |
-
-사내 위키 승인·거절은 앱의 **사내 위키 → 확인 대기**에서 사용자가 직접
-결정한다. 앱은 버튼 동작과 일반 로컬 API 호출을 구분하는 intent header를
-보내며, 이 값이 없는 승인·거절 요청은 `403`으로 거부된다. 이는 로컬 단일 사용자
-앱의 의도 확인 장치이지 인증 경계는 아니므로 4317 포트를 외부에 노출해서는 안 된다.
-
-업무 실행 예시는 다음과 같다.
-
-```sh
-curl -X POST http://127.0.0.1:4317/api/agent-jobs \
-  -H 'content-type: application/json' \
-  -d '{
-    "characterId": "right-woman",
-    "prompt": "README 설치 절차를 검토해줘.",
-    "attachmentPaths": []
-  }'
-```
-
-요청이 접수되면 `202`와 함께 `turnId`, `conversationId`, `status`가 반환된다.
-같은 직원이 이미 실행 중이면 `409`를 반환하며, 서로 다른 직원은 병렬로
-실행할 수 있다.
-
-실행 권한이 있는 직원은 자신의 CLI 세션에서 이 API를 직접 호출할 수도 있다.
-사용자가 특정 직원에게 협업이나 업무 분배를 요청하면, 그 직원이
-`POST /api/agent-jobs`로 다른 직원에게 업무를 지시하고 `GET /api/live-feed`로
-진행 상황을 모니터링한 뒤 결과를 종합해 보고하는 방식으로 동작한다. 즉 로컬
-API를 이용한 직원 주도 오케스트레이션은 가능하다. 다만 직원이 명시적 요청을
-받아 수행하는 방식이며, 백엔드가 독립적으로 업무를 계획·분배·감시·재시도하는
-자동 오케스트레이터는 없다.
-
-## 데이터와 보안 경계
-
-- 업무·응답·세션·활동, 완료 업무 원본 `work_records`와 응답 근거는 로컬
-  PostgreSQL Docker 볼륨에 저장된다.
-- `checklist.md`와 `context-notes.md`는 작업 기록 DB 전환 당시의 동결본이다. 이 두
-  파일은 재생성하거나 편집하지 않으며, 현재 작업 기록은 읽기 전용
-  `GET /api/work-records`로 조회한다.
-- 사내 위키 제안과 승인된 페이지는 로컬 PostgreSQL에 저장된다. 승인 전·거절·충돌
-  제안은 일반 RAG와 게시된 위키 검색에 나타나지 않으며, 승인된 페이지만 원본 업무
-  기록과 연결된 별도 위키 검색 자료가 된다.
-- 첨부 파일은 작업 폴더의 `.office-attachments/`에 복사된다. 다른 Git 저장소를 `workdir`로 사용한다면 해당 저장소의 `.gitignore`에도 이 폴더를 추가해야 한다.
-- OFFICESTRA는 API 키를 직접 저장하지 않고 각 CLI의 기존 로컬 로그인을 사용한다.
-- 백엔드는 기본적으로 `127.0.0.1`에만 바인딩된다.
-- PostgreSQL의 호스트 포트도 `127.0.0.1:54329`에만 바인딩된다.
-- API에는 인증이 없으므로 포트를 LAN이나 인터넷에 그대로 노출하면 안 된다.
-- Compose의 PostgreSQL 계정은 루프백 전용 로컬 개발값이므로 외부에 노출하면 안 된다.
-- 진행 로그와 보관함에는 프롬프트·명령·파일 경로가 포함될 수 있다.
-- 화면 캡처나 로그를 공유하기 전에 프로젝트명, 절대 경로와 사용량 정보를 확인한다.
-
-기본 PostgreSQL 포트는 호스트 `54329`, 컨테이너 `5432`다. 환경 변수 목록은
-`backend/.env.example`에서 확인할 수 있으며, 현재 시작 스크립트는
-`backend/.env`를 자동으로 불러오지 않는다.
-
-## 작업 기록, RAG 검색과 사내 위키
-
-완료 업무의 원본은 PostgreSQL `work_records`다. 백엔드는 완료 턴을 자동으로
-저장하고 검색 가능한 상태의 기록만 `rag_documents` 파생 검색 자료로
-동기화한다. 백엔드는 RAG로 찾은 과거 완료 업무를 새 프롬프트에 자동으로
-덧붙이지 않는다. 같은 직원의 기존 CLI 세션은 계속 재개하되, 별도 기록이 필요할
-때만 직원이 읽기 전용 `GET /api/work-records` 또는 `POST /api/rag/search`를 직접
-호출하며 조회 결과는 명령이 아닌 비신뢰 참고 자료로 취급한다.
-
-사내 위키는 원본 대화와 분리된 사용자 승인형 지속 지식이다. 완료 응답에서 직원은
-이번 업무로 새로 확정된 항목을 최대 3개까지 제안할 수 있다. 대상은 사용자가
-명시한 지속 선호·금지, 확정된 제품·구조 결정, 재발 방지가 필요한 중대한 사고의
-원인과 조치뿐이다. 단순 대화, 테스트 문구, 일회성 상태, 빌드 수치와 추측은
-제안하지 않는다.
-
-- `GET /api/work-records`로 원본 업무 기록 검색
-- `POST /api/rag/documents`로 일반 문서와 선택적인 임베딩 저장
-- `POST /api/rag/search`로 벡터 또는 전문 검색
-- 완료 응답의 위키 제안은 `확인 대기`에 들어가며 사용자만 승인·거절
-- 승인 시 원본 업무 기록을 근거로 연결한 `synthesis` 페이지를 생성하거나 갱신
-- 승인된 페이지만 `현재 지식`과 위키 전용 검색에 노출
-- 같은 페이지의 새 버전이 먼저 게시되면 오래된 제안은 덮어쓰지 않고 충돌로 종료
-- 자연어 답변과 분리된 `officestra-result` 통로로 실제 사용한 근거를 검증해 턴에 저장
-- 기존 `[OFFICE_SOURCES]`·`[OFFICE_WIKI_PROPOSALS]` 응답은 이전 세션 호환용으로 계속 인식
-- 앱에서 RAG·DB·파일·웹·도구·스킬 근거를 표시하고 웹 주소는 클릭,
-  파일 경로는 Finder로 열기
-
-작업 기록과 사내 위키의 텍스트 검색은 PostgreSQL 전문 검색을 사용한다. RAG
-검색은 호출자가 임베딩을 제공하면 벡터 검색도 지원하지만 임베딩을 자동으로
-생성하지는 않는다. 사내 위키는 기존 Node·PostgreSQL에 포함되어 별도 설치가
-필요 없고, 백엔드 시작 시 데이터베이스 마이그레이션으로 준비된다.
-
-## 개발과 검증
-
-```sh
-npm --prefix backend run check
-npm --prefix backend test
-swift test -Xswiftc -warnings-as-errors
-```
-
-로컬 앱 번들을 만들고 서명을 확인할 수 있다.
-
-```sh
-./scripts/build-app.sh
-codesign --verify --deep --strict --verbose=2 dist/OFFICESTRA.app
-open dist/OFFICESTRA.app
-```
-
-앱 번들은 로컬 실행용 ad-hoc 서명을 사용한다. 번들에는 Node와 백엔드가 포함되며
-첫 실행 도우미가 이를 별도 로컬 프로세스로 자동 시작한다.
-
-## 프로젝트 구조
-
-```text
-Sources/OfficeCore/       공통 설정·모델·오피스 리소스
-Sources/OfficeGame/       SwiftUI·SpriteKit 앱과 실시간 업무 UI
-backend/                  REST·WebSocket 서버와 CLI 실행 런타임
-database/migrations/      PostgreSQL·pgvector 스키마
-infra/                    로컬 PostgreSQL Docker Compose 설정
-scripts/                  백엔드 시작과 macOS 앱 번들 빌드
-Tests/                    Swift 단위 테스트
-backend/test/             Node.js 백엔드 단위 테스트
-docs/images/              공개 문서용 선별 화면 이미지
-```
-
-구현 배경은 [`APP-DESIGN.md`](APP-DESIGN.md), CLI 연결 방식은
-[`LLM-WIRING.md`](LLM-WIRING.md)에서 더 자세히 볼 수 있다.
-
-## 현재 제한 사항
-
-- macOS 전용 앱이다.
-- CLI와 Docker 설치·로그인은 사용자가 로컬에서 준비해야 한다.
-- 모델 목록은 현재 코드에 정의돼 있으며 CLI의 모든 모델을 자동 탐색하지 않는다.
-- Claude Code Fast 모드는 현재 Opus 5에서만 사용할 수 있다.
-- 공개 DMG는 ad-hoc 서명이며 Apple 공증을 받지 않아 첫 실행 때 명시적으로 **열기**를 선택해야 한다.
-- 공유 작업 폴더에는 직원 또는 외부 터미널·IDE 사이의 파일 잠금이 없다. 같은
-  파일을 동시에 고치면 변경이 겹칠 수 있으므로 Git diff와 dirty 상태를 직접
-  확인해야 한다.
-- 백엔드는 자동 commit이나 push를 하지 않는다. 원격 반영이 필요하면 업무에
-  명시하고, 보호된 원격 branch 규칙을 함께 사용한다.
-- 직원 주도 오케스트레이션은 가능하지만, 백엔드가 독립적으로 업무를
-  계획·분배·감시·재시도하는 자동 오케스트레이터는 없다.
-- 작업 기록과 사내 위키의 텍스트 검색은 PostgreSQL 전문 검색을 사용하고, RAG
-  벡터 검색용 임베딩 생성은 자동화하지 않는다.
-- 로컬 API는 인증이 없으므로 외부 네트워크용 서비스로 사용하면 안 된다.
+[License](LICENSE)
