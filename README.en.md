@@ -60,20 +60,17 @@ the next task.
 
 ## Two ways to work: GUI and real terminal
 
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/images/officestra-gui-mode.jpg" alt="OFFICESTRA GUI mode" width="100%"><br>
-      <strong>GUI mode</strong><br>
-      <sub>Conversations, work history, and coworkers in one view</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/images/officestra-terminal-mode.jpg" alt="Claude Code CLI running inside OFFICESTRA terminal mode" width="100%"><br>
-      <strong>Terminal mode</strong><br>
-      <sub>The same coworker's live Claude Code CLI session</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/images/officestra-gui-mode.png" alt="OFFICESTRA GUI mode" width="100%"><br>
+  <strong>GUI mode</strong><br>
+  <sub>Conversations, work history, and coworkers in one view</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/officestra-terminal-mode.png" alt="Claude Code CLI running inside OFFICESTRA terminal mode" width="100%"><br>
+  <strong>Terminal mode</strong><br>
+  <sub>The same coworker's live Claude Code CLI session</sub>
+</p>
 
 Move between a conversational GUI and real interactive CLIs while keeping each
 coworker's progress, limits, and history in one place. Visual styles can change;
