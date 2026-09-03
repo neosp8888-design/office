@@ -55,17 +55,20 @@ GUI로 돌아오면 터미널에서 진행한 내용도 같은 직원의 기록�
 
 ## GUI와 실제 터미널, 두 가지 작업 방식
 
-<p align="center">
-  <img src="docs/images/officestra-gui-mode.png" alt="OFFICESTRA GUI 모드" width="100%"><br>
-  <strong>GUI 모드</strong><br>
-  <sub>대화·작업 기록·직원 전환을 한 화면에서</sub>
-</p>
-
-<p align="center">
-  <img src="docs/images/officestra-terminal-mode.png" alt="OFFICESTRA 터미널 모드에서 실행 중인 Claude Code CLI" width="100%"><br>
-  <strong>터미널 모드</strong><br>
-  <sub>같은 직원의 실제 Claude Code CLI 세션을 그대로</sub>
-</p>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/officestra-gui-mode.png" alt="OFFICESTRA GUI 모드" width="100%"><br>
+      <strong>GUI 모드</strong><br>
+      <sub>대화·작업 기록·직원 전환을 한 화면에서</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/officestra-terminal-mode.png" alt="OFFICESTRA 터미널 모드에서 실행 중인 Claude Code CLI" width="100%"><br>
+      <strong>터미널 모드</strong><br>
+      <sub>같은 직원의 실제 Claude Code CLI 세션을 그대로</sub>
+    </td>
+  </tr>
+</table>
 
 대화형 GUI와 실제 CLI 터미널을 오가고, 직원별 진행 상태·사용 한도·대화 기록을 같은
 화면에서 관리합니다. 화면 스타일을 바꿔도 각 AI의 세션과 작업 흐름은 그대로 유지됩니다.
