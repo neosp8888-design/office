@@ -70,9 +70,7 @@ public enum AgentBackend:
             ]
         case .antigravity:
             [
-                "gemini-3.7-flash",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash",
+                "gemini-3.8-flash",
                 "gemini-3.1-pro",
             ]
         }
@@ -107,14 +105,18 @@ public enum AgentBackend:
             "Fable"
         case "claude-sonnet-5":
             "Sonnet 5"
+        case "gemini-3.8-flash":
+            "Gemini 3.8 Flash"
+        case "gemini-3.1-pro":
+            "Gemini 3.1 Pro"
+        // 목록에서 내렸어도 이미 저장된 설정과 지난 턴 기록에 남아 있으므로
+        // 원본 식별자가 그대로 노출되지 않도록 이름을 유지한다.
         case "gemini-3.7-flash":
             "Gemini 3.7 Flash"
         case "gemini-3.6-flash":
             "Gemini 3.6 Flash"
         case "gemini-3.5-flash":
             "Gemini 3.5 Flash"
-        case "gemini-3.1-pro":
-            "Gemini 3.1 Pro"
         default:
             model
         }

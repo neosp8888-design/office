@@ -72,15 +72,13 @@ final class AgentBackendEffortOptionsTests: XCTestCase {
         XCTAssertEqual(
             AgentBackend.antigravity.modelOptions,
             [
-                "gemini-3.7-flash",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash",
+                "gemini-3.8-flash",
                 "gemini-3.1-pro",
             ]
         )
         XCTAssertEqual(
             AgentBackend.antigravity.effortOptions(
-                for: "gemini-3.7-flash"
+                for: "gemini-3.8-flash"
             ),
             ["low", "medium", "high"]
         )
@@ -112,5 +110,30 @@ final class AgentBackendEffortOptionsTests: XCTestCase {
         XCTAssertEqual(settings.effort, "high")
         settings.setFastMode(true)
         XCTAssertFalse(settings.fastMode)
+    }
+
+    // 목록에서 내린 모델이 이미 직원 설정이나 지난 턴에 남아 있어도
+    // 화면에 원본 식별자가 그대로 드러나거나 빈칸이 되면 안 된다.
+    func testRetiredAntigravityModelsKeepReadableTitles() {
+        for model in [
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+        ] {
+            let title = AgentBackend.antigravity.modelTitle(model)
+            XCTAssertNotEqual(title, model)
+            XCTAssertFalse(title.isEmpty)
+            XCTAssertFalse(
+                AgentBackend.antigravity.modelOptions.contains(model)
+            )
+        }
+        XCTAssertEqual(
+            AgentBackend.antigravity.modelTitle("gemini-3.8-flash"),
+            "Gemini 3.8 Flash"
+        )
+        XCTAssertEqual(
+            AgentBackend.antigravity.defaultModel,
+            "gemini-3.8-flash"
+        )
     }
 }
