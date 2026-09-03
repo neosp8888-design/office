@@ -53,19 +53,19 @@ GUI로 돌아오면 터미널에서 진행한 내용도 같은 직원의 기록�
 완료된 업무와 대화는 로컬에 쌓입니다. 직원별 기록을 다시 찾고, 각 CLI의 남은 한도와
 컨텍스트 상태를 보며 다음에 어떤 AI를 투입할지 판단할 수 있습니다.
 
-## 원하는 모습으로 운영하세요
+## GUI와 실제 터미널, 두 가지 작업 방식
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/images/officestra-2d-night.jpg" alt="OFFICESTRA 2D 야간 사무실" width="100%"><br>
-      <strong>2D 야간 사무실</strong><br>
-      <sub>작업 상태를 한눈에 보는 집중형 화면</sub>
+      <img src="docs/images/officestra-gui-mode.jpg" alt="OFFICESTRA GUI 모드" width="100%"><br>
+      <strong>GUI 모드</strong><br>
+      <sub>대화·작업 기록·직원 전환을 한 화면에서</sub>
     </td>
     <td width="50%" align="center">
-      <img src="docs/images/officestra-3d-day.jpg" alt="OFFICESTRA 3D 주간 사무실" width="100%"><br>
-      <strong>3D 주간 사무실</strong><br>
-      <sub>같은 AI 팀을 다른 분위기로 시각화</sub>
+      <img src="docs/images/officestra-terminal-mode.jpg" alt="OFFICESTRA 터미널 모드에서 실행 중인 Claude Code CLI" width="100%"><br>
+      <strong>터미널 모드</strong><br>
+      <sub>같은 직원의 실제 Claude Code CLI 세션을 그대로</sub>
     </td>
   </tr>
 </table>
