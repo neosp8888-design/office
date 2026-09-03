@@ -197,6 +197,41 @@ enum OfficePanelControl {
     case terminal
 }
 
+/// 터미널 모드에서는 CLI가 직원 세션을 직접 잡고 있으므로, 하단 바에서
+/// 프로필과 설정만 남기고 나머지 조작은 잠근다.
+enum LiveWorkspaceCommandAvailability {
+    enum Control {
+        case characterSelector
+        case quickSettings
+        case profile
+        case identitySettings
+    }
+
+    static let lockedOpacity: Double = 0.52
+
+    static func isEnabled(
+        _ control: Control,
+        in mode: OfficeConversationMode
+    ) -> Bool {
+        guard mode == .terminal else {
+            return true
+        }
+        switch control {
+        case .profile, .identitySettings:
+            return true
+        case .characterSelector, .quickSettings:
+            return false
+        }
+    }
+
+    static func opacity(
+        _ control: Control,
+        in mode: OfficeConversationMode
+    ) -> Double {
+        isEnabled(control, in: mode) ? 1 : lockedOpacity
+    }
+}
+
 enum OfficePanelControlLayout {
     static let artStyleControlDiameter: CGFloat = 36
 
@@ -1045,6 +1080,24 @@ private struct LiveWorkspaceCommandBar: View {
             }
     }
 
+    private func isEnabled(
+        _ control: LiveWorkspaceCommandAvailability.Control
+    ) -> Bool {
+        LiveWorkspaceCommandAvailability.isEnabled(
+            control,
+            in: conversationMode
+        )
+    }
+
+    private func controlOpacity(
+        _ control: LiveWorkspaceCommandAvailability.Control
+    ) -> Double {
+        LiveWorkspaceCommandAvailability.opacity(
+            control,
+            in: conversationMode
+        )
+    }
+
     private var selectedCharacterID: OfficeCharacter? {
         characterSelectionStore.selectedCharacterID
     }
@@ -1059,6 +1112,8 @@ private struct LiveWorkspaceCommandBar: View {
     private var commandBar: some View {
         VStack(alignment: .leading, spacing: 9) {
             characterSelector
+                .disabled(!isEnabled(.characterSelector))
+                .opacity(controlOpacity(.characterSelector))
 
             if conversationMode == .chat, !attachments.isEmpty {
                 attachmentStrip
@@ -1110,6 +1165,8 @@ private struct LiveWorkspaceCommandBar: View {
                             )
                         }
                     )
+                    .disabled(!isEnabled(.quickSettings))
+                    .opacity(controlOpacity(.quickSettings))
 
                     if conversationMode == .chat,
                         ContextCompactionPresentation.supportsManualCompaction(
