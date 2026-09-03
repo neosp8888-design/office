@@ -53,6 +53,10 @@ import {
   antigravityStepReasonings,
 } from "./antigravity-reasoning.mjs";
 import {
+  claudeTranscriptTurnUsage,
+  codexRolloutTurnUsage,
+} from "./terminal-usage.mjs";
+import {
   CodexRolloutCollaborationTracker,
 } from "./codex-rollout-collaboration.mjs";
 import { compactCodexThread } from "./codex-context-compactor.mjs";
@@ -1751,6 +1755,7 @@ export class AgentRuntime {
           turn.model AS "executionModel",
           turn.effort AS "executionEffort",
           turn.fast_mode AS "executionFastMode",
+          turn.started_at AS "startedAt",
           session.conversation_id AS "conversationID",
           session.external_id AS "externalSessionID",
           character.id AS "characterID",
@@ -1821,7 +1826,44 @@ export class AgentRuntime {
       cancelRequested: false,
       structuredResultPath: null,
     };
+    state.usage ??= await this.terminalTurnUsage(state, row.startedAt);
     await this.complete(state, decoded);
+  }
+
+  // Claude와 Codex 터미널 턴은 CLI가 사용량을 알려주지 않는다. 두 CLI가
+  // 디스크에 남긴 기록에서 이 턴 구간만 합산해 GUI 턴과 같은 값을 채운다.
+  async terminalTurnUsage(state, startedAt) {
+    const backend = state.character?.backend;
+    if (!state.externalSessionID || !startedAt) {
+      return null;
+    }
+    const window = { startedAt, endedAt: state.endedAt };
+    try {
+      if (backend === "codex") {
+        return await codexRolloutTurnUsage(
+          findRolloutPath(state.externalSessionID),
+          window,
+        );
+      }
+      if (backend === "claude") {
+        const current = claudeSessionPath(
+          state.workdir,
+          state.externalSessionID,
+        );
+        return await claudeTranscriptTurnUsage(
+          claudeSessionFileMatches(current, state.externalSessionID)
+            ? current
+            : findClaudeSessionPath(state.externalSessionID),
+          window,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "터미널 턴 사용량을 읽지 못했습니다.",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    return null;
   }
 
   async interruptTerminalTurn(characterID, turnID) {

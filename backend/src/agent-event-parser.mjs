@@ -962,10 +962,36 @@ export function claudeSessionUsage(line) {
   } catch {
     return null;
   }
+  return claudeMessageUsage(object);
+}
+
+export function claudeMessageUsage(object) {
   if (!object || typeof object !== "object" || Array.isArray(object)) {
     return null;
   }
   return normalizedUsage(object.message?.usage, "claude");
+}
+
+// Claude 세션 기록은 같은 응답을 여러 줄로 남기므로, 합산할 때 중복을 걸러낼
+// 열쇠가 필요하다. 응답 식별자가 없으면 줄 자체의 식별자를 쓴다.
+export function claudeSessionUsageKey(object) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
+    return null;
+  }
+  return cleanText(object.message?.id) ?? cleanText(object.uuid);
+}
+
+// Codex rollout의 token_count 한 줄에서 그 요청 한 번의 사용량을 읽는다.
+// 누적 총량은 압축으로 되돌아가므로 턴 합산에는 요청 단위 값을 쓴다.
+export function codexRequestUsage(object) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
+    return null;
+  }
+  const payload = object.payload;
+  if (object.type !== "event_msg" || payload?.type !== "token_count") {
+    return null;
+  }
+  return normalizedUsage(payload.info?.last_token_usage, "codex");
 }
 
 function tokenCount(value) {

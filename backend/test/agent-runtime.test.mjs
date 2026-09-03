@@ -5526,3 +5526,126 @@ function antigravityReasoningState() {
     emittedReasoning: new Map(),
   };
 }
+
+// Antigravity 터미널 턴은 CLI가 사용량을 직접 알려주므로 디스크를 다시 읽지 않는다.
+test("터미널 턴이 사용량을 이미 받았으면 기록에서 다시 읽지 않는다", async () => {
+  const runtime = terminalTurnRuntime();
+  let reads = 0;
+  runtime.terminalTurnUsage = async () => {
+    reads += 1;
+    return { inputTokens: 999, outputTokens: 999 };
+  };
+  let captured = null;
+  runtime.complete = async (state) => {
+    captured = state;
+  };
+
+  await runtime.completeTerminalTurn({
+    characterID: "right-man",
+    turnID: "turn-1",
+    response: "완료했습니다.",
+    usage: { inputTokens: 10, outputTokens: 2 },
+  });
+
+  assert.equal(reads, 0);
+  assert.deepEqual(captured.usage, { inputTokens: 10, outputTokens: 2 });
+});
+
+test("사용량 없이 끝난 터미널 턴은 CLI 기록에서 사용량을 채운다", async () => {
+  const runtime = terminalTurnRuntime();
+  const windows = [];
+  runtime.terminalTurnUsage = async (state, startedAt) => {
+    windows.push({ startedAt, endedAt: state.endedAt });
+    return { inputTokens: 12, outputTokens: 34 };
+  };
+  let captured = null;
+  runtime.complete = async (state) => {
+    captured = state;
+  };
+  const endedAt = new Date("2026-09-02T14:01:00.000Z");
+
+  await runtime.completeTerminalTurn({
+    characterID: "left-man",
+    turnID: "turn-1",
+    response: "완료했습니다.",
+    endedAt,
+  });
+
+  assert.deepEqual(captured.usage, { inputTokens: 12, outputTokens: 34 });
+  assert.deepEqual(windows, [{
+    startedAt: new Date("2026-09-02T14:00:00.000Z"),
+    endedAt,
+  }]);
+});
+
+test("터미널 사용량 읽기는 대화 ID나 시작 시각이 없으면 건너뛴다", async () => {
+  const runtime = terminalTurnRuntime();
+  const startedAt = new Date("2026-09-02T14:00:00.000Z");
+
+  assert.equal(
+    await runtime.terminalTurnUsage(
+      { character: { backend: "claude" }, endedAt: new Date() },
+      startedAt,
+    ),
+    null,
+  );
+  assert.equal(
+    await runtime.terminalTurnUsage(
+      {
+        character: { backend: "codex" },
+        externalSessionID: "session-1",
+        endedAt: new Date(),
+      },
+      null,
+    ),
+    null,
+  );
+  assert.equal(
+    await runtime.terminalTurnUsage(
+      {
+        character: { backend: "antigravity" },
+        externalSessionID: "session-1",
+        endedAt: new Date(),
+      },
+      startedAt,
+    ),
+    null,
+  );
+});
+
+function terminalTurnRuntime() {
+  return new AgentRuntime({
+    pool: {
+      query: async () => ({
+        rowCount: 1,
+        rows: [{
+          id: "turn-1",
+          sessionID: "session-row",
+          prompt: "질문",
+          executionBackend: "claude",
+          executionModel: "claude-sonnet-5",
+          executionEffort: "high",
+          executionFastMode: false,
+          startedAt: new Date("2026-09-02T14:00:00.000Z"),
+          conversationID: "conversation-1",
+          externalSessionID: "external-1",
+          characterID: "left-man",
+          name: "직원",
+          seat: "left-man",
+          backend: "claude",
+          model: "claude-sonnet-5",
+          effort: "high",
+          fastMode: false,
+          autoCompactPercent: 30,
+          permission: "accept-edits",
+          identityPrompt: "",
+          config: {},
+        }],
+      }),
+    },
+    withTransaction: async (operation) => await operation({}),
+    workdir: "/repo",
+    repositoryRoot: "/repo",
+    broadcast: () => {},
+  });
+}
