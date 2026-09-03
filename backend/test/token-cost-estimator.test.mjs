@@ -54,8 +54,8 @@ test("Gemini 3.7 Flash는 agy의 분리된 입력·캐시와 합산 출력을 �
   );
 });
 
-// 3.8-flash는 공식 단가 확인 전까지 3.7-flash와 같은 값으로 잠정 적용한다.
-test("Gemini 3.8 Flash는 3.7 Flash와 같은 잠정 단가로 비용을 채운다", () => {
+// 3.8-flash 단가는 3.7-flash와 같다.
+test("Gemini 3.8 Flash는 3.7 Flash와 같은 단가로 비용을 채운다", () => {
   const usage = {
     inputTokens: 100_000,
     cachedInputTokens: 20_000,
