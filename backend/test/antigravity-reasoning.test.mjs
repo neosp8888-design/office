@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
+  antigravityLatestStepIndex,
   antigravityStepPayloadReasoning,
   antigravityStepReasonings,
 } from "../src/antigravity-reasoning.mjs";
@@ -101,8 +102,30 @@ test("진행 중인 단계의 추론이 자라면 늘어난 원문을 읽는다"
     assert.deepEqual(antigravityStepReasonings(sessionID, { root }), [
       { stepIndex: 1, text: "상자 수를 센다. 그리고 검산했다.", done: true },
     ]);
+
+    assert.equal(antigravityLatestStepIndex(sessionID, { root }), 1);
+
+    // minStepIndex보다 작은 단계는 건너뛴다.
+    assert.deepEqual(
+      antigravityStepReasonings(sessionID, { minStepIndex: 2, root }),
+      [],
+    );
+    assert.deepEqual(
+      antigravityStepReasonings(sessionID, { minStepIndex: 1, root }),
+      [{ stepIndex: 1, text: "상자 수를 센다. 그리고 검산했다.", done: true }],
+    );
   } finally {
     database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("세션 ID나 대화 파일이 없으면 마지막 단계 번호로 null을 준다", () => {
+  const root = mkdtempSync(join(tmpdir(), "officestra-agy-reasoning-"));
+  try {
+    assert.equal(antigravityLatestStepIndex("세션 아님", { root }), null);
+    assert.equal(antigravityLatestStepIndex(sessionID, { root }), null);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

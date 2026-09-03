@@ -21,9 +21,40 @@ const MAX_REASONING_LENGTH = 6_000;
 // agy는 단계가 끝나야 status를 3으로 바꾼다. 그 전까지는 추론이 자라는 중이다.
 const STEP_STATUS_DONE = 3;
 
+// 대화 SQLite의 마지막 단계 번호를 구한다. 턴 시작 전 시점의 기준선으로 쓴다.
+export function antigravityLatestStepIndex(sessionID, { root } = {}) {
+  const path = antigravityConversationPath(sessionID, root);
+  if (!path || !existsSync(path)) {
+    return null;
+  }
+  let database;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    database = new DatabaseSync(path, { readOnly: true });
+    const row = database.prepare(
+      `
+        SELECT MAX(idx) AS max_idx
+        FROM steps
+      `,
+    ).get();
+    return row && Number.isInteger(row.max_idx) ? row.max_idx : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      database?.close();
+    } catch {
+      // close 실패는 읽기 결과에 영향을 주지 않는다.
+    }
+  }
+}
+
 // 추론은 단계가 끝날 때가 아니라 진행 중에도 조금씩 쌓이므로,
-// 지금까지 쌓인 단계별 추론을 통째로 돌려주고 호출자가 갱신 여부를 판단한다.
-export function antigravityStepReasonings(sessionID, { root } = {}) {
+// 기준선 이후에 쌓인 단계별 추론을 돌려주고 호출자가 갱신 여부를 판단한다.
+export function antigravityStepReasonings(
+  sessionID,
+  { minStepIndex = null, root } = {},
+) {
   const path = antigravityConversationPath(sessionID, root);
   if (!path || !existsSync(path)) {
     return [];
@@ -32,6 +63,7 @@ export function antigravityStepReasonings(sessionID, { root } = {}) {
   try {
     const { DatabaseSync } = require("node:sqlite");
     database = new DatabaseSync(path, { readOnly: true });
+    const hasMin = Number.isInteger(minStepIndex);
     const rows = database.prepare(
       `
         SELECT idx, status, step_payload
@@ -39,9 +71,14 @@ export function antigravityStepReasonings(sessionID, { root } = {}) {
         WHERE step_type = ?
           AND step_payload IS NOT NULL
           AND length(step_payload) <= ?
+          ${hasMin ? "AND idx >= ?" : ""}
         ORDER BY idx
       `,
-    ).all(AGENT_RESPONSE_STEP_TYPE, MAX_PAYLOAD_BYTES);
+    ).all(...[
+      AGENT_RESPONSE_STEP_TYPE,
+      MAX_PAYLOAD_BYTES,
+      ...(hasMin ? [minStepIndex] : []),
+    ]);
     const reasonings = [];
     for (const row of rows) {
       const text = antigravityStepPayloadReasoning(row.step_payload);

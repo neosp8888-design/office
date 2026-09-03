@@ -50,6 +50,7 @@ import {
   antigravitySessionUsage,
 } from "./antigravity-local-state.mjs";
 import {
+  antigravityLatestStepIndex,
   antigravityStepReasonings,
 } from "./antigravity-reasoning.mjs";
 import {
@@ -179,6 +180,7 @@ export class AgentRuntime {
     contextUsageReader = sessionContextUsage,
     antigravityUsageReader = antigravitySessionUsage,
     antigravityReasoningReader = antigravityStepReasonings,
+    antigravityReasoningBaselineReader = antigravityLatestStepIndex,
     embeddingService = null,
   }) {
     this.pool = pool;
@@ -193,6 +195,7 @@ export class AgentRuntime {
     this.contextUsageReader = contextUsageReader;
     this.antigravityUsageReader = antigravityUsageReader;
     this.antigravityReasoningReader = antigravityReasoningReader;
+    this.antigravityReasoningBaselineReader = antigravityReasoningBaselineReader;
     this.embeddingService = embeddingService;
     this.running = new Map();
     this.claudeWorkers = new Map();
@@ -539,6 +542,9 @@ export class AgentRuntime {
       : resumedAntigravitySession
         ? this.antigravityUsageReader(prepared.externalSessionID)
         : null;
+    const antigravityReasoningBaseline = resumedAntigravitySession
+      ? this.antigravityReasoningBaselineReader(prepared.externalSessionID)
+      : null;
     const state = {
       ...prepared,
       process: null,
@@ -574,6 +580,7 @@ export class AgentRuntime {
       resumedCodexSession,
       resumedAntigravitySession,
       antigravityUsageReader: this.antigravityUsageReader,
+      antigravityReasoningBaseline,
       usageBaseline,
       usage: null,
       warning: null,
@@ -2234,8 +2241,13 @@ export class AgentRuntime {
       return state.reasoningPollPromise;
     }
     const conversationID = state.externalSessionID;
+    const minStepIndex = Number.isInteger(state.antigravityReasoningBaseline)
+      ? state.antigravityReasoningBaseline + 1
+      : 0;
     const poll = (async () => {
-      const reasonings = this.antigravityReasoningReader(conversationID);
+      const reasonings = this.antigravityReasoningReader(conversationID, {
+        minStepIndex,
+      });
       const emitted = state.emittedReasoning ??= new Map();
       const activities = [];
       for (const { stepIndex, text, done } of reasonings) {
