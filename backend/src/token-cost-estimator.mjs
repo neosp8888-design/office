@@ -115,6 +115,10 @@ function estimateAntigravityCost({ model, usage, pricedAt }) {
 function antigravityPrices(model, promptTokens, pricedAt) {
   const timestamp = priceTimestamp(pricedAt);
   switch (model) {
+    // gemini-3.8-flash 공식 단가는 아직 확인하지 못했다. 같은 flash 세대인
+    // 3.7-flash와 같은 값으로 잠정 적용해 비용이 빈칸이 되지 않게 한다.
+    // 공식 숫자가 확인되면 이 한 줄만 고치면 된다.
+    case "gemini-3.8-flash":
     case "gemini-3.7-flash":
     case "gemini-3.6-flash":
       return timestamp < GEMINI_FLASH_PROMOTION_END

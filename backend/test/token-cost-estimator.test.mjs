@@ -54,6 +54,43 @@ test("Gemini 3.7 Flash는 agy의 분리된 입력·캐시와 합산 출력을 �
   );
 });
 
+// 3.8-flash는 공식 단가 확인 전까지 3.7-flash와 같은 값으로 잠정 적용한다.
+test("Gemini 3.8 Flash는 3.7 Flash와 같은 잠정 단가로 비용을 채운다", () => {
+  const usage = {
+    inputTokens: 100_000,
+    cachedInputTokens: 20_000,
+    outputTokens: 5_000,
+    reasoningOutputTokens: 4_000,
+  };
+  const promotion = new Date("2026-08-28T00:00:00Z");
+  assert.equal(
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.8-flash",
+      fastMode: false,
+      pricedAt: promotion,
+      usage,
+    }),
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.7-flash",
+      fastMode: false,
+      pricedAt: promotion,
+      usage,
+    }),
+  );
+  assert.notEqual(
+    estimateTokenCost({
+      backend: "antigravity",
+      model: "gemini-3.8-flash",
+      fastMode: false,
+      pricedAt: promotion,
+      usage,
+    }),
+    null,
+  );
+});
+
 test("Gemini 3.7 Flash는 프로모션 종료 뒤 정가를 사용한다", () => {
   assert.equal(
     estimateTokenCost({
