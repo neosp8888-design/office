@@ -34,6 +34,48 @@ final class TerminalWorkspaceLifecycleTests: XCTestCase {
         XCTAssertTrue(selectionStore.canSelect(.rightMan))
     }
 
+    // 직원을 바꾸면 그 직원의 터미널로 포커스 요청이 가야 한다.
+    @MainActor
+    func testSwitchingCharacterRoutesFocusToSelectedTerminal() async {
+        let selectionStore = CharacterSelectionStore()
+        let view = CachedTerminalWorkspacesNSView()
+        view.startsProcesses = false
+        let baseURL = URL(string: "http://127.0.0.1:4317")!
+
+        view.configure(
+            selectedCharacterID: .boss,
+            characterSelectionStore: selectionStore,
+            databaseBaseURL: baseURL,
+            sessionRevision: 0,
+            restartRequest: nil
+        )
+        await Task.yield()
+        XCTAssertEqual(view.lastFocusRequestCharacterForTesting, .boss)
+
+        selectionStore.select(.leftMan)
+        view.configure(
+            selectedCharacterID: .leftMan,
+            characterSelectionStore: selectionStore,
+            databaseBaseURL: baseURL,
+            sessionRevision: 0,
+            restartRequest: nil
+        )
+        await Task.yield()
+        XCTAssertEqual(view.lastFocusRequestCharacterForTesting, .leftMan)
+
+        // 이미 떠 있는 직원으로 되돌아와도 다시 그 직원으로 포커스가 간다.
+        selectionStore.select(.boss)
+        view.configure(
+            selectedCharacterID: .boss,
+            characterSelectionStore: selectionStore,
+            databaseBaseURL: baseURL,
+            sessionRevision: 0,
+            restartRequest: nil
+        )
+        await Task.yield()
+        XCTAssertEqual(view.lastFocusRequestCharacterForTesting, .boss)
+    }
+
     func testTerminalAppearanceKeepsDefaultTextReadableOnBlack() {
         let foreground = TerminalWorkspaceAppearance.foregroundColor
             .usingColorSpace(.deviceRGB)

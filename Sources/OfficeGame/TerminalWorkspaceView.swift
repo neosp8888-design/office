@@ -94,6 +94,7 @@ final class CachedTerminalWorkspacesNSView: NSView {
     private var databaseBaseURL: URL?
     private var sessionRevision = 0
     private weak var characterSelectionStore: CharacterSelectionStore?
+    private var lastFocusRequest: OfficeCharacter?
 
     var startsProcesses = true
 
@@ -103,6 +104,11 @@ final class CachedTerminalWorkspacesNSView: NSView {
 
     var activeCharacterIDForTesting: OfficeCharacter? {
         selectedCharacterID
+    }
+
+    // 전환할 때 어느 직원의 터미널로 커서를 옮겨 달라고 요청했는지 기록한다.
+    var lastFocusRequestCharacterForTesting: OfficeCharacter? {
+        lastFocusRequest
     }
 
     override init(frame frameRect: NSRect) {
@@ -146,28 +152,43 @@ final class CachedTerminalWorkspacesNSView: NSView {
             entry.isHidden = id != character
         }
         guard let character else { return }
-        if entries[character] != nil {
-            completeSelectionLoading(for: character)
-            return
+        if entries[character] == nil {
+            guard let databaseBaseURL else { return }
+            let entry = TerminalProcessHostView(
+                character: character,
+                databaseBaseURL: databaseBaseURL
+            )
+            entry.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(entry)
+            NSLayoutConstraint.activate([
+                entry.leadingAnchor.constraint(equalTo: leadingAnchor),
+                entry.trailingAnchor.constraint(equalTo: trailingAnchor),
+                entry.topAnchor.constraint(equalTo: topAnchor),
+                entry.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            entries[character] = entry
+            if startsProcesses {
+                entry.start()
+            }
         }
-        guard let databaseBaseURL else { return }
-        let entry = TerminalProcessHostView(
-            character: character,
-            databaseBaseURL: databaseBaseURL
-        )
-        entry.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(entry)
-        NSLayoutConstraint.activate([
-            entry.leadingAnchor.constraint(equalTo: leadingAnchor),
-            entry.trailingAnchor.constraint(equalTo: trailingAnchor),
-            entry.topAnchor.constraint(equalTo: topAnchor),
-            entry.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        entries[character] = entry
-        if startsProcesses {
-            entry.start()
-        }
+        focusSelectedTerminal(character)
         completeSelectionLoading(for: character)
+    }
+
+    // 직원을 바꾸면 그 직원의 터미널로 키보드 포커스를 옮겨, 곧바로 커서에
+    // 입력할 수 있게 한다. 처음 뜨는 터미널은 프로세스가 붙는 시점에
+    // installAndStart가 포커스를 잡고, 이미 떠 있는 터미널은 여기서 잡는다.
+    private func focusSelectedTerminal(_ character: OfficeCharacter) {
+        DispatchQueue.main.async { [weak self] in
+            guard
+                let self,
+                self.selectedCharacterID == character
+            else {
+                return
+            }
+            self.lastFocusRequest = character
+            self.entries[character]?.focusTerminal()
+        }
     }
 
     private func completeSelectionLoading(for character: OfficeCharacter) {
@@ -370,6 +391,16 @@ private final class TerminalProcessHostView:
             environment: environment,
             currentDirectory: specification.cwd
         )
+        // 시작이 끝났을 때 이 호스트가 숨어 있으면(그 사이 다른 직원으로
+        // 넘어갔다면) 포커스를 뺏지 않는다.
+        if !isHidden {
+            window?.makeFirstResponder(terminal)
+        }
+    }
+
+    // 이미 프로세스가 붙어 있는 터미널로 키보드 포커스를 옮긴다.
+    func focusTerminal() {
+        guard let terminal else { return }
         window?.makeFirstResponder(terminal)
     }
 
