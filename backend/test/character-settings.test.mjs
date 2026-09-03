@@ -229,6 +229,44 @@ test("bulk 요청은 모든 항목을 먼저 검증하고 중복 직원을 거�
   );
 });
 
+test("Antigravity 3.8 Flash 선택이 검증을 통과해 저장된다", () => {
+  assert.deepEqual(
+    normalizeBulkCharacterSettings({
+      updates: [settings("right-man", {
+        backend: "antigravity",
+        model: "gemini-3.8-flash",
+        effort: "medium",
+        fastMode: false,
+        permission: "accept-edits",
+      })],
+    }),
+    [{
+      characterID: "right-man",
+      backend: "antigravity",
+      model: "gemini-3.8-flash",
+      effort: "medium",
+      fastMode: false,
+      permission: "accept-edits",
+    }],
+  );
+});
+
+// 목록에서 내렸어도 이미 저장된 3.7-flash 값을 다시 저장할 수 있어야 한다.
+test("Antigravity 3.7 Flash 저장값은 재저장 시 막히지 않는다", () => {
+  assert.deepEqual(
+    normalizeBulkCharacterSettings({
+      updates: [settings("right-man", {
+        backend: "antigravity",
+        model: "gemini-3.7-flash",
+        effort: "high",
+        fastMode: false,
+        permission: "accept-edits",
+      })],
+    })[0].model,
+    "gemini-3.7-flash",
+  );
+});
+
 test("Antigravity 설정은 실제 모델별 추론·권한·Fast 계약을 검증한다", () => {
   assert.deepEqual(
     normalizeBulkCharacterSettings({

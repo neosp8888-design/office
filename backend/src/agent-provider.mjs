@@ -32,11 +32,15 @@ const PROVIDERS = Object.freeze({
   }),
   antigravity: Object.freeze({
     executable: "agy",
+    // 앞 두 개가 현재 고르는 목록이다. 아래 셋은 목록에서 내렸지만 이미
+    // 직원 설정과 지난 턴에 남아 있으므로, 그 값을 다시 저장할 때 검증에서
+    // 막히지 않도록 허용 목록에는 남긴다.
     models: Object.freeze([
+      "gemini-3.8-flash",
+      "gemini-3.1-pro",
       "gemini-3.7-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash",
-      "gemini-3.1-pro",
     ]),
     efforts: Object.freeze(["low", "medium", "high"]),
     permissions: Object.freeze([
