@@ -28,7 +28,11 @@ import {
   protobufFields,
   utf8Field,
 } from "./antigravity-local-state.mjs";
-import { CodexTerminalTurnGate } from "./codex-rollout-turns.mjs";
+import {
+  CodexTerminalTurnGate,
+  codexRolloutUserPrompt,
+  findCodexRolloutPath,
+} from "./codex-rollout-turns.mjs";
 import {
   generatedImageRoot,
   listGeneratedImages,
@@ -408,6 +412,149 @@ class AntigravityTerminalWatcher {
   }
 }
 
+// Codex 터미널은 notify가 완료 때만 와서 running 구간이 화면에 잡히지 않는다.
+// GUI가 하듯 rollout을 파일 끝부터 증분으로 읽어, task_started 뒤 사용자
+// 메시지가 붙는 순간 질문과 함께 running 턴을 먼저 만든다. 완료와 답변
+// 추출은 검증된 notify 경로가 그대로 맡는다. 터미널이 열려 있는 동안 그
+// 직원의 GUI 턴은 막히므로, 이때 붙는 턴은 모두 터미널 턴이다.
+class CodexTerminalWatcher {
+  constructor({ state, runtime, broadcast, sessionsRoot, intervalMs = 400 }) {
+    this.state = state;
+    this.runtime = runtime;
+    this.broadcast = broadcast;
+    this.sessionsRoot = sessionsRoot;
+    this.intervalMs = intervalMs;
+    this.path = null;
+    this.offset = 0;
+    this.remainder = "";
+    this.pendingStarts = new Map();
+    this.seen = new Set();
+    this.timer = null;
+    this.sweepPromise = Promise.resolve();
+  }
+
+  start() {
+    this.timer = setInterval(() => this.schedule(), this.intervalMs);
+    this.timer.unref?.();
+  }
+
+  schedule() {
+    this.sweepPromise = this.sweepPromise
+      .then(() => this.sweep())
+      .catch((error) => console.warn(
+        "Codex 터미널 기록을 읽지 못했습니다.",
+        error instanceof Error ? error.message : String(error),
+      ));
+    return this.sweepPromise;
+  }
+
+  // notify 경로가 기록한 턴은 늦게 읽혀도 다시 만들지 않는다.
+  markCompleted(turnID) {
+    const id = String(turnID ?? "").trim();
+    if (!id) return;
+    this.pendingStarts.delete(id);
+    this.seen.add(id);
+  }
+
+  // 세션이 묶이는 시점의 파일 끝에서 시작해 지난 기록을 되풀이하지 않는다.
+  async adoptRolloutIfNeeded() {
+    if (this.path) return true;
+    if (!this.state.externalSessionID) return false;
+    const path = await findCodexRolloutPath(this.state.externalSessionID, {
+      sessionsRoot: this.sessionsRoot,
+    });
+    if (!path) return false;
+    this.path = path;
+    this.offset = statSync(path).size;
+    this.remainder = "";
+    return true;
+  }
+
+  readNewLines() {
+    const size = statSync(this.path).size;
+    if (size < this.offset) {
+      this.offset = 0;
+      this.remainder = "";
+    }
+    if (size === this.offset) return [];
+    const length = size - this.offset;
+    const buffer = Buffer.alloc(length);
+    let descriptor;
+    try {
+      descriptor = openSync(this.path, "r");
+      readSync(descriptor, buffer, 0, length, this.offset);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
+    this.offset = size;
+    const lines = (this.remainder + buffer.toString("utf8")).split("\n");
+    this.remainder = lines.pop() ?? "";
+    return lines;
+  }
+
+  async sweep() {
+    if (this.state.closed || !await this.adoptRolloutIfNeeded()) return;
+    for (const line of this.readNewLines()) {
+      if (!line) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const payload = record?.payload ?? {};
+      if (record?.type === "event_msg" && payload.type === "task_started") {
+        const turnID = String(payload.turn_id ?? "").trim();
+        if (turnID && !this.seen.has(turnID)) {
+          this.pendingStarts.set(turnID, payload.started_at);
+        }
+        continue;
+      }
+      if (record?.type === "event_msg" && payload.type === "task_complete") {
+        // 질문을 보기 전에 끝난 턴은 notify 경로가 처음부터 기록한다.
+        this.pendingStarts.delete(String(payload.turn_id ?? "").trim());
+        continue;
+      }
+      const prompt = codexRolloutUserPrompt(record);
+      if (!prompt || !this.pendingStarts.has(prompt.turnID)) continue;
+      const startedAt = this.pendingStarts.get(prompt.turnID);
+      this.pendingStarts.delete(prompt.turnID);
+      this.seen.add(prompt.turnID);
+      if (this.state.runningTurnID) continue;
+      // 한 턴을 못 만들어도 같은 묶음의 뒷줄은 계속 읽는다. 이미 읽은
+      // 바이트는 다시 오지 않는다.
+      try {
+        const turn = await this.runtime.beginTerminalTurn({
+          characterID: this.state.characterID,
+          sessionID: this.state.sessionID,
+          prompt: prompt.text,
+          startedAt: dateFromEpoch(startedAt),
+          execution: this.state.character,
+        });
+        this.state.runningTurnID = turn.turnID;
+        this.state.codexTurnID = prompt.turnID;
+        this.broadcast({
+          type: "terminal.changed",
+          characterId: this.state.characterID,
+        });
+      } catch (error) {
+        console.warn(
+          `Codex 터미널 running 턴을 만들지 못했습니다(${this.state.characterID}):`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  }
+
+  // 완료는 notify가 맡으므로 마지막 sweep은 하지 않는다. 닫히는 중에 턴을
+  // 새로 만들었다가 곧바로 중단하는 낭비를 피한다.
+  async stop() {
+    clearInterval(this.timer);
+    this.timer = null;
+    await this.sweepPromise;
+  }
+}
+
 export class TerminalSessionManager {
   constructor({
     runtime,
@@ -471,6 +618,7 @@ export class TerminalSessionManager {
         )),
         closed: false,
         watcher: null,
+        codexTurnID: null,
         codexGate: character.backend === "codex"
           ? new CodexTerminalTurnGate({
             cwd: launch.workdir,
@@ -489,6 +637,14 @@ export class TerminalSessionManager {
           state,
           runtime: this.runtime,
           root: this.antigravityRoot,
+        });
+        state.watcher.start();
+      } else if (character.backend === "codex") {
+        state.watcher = new CodexTerminalWatcher({
+          state,
+          runtime: this.runtime,
+          broadcast: (event) => this.broadcast(event),
+          sessionsRoot: this.codexSessionsRoot,
         });
         state.watcher.start();
       }
@@ -615,14 +771,32 @@ export class TerminalSessionManager {
       await this.bindIfNeeded(state, result.boundExternalSessionID);
     }
     const turn = result.turn;
-    const started = await this.runtime.beginTerminalTurn({
-      characterID: state.characterID,
-      sessionID: state.sessionID,
-      prompt: turn.prompt,
-      startedAt: dateFromEpoch(turn.startedAt),
-      execution: state.character,
-    });
-    state.runningTurnID = started.turnID;
+    state.watcher?.markCompleted(turn.turnID);
+    // 워처가 이미 이 턴을 running으로 만들었으면 그 턴을 완료한다. 다른 턴이
+    // running으로 남아 있으면(그 notify가 버려진 경우) 세션이 묶이지 않게
+    // 먼저 중단하고 이 notify 기준으로 처음부터 기록한다.
+    let turnID;
+    if (state.runningTurnID && state.codexTurnID === turn.turnID) {
+      turnID = state.runningTurnID;
+    } else {
+      if (state.runningTurnID) {
+        await this.runtime.interruptTerminalTurn(
+          state.characterID,
+          state.runningTurnID,
+        );
+        state.runningTurnID = null;
+      }
+      const started = await this.runtime.beginTerminalTurn({
+        characterID: state.characterID,
+        sessionID: state.sessionID,
+        prompt: turn.prompt,
+        startedAt: dateFromEpoch(turn.startedAt),
+        execution: state.character,
+      });
+      turnID = started.turnID;
+      state.runningTurnID = turnID;
+    }
+    state.codexTurnID = null;
     try {
       const structured = consumeStructuredTurnResult(
         state.structuredResultPath,
@@ -630,7 +804,7 @@ export class TerminalSessionManager {
       state.structuredResultPath = null;
       await this.runtime.completeTerminalTurn({
         characterID: state.characterID,
-        turnID: started.turnID,
+        turnID,
         response: turn.response,
         structured,
         endedAt: dateFromEpoch(turn.completedAt),
@@ -639,16 +813,13 @@ export class TerminalSessionManager {
       state.runningTurnID = null;
       this.resetTurnArtifacts(state);
     } catch (error) {
-      await this.runtime.interruptTerminalTurn(
-        state.characterID,
-        started.turnID,
-      );
+      await this.runtime.interruptTerminalTurn(state.characterID, turnID);
       state.runningTurnID = null;
       throw error;
     } finally {
       this.broadcast({ type: "terminal.changed", characterId: state.characterID });
     }
-    return { accepted: true, turnId: started.turnID };
+    return { accepted: true, turnId: turnID };
   }
 
   async close(characterID) {

@@ -92,6 +92,28 @@ function itemType(item) {
   return String(item?.type ?? "").replace(/[_-]/g, "").toLowerCase();
 }
 
+// rollout 한 줄이 사용자 메시지면 그 턴 id와 본문을 돌려준다. 터미널 턴을
+// 질문과 함께 running으로 먼저 만들 때 쓴다. 두 기록 형태를 모두 읽는다.
+export function codexRolloutUserPrompt(record) {
+  const payload = record?.payload ?? {};
+  if (record?.type === "response_item" && payload.type === "message") {
+    if (String(payload.role ?? "").toLowerCase() !== "user") return null;
+    const turnID = String(
+      payload.internal_chat_message_metadata_passthrough?.turn_id ?? "",
+    ).trim();
+    const text = textContent(payload.content).join("\n").trim();
+    return turnID && text ? { turnID, text } : null;
+  }
+  if (record?.type !== "event_msg" || payload.type !== "item_completed") {
+    return null;
+  }
+  const item = payload.item ?? {};
+  if (itemType(item) !== "usermessage") return null;
+  const turnID = String(payload.turn_id ?? "").trim();
+  const text = textContent(item.content).join("\n").trim();
+  return turnID && text ? { turnID, text } : null;
+}
+
 export async function readCodexRolloutTurn(path, turnID) {
   const wantedTurnID = String(turnID ?? "").trim();
   if (!path || !wantedTurnID) return null;

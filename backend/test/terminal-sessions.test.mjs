@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -186,7 +189,146 @@ test("turn origin migration은 gui 기본값과 terminal 제약을 둔다", () =
   assert.match(sql, /turns_origin_check/);
 });
 
-function fakeRuntime() {
+const codexThreadID = "01a0c0de-1111-7000-8000-000000000001";
+const codexTurnID = "01a0c0de-2222-7000-8000-000000000002";
+
+function rolloutLine(record) {
+  return JSON.stringify(record) + "\n";
+}
+
+async function codexFixture() {
+  const root = await mkdtemp(join(tmpdir(), "officestra-codex-terminal-"));
+  const sessionsRoot = join(root, "sessions");
+  const workdir = join(root, "workdir");
+  const day = join(sessionsRoot, "2026", "09", "03");
+  await mkdir(day, { recursive: true });
+  await mkdir(workdir, { recursive: true });
+  const rollout = join(
+    day,
+    `rollout-2026-09-03T00-00-00-${codexThreadID}.jsonl`,
+  );
+  // 열기 전에 이미 끝난 지난 턴. 워처가 되풀이하면 안 된다.
+  await writeFile(rollout, [
+    { type: "session_meta", payload: { id: codexThreadID, source: "cli", cwd: workdir } },
+    { type: "event_msg", payload: { type: "task_started", turn_id: "old-turn", started_at: 1 } },
+    { type: "event_msg", payload: { type: "item_completed", turn_id: "old-turn", item: { type: "UserMessage", content: [{ type: "text", text: "지난 질문" }] } } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: "old-turn", last_agent_message: "지난 답변", started_at: 1, completed_at: 2 } },
+  ].map(rolloutLine).join(""));
+  return { sessionsRoot, workdir, rollout };
+}
+
+function codexNotify(workdir, message) {
+  return {
+    source: "codex",
+    payload: {
+      type: "agent-turn-complete",
+      "thread-id": codexThreadID,
+      "turn-id": codexTurnID,
+      cwd: workdir,
+      "last-assistant-message": message,
+    },
+  };
+}
+
+// codex notify는 완료 때만 오므로, rollout에서 시작을 읽어 running을 먼저
+// 보여야 하단 바의 "일하는중" 표시가 켜진다.
+test("Codex 터미널은 rollout의 시작과 질문을 보면 running 턴을 먼저 만들고 notify가 그 턴을 완료한다", async () => {
+  const { sessionsRoot, workdir, rollout } = await codexFixture();
+  const events = [];
+  const runtime = fakeRuntime({
+    backend: "codex",
+    externalSessionID: codexThreadID,
+    workdir,
+    executablePath: "/usr/bin/true",
+  });
+  const manager = new TerminalSessionManager({
+    runtime,
+    broadcast: (event) => events.push(event),
+    codexSessionsRoot: sessionsRoot,
+  });
+  await manager.open("boss");
+  const state = manager.sessions.get("boss");
+  // 열기 전 기록은 되풀이하지 않는다.
+  await state.watcher.sweep();
+  assert.equal(runtime.begun.length, 0);
+
+  await appendFile(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: codexTurnID, started_at: 1_788_347_510 } },
+    { type: "event_msg", payload: { type: "item_completed", turn_id: codexTurnID, item: { type: "UserMessage", content: [{ type: "text", text: "터미널 질문" }] } } },
+  ].map(rolloutLine).join(""));
+  events.length = 0;
+  await state.watcher.sweep();
+  assert.equal(runtime.begun.length, 1);
+  assert.equal(runtime.begun[0].prompt, "터미널 질문");
+  assert.equal(state.runningTurnID, "turn-1");
+  assert.ok(events.some((event) => event.type === "terminal.changed"));
+  // 같은 줄을 다시 읽어도 두 번 만들지 않는다.
+  await state.watcher.sweep();
+  assert.equal(runtime.begun.length, 1);
+
+  await appendFile(rollout, [
+    { type: "turn_context", payload: { turn_id: codexTurnID, cwd: workdir } },
+    { type: "event_msg", payload: { type: "item_completed", turn_id: codexTurnID, item: { type: "AgentMessage", phase: "final_answer", content: [{ type: "Text", text: "터미널 답변" }] } } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: codexTurnID, last_agent_message: "터미널 답변", started_at: 1_788_347_510, completed_at: 1_788_347_513 } },
+  ].map(rolloutLine).join(""));
+  const completed = await manager.handleEvent(
+    "boss",
+    codexNotify(workdir, "터미널 답변"),
+  );
+  assert.equal(completed.accepted, true);
+  assert.equal(completed.turnId, "turn-1");
+  assert.equal(runtime.begun.length, 1);
+  assert.deepEqual(
+    runtime.completed.map((entry) => [entry.turnID, entry.response]),
+    [["turn-1", "터미널 답변"]],
+  );
+  assert.equal(state.runningTurnID, null);
+  await manager.close("boss");
+});
+
+test("Codex notify가 워처보다 먼저 오면 기존 경로로 기록하고 늦은 sweep이 같은 턴을 다시 만들지 않는다", async () => {
+  const { sessionsRoot, workdir, rollout } = await codexFixture();
+  const runtime = fakeRuntime({
+    backend: "codex",
+    externalSessionID: codexThreadID,
+    workdir,
+    executablePath: "/usr/bin/true",
+  });
+  const manager = new TerminalSessionManager({
+    runtime,
+    broadcast() {},
+    codexSessionsRoot: sessionsRoot,
+  });
+  await manager.open("boss");
+  const state = manager.sessions.get("boss");
+  await state.watcher.sweep();
+
+  await appendFile(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: codexTurnID, started_at: 1_788_347_510 } },
+    { type: "turn_context", payload: { turn_id: codexTurnID, cwd: workdir } },
+    { type: "event_msg", payload: { type: "item_completed", turn_id: codexTurnID, item: { type: "UserMessage", content: [{ type: "text", text: "빠른 질문" }] } } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: codexTurnID, last_agent_message: "빠른 답변", started_at: 1_788_347_510, completed_at: 1_788_347_511 } },
+  ].map(rolloutLine).join(""));
+  const completed = await manager.handleEvent(
+    "boss",
+    codexNotify(workdir, "빠른 답변"),
+  );
+  assert.equal(completed.accepted, true);
+  assert.equal(runtime.begun.length, 1);
+  assert.equal(runtime.completed.length, 1);
+  assert.equal(state.runningTurnID, null);
+
+  await state.watcher.sweep();
+  assert.equal(runtime.begun.length, 1);
+  await manager.close("boss");
+});
+
+function fakeRuntime({
+  backend = "claude",
+  externalSessionID = null,
+  workdir = "/tmp/office",
+  executablePath = null,
+} = {}) {
   return {
     begun: [],
     completed: [],
@@ -194,11 +336,16 @@ function fakeRuntime() {
     registry: null,
     async prepareTerminalLaunch(characterID) {
       return {
-        character: { ...baseCharacter, id: characterID, backend: "claude" },
+        character: {
+          ...baseCharacter,
+          id: characterID,
+          backend,
+          ...(executablePath ? { executablePath } : {}),
+        },
         sessionID: "db-session",
         conversationID: "conversation",
-        externalSessionID: null,
-        workdir: "/tmp/office",
+        externalSessionID,
+        workdir,
       };
     },
     async bindTerminalExternalSession(entry) { this.bound.push(entry); },
