@@ -111,6 +111,58 @@ test("Claude UserPromptSubmit과 Stop 훅이 같은 터미널 턴을 생성·완
   await manager.close("boss");
 });
 
+// 완료 저장이 실패했을 때 턴을 running으로 남기면 세션이 그 턴에 묶여
+// 이후 질문이 전부 turn-running으로 거절된다.
+test("Claude Stop 훅의 완료 저장이 실패하면 턴을 중단 처리하고 세션을 푼다", async () => {
+  const runtime = fakeRuntime();
+  const interrupted = [];
+  runtime.completeTerminalTurn = async () => {
+    throw new Error("터미널 최종 메시지가 없습니다.");
+  };
+  runtime.interruptTerminalTurn = async (characterID, turnID) => {
+    interrupted.push({ characterID, turnID });
+    return true;
+  };
+  const manager = new TerminalSessionManager({ runtime, broadcast() {} });
+  await manager.open("boss");
+  const started = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "첫 질문",
+    },
+  });
+
+  await assert.rejects(() =>
+    manager.handleEvent("boss", {
+      source: "claude",
+      payload: {
+        hook_event_name: "Stop",
+        session_id: "claude-session",
+        last_assistant_message: "답변",
+      },
+    })
+  );
+
+  assert.deepEqual(interrupted, [{
+    characterID: "boss",
+    turnID: started.turnId,
+  }]);
+  // 다음 질문이 turn-running으로 막히지 않아야 한다.
+  const next = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "다음 질문",
+    },
+  });
+  assert.equal(next.accepted, true);
+  assert.notEqual(next.turnId, started.turnId);
+  await manager.close("boss");
+});
+
 test("Antigravity step 14/15 payload를 사용자·최종 응답으로 해독한다", () => {
   const user = parseAntigravityTerminalStep({
     step_type: 14,

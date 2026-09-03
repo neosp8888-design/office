@@ -369,17 +369,31 @@ class AntigravityTerminalWatcher {
         this.state.structuredResultPath,
       );
       this.state.structuredResultPath = null;
-      await this.runtime.completeTerminalTurn({
-        characterID: this.state.characterID,
-        turnID,
-        response: event.text,
-        endedAt: event.metadata?.at ? new Date(event.metadata.at) : new Date(),
-        usage,
-        initialGeneratedImages: this.state.initialGeneratedImages,
-        structured,
-      });
-      this.state.runningTurnID = null;
-      resetTerminalArtifacts(this.state);
+      // 완료 저장이 실패해도 턴을 running으로 두면 안 된다. 이미 읽은
+      // 단계는 다시 오지 않으므로 세션이 그 턴에 영영 묶인다.
+      try {
+        await this.runtime.completeTerminalTurn({
+          characterID: this.state.characterID,
+          turnID,
+          response: event.text,
+          endedAt: event.metadata?.at
+            ? new Date(event.metadata.at)
+            : new Date(),
+          usage,
+          initialGeneratedImages: this.state.initialGeneratedImages,
+          structured,
+        });
+        this.state.runningTurnID = null;
+        resetTerminalArtifacts(this.state);
+      } catch (error) {
+        await this.runtime.interruptTerminalTurn(
+          this.state.characterID,
+          turnID,
+        );
+        this.state.runningTurnID = null;
+        resetTerminalArtifacts(this.state);
+        throw error;
+      }
     }
   }
 
@@ -564,16 +578,28 @@ export class TerminalSessionManager {
       state.structuredResultPath,
     );
     state.structuredResultPath = null;
-    await this.runtime.completeTerminalTurn({
-      characterID: state.characterID,
-      turnID,
-      response,
-      structured,
-      initialGeneratedImages: state.initialGeneratedImages,
-    });
-    state.runningTurnID = null;
-    this.resetTurnArtifacts(state);
-    this.broadcast({ type: "terminal.changed", characterId: state.characterID });
+    // 완료 저장이 실패해도 턴을 running으로 두면 안 된다. 세션이 그 턴에
+    // 묶여 다음 질문까지 전부 turn-running으로 거절된다.
+    try {
+      await this.runtime.completeTerminalTurn({
+        characterID: state.characterID,
+        turnID,
+        response,
+        structured,
+        initialGeneratedImages: state.initialGeneratedImages,
+      });
+      state.runningTurnID = null;
+      this.resetTurnArtifacts(state);
+    } catch (error) {
+      await this.runtime.interruptTerminalTurn(state.characterID, turnID);
+      state.runningTurnID = null;
+      throw error;
+    } finally {
+      this.broadcast({
+        type: "terminal.changed",
+        characterId: state.characterID,
+      });
+    }
     return { accepted: true, turnId: turnID };
   }
 
