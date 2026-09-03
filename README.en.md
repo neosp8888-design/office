@@ -33,18 +33,20 @@ brings their operation into one shared view.
 
 Assign Claude Code, Codex, or Antigravity to each coworker, then give every one
 a different role and model. Their conversations never get mixed together, and
-each coworker resumes its own session when you return.
+each coworker resumes its own session when you return. However, all conversation
+history is shared through the database, RAG, and the internal wiki.
 
 ### Run work in parallel and see it all
 
-Give different tasks to several coworkers at once. See who is thinking, which
-commands and tools are running, what changed, and what each AI concluded—without
-chasing separate windows.
+Give different tasks to several coworkers at once. For each coworker, see who is
+thinking, which commands and tools are running, what changed, and what answer
+they produced.
 
-### Hand work from one AI to the next
+### Let a lead AI delegate and consolidate
 
-Let one coworker research, another review, and another finish. Keep every
-conversation independent while operating them as one continuous workflow.
+Ask the lead coworker to assign work to several coworkers. Their conversations
+remain independent while the lead coworker gathers the results and finishes the
+job.
 
 ### Move between the GUI and a real terminal
 
