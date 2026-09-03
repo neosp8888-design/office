@@ -197,8 +197,8 @@ enum OfficePanelControl {
     case terminal
 }
 
-/// 터미널 모드에서는 CLI가 직원 세션을 직접 잡고 있으므로, 하단 바에서
-/// 프로필과 설정만 남기고 나머지 조작은 잠근다.
+/// 터미널 모드에서는 CLI가 직원 세션을 직접 잡고 있으므로 실행 설정을 잠근다.
+/// 직원 선택은 각 직원의 터미널로 옮겨 가는 유일한 통로라 잠그지 않는다.
 enum LiveWorkspaceCommandAvailability {
     enum Control {
         case characterSelector
@@ -217,9 +217,9 @@ enum LiveWorkspaceCommandAvailability {
             return true
         }
         switch control {
-        case .profile, .identitySettings:
+        case .characterSelector, .profile, .identitySettings:
             return true
-        case .characterSelector, .quickSettings:
+        case .quickSettings:
             return false
         }
     }
