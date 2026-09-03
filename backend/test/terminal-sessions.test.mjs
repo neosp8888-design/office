@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   AgentBusyError,
@@ -182,6 +184,92 @@ test("Antigravity step 14/15 payload를 사용자·최종 응답으로 해독한
   assert.equal(assistant.text, "답변");
 });
 
+test("Antigravity 파일 알림을 놓쳐도 주기 확인으로 턴을 완료한다", async () => {
+  const root = await mkdtemp(join(tmpdir(), "officestra-antigravity-terminal-"));
+  const conversations = join(root, "conversations");
+  const externalSessionID = "01a0c0de-3333-7000-8000-000000000003";
+  const databasePath = join(conversations, `${externalSessionID}.db`);
+  await mkdir(conversations, { recursive: true });
+  const database = new DatabaseSync(databasePath);
+  database.exec(`
+    CREATE TABLE steps (
+      idx INTEGER PRIMARY KEY,
+      step_type INTEGER NOT NULL,
+      status INTEGER NOT NULL,
+      metadata BLOB,
+      step_payload BLOB NOT NULL
+    )
+  `);
+  const runtime = fakeRuntime({
+    backend: "antigravity",
+    externalSessionID,
+    permission: "dangerously-skip-permissions",
+  });
+  const manager = new TerminalSessionManager({
+    runtime,
+    broadcast() {},
+    antigravityRoot: root,
+    antigravityPollIntervalMs: 10,
+    antigravityDebounceMs: 50,
+  });
+  let notificationStorm = null;
+
+  try {
+    await manager.open("boss");
+    const state = manager.sessions.get("boss");
+    // 최초 sweep을 끝낸 뒤 파일 감시를 끊어 fs.watch 알림 누락을 재현한다.
+    await delay(20);
+    for (const watcher of state.watcher.watchers) watcher.close();
+    state.watcher.watchers = [];
+    // 실제 WAL/SHM처럼 debounce보다 잦은 알림이 와도 주기 확인은 굶으면
+    // 안 된다. 기존 구현은 이 알림이 poll 타이머까지 계속 미뤘다.
+    notificationStorm = setInterval(() => state.watcher.schedule(), 2);
+
+    database.prepare(
+      "INSERT INTO steps(idx, step_type, status, metadata, step_payload) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      1,
+      14,
+      3,
+      null,
+      message(
+        numberField(1, 14),
+        bytesField(19, message(bytesField(2, Buffer.from("질문")))),
+      ),
+    );
+    await waitUntil(() => runtime.begun.length === 1);
+    assert.equal(state.runningTurnID, "turn-1");
+
+    const assistantPayload = message(
+      numberField(1, 15),
+      bytesField(20, message(bytesField(1, Buffer.from("답변")))),
+    );
+    database.prepare(
+      "INSERT INTO steps(idx, step_type, status, metadata, step_payload) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      2,
+      15,
+      1,
+      null,
+      assistantPayload,
+    );
+    // 미완료 행을 한 번 읽어 커서가 지나간 뒤 같은 idx가 완료되는 실제
+    // Antigravity 기록 순서를 재현한다.
+    await waitUntil(() => state.watcher.lastIndex === 2);
+    assert.equal(runtime.completed.length, 0);
+    database.prepare(
+      "UPDATE steps SET status = 3, step_payload = ? WHERE idx = 2",
+    ).run(assistantPayload);
+    await waitUntil(() => runtime.completed.length === 1);
+    assert.equal(runtime.completed[0].response, "답변");
+    assert.equal(state.runningTurnID, null);
+  } finally {
+    clearInterval(notificationStorm);
+    database.close();
+    await manager.close("boss");
+  }
+});
+
 test("turn origin migration은 gui 기본값과 terminal 제약을 둔다", () => {
   const sql = readFileSync(new URL("../../database/migrations/034_turn_origin.sql", import.meta.url), "utf8");
   assert.match(sql, /origin text NOT NULL DEFAULT 'gui'/);
@@ -323,15 +411,64 @@ test("Codex notify가 워처보다 먼저 오면 기존 경로로 기록하고 �
   await manager.close("boss");
 });
 
+test("Codex turn_aborted를 보면 rollout 워처가 running 턴을 중단한다", async () => {
+  const { sessionsRoot, workdir, rollout } = await codexFixture();
+  const events = [];
+  const runtime = fakeRuntime({
+    backend: "codex",
+    externalSessionID: codexThreadID,
+    workdir,
+    executablePath: "/usr/bin/true",
+  });
+  const manager = new TerminalSessionManager({
+    runtime,
+    broadcast: (event) => events.push(event),
+    codexSessionsRoot: sessionsRoot,
+  });
+  await manager.open("boss");
+  const state = manager.sessions.get("boss");
+  await state.watcher.sweep();
+
+  await appendFile(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: codexTurnID, started_at: 1_788_347_510 } },
+    { type: "event_msg", payload: { type: "item_completed", turn_id: codexTurnID, item: { type: "UserMessage", content: [{ type: "text", text: "중단할 질문" }] } } },
+  ].map(rolloutLine).join(""));
+  await state.watcher.sweep();
+  assert.equal(state.runningTurnID, "turn-1");
+
+  events.length = 0;
+  await appendFile(rollout, rolloutLine({
+    type: "event_msg",
+    payload: {
+      type: "turn_aborted",
+      turn_id: codexTurnID,
+      started_at: 1_788_347_510,
+      completed_at: 1_788_347_511,
+    },
+  }));
+  await state.watcher.sweep();
+
+  assert.deepEqual(runtime.interrupted, [{
+    characterID: "boss",
+    turnID: "turn-1",
+  }]);
+  assert.equal(state.runningTurnID, null);
+  assert.equal(state.codexTurnID, null);
+  assert.ok(events.some((event) => event.type === "terminal.changed"));
+  await manager.close("boss");
+});
+
 function fakeRuntime({
   backend = "claude",
   externalSessionID = null,
   workdir = "/tmp/office",
   executablePath = null,
+  permission = baseCharacter.permission,
 } = {}) {
   return {
     begun: [],
     completed: [],
+    interrupted: [],
     bound: [],
     registry: null,
     async prepareTerminalLaunch(characterID) {
@@ -340,6 +477,7 @@ function fakeRuntime({
           ...baseCharacter,
           id: characterID,
           backend,
+          permission,
           ...(executablePath ? { executablePath } : {}),
         },
         sessionID: "db-session",
@@ -355,8 +493,20 @@ function fakeRuntime({
       return turn;
     },
     async completeTerminalTurn(entry) { this.completed.push(entry); },
-    async interruptTerminalTurn() { return true; },
+    async interruptTerminalTurn(characterID, turnID) {
+      this.interrupted.push({ characterID, turnID });
+      return true;
+    },
   };
+}
+
+async function waitUntil(predicate, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await delay(10);
+  }
+  assert.fail("조건이 제한 시간 안에 충족되지 않았습니다.");
 }
 
 function encodeVarint(input) {

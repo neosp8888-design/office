@@ -240,7 +240,13 @@ function lastClaudeAssistantMessage(path) {
 }
 
 class AntigravityTerminalWatcher {
-  constructor({ state, runtime, root }) {
+  constructor({
+    state,
+    runtime,
+    root,
+    pollIntervalMs = 1_000,
+    debounceMs = 500,
+  }) {
     this.state = state;
     this.runtime = runtime;
     this.root = root;
@@ -250,9 +256,13 @@ class AntigravityTerminalWatcher {
       ? join(this.conversationsRoot, `${state.externalSessionID}.db`)
       : null;
     this.lastIndex = this.path ? this.maximumIndex(this.path) : -1;
+    this.pendingIndexes = new Set();
     this.baseline = new Map(this.databaseFiles().map((entry) => [entry.path, entry.mtimeMs]));
     this.watchers = [];
     this.timer = null;
+    this.pollTimer = null;
+    this.pollIntervalMs = pollIntervalMs;
+    this.debounceMs = debounceMs;
     this.sweepPromise = Promise.resolve();
   }
 
@@ -286,19 +296,33 @@ class AntigravityTerminalWatcher {
     const schedule = () => this.schedule();
     try { this.watchers.push(watch(this.conversationsRoot, schedule)); } catch {}
     try { this.watchers.push(watch(this.summaryPath, schedule)); } catch {}
-    this.schedule();
+    // SQLite가 WAL에만 기록하면 macOS의 fs.watch가 마지막 변경을 놓칠 수
+    // 있다. 주기 확인은 debounce를 거치지 않아 지속적인 WAL 알림에도
+    // 굶지 않고 반드시 실행된다.
+    this.pollTimer = setInterval(
+      () => this.enqueueSweep(),
+      this.pollIntervalMs,
+    );
+    this.pollTimer.unref?.();
+    this.enqueueSweep();
   }
 
   schedule() {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      this.sweepPromise = this.sweepPromise
-        .then(() => this.sweep())
-        .catch((error) => console.warn(
-          "Antigravity 터미널 기록 해독 실패:",
-          error instanceof Error ? error.message : String(error),
-        ));
-    }, 500);
+      this.timer = null;
+      this.enqueueSweep();
+    }, this.debounceMs);
+  }
+
+  enqueueSweep() {
+    this.sweepPromise = this.sweepPromise
+      .then(() => this.sweep())
+      .catch((error) => console.warn(
+        "Antigravity 터미널 기록 해독 실패:",
+        error instanceof Error ? error.message : String(error),
+      ));
+    return this.sweepPromise;
   }
 
   async adoptConversationIfNeeded() {
@@ -329,7 +353,7 @@ class AntigravityTerminalWatcher {
     try {
       const { DatabaseSync } = require("node:sqlite");
       database = new DatabaseSync(this.path, { readOnly: true });
-      return database.prepare(
+      const rows = database.prepare(
         `
           SELECT idx, step_type, status, metadata, step_payload
           FROM steps
@@ -337,6 +361,19 @@ class AntigravityTerminalWatcher {
           ORDER BY idx
         `,
       ).all(this.lastIndex);
+      const pending = [...this.pendingIndexes];
+      if (pending.length > 0) {
+        const placeholders = pending.map(() => "?").join(", ");
+        rows.push(...database.prepare(
+          `
+            SELECT idx, step_type, status, metadata, step_payload
+            FROM steps
+            WHERE idx IN (${placeholders})
+          `,
+        ).all(...pending));
+      }
+      return [...new Map(rows.map((row) => [Number(row.idx), row])).values()]
+        .sort((left, right) => Number(left.idx) - Number(right.idx));
     } finally {
       try { database?.close(); } catch {}
     }
@@ -345,11 +382,25 @@ class AntigravityTerminalWatcher {
   async sweep() {
     if (this.state.closed || !await this.adoptConversationIfNeeded()) return;
     for (const row of this.rows()) {
-      this.lastIndex = Math.max(this.lastIndex, Number(row.idx));
+      const index = Number(row.idx);
+      this.lastIndex = Math.max(this.lastIndex, index);
+      // Antigravity는 한 idx의 행을 먼저 미완료 상태로 INSERT한 뒤 UPDATE한다.
+      // 커서만 넘기면 완료된 같은 행을 다시 볼 수 없으므로 따로 재조회한다.
+      if (Number(row.status) !== 3) {
+        this.pendingIndexes.add(index);
+        continue;
+      }
       const event = parseAntigravityTerminalStep(row);
-      if (!event) continue;
+      if (!event) {
+        this.pendingIndexes.delete(index);
+        continue;
+      }
       if (event.kind === "user") {
-        if (this.state.runningTurnID) continue;
+        if (this.state.runningTurnID) {
+          this.pendingIndexes.add(index);
+          continue;
+        }
+        this.pendingIndexes.add(index);
         const turn = await this.runtime.beginTerminalTurn({
           characterID: this.state.characterID,
           sessionID: this.state.sessionID,
@@ -357,9 +408,13 @@ class AntigravityTerminalWatcher {
           execution: this.state.character,
         });
         this.state.runningTurnID = turn.turnID;
+        this.pendingIndexes.delete(index);
         continue;
       }
-      if (!this.state.runningTurnID) continue;
+      if (!this.state.runningTurnID) {
+        this.pendingIndexes.add(index);
+        continue;
+      }
       const turnID = this.state.runningTurnID;
       const usage = event.metadata?.usage
         ? {
@@ -375,6 +430,7 @@ class AntigravityTerminalWatcher {
       this.state.structuredResultPath = null;
       // 완료 저장이 실패해도 턴을 running으로 두면 안 된다. 이미 읽은
       // 단계는 다시 오지 않으므로 세션이 그 턴에 영영 묶인다.
+      this.pendingIndexes.add(index);
       try {
         await this.runtime.completeTerminalTurn({
           characterID: this.state.characterID,
@@ -388,6 +444,7 @@ class AntigravityTerminalWatcher {
           structured,
         });
         this.state.runningTurnID = null;
+        this.pendingIndexes.delete(index);
         resetTerminalArtifacts(this.state);
       } catch (error) {
         await this.runtime.interruptTerminalTurn(
@@ -395,6 +452,7 @@ class AntigravityTerminalWatcher {
           turnID,
         );
         this.state.runningTurnID = null;
+        this.pendingIndexes.delete(index);
         resetTerminalArtifacts(this.state);
         throw error;
       }
@@ -403,6 +461,8 @@ class AntigravityTerminalWatcher {
 
   async stop({ finalSweep = true } = {}) {
     clearTimeout(this.timer);
+    clearInterval(this.pollTimer);
+    this.pollTimer = null;
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
     if (finalSweep) {
@@ -515,6 +575,30 @@ class CodexTerminalWatcher {
         this.pendingStarts.delete(String(payload.turn_id ?? "").trim());
         continue;
       }
+      if (record?.type === "event_msg" && payload.type === "turn_aborted") {
+        const abortedTurnID = String(payload.turn_id ?? "").trim();
+        this.pendingStarts.delete(abortedTurnID);
+        this.seen.add(abortedTurnID);
+        if (
+          abortedTurnID &&
+          this.state.codexTurnID === abortedTurnID &&
+          this.state.runningTurnID
+        ) {
+          const runningTurnID = this.state.runningTurnID;
+          await this.runtime.interruptTerminalTurn(
+            this.state.characterID,
+            runningTurnID,
+          );
+          this.state.runningTurnID = null;
+          this.state.codexTurnID = null;
+          resetTerminalArtifacts(this.state);
+          this.broadcast({
+            type: "terminal.changed",
+            characterId: this.state.characterID,
+          });
+        }
+        continue;
+      }
       const prompt = codexRolloutUserPrompt(record);
       if (!prompt || !this.pendingStarts.has(prompt.turnID)) continue;
       const startedAt = this.pendingStarts.get(prompt.turnID);
@@ -563,6 +647,8 @@ export class TerminalSessionManager {
     antigravityRoot = join(homedir(), ".gemini", "antigravity-cli"),
     codexSessionsRoot = join(homedir(), ".codex", "sessions"),
     baseEnvironment = process.env,
+    antigravityPollIntervalMs = 1_000,
+    antigravityDebounceMs = 500,
   }) {
     this.runtime = runtime;
     this.broadcast = broadcast;
@@ -570,6 +656,8 @@ export class TerminalSessionManager {
     this.antigravityRoot = antigravityRoot;
     this.codexSessionsRoot = codexSessionsRoot;
     this.baseEnvironment = baseEnvironment;
+    this.antigravityPollIntervalMs = antigravityPollIntervalMs;
+    this.antigravityDebounceMs = antigravityDebounceMs;
     this.sessions = new Map();
     this.opening = new Set();
   }
@@ -597,11 +685,12 @@ export class TerminalSessionManager {
     if (!id) throw new CharacterNotFoundError("캐릭터를 찾을 수 없습니다.");
     if (this.has(id)) throw new AgentBusyError("터미널 모드에서 사용 중입니다.");
     this.opening.add(id);
+    let state = null;
     try {
       const launch = await this.runtime.prepareTerminalLaunch(id);
       const character = launch.character;
       const terminalSessionID = randomUUID();
-      const state = {
+      state = {
         terminalSessionID,
         characterID: id,
         character,
@@ -637,6 +726,8 @@ export class TerminalSessionManager {
           state,
           runtime: this.runtime,
           root: this.antigravityRoot,
+          pollIntervalMs: this.antigravityPollIntervalMs,
+          debounceMs: this.antigravityDebounceMs,
         });
         state.watcher.start();
       } else if (character.backend === "codex") {
@@ -671,6 +762,11 @@ export class TerminalSessionManager {
       this.broadcast({ type: "terminal.changed", characterId: id });
       return spec;
     } catch (error) {
+      if (state) {
+        state.closed = true;
+        try { await state.watcher?.stop({ finalSweep: false }); } catch {}
+        discardStructuredTurnResult(state.structuredResultPath);
+      }
       this.sessions.delete(id);
       if (error instanceof AgentDrainingError) throw error;
       throw error;
