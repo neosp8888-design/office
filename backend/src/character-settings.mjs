@@ -28,6 +28,7 @@ export class CharacterSettingsDrainConflictError extends Error {}
 
 export function normalizeCharacterSettingsUpdate(body, {
   requireCharacterID = false,
+  modelCatalog = null,
 } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new CharacterSettingsValidationError(
@@ -46,13 +47,20 @@ export function normalizeCharacterSettingsUpdate(body, {
     throw new CharacterSettingsValidationError("지원하지 않는 CLI입니다.");
   }
   const model = String(body.model ?? "");
-  if (!backendModels(backend).includes(model)) {
+  const dynamicCapabilities = modelCatalog?.modelCapabilities?.(
+    backend,
+    model,
+  ) ?? null;
+  if (!dynamicCapabilities && !backendModels(backend).includes(model)) {
     throw new CharacterSettingsValidationError(
       "지원하지 않는 모델입니다.",
     );
   }
   const effort = String(body.effort ?? "");
-  if (!backendEfforts(backend, model).includes(effort)) {
+  const supportedEfforts = dynamicCapabilities?.efforts?.length > 0
+    ? dynamicCapabilities.efforts
+    : backendEfforts(backend, model);
+  if (!supportedEfforts.includes(effort)) {
     throw new CharacterSettingsValidationError(
       "지원하지 않는 추론 레벨입니다.",
     );
@@ -64,7 +72,10 @@ export function normalizeCharacterSettingsUpdate(body, {
       "Fast 모드 설정은 참 또는 거짓이어야 합니다.",
     );
   }
-  if (fastMode && !backendSupportsFastMode(backend, model)) {
+  const supportsFastMode = dynamicCapabilities
+    ? dynamicCapabilities.supportsFastMode === true
+    : backendSupportsFastMode(backend, model);
+  if (fastMode && !supportsFastMode) {
     throw new CharacterSettingsValidationError(
       "선택한 CLI와 모델은 Fast 모드를 지원하지 않습니다.",
     );
@@ -87,7 +98,9 @@ export function normalizeCharacterSettingsUpdate(body, {
   };
 }
 
-export function normalizeBulkCharacterSettings(body) {
+export function normalizeBulkCharacterSettings(body, {
+  modelCatalog = null,
+} = {}) {
   if (!body || !Array.isArray(body.updates)) {
     throw new CharacterSettingsValidationError(
       "updates 배열을 입력하세요.",
@@ -103,7 +116,10 @@ export function normalizeBulkCharacterSettings(body) {
   }
 
   const updates = body.updates.map((update) =>
-    normalizeCharacterSettingsUpdate(update, { requireCharacterID: true })
+    normalizeCharacterSettingsUpdate(update, {
+      requireCharacterID: true,
+      modelCatalog,
+    })
   );
   const seen = new Set();
   for (const update of updates) {
@@ -158,8 +174,9 @@ export async function updateCharacterSettingsAtomically({
   pool,
   runtime,
   body,
+  modelCatalog = null,
 }) {
-  const updates = normalizeBulkCharacterSettings(body);
+  const updates = normalizeBulkCharacterSettings(body, { modelCatalog });
   if (!runtime) {
     throw new CharacterSettingsRuntimeUnavailableError(
       "CLI 실행기가 준비된 뒤 설정을 변경하세요.",

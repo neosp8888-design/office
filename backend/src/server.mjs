@@ -11,6 +11,7 @@ import {
   AgentSessionNotFoundError,
   AgentRuntime,
   CharacterNotFoundError,
+  locateExecutable,
 } from "./agent-runtime.mjs";
 import {
   canonicalProjectRoot,
@@ -45,6 +46,7 @@ import {
   CharacterSettingsRuntimeUnavailableError,
   CharacterSettingsTargetsNotFoundError,
   CharacterSettingsValidationError,
+  normalizeCharacterSettingsUpdate,
   updateCharacterSettingsAtomically,
   withCharacterSessionLocks,
 } from "./character-settings.mjs";
@@ -55,10 +57,7 @@ import {
 import {
   AGENT_BACKENDS,
   backendEfforts,
-  backendModels,
-  backendPermissions,
   backendSupportsFastMode,
-  normalizedBackendPermission,
 } from "./agent-provider.mjs";
 import { migrate } from "./migrate.mjs";
 import {
@@ -96,6 +95,15 @@ import {
   sharedInstallPrefix,
 } from "./cli-updates.mjs";
 import { TerminalSessionManager } from "./terminal-sessions.mjs";
+import {
+  createPostgresPricingCatalogStore,
+  PricingCatalogService,
+} from "./pricing-catalog.mjs";
+import {
+  createPostgresModelCatalogStore,
+  ModelCatalogService,
+  ModelCatalogValidationError,
+} from "./model-catalog.mjs";
 
 const port = Number(process.env.OFFICE_BACKEND_PORT ?? 4317);
 const liveFeedMinimumTurnsPerCharacter = 10;
@@ -103,6 +111,8 @@ const sockets = new Set();
 const webSocketServer = new WebSocketServer({ noServer: true });
 let runtime;
 let terminalSessions;
+let pricingCatalogService;
+let modelCatalogService;
 let shuttingDown = false;
 const readUsageSummary = createUsageSummaryReader({ pool });
 const cliUpdateChecker = createCLIUpdateChecker();
@@ -179,6 +189,47 @@ async function readJSON(request) {
     return {};
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function configuredModelCatalogExecutable(provider) {
+  const { rows } = await pool.query(
+    `
+      SELECT config
+      FROM characters
+      WHERE backend = $1
+      ORDER BY updated_at DESC, id
+      LIMIT 1
+    `,
+    [provider],
+  );
+  return locateExecutable({
+    backend: provider,
+    config: rows[0]?.config ?? {},
+  });
+}
+
+async function modelCatalog(response, url) {
+  if (!modelCatalogService) {
+    send(response, 503, { error: "모델 목록 수집기가 준비되지 않았습니다." });
+    return;
+  }
+  if (url.searchParams.get("force") === "1") {
+    await modelCatalogService.refreshDue({ force: true });
+  }
+  send(response, 200, modelCatalogService.snapshot());
+}
+
+async function updateModelCatalogExclusions(response, body) {
+  if (!modelCatalogService) {
+    send(response, 503, { error: "모델 목록 수집기가 준비되지 않았습니다." });
+    return;
+  }
+  const provider = String(body.provider ?? "");
+  const snapshot = await modelCatalogService.setExclusions(
+    provider,
+    body.excludedModels,
+  );
+  send(response, 200, snapshot);
 }
 
 function routeCharacterName(pathname) {
@@ -479,41 +530,29 @@ async function compactCharacterContext(response, characterID) {
 }
 
 async function updateCharacterSettings(response, characterID, body) {
-  const backend = String(body.backend ?? "");
-  if (!AGENT_BACKENDS.includes(backend)) {
-    send(response, 400, { error: "지원하지 않는 CLI입니다." });
-    return;
+  let normalized;
+  try {
+    normalized = normalizeCharacterSettingsUpdate(
+      { ...body, characterId: characterID },
+      {
+        requireCharacterID: true,
+        modelCatalog: modelCatalogService,
+      },
+    );
+  } catch (error) {
+    if (error instanceof CharacterSettingsValidationError) {
+      send(response, 400, { error: error.message });
+      return;
+    }
+    throw error;
   }
-  const model = String(body.model ?? "");
-  if (!backendModels(backend).includes(model)) {
-    send(response, 400, { error: "지원하지 않는 모델입니다." });
-    return;
-  }
-  const effort = String(body.effort ?? "");
-  if (!backendEfforts(backend, model).includes(effort)) {
-    send(response, 400, { error: "지원하지 않는 추론 레벨입니다." });
-    return;
-  }
-  const fastMode = body.fastMode;
-  if (typeof fastMode !== "boolean") {
-    send(response, 400, { error: "Fast 모드 설정은 참 또는 거짓이어야 합니다." });
-    return;
-  }
-  if (fastMode && !backendSupportsFastMode(backend, model)) {
-    send(response, 400, {
-      error: "선택한 CLI와 모델은 Fast 모드를 지원하지 않습니다.",
-    });
-    return;
-  }
-  const requestedPermission = String(body.permission ?? "");
-  if (!backendPermissions(backend).includes(requestedPermission)) {
-    send(response, 400, { error: "지원하지 않는 권한입니다." });
-    return;
-  }
-  const permission = normalizedBackendPermission(
+  const {
     backend,
-    requestedPermission,
-  );
+    model,
+    effort,
+    fastMode,
+    permission,
+  } = normalized;
 
   const character = await withCharacterSessionLock(
     characterID,
@@ -611,7 +650,12 @@ async function updateCharacterSettingsBulk(response, body) {
     send(
       response,
       200,
-      await updateCharacterSettingsAtomically({ pool, runtime, body }),
+      await updateCharacterSettingsAtomically({
+        pool,
+        runtime,
+        body,
+        modelCatalog: modelCatalogService,
+      }),
     );
   } catch (error) {
     if (error instanceof CharacterSettingsValidationError) {
@@ -1736,6 +1780,12 @@ async function recordTurn(response, body) {
       typeof body.fastMode === "boolean"
     ? body.fastMode
     : false;
+  const executionCapabilities = executionBackend && executionModel
+    ? modelCatalogService?.modelCapabilities(
+      executionBackend,
+      executionModel,
+    ) ?? null
+    : null;
 
   if (!conversationID || !characterID || !body.prompt) {
     send(response, 400, { error: "대화, 캐릭터, 프롬프트가 필요합니다." });
@@ -1750,7 +1800,10 @@ async function recordTurn(response, body) {
   }
   if (
     executionEffort &&
-    !backendEfforts(executionBackend, executionModel).includes(
+    !(executionCapabilities?.efforts ?? backendEfforts(
+      executionBackend,
+      executionModel,
+    )).includes(
       executionEffort,
     )
   ) {
@@ -1764,7 +1817,9 @@ async function recordTurn(response, body) {
   if (
     executionBackend &&
     executionFastMode === true &&
-    !backendSupportsFastMode(executionBackend, executionModel)
+    !(executionCapabilities
+      ? executionCapabilities.supportsFastMode === true
+      : backendSupportsFastMode(executionBackend, executionModel))
   ) {
     send(response, 400, {
       error: "선택한 실행 CLI와 모델은 Fast 모드를 지원하지 않습니다.",
@@ -2091,6 +2146,19 @@ const server = createServer(async (request, response) => {
       await updateRuntimeCLIPaths(response, await readJSON(request));
     } else if (
       request.method === "GET" &&
+      url.pathname === "/api/model-catalog"
+    ) {
+      await modelCatalog(response, url);
+    } else if (
+      request.method === "PUT" &&
+      url.pathname === "/api/model-catalog/exclusions"
+    ) {
+      if (!trustedJSONMutation(request, response)) {
+        return;
+      }
+      await updateModelCatalogExclusions(response, await readJSON(request));
+    } else if (
+      request.method === "GET" &&
       url.pathname === "/api/characters"
     ) {
       await listCharacters(response);
@@ -2308,7 +2376,8 @@ const server = createServer(async (request, response) => {
     }
     if (
       error instanceof ProvenanceValidationError ||
-      error instanceof TurnFeedbackValidationError
+      error instanceof TurnFeedbackValidationError ||
+      error instanceof ModelCatalogValidationError
     ) {
       send(response, 400, { error: error.message });
       return;
@@ -2361,6 +2430,8 @@ async function shutdown(signal) {
   }
   shuttingDown = true;
   console.log(`${signal} 신호를 받아 사무실 백엔드를 종료합니다.`);
+  modelCatalogService?.stop();
+  pricingCatalogService?.stop();
   await terminalSessions?.shutdown();
   runtime?.shutdown();
   for (const socket of sockets) {
@@ -2401,6 +2472,34 @@ try {
   await withTransaction(async (client) => {
     await syncCharacters(client, configuration);
   });
+  pricingCatalogService = new PricingCatalogService({
+    store: createPostgresPricingCatalogStore(pool),
+  });
+  try {
+    await pricingCatalogService.loadCached();
+  } catch (error) {
+    console.warn(
+      "저장된 가격 카탈로그를 읽지 못해 내장 기본값으로 시작합니다.",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  pricingCatalogService.start();
+  modelCatalogService = new ModelCatalogService({
+    store: createPostgresModelCatalogStore(pool),
+    resolveExecutable: configuredModelCatalogExecutable,
+    onChanged(provider) {
+      broadcast({ type: "model-catalog.changed", provider });
+    },
+  });
+  try {
+    await modelCatalogService.loadCached();
+  } catch (error) {
+    console.warn(
+      "저장된 모델 카탈로그를 읽지 못해 내장 기본값으로 시작합니다.",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  modelCatalogService.start();
   try {
     await withTransaction(async (client) => {
       await reconcileTerminalWorkRecordReviews(client, {

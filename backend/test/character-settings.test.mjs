@@ -309,6 +309,74 @@ test("Antigravity 설정은 실제 모델별 추론·권한·Fast 계약을 검�
   }
 });
 
+test("동적 카탈로그의 새 Codex·Antigravity 모델과 옵션을 검증한다", () => {
+  const capabilities = new Map([
+    ["codex:gpt-future-mini", {
+      efforts: ["low", "medium"],
+      supportsFastMode: false,
+    }],
+    ["antigravity:gemini-future-pro", {
+      efforts: ["low", "high"],
+      supportsFastMode: false,
+    }],
+  ]);
+  const modelCatalog = {
+    modelCapabilities(backend, model) {
+      return capabilities.get(`${backend}:${model}`) ?? null;
+    },
+  };
+
+  const normalized = normalizeBulkCharacterSettings({
+    updates: [
+      settings("boss", {
+        backend: "codex",
+        model: "gpt-future-mini",
+        effort: "medium",
+        fastMode: false,
+      }),
+      settings("right-man", {
+        backend: "antigravity",
+        model: "gemini-future-pro",
+        effort: "low",
+        fastMode: false,
+        permission: "accept-edits",
+      }),
+    ],
+  }, { modelCatalog });
+
+  assert.deepEqual(
+    normalized.map(({ backend, model, effort }) => ({ backend, model, effort })),
+    [
+      { backend: "codex", model: "gpt-future-mini", effort: "medium" },
+      {
+        backend: "antigravity",
+        model: "gemini-future-pro",
+        effort: "low",
+      },
+    ],
+  );
+
+  assert.throws(
+    () => normalizeBulkCharacterSettings({
+      updates: [settings("boss", {
+        model: "gpt-future-mini",
+        effort: "ultra",
+      })],
+    }, { modelCatalog }),
+    /지원하지 않는 추론 레벨/,
+  );
+  assert.throws(
+    () => normalizeBulkCharacterSettings({
+      updates: [settings("boss", {
+        model: "gpt-future-mini",
+        effort: "medium",
+        fastMode: true,
+      })],
+    }, { modelCatalog }),
+    /Fast 모드/,
+  );
+});
+
 test("bulk 전체 요청 검증은 drain과 DB 잠금보다 먼저 끝난다", async () => {
   const database = fakeDatabase([profile("boss"), profile("right-man")]);
   const runtime = fakeRuntime();

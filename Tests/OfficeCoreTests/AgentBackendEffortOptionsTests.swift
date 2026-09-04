@@ -7,7 +7,7 @@ final class AgentBackendEffortOptionsTests: XCTestCase {
     func testCodexIncludesUltraEffort() {
         XCTAssertEqual(
             AgentBackend.codex.effortOptions,
-            ["high", "xhigh", "max", "ultra"]
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
         )
     }
 
@@ -66,6 +66,31 @@ final class AgentBackendEffortOptionsTests: XCTestCase {
 
         XCTAssertFalse(settings.fastMode)
         XCTAssertEqual(settings.model, "claude-sonnet-5")
+    }
+
+    func testSelectingDiscoveredModelUsesItsOwnEffortsAndFastCapability() {
+        var settings = CharacterAgentSettings(
+            backend: .codex,
+            model: "gpt-5.6-sol",
+            effort: "ultra",
+            fastMode: true,
+            permission: .workspaceWrite
+        )
+        let discovered = AgentModelOption(
+            id: "gpt-future-mini",
+            title: "GPT Future Mini",
+            efforts: ["low", "medium"],
+            defaultEffort: "medium",
+            supportsFastMode: false
+        )
+
+        settings.selectModel(discovered)
+
+        XCTAssertEqual(settings.model, "gpt-future-mini")
+        XCTAssertEqual(settings.effort, "medium")
+        XCTAssertFalse(settings.fastMode)
+        settings.setFastMode(true, option: discovered)
+        XCTAssertFalse(settings.fastMode)
     }
 
     func testAntigravityModelsUseNativeEffortLevelsWithoutFastMode() {

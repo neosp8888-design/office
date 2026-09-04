@@ -60,6 +60,36 @@ test("세 CLI의 대화형 인자는 resume 유무와 권한을 보존한다", (
   }
 });
 
+test("터미널은 동적으로 발견된 모델 이름과 추론 레벨을 그대로 전달한다", () => {
+  const codex = terminalArguments({
+    character: {
+      ...baseCharacter,
+      backend: "codex",
+      model: "gpt-future-mini",
+      effort: "medium",
+    },
+    workdir: "/tmp/office",
+  });
+  assert.equal(codex.includes('model="gpt-future-mini"'), true);
+  assert.equal(codex.includes('model_reasoning_effort="medium"'), true);
+
+  const antigravity = terminalArguments({
+    character: {
+      ...baseCharacter,
+      backend: "antigravity",
+      model: "gemini-future-pro",
+      effort: "low",
+      permission: "accept-edits",
+    },
+    workdir: "/tmp/office",
+  });
+  assert.equal(
+    antigravity[antigravity.indexOf("--model") + 1],
+    "gemini-future-pro",
+  );
+  assert.equal(antigravity[antigravity.indexOf("--effort") + 1], "low");
+});
+
 test("열린 터미널은 같은 직원의 두 번째 터미널과 GUI 업무를 막는다", async () => {
   const events = [];
   const runtime = fakeRuntime();

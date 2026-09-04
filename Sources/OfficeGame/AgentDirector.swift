@@ -767,6 +767,8 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var turnPersistenceErrors:
         [OfficeCharacter: String] = [:]
     @Published private(set) var settingsStatus: String?
+    @Published private(set) var modelCatalogs:
+        [AgentBackend: AgentModelProviderCatalog] = [:]
     @Published private(set) var latestSubmittedCommandID: UUID?
     @Published private(set) var latestSubmittedTurnID: String?
     @Published private(set) var latestStartedCommandID: UUID?
@@ -1625,6 +1627,105 @@ final class AgentDirector: ObservableObject {
             )
     }
 
+    func modelOptions(for backend: AgentBackend) -> [AgentModelOption] {
+        if let catalog = modelCatalogs[backend],
+           !catalog.visibleModels.isEmpty
+        {
+            return catalog.visibleModels
+        }
+        return backend.modelOptions.map { model in
+            AgentModelOption(
+                id: model,
+                title: backend.modelTitle(model),
+                efforts: backend.effortOptions(for: model),
+                defaultEffort: backend.effortOptions(for: model).contains("high")
+                    ? "high"
+                    : (backend.effortOptions(for: model).first ?? "high"),
+                supportsFastMode: backend.supportsFastMode(model: model)
+            )
+        }
+    }
+
+    func allDiscoveredModelOptions(
+        for backend: AgentBackend
+    ) -> [AgentModelOption] {
+        modelCatalogs[backend]?.models ?? modelOptions(for: backend)
+    }
+
+    func modelOption(
+        for backend: AgentBackend,
+        model: String?
+    ) -> AgentModelOption? {
+        guard let model else { return nil }
+        return allDiscoveredModelOptions(for: backend).first {
+            $0.id == model
+        } ?? modelOptions(for: backend).first { $0.id == model }
+    }
+
+    func defaultModelOption(for backend: AgentBackend) -> AgentModelOption {
+        modelOptions(for: backend).first
+            ?? AgentModelOption(
+                id: backend.defaultModel,
+                title: backend.modelTitle(backend.defaultModel),
+                efforts: backend.effortOptions(for: backend.defaultModel),
+                defaultEffort: "high",
+                supportsFastMode: backend.supportsFastMode(
+                    model: backend.defaultModel
+                )
+            )
+    }
+
+    func modelTitle(for backend: AgentBackend, model: String) -> String {
+        modelOption(for: backend, model: model)?.title
+            ?? backend.modelTitle(model)
+    }
+
+    func effortOptions(
+        for backend: AgentBackend,
+        model: String?
+    ) -> [String] {
+        modelOption(for: backend, model: model)?.efforts
+            ?? backend.effortOptions(for: model)
+    }
+
+    func supportsFastMode(
+        for backend: AgentBackend,
+        model: String?
+    ) -> Bool {
+        modelOption(for: backend, model: model)?.supportsFastMode
+            ?? backend.supportsFastMode(model: model)
+    }
+
+    func excludedModels(for backend: AgentBackend) -> Set<String> {
+        Set(modelCatalogs[backend]?.excludedModels ?? [])
+    }
+
+    func refreshModelCatalog(force: Bool = false) async throws {
+        applyModelCatalogSnapshot(
+            try await database.fetchModelCatalog(force: force)
+        )
+    }
+
+    func updateModelExclusions(
+        _ excludedModels: Set<String>,
+        for backend: AgentBackend
+    ) async throws {
+        applyModelCatalogSnapshot(
+            try await database.updateModelExclusions(
+                excludedModels.sorted(),
+                for: backend
+            )
+        )
+    }
+
+    func applyModelCatalogSnapshot(_ snapshot: AgentModelCatalogSnapshot) {
+        modelCatalogs = Dictionary(
+            uniqueKeysWithValues: snapshot.providers.map {
+                ($0.backend, $0)
+            }
+        )
+    }
+
     func fetchCharacterIdentitySettings(
         for character: OfficeCharacter
     ) async throws -> CharacterIdentitySettingsDraft {
@@ -2060,6 +2161,10 @@ final class AgentDirector: ObservableObject {
                 }
                 autoCompactPercents = restoredAutoCompactPercents
 
+                if let snapshot = try? await database.fetchModelCatalog() {
+                    applyModelCatalogSnapshot(snapshot)
+                }
+
                 let activeSessions = try await database.fetchActiveSessions()
                 applyActiveSessionRestoreState(
                     ActiveSessionRestoreState(activeSessions: activeSessions)
@@ -2192,6 +2297,9 @@ final class AgentDirector: ObservableObject {
     ) -> Bool {
         switch event.type {
         case "ready":
+            Task { [weak self] in
+                try? await self?.refreshModelCatalog()
+            }
             let synchronized = Set(
                 (event.compactingCharacterIds ?? []).compactMap(
                     OfficeCharacter.init(rawValue:)
@@ -2268,6 +2376,12 @@ final class AgentDirector: ObservableObject {
 
         case "terminal.changed":
             terminalSessionRevision &+= 1
+            return true
+
+        case "model-catalog.changed":
+            Task { [weak self] in
+                try? await self?.refreshModelCatalog()
+            }
             return true
 
         default:

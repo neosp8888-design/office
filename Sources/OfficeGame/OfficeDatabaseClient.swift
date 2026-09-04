@@ -17,6 +17,52 @@ struct OfficeDatabaseClient: Sendable {
         return payload.characters
     }
 
+    func fetchModelCatalog(
+        force: Bool = false
+    ) async throws -> AgentModelCatalogSnapshot {
+        var components = URLComponents(
+            url: baseURL.appending(path: "api/model-catalog"),
+            resolvingAgainstBaseURL: false
+        )
+        if force {
+            components?.queryItems = [URLQueryItem(name: "force", value: "1")]
+        }
+        let url = components?.url
+            ?? baseURL.appending(path: "api/model-catalog")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response, data: data)
+        return try historyDecoder().decode(
+            AgentModelCatalogSnapshot.self,
+            from: data
+        )
+    }
+
+    func updateModelExclusions(
+        _ excludedModels: [String],
+        for backend: AgentBackend
+    ) async throws -> AgentModelCatalogSnapshot {
+        var request = URLRequest(
+            url: baseURL.appending(path: "api/model-catalog/exclusions")
+        )
+        request.httpMethod = "PUT"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = try JSONEncoder().encode(
+            ModelCatalogExclusionRequest(
+                provider: backend,
+                excludedModels: excludedModels
+            )
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try historyDecoder().decode(
+            AgentModelCatalogSnapshot.self,
+            from: data
+        )
+    }
+
     func fetchActiveSessions() async throws -> [StoredActiveSession] {
         let url = baseURL.appending(path: "api/active-sessions")
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -817,6 +863,11 @@ private struct CharacterListResponse: Decodable {
     let characters: [StoredCharacterProfile]
 }
 
+private struct ModelCatalogExclusionRequest: Encodable {
+    let provider: AgentBackend
+    let excludedModels: [String]
+}
+
 private struct ActiveSessionListResponse: Decodable {
     let sessions: [StoredActiveSession]
 }
@@ -885,6 +936,31 @@ struct StoredCharacterProfile: Decodable, Sendable {
     var autoCompactPercent: Int? = nil
     let permission: String
     let identityPrompt: String
+}
+
+struct AgentModelCatalogSnapshot: Decodable, Equatable, Sendable {
+    let providers: [AgentModelProviderCatalog]
+}
+
+struct AgentModelProviderCatalog:
+    Decodable,
+    Equatable,
+    Identifiable,
+    Sendable
+{
+    let backend: AgentBackend
+    let models: [AgentModelOption]
+    let excludedModels: [String]
+    let fetchedAt: Date?
+    let lastAttemptedAt: Date?
+    let lastError: String?
+
+    var id: AgentBackend { backend }
+
+    var visibleModels: [AgentModelOption] {
+        let excluded = Set(excludedModels)
+        return models.filter { !excluded.contains($0.id) }
+    }
 }
 
 struct CharacterContextSettings: Decodable, Equatable, Sendable {

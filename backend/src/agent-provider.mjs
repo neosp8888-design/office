@@ -8,7 +8,14 @@ const PROVIDERS = Object.freeze({
       "gpt-5.6-terra",
       "gpt-5.6-luna",
     ]),
-    efforts: Object.freeze(["high", "xhigh", "max", "ultra"]),
+    efforts: Object.freeze([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]),
     permissions: Object.freeze([
       "read-only",
       "workspace-write",

@@ -20,7 +20,7 @@ test("GPT-5.6 Sol Standard 비용을 캐시 종류별로 계산한다", () => {
       fastMode: false,
       usage,
     }),
-    0.005725,
+    0.00438,
   );
 });
 
@@ -32,7 +32,7 @@ test("GPT-5.6 Sol Fast 비용은 Fast 공식 단가를 사용한다", () => {
       fastMode: true,
       usage,
     }),
-    0.01145,
+    0.00876,
   );
 });
 
@@ -170,7 +170,7 @@ test("Claude 전체 pipeline 비용은 본체 토큰 재계산보다 우선한�
   );
 });
 
-test("Claude Sonnet 5 공급자 비용은 프로모션 기간만 해당 모델 몫을 보정한다", () => {
+test("Claude Sonnet 5 공급자 비용은 시점과 무관하게 받은 값을 보존한다", () => {
   assert.equal(
     estimateTokenCost({
       backend: "claude",
@@ -182,7 +182,7 @@ test("Claude Sonnet 5 공급자 비용은 프로모션 기간만 해당 모델 �
         reportedSonnet5CostUsd: 1.1559903,
       },
     }),
-    1.0706602,
+    1.4559903,
   );
 });
 

@@ -2443,6 +2443,7 @@ private struct AgentQuickSettingsView: View {
     @ObservedObject var director: AgentDirector
     let character: CharacterConfiguration
     var onChanged: (() -> Void)? = nil
+    @State private var isShowingModelVisibilitySettings = false
 
     private var settings: CharacterAgentSettings {
         director.agentSettings(for: character.id)
@@ -2458,20 +2459,49 @@ private struct AgentQuickSettingsView: View {
         )
     }
 
+    private var selectableModels: [AgentModelOption] {
+        var models = director.modelOptions(for: settings.backend)
+        if let selected = settings.model,
+           !models.contains(where: { $0.id == selected })
+        {
+            models.append(
+                director.modelOption(
+                    for: settings.backend,
+                    model: selected
+                ) ?? AgentModelOption(
+                    id: selected,
+                    title: settings.backend.modelTitle(selected),
+                    efforts: settings.backend.effortOptions(for: selected),
+                    defaultEffort: settings.effort,
+                    supportsFastMode: settings.backend.supportsFastMode(
+                        model: selected
+                    )
+                )
+            )
+        }
+        return models
+    }
+
+    private var selectedModelOption: AgentModelOption? {
+        director.modelOption(
+            for: settings.backend,
+            model: settings.model
+        )
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             Menu {
                 ForEach(AgentBackend.allCases) { backend in
                     Button {
+                        let model = director.defaultModelOption(for: backend)
                         apply(
                             CharacterAgentSettings(
                                 backend: backend,
-                                model: backend.defaultModel,
-                                effort: "high",
+                                model: model.id,
+                                effort: model.defaultEffort,
                                 fastMode: settings.fastMode
-                                    && backend.supportsFastMode(
-                                        model: backend.defaultModel
-                                    ),
+                                    && model.supportsFastMode,
                                 permission: settings.permission
                             )
                         )
@@ -2493,36 +2523,53 @@ private struct AgentQuickSettingsView: View {
             .help(OfficeLocalization.string("직원 CLI 선택"))
 
             Menu {
-                ForEach(settings.backend.modelOptions, id: \.self) { model in
+                ForEach(selectableModels) { model in
                     Button {
                         var updated = settings
                         updated.selectModel(model)
                         apply(updated)
                     } label: {
-                        if settings.model == model {
+                        if settings.model == model.id {
                             Label(
-                                settings.backend.modelTitle(model),
+                                model.title,
                                 systemImage: "checkmark"
                             )
                         } else {
-                            Text(settings.backend.modelTitle(model))
+                            Text(model.title)
                         }
                     }
                 }
+                Divider()
+                Button {
+                    isShowingModelVisibilitySettings = true
+                } label: {
+                    Label("표시 모델 관리…", systemImage: "slider.horizontal.3")
+                }
             } label: {
                 QuickSettingLabel(
-                    text: settings.backend.modelTitle(
-                        settings.model ?? settings.backend.defaultModel
+                    text: director.modelTitle(
+                        for: settings.backend,
+                        model: settings.model ?? settings.backend.defaultModel
                     ),
                     systemImage: "cpu"
                 )
             }
             .disabled(!availability.canChangeCurrentBackendSettings)
 
-            if settings.backend.supportsFastMode(model: settings.model) {
+            if director.supportsFastMode(
+                for: settings.backend,
+                model: settings.model
+            ) {
                 Button {
                     var updated = settings
-                    updated.setFastMode(!settings.fastMode)
+                    if let selectedModelOption {
+                        updated.setFastMode(
+                            !settings.fastMode,
+                            option: selectedModelOption
+                        )
+                    } else {
+                        updated.setFastMode(!settings.fastMode)
+                    }
                     apply(updated)
                 } label: {
                     QuickSettingLabel(
@@ -2537,7 +2584,10 @@ private struct AgentQuickSettingsView: View {
 
             Menu {
                 ForEach(
-                    settings.backend.effortOptions(for: settings.model),
+                    director.effortOptions(
+                        for: settings.backend,
+                        model: settings.model
+                    ),
                     id: \.self
                 ) { effort in
                     Button {
@@ -2589,16 +2639,272 @@ private struct AgentQuickSettingsView: View {
         .menuStyle(.borderlessButton)
         // Menu는 남는 가로 폭을 나눠 가지므로 내용 폭으로 고정해 좌측에 붙인다.
         .fixedSize(horizontal: true, vertical: false)
+        .sheet(isPresented: $isShowingModelVisibilitySettings) {
+            AgentModelVisibilitySettingsView(
+                director: director,
+                initialBackend: settings.backend
+            )
+        }
     }
 
     private func apply(_ settings: CharacterAgentSettings) {
+        var normalized = settings
+        if let model = director.modelOption(
+            for: normalized.backend,
+            model: normalized.model
+        ) {
+            normalized.selectModel(model)
+        }
         Task {
             await director.updateAgentSettings(
-                settings,
+                normalized,
                 for: character.id
             )
-            if director.agentSettings(for: character.id) == settings {
+            if director.agentSettings(for: character.id) == normalized {
                 onChanged?()
+            }
+        }
+    }
+}
+
+enum AgentModelVisibilitySettingsLayout {
+    static let width: CGFloat = 640
+    static let height: CGFloat = 560
+}
+
+private struct AgentModelVisibilitySettingsView: View {
+    @ObservedObject var director: AgentDirector
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedBackend: AgentBackend
+    @State private var draftExclusions: [AgentBackend: Set<String>]
+    @State private var isRefreshing = false
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private let managedBackends: [AgentBackend] = [.codex, .antigravity]
+
+    init(director: AgentDirector, initialBackend: AgentBackend) {
+        self.director = director
+        let selected = initialBackend == .antigravity
+            ? AgentBackend.antigravity
+            : AgentBackend.codex
+        _selectedBackend = State(initialValue: selected)
+        _draftExclusions = State(
+            initialValue: Dictionary(
+                uniqueKeysWithValues: [AgentBackend.codex, .antigravity].map {
+                    ($0, director.excludedModels(for: $0))
+                }
+            )
+        )
+    }
+
+    private var models: [AgentModelOption] {
+        director.allDiscoveredModelOptions(for: selectedBackend)
+            .filter(\.available)
+    }
+
+    private var providerCatalog: AgentModelProviderCatalog? {
+        director.modelCatalogs[selectedBackend]
+    }
+
+    private var canSave: Bool {
+        !isSaving && managedBackends.allSatisfy { backend in
+            let available = director.allDiscoveredModelOptions(for: backend)
+                .filter(\.available)
+            let excluded = draftExclusions[backend] ?? []
+            return available.isEmpty
+                || available.contains { !excluded.contains($0.id) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("표시 모델 관리")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("체크한 모델은 하단 선택기에서 제외됩니다. 새 모델은 자동으로 표시됩니다.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            Picker("CLI", selection: $selectedBackend) {
+                ForEach(managedBackends) { backend in
+                    Text(backend.title).tag(backend)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(models) { model in
+                        Toggle(isOn: exclusionBinding(for: model.id)) {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.title)
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(model.id)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                    Text(modelDetail(model))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if isModelInUse(model.id) {
+                                    Text("사용 중")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.orange)
+                                }
+                                Text("제외")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            Color.primary.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 9)
+                        )
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(maxHeight: .infinity)
+
+            if let catalog = providerCatalog {
+                HStack(spacing: 8) {
+                    if let fetchedAt = catalog.fetchedAt {
+                        Text(
+                            "최근 수집 \(fetchedAt.formatted(date: .abbreviated, time: .shortened))"
+                        )
+                    } else {
+                        Text("내장 기본 목록 사용 중")
+                    }
+                    if let lastError = catalog.lastError, !lastError.isEmpty {
+                        Text("· 마지막 갱신 실패")
+                            .foregroundStyle(.orange)
+                            .help(lastError)
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+
+            HStack {
+                Button {
+                    refresh()
+                } label: {
+                    Label("목록 새로고침", systemImage: "arrow.clockwise")
+                }
+                .disabled(isRefreshing || isSaving)
+
+                Spacer()
+
+                Button("취소") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button(isSaving ? "저장 중…" : "저장") {
+                    save()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
+            }
+        }
+        .padding(20)
+        .frame(
+            width: AgentModelVisibilitySettingsLayout.width,
+            height: AgentModelVisibilitySettingsLayout.height
+        )
+        .accessibilityIdentifier("agentModelVisibilitySettings")
+    }
+
+    private func exclusionBinding(for modelID: String) -> Binding<Bool> {
+        Binding(
+            get: {
+                draftExclusions[selectedBackend, default: []]
+                    .contains(modelID)
+            },
+            set: { isExcluded in
+                var values = draftExclusions[selectedBackend, default: []]
+                if isExcluded {
+                    values.insert(modelID)
+                } else {
+                    values.remove(modelID)
+                }
+                draftExclusions[selectedBackend] = values
+            }
+        )
+    }
+
+    private func modelDetail(_ model: AgentModelOption) -> String {
+        var parts = ["추론 " + model.efforts.joined(separator: " · ")]
+        if model.supportsFastMode {
+            parts.append("Fast 지원")
+        }
+        return parts.joined(separator: "  |  ")
+    }
+
+    private func isModelInUse(_ modelID: String) -> Bool {
+        director.characters.contains {
+            $0.backend == selectedBackend && $0.model == modelID
+        }
+    }
+
+    private func reloadDrafts() {
+        draftExclusions = Dictionary(
+            uniqueKeysWithValues: managedBackends.map {
+                ($0, director.excludedModels(for: $0))
+            }
+        )
+    }
+
+    private func refresh() {
+        isRefreshing = true
+        errorMessage = nil
+        Task {
+            defer { isRefreshing = false }
+            do {
+                try await director.refreshModelCatalog(force: true)
+                reloadDrafts()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        errorMessage = nil
+        Task {
+            defer { isSaving = false }
+            do {
+                for backend in managedBackends {
+                    try await director.updateModelExclusions(
+                        draftExclusions[backend] ?? [],
+                        for: backend
+                    )
+                }
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
     }

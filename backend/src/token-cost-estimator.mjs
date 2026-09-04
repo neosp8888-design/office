@@ -1,19 +1,6 @@
 // 이 파일은 CLI가 보고한 토큰 사용량을 공식 API 단가 기준의 USD 추정 비용으로 환산한다.
 
-const OPENAI_PRICES_PER_MILLION = {
-  "gpt-5.6-sol": {
-    standard: { input: 5, cached: 0.5, cacheWrite: 6.25, output: 30 },
-    fast: { input: 10, cached: 1, cacheWrite: 12.5, output: 60 },
-  },
-  "gpt-5.6-terra": {
-    standard: { input: 2, cached: 0.2, cacheWrite: 2.5, output: 12 },
-    fast: { input: 4, cached: 0.4, cacheWrite: 5, output: 24 },
-  },
-  "gpt-5.6-luna": {
-    standard: { input: 0.2, cached: 0.02, cacheWrite: 0.25, output: 1.2 },
-    fast: { input: 0.4, cached: 0.04, cacheWrite: 0.5, output: 2.4 },
-  },
-};
+import { pricingRateFor } from "./pricing-catalog.mjs";
 
 const CLAUDE_STANDARD_PRICES_PER_MILLION = {
   "claude-opus-5": { input: 5, output: 25 },
@@ -24,9 +11,6 @@ const CLAUDE_STANDARD_PRICES_PER_MILLION = {
 const CLAUDE_FAST_PRICES_PER_MILLION = {
   "claude-opus-5": { input: 10, output: 50 },
 };
-
-const SONNET_FIVE_STANDARD_PRICE_CHANGE = Date.UTC(2026, 8, 1);
-const GEMINI_FLASH_PROMOTION_END = Date.UTC(2027, 0, 1);
 
 export function estimateTokenCost({
   backend,
@@ -54,11 +38,15 @@ export function estimateTokenCost({
     return null;
   }
 
-  const prices = OPENAI_PRICES_PER_MILLION[model]?.[
-    fastMode === true ? "fast" : "standard"
-  ];
   const inputTokens = nonnegativeNumber(usage.inputTokens);
   const outputTokens = nonnegativeNumber(usage.outputTokens);
+  const prices = pricingRateFor({
+    backend: "codex",
+    model,
+    fastMode,
+    promptTokens: inputTokens,
+    pricedAt,
+  });
   if (!prices || inputTokens === null || outputTokens === null) {
     return null;
   }
@@ -77,8 +65,8 @@ export function estimateTokenCost({
   );
   const cost = (
     uncachedInputTokens * prices.input +
-    cachedInputTokens * prices.cached +
-    cacheWriteInputTokens * prices.cacheWrite +
+    cachedInputTokens * (prices.cached ?? prices.input) +
+    cacheWriteInputTokens * (prices.cacheWrite ?? prices.input) +
     outputTokens * prices.output
   ) / 1_000_000;
   return roundedCost(cost);
@@ -91,11 +79,12 @@ function estimateAntigravityCost({ model, usage, pricedAt }) {
     return null;
   }
   const cachedInputTokens = nonnegativeNumber(usage.cachedInputTokens) ?? 0;
-  const prices = antigravityPrices(
+  const prices = pricingRateFor({
+    backend: "antigravity",
     model,
-    inputTokens + cachedInputTokens,
+    promptTokens: inputTokens + cachedInputTokens,
     pricedAt,
-  );
+  });
   if (!prices) {
     return null;
   }
@@ -106,54 +95,19 @@ function estimateAntigravityCost({ model, usage, pricedAt }) {
   // 저장 요금은 이 API 환산 추정치에서 제외한다.
   const cost = (
     inputTokens * prices.input +
-    cachedInputTokens * prices.cached +
+    cachedInputTokens * (prices.cached ?? prices.input) +
     outputTokens * prices.output
   ) / 1_000_000;
   return roundedCost(cost);
-}
-
-function antigravityPrices(model, promptTokens, pricedAt) {
-  const timestamp = priceTimestamp(pricedAt);
-  switch (model) {
-    // gemini-3.8-flash 단가는 3.7-flash와 같다(2026-09-03 사용자 확인).
-    case "gemini-3.8-flash":
-    case "gemini-3.7-flash":
-    case "gemini-3.6-flash":
-      return timestamp < GEMINI_FLASH_PROMOTION_END
-        ? { input: 0.75, cached: 0.075, output: 3.75 }
-        : { input: 1.5, cached: 0.15, output: 7.5 };
-    case "gemini-3.5-flash":
-      return { input: 1.5, cached: 0.15, output: 9 };
-    case "gemini-3.1-pro":
-    case "gemini-3.1-pro-preview":
-      return promptTokens > 200_000
-        ? { input: 4, cached: 0.4, output: 18 }
-        : { input: 2, cached: 0.2, output: 12 };
-    default:
-      return null;
-  }
 }
 
 function estimateClaudeCost({ model, fastMode, usage, pricedAt }) {
   // Claude result.total_cost_usd는 서브에이전트·압축·내부 호출까지 같은
   // query pipeline 전체를 포함한다. 토큰으로 본체 모델만 다시 계산하면
   // 실제 업무 비용을 과소계상할 수 있으므로 공급자 합계를 우선한다.
-  // 다만 CLI 합계는 표준 정가로 계산되어 기간 한정 Sonnet 5 가격을
-  // 반영하지 않으므로, modelUsage에서 확인된 Sonnet 5 몫만 보정한다.
   const reportedCost = nonnegativeNumber(usage.reportedCostUsd);
   if (reportedCost !== null) {
-    const timestamp = priceTimestamp(pricedAt);
-    const reportedSonnet5Cost = nonnegativeNumber(
-      usage.reportedSonnet5CostUsd,
-    );
-    if (
-      timestamp < SONNET_FIVE_STANDARD_PRICE_CHANGE &&
-      reportedSonnet5Cost !== null
-    ) {
-      return roundedCost(
-        reportedCost - reportedSonnet5Cost / 3,
-      );
-    }
+    // Claude Code가 계산한 전체 pipeline 금액은 별도 보정 없이 보존한다.
     return roundedCost(reportedCost);
   }
   const usesFastPricing = usage.speed === "fast" ||
@@ -199,17 +153,7 @@ function claudeStandardPrices(model, pricedAt) {
   if (model !== "claude-sonnet-5") {
     return CLAUDE_STANDARD_PRICES_PER_MILLION[model];
   }
-  const timestamp = priceTimestamp(pricedAt);
-  return timestamp >= SONNET_FIVE_STANDARD_PRICE_CHANGE
-    ? { input: 3, output: 15 }
-    : { input: 2, output: 10 };
-}
-
-function priceTimestamp(pricedAt) {
-  const timestamp = pricedAt instanceof Date
-    ? pricedAt.getTime()
-    : Number(pricedAt);
-  return Number.isFinite(timestamp) ? timestamp : Date.now();
+  return { input: 2, output: 10 };
 }
 
 function nonnegativeNumber(value) {

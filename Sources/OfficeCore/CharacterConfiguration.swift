@@ -43,7 +43,7 @@ public enum AgentBackend:
     public var effortOptions: [String] {
         switch self {
         case .codex:
-            ["high", "xhigh", "max", "ultra"]
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
         case .claude:
             ["high", "xhigh", "max"]
         case .antigravity:
@@ -120,6 +120,43 @@ public enum AgentBackend:
         default:
             model
         }
+    }
+}
+
+public struct AgentModelOption:
+    Codable,
+    Identifiable,
+    Equatable,
+    Hashable,
+    Sendable
+{
+    public let id: String
+    public let title: String
+    public let efforts: [String]
+    public let defaultEffort: String
+    public let supportsFastMode: Bool
+    public let contextWindow: Int?
+    public let maxContextWindow: Int?
+    public let available: Bool
+
+    public init(
+        id: String,
+        title: String,
+        efforts: [String],
+        defaultEffort: String,
+        supportsFastMode: Bool,
+        contextWindow: Int? = nil,
+        maxContextWindow: Int? = nil,
+        available: Bool = true
+    ) {
+        self.id = id
+        self.title = title
+        self.efforts = efforts
+        self.defaultEffort = defaultEffort
+        self.supportsFastMode = supportsFastMode
+        self.contextWindow = contextWindow
+        self.maxContextWindow = maxContextWindow
+        self.available = available
     }
 }
 
@@ -221,11 +258,32 @@ public struct CharacterAgentSettings: Equatable, Sendable {
         }
     }
 
+    public mutating func selectModel(_ option: AgentModelOption) {
+        model = option.id
+        if !option.efforts.contains(effort) {
+            effort = option.efforts.contains(option.defaultEffort)
+                ? option.defaultEffort
+                : (option.efforts.last ?? "high")
+        }
+        if !option.supportsFastMode {
+            fastMode = false
+        }
+    }
+
     public mutating func setFastMode(_ isEnabled: Bool) {
         if isEnabled && !backend.supportsFastMode(model: model) {
             model = backend.defaultModel
         }
         fastMode = isEnabled && backend.supportsFastMode(model: model)
+    }
+    public mutating func setFastMode(
+        _ isEnabled: Bool,
+        option: AgentModelOption
+    ) {
+        if model != option.id {
+            selectModel(option)
+        }
+        fastMode = isEnabled && option.supportsFastMode
     }
 }
 

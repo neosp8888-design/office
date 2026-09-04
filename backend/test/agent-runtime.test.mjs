@@ -828,6 +828,25 @@ test("Codex 재개는 바뀐 모델·추론·Fast·권한을 같은 세션에 �
   );
 });
 
+test("GUI 실행은 동적으로 발견된 Codex 모델과 추론 레벨을 그대로 전달한다", () => {
+  const argumentsList = buildArguments({
+    character: {
+      ...codexCharacter,
+      model: "gpt-future-mini",
+      effort: "medium",
+      fastMode: false,
+    },
+    prompt: "새 모델을 사용해줘.",
+    previousSessionID: "session-1",
+  });
+
+  assert.equal(argumentsList.includes('model="gpt-future-mini"'), true);
+  assert.equal(
+    argumentsList.includes('model_reasoning_effort="medium"'),
+    true,
+  );
+});
+
 test("Codex 신규와 재개는 DB 업무 지침과 짧은 결과 통로 안내만 전달한다", () => {
   for (const previousSessionID of [null, "session-1"]) {
     const argumentsList = buildArguments({
@@ -3670,7 +3689,7 @@ test("완료 사용량과 추정 비용을 같은 턴의 사용량 기록으로 
     50,
     200,
     10,
-    0.01145,
+    0.00876,
     100,
     null,
     null,
