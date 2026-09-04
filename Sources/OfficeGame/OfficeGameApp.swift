@@ -232,6 +232,31 @@ enum LiveWorkspaceCommandAvailability {
     }
 }
 
+/// 대화 모드에서 직원이 일하는 중이면 터미널 모드로 들어가지 않는다. 터미널이
+/// 열리면 CLI가 직원 세션을 잡아 진행 중인 응답이 끊기고, 백엔드도 일하는
+/// 직원의 터미널 열기를 거부한다. 작업이 끝난 뒤에만 전환한다.
+enum ConversationModeSwitchPolicy {
+    static func terminalEntryBlockMessage(
+        runningCharacterNames: [String]
+    ) -> String? {
+        guard !runningCharacterNames.isEmpty else {
+            return nil
+        }
+        return "직원이 일하는 중입니다. 작업이 끝난 뒤 다시 시도하세요.\n"
+            + "일하는 직원: "
+            + runningCharacterNames.joined(separator: ", ")
+    }
+
+    static func toggleOpacity(
+        mode: OfficeConversationMode,
+        hasRunningWork: Bool
+    ) -> Double {
+        mode == .chat && hasRunningWork
+            ? LiveWorkspaceCommandAvailability.lockedOpacity
+            : 1
+    }
+}
+
 enum OfficePanelControlLayout {
     static let artStyleControlDiameter: CGFloat = 36
 
@@ -251,12 +276,15 @@ enum OfficePanelControlLayout {
 
 private enum TerminalModeAlert: Identifiable {
     case confirmRunningTurn
+    case blockedByRunningWork(String)
     case statusError(String)
 
     var id: String {
         switch self {
         case .confirmRunningTurn:
             "confirm-running-turn"
+        case .blockedByRunningWork:
+            "blocked-by-running-work"
         case .statusError(let message):
             "status-error:\(message)"
         }
@@ -431,6 +459,12 @@ private struct OfficeGameView: View {
                         selectedConversationModeRawValue =
                             OfficeConversationMode.chat.rawValue
                     }
+                )
+            case .blockedByRunningWork(let message):
+                Alert(
+                    title: Text("터미널 모드로 전환할 수 없습니다"),
+                    message: Text(message),
+                    dismissButton: .default(Text("확인"))
                 )
             case .statusError(let message):
                 Alert(
@@ -774,6 +808,12 @@ private struct OfficeGameView: View {
             )
         }
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
+        .opacity(
+            ConversationModeSwitchPolicy.toggleOpacity(
+                mode: conversationMode,
+                hasRunningWork: !director.runningCharacters.isEmpty
+            )
+        )
         .fixedSize()
         .accessibilityLabel("대화 표시 방식")
         .accessibilityValue(
@@ -783,12 +823,23 @@ private struct OfficeGameView: View {
         .help(
             conversationMode == .terminal
                 ? "대화 모드로 전환"
-                : "터미널 모드로 전환"
+                : director.runningCharacters.isEmpty
+                    ? "터미널 모드로 전환"
+                    : "직원이 일하는 중이라 터미널 모드로 전환할 수 없습니다"
         )
     }
 
     private func toggleConversationMode() {
         guard conversationMode == .terminal else {
+            let runningNames = OfficeCharacter.allCases
+                .filter { director.runningCharacters.contains($0) }
+                .map { director.displayName(for: $0) }
+            if let message = ConversationModeSwitchPolicy
+                .terminalEntryBlockMessage(runningCharacterNames: runningNames)
+            {
+                terminalModeAlert = .blockedByRunningWork(message)
+                return
+            }
             selectedConversationModeRawValue =
                 OfficeConversationMode.terminal.rawValue
             return
