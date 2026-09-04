@@ -4,6 +4,17 @@ import XCTest
 @testable import OfficeGame
 
 final class TokenCostPresentationTests: XCTestCase {
+    func testEstimatedTokenCostEmphasisThresholds() {
+        XCTAssertEqual(estimatedTokenCostEmphasis(0), .standard)
+        XCTAssertEqual(estimatedTokenCostEmphasis(2.99), .standard)
+        XCTAssertEqual(estimatedTokenCostEmphasis(3), .standard)
+        XCTAssertEqual(estimatedTokenCostEmphasis(4.99), .standard)
+        XCTAssertEqual(estimatedTokenCostEmphasis(5), .warning)
+        XCTAssertEqual(estimatedTokenCostEmphasis(9.99), .warning)
+        XCTAssertEqual(estimatedTokenCostEmphasis(10), .critical)
+        XCTAssertEqual(estimatedTokenCostEmphasis(100), .critical)
+    }
+
     func testFormatsEstimatedTokenCostWithReadablePrecision() {
         XCTAssertEqual(
             estimatedTokenCostText(0.13599125),

@@ -4515,7 +4515,9 @@ private struct LiveTurnElapsedStatusView: View {
                 if let estimatedCostUsd {
                     Text(estimatedTokenCostText(estimatedCostUsd))
                         .font(supplementFont)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(
+                            estimatedTokenCostColor(estimatedCostUsd)
+                        )
                         .accessibilityLabel(
                             estimatedTokenCostText(estimatedCostUsd)
                         )
@@ -4549,6 +4551,17 @@ private struct LiveTurnElapsedStatusView: View {
             return .orange
         }
         return .secondary
+    }
+
+    private func estimatedTokenCostColor(_ costUsd: Double) -> Color {
+        switch estimatedTokenCostEmphasis(costUsd) {
+        case .standard:
+            .secondary
+        case .warning:
+            .orange
+        case .critical:
+            .red
+        }
     }
 
     private var statusFont: Font {
@@ -4604,6 +4617,24 @@ private struct LiveTurnElapsedStatusView: View {
             minutes % 60
         )
     }
+}
+
+enum EstimatedTokenCostEmphasis: Equatable {
+    case standard
+    case warning
+    case critical
+}
+
+func estimatedTokenCostEmphasis(
+    _ costUsd: Double
+) -> EstimatedTokenCostEmphasis {
+    if costUsd >= 10 {
+        return .critical
+    }
+    if costUsd >= 5 {
+        return .warning
+    }
+    return .standard
 }
 
 func estimatedTokenCostText(_ costUsd: Double) -> String {
