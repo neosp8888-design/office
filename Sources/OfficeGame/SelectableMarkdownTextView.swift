@@ -34,6 +34,16 @@ struct SelectableMarkdownTextView: NSViewRepresentable {
         return view
     }
 
+    // 선택 영역 전환으로 이 뷰가 버려질 때 조판이 끝난 텍스트 스택을 풀에
+    // 맡긴다. SwiftUI는 새 뷰의 make를 먼저 부르므로 새 뷰는 자기 layout()에서
+    // 이어받는다.
+    static func dismantleNSView(
+        _ nsView: SelectableMarkdownDocumentView,
+        coordinator: ()
+    ) {
+        nsView.releaseTextStackForReuse()
+    }
+
     func updateNSView(
         _ nsView: SelectableMarkdownDocumentView,
         context: Context
@@ -70,7 +80,7 @@ struct SelectableMarkdownTextView: NSViewRepresentable {
 
 @MainActor
 final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
-    let textView = NSTextView()
+    private(set) var textView = NSTextView()
     var linkOpener: ((URL) -> Bool)?
 
     private let horizontalClipView = SelectableMarkdownHorizontalClipView()
@@ -86,6 +96,13 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     private var hasValidTextMeasurement = false
     private(set) var textLayoutMeasurementCount = 0
     private(set) var textLayoutCacheHitCount = 0
+    // hover·선택 상태 변화가 이 뷰를 얼마나 다시 만들고 다시 배치하는지
+    // 측정하기 위한 계수기다. 화면 동작에는 영향이 없다.
+    private(set) var layoutPassCount = 0
+    private(set) var heightRequestCount = 0
+    private(set) static var createdCount = 0
+    private(set) var textStackReuseCount = 0
+    private var textStackAdoptionAttemptsLeft = 3
 
     init(
         fontSize: CGFloat,
@@ -94,6 +111,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         self.fontSize = fontSize
         self.minimumLayoutWidth = minimumLayoutWidth
         super.init(frame: .zero)
+        Self.createdCount += 1
         configureTextView()
     }
 
@@ -115,6 +133,8 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
+        layoutPassCount += 1
+        adoptPooledTextStackIfNeeded()
         guard bounds.width > 0 else {
             return
         }
@@ -197,6 +217,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     }
 
     func heightThatFits(width: CGFloat) -> CGFloat {
+        heightRequestCount += 1
         guard width > 0 else {
             return minimumTextHeight
         }
@@ -207,6 +228,65 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         let height = measuredTextHeight()
         measuredHeight = height
         return height
+    }
+
+    // SwiftUI는 선택 영역이 바뀔 때 새 뷰의 make를 먼저 부르고 옛 뷰의
+    // dismantle을 나중에 부른다. 그래서 옛 뷰는 글리프·레이아웃을 마친
+    // NSTextView를 풀에 맡기고, 새 뷰는 트랜잭션이 끝난 뒤 도는 layout()에서
+    // 같은 본문의 스택을 이어받는다. 같은 인스턴스가 이어지므로 표 전체를
+    // 다시 조판·그리지 않고 선택 상태도 그대로 남는다.
+    func releaseTextStackForReuse() {
+        guard !source.isEmpty else {
+            return
+        }
+        let stack = textView
+        stack.delegate = nil
+        if horizontalClipView.documentView === stack {
+            horizontalClipView.documentView = nil
+        }
+        stack.removeFromSuperview()
+        SelectableMarkdownTextStackPool.shared.store(stack, key: textStackKey)
+    }
+
+    private func adoptPooledTextStackIfNeeded() {
+        guard textStackAdoptionAttemptsLeft > 0, !source.isEmpty else {
+            return
+        }
+        textStackAdoptionAttemptsLeft -= 1
+        guard
+            let stack = SelectableMarkdownTextStackPool.shared.take(
+                key: textStackKey
+            )
+        else {
+            return
+        }
+        textStackAdoptionAttemptsLeft = 0
+        let previous = textView
+        previous.delegate = nil
+        if horizontalClipView.documentView === previous {
+            horizontalClipView.documentView = nil
+        }
+        previous.removeFromSuperview()
+        textView = stack
+        stack.delegate = self
+        if usesHorizontalViewport {
+            horizontalClipView.documentView = stack
+        } else {
+            addSubview(stack)
+        }
+        // 이어받은 스택이 이미 이 폭으로 조판돼 있으면 컨테이너를 건드리지
+        // 않아 재조판이 일어나지 않는다.
+        measuredWidth = stack.textContainer?.containerSize.width ?? 0
+        textStackReuseCount += 1
+    }
+
+    private var textStackKey: String {
+        [
+            source,
+            String(format: "%.2f", fontSize),
+            fallbackDirectory?.path ?? "",
+            isDark ? "dark" : "light",
+        ].joined(separator: "\u{1F}")
     }
 
     private var minimumTextHeight: CGFloat {
@@ -559,6 +639,51 @@ final class SelectableMarkdownLayoutMeasurementCache {
             isDark ? "dark" : "light",
             String(format: "%.2f", layoutWidth),
         ].joined(separator: "\u{1F}") as NSString
+    }
+}
+
+// 선택 영역 전환으로 버려지는 문서 뷰의 NSTextView를 잠깐 맡아 두는 풀이다.
+// 같은 본문을 그리는 새 뷰가 곧바로 이어받지 않으면 전환이 아니므로
+// 짧은 수명 뒤 버린다.
+@MainActor
+final class SelectableMarkdownTextStackPool {
+    static let shared = SelectableMarkdownTextStackPool()
+    static let lifetime: TimeInterval = 1.5
+    static let capacity = 4
+
+    private var entries: [(key: String, textView: NSTextView, storedAt: Date)] = []
+
+    init() {}
+
+    var count: Int {
+        entries.count
+    }
+
+    func store(_ textView: NSTextView, key: String, now: Date = Date()) {
+        purge(now: now)
+        entries.removeAll { $0.key == key }
+        entries.append((key: key, textView: textView, storedAt: now))
+        if entries.count > Self.capacity {
+            entries.removeFirst(entries.count - Self.capacity)
+        }
+    }
+
+    func take(key: String, now: Date = Date()) -> NSTextView? {
+        purge(now: now)
+        guard let index = entries.firstIndex(where: { $0.key == key }) else {
+            return nil
+        }
+        return entries.remove(at: index).textView
+    }
+
+    func removeAll() {
+        entries.removeAll()
+    }
+
+    private func purge(now: Date) {
+        entries.removeAll {
+            now.timeIntervalSince($0.storedAt) > Self.lifetime
+        }
     }
 }
 
