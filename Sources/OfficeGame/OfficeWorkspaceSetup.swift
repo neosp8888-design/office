@@ -517,12 +517,14 @@ struct OfficeWorkspaceSetupView: View {
                 .accessibilityHidden(true)
 
             VStack(spacing: 8) {
-                Text("OFFICESTRA 시작하기")
+                Text(OfficeLocalization.string("OFFICESTRA 시작하기"))
                     .font(.system(size: 28, weight: .bold))
-                Text("업무 폴더 선택")
+                Text(OfficeLocalization.string("업무 폴더 선택"))
                     .font(.system(size: 18, weight: .semibold))
                 Text(
-                    "직원들이 함께 작업할 프로젝트 폴더를 선택하세요. 모든 직원은 이 폴더의 현재 파일을 함께 사용합니다."
+                    OfficeLocalization.string(
+                        "직원들이 함께 작업할 프로젝트 폴더를 선택하세요. 모든 직원은 이 폴더의 현재 파일을 함께 사용합니다."
+                    )
                 )
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -540,14 +542,21 @@ struct OfficeWorkspaceSetupView: View {
             }
 
             Button(action: chooseWorkspace) {
-                Label("프로젝트 폴더 선택", systemImage: "folder.badge.plus")
+                Label(
+                    OfficeLocalization.string("프로젝트 폴더 선택"),
+                    systemImage: "folder.badge.plus"
+                )
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
             .accessibilityIdentifier("officeWorkspaceChooseButton")
 
-            Text("폴더 경로는 이 Mac에만 저장됩니다. Mac 전체나 홈 폴더는 선택할 수 없습니다.")
+            Text(
+                OfficeLocalization.string(
+                    "폴더 경로는 이 Mac에만 저장됩니다. Mac 전체나 홈 폴더는 선택할 수 없습니다."
+                )
+            )
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
         }
@@ -564,12 +573,16 @@ struct OfficeSetupPreparingView: View {
         VStack(spacing: 18) {
             ProgressView()
                 .controlSize(.large)
-            Text("OFFICESTRA 준비 중")
+            Text(OfficeLocalization.string("OFFICESTRA 준비 중"))
                 .font(.system(size: 26, weight: .bold))
             Text(OfficeLocalization.string(stage))
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("officeSetupStage")
-            Text("기존 프로젝트와 대화 데이터는 삭제하지 않습니다.")
+            Text(
+                OfficeLocalization.string(
+                    "기존 프로젝트와 대화 데이터는 삭제하지 않습니다."
+                )
+            )
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
         }
@@ -600,9 +613,13 @@ struct OfficeEnvironmentSetupView: View {
                     .font(.system(size: 50, weight: .medium))
                     .foregroundStyle(.tint)
                     .accessibilityHidden(true)
-                Text("OFFICESTRA 시작 준비")
+                Text(OfficeLocalization.string("OFFICESTRA 시작 준비"))
                     .font(.system(size: 27, weight: .bold))
-                Text("필요한 항목만 준비하면 다음 확인부터 자동으로 이어집니다.")
+                Text(
+                    OfficeLocalization.string(
+                        "필요한 항목만 준비하면 다음 확인부터 자동으로 이어집니다."
+                    )
+                )
                     .foregroundStyle(.secondary)
             }
 
@@ -640,32 +657,47 @@ struct OfficeEnvironmentSetupView: View {
             .frame(maxWidth: 620)
 
             HStack(spacing: 10) {
-                Button("프로젝트 폴더 변경", action: chooseWorkspace)
+                Button(
+                    OfficeLocalization.string("프로젝트 폴더 변경"),
+                    action: chooseWorkspace
+                )
                     .accessibilityIdentifier(
                         "officeSetupChangeWorkspaceButton"
                     )
                 if !snapshot.docker.isReady {
-                    Button("Docker 준비", action: openDocker)
+                    Button(
+                        OfficeLocalization.string("Docker 준비"),
+                        action: openDocker
+                    )
                         .accessibilityIdentifier("officeSetupDockerButton")
                 }
                 if !snapshot.codex.isReady {
-                    Button("Codex 준비", action: setupCodex)
+                    Button(
+                        OfficeLocalization.string("Codex 준비"),
+                        action: setupCodex
+                    )
                         .accessibilityIdentifier("officeSetupCodexButton")
                 }
                 if !snapshot.claude.isReady {
-                    Button("Claude Code 준비", action: setupClaude)
+                    Button(
+                        OfficeLocalization.string("Claude Code 준비"),
+                        action: setupClaude
+                    )
                         .accessibilityIdentifier("officeSetupClaudeButton")
                 }
                 if !snapshot.antigravity.isReady {
-                    Button("Antigravity 준비", action: setupAntigravity)
+                    Button(
+                        OfficeLocalization.string("Antigravity 준비"),
+                        action: setupAntigravity
+                    )
                         .accessibilityIdentifier(
                             "officeSetupAntigravityButton"
                         )
                 }
-                Button("로그 열기", action: openLogs)
+                Button(OfficeLocalization.string("로그 열기"), action: openLogs)
                 if snapshot.dockerDataSelection == .currentAndLegacy {
                     Button(
-                        "현재 OFFICESTRA 데이터 사용",
+                        OfficeLocalization.string("현재 OFFICESTRA 데이터 사용"),
                         action: useCurrentDatabase
                     )
                     .accessibilityIdentifier(
@@ -674,7 +706,7 @@ struct OfficeEnvironmentSetupView: View {
                 }
                 if snapshot.dockerDataSelection != nil {
                     Button(
-                        "기존 OFFICESTRA 데이터 사용",
+                        OfficeLocalization.string("기존 OFFICESTRA 데이터 사용"),
                         action: useLegacyDatabase
                     )
                     .accessibilityIdentifier(
@@ -702,27 +734,43 @@ struct OfficeEnvironmentSetupView: View {
                         "officeSetupReplaceBackendButton"
                     )
                 }
-                Button("다시 확인", action: retry)
+                Button(OfficeLocalization.string("다시 확인"), action: retry)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("officeSetupRetryButton")
             }
 
-            Text("Antigravity, Claude Code 또는 Codex 중 하나만 로그인돼도 시작할 수 있습니다.")
+            Text(
+                OfficeLocalization.string(
+                    "Antigravity, Claude Code 또는 Codex 중 하나만 로그인돼도 시작할 수 있습니다."
+                )
+            )
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
             if snapshot.dockerDataSelection == .currentAndLegacy {
-                Text("두 볼륨 중 선택한 데이터만 연결하며 다른 볼륨은 그대로 보존됩니다.")
+                Text(
+                    OfficeLocalization.string(
+                        "두 볼륨 중 선택한 데이터만 연결하며 다른 볼륨은 그대로 보존됩니다."
+                    )
+                )
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
             if snapshot.providerRemapTarget != nil {
-                Text("직원 전환은 진행 중 업무가 없을 때만 가능하며, 기존 대화 기록은 보존됩니다.")
+                Text(
+                    OfficeLocalization.string(
+                        "직원 전환은 진행 중 업무가 없을 때만 가능하며, 기존 대화 기록은 보존됩니다."
+                    )
+                )
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
             if snapshot.backendReplacement != nil {
-                Text("백엔드 전환은 실행 중 업무가 0건이고 4317 리스너가 OFFICESTRA launchd 작업과 일치할 때만 수행됩니다.")
+                Text(
+                    OfficeLocalization.string(
+                        "백엔드 전환은 실행 중 업무가 0건이고 4317 리스너가 OFFICESTRA launchd 작업과 일치할 때만 수행됩니다."
+                    )
+                )
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
@@ -802,7 +850,7 @@ struct OfficeLaunchFailureView: View {
 
     var body: some View {
         ContentUnavailableView(
-            "앱 설정을 읽지 못했습니다",
+            OfficeLocalization.string("앱 설정을 읽지 못했습니다"),
             systemImage: "exclamationmark.triangle",
             description: Text(OfficeLocalization.string(message))
         )

@@ -205,73 +205,89 @@ private struct ArchiveShelfContent: View {
     private static let pageSize = 12
 
     var body: some View {
-        Group {
-            if let selectedTurn {
-                ArchiveOpenBook(turn: selectedTurn) {
-                    withAnimation(
-                        .spring(response: 0.3, dampingFraction: 0.88)
-                    ) {
-                        selectedTurnID = nil
-                    }
-                }
-                .transition(
-                    .scale(scale: 0.97).combined(with: .opacity)
+        VStack(spacing: 0) {
+            searchBar
+
+            if isLoading && turns.isEmpty {
+                ProgressView(OfficeLocalization.string("기록을 불러오는 중"))
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let errorMessage, turns.isEmpty {
+                ContentUnavailableView(
+                    OfficeLocalization.string("기록을 불러오지 못했습니다"),
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+            } else if turns.isEmpty && normalizedSearchText.isEmpty {
+                ContentUnavailableView(
+                    OfficeLocalization.string("아직 저장된 기록이 없습니다"),
+                    systemImage: "tray",
+                    description: Text(
+                        OfficeLocalization.string("직원에게 업무를 보내면 여기에 쌓입니다.")
+                    )
+                )
+            } else if turns.isEmpty {
+                ContentUnavailableView(
+                    OfficeLocalization.string("검색 결과가 없습니다"),
+                    systemImage: "text.magnifyingglass",
+                    description: Text(
+                        OfficeLocalization.string("다른 이름이나 대화 내용으로 검색해보세요.")
+                    )
                 )
             } else {
-                VStack(spacing: 0) {
-                    searchBar
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ArchiveRecordGrid(turns: turns) { turn in
+                            selectedTurnID = turn.id
+                        }
 
-                    if isLoading && turns.isEmpty {
-                        ProgressView(OfficeLocalization.string("기록을 불러오는 중"))
-                            .font(.system(size: 11, weight: .medium))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let errorMessage, turns.isEmpty {
-                        ContentUnavailableView(
-                            OfficeLocalization.string("기록을 불러오지 못했습니다"),
-                            systemImage: "exclamationmark.triangle",
-                            description: Text(errorMessage)
-                        )
-                    } else if turns.isEmpty && normalizedSearchText.isEmpty {
-                        ContentUnavailableView(
-                            OfficeLocalization.string("아직 저장된 기록이 없습니다"),
-                            systemImage: "tray",
-                            description: Text(
-                                OfficeLocalization.string("직원에게 업무를 보내면 여기에 쌓입니다.")
-                            )
-                        )
-                    } else if turns.isEmpty {
-                        ContentUnavailableView(
-                            OfficeLocalization.string("검색 결과가 없습니다"),
-                            systemImage: "text.magnifyingglass",
-                            description: Text(
-                                OfficeLocalization.string("다른 이름이나 대화 내용으로 검색해보세요.")
-                            )
-                        )
-                    } else {
-                        ScrollView {
-                            VStack(spacing: 10) {
-                                ArchiveRecordGrid(
-                                    turns: turns
-                                ) { turn in
-                                    withAnimation(
-                                        .easeInOut(duration: 0.16)
-                                    ) {
-                                        selectedTurnID = turn.id
-                                    }
-                                }
-
-                                if turns.count < totalTurnCount {
-                                    loadMoreButton
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 12)
+                        if turns.count < totalTurnCount {
+                            loadMoreButton
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
                 }
             }
         }
         .animation(.easeInOut(duration: 0.18), value: isSearching)
+        // 카드를 누르면 바로 넓은 시트로 펼친다. 이전·다음은 지금 목록 안에서만
+        // 움직이므로 검색 중이면 검색 결과만 넘긴다.
+        .sheet(isPresented: isShowingBook) {
+            if let selectedTurn, let selectedIndex {
+                ArchiveOpenBook(
+                    turn: selectedTurn,
+                    navigation: ArchiveBookNavigation(
+                        index: selectedIndex,
+                        total: totalTurnCount,
+                        canGoPrevious: ArchiveBookPaging.canGoPrevious(
+                            index: selectedIndex
+                        ),
+                        canGoNext: !isLoadingMore
+                            && ArchiveBookPaging.canGoNext(
+                                index: selectedIndex,
+                                loadedCount: turns.count,
+                                totalCount: totalTurnCount
+                            )
+                    ),
+                    onPrevious: showPreviousTurn,
+                    onNext: {
+                        Task {
+                            await showNextTurn()
+                        }
+                    },
+                    onClose: {
+                        selectedTurnID = nil
+                    }
+                )
+                .frame(
+                    minWidth: 1_080,
+                    idealWidth: 1_160,
+                    minHeight: 720,
+                    idealHeight: 760
+                )
+            }
+        }
         .task(id: normalizedSearchText) {
             if !normalizedSearchText.isEmpty {
                 try? await Task.sleep(for: .milliseconds(250))
@@ -379,11 +395,51 @@ private struct ArchiveShelfContent: View {
         !normalizedSearchText.isEmpty
     }
 
-    private var selectedTurn: LiveFeedTurn? {
+    private var selectedIndex: Int? {
         guard let selectedTurnID else {
             return nil
         }
-        return turns.first { $0.id == selectedTurnID }
+        return turns.firstIndex { $0.id == selectedTurnID }
+    }
+
+    private var selectedTurn: LiveFeedTurn? {
+        selectedIndex.map { turns[$0] }
+    }
+
+    private var isShowingBook: Binding<Bool> {
+        Binding(
+            get: { selectedTurn != nil },
+            set: { isShowing in
+                if !isShowing {
+                    selectedTurnID = nil
+                }
+            }
+        )
+    }
+
+    private func showPreviousTurn() {
+        guard let selectedIndex, selectedIndex > 0 else {
+            return
+        }
+        selectedTurnID = turns[selectedIndex - 1].id
+    }
+
+    // 불러온 목록의 끝이면 다음 12건을 받아 온 뒤에 넘어간다.
+    private func showNextTurn() async {
+        guard let selectedIndex else {
+            return
+        }
+        if selectedIndex + 1 >= turns.count {
+            await loadMore()
+        }
+        // 받아 오는 동안 목록이 바뀌었을 수 있어 위치를 다시 찾는다.
+        guard
+            let refreshedIndex = self.selectedIndex,
+            refreshedIndex + 1 < turns.count
+        else {
+            return
+        }
+        selectedTurnID = turns[refreshedIndex + 1].id
     }
 
     private func reload() async {
@@ -765,8 +821,11 @@ private struct UsageProviderCard: View {
                     .buttonStyle(.plain)
                     .disabled(isUpdating)
                     .help(
-                        "설치본 \(update.installedVersion ?? "?") → "
-                            + "\(update.latestVersion ?? "?")"
+                        OfficeLocalization.format(
+                            "설치본 %@ → %@",
+                            update.installedVersion ?? "?",
+                            update.latestVersion ?? "?"
+                        )
                     )
                     .accessibilityLabel(OfficeLocalization.format("%@ 업데이트", update.label))
                 }

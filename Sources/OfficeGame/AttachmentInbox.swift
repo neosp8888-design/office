@@ -24,7 +24,7 @@ enum AttachmentInboxError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .unsupportedItem(name):
-            "일반 파일만 첨부할 수 있습니다: \(name)"
+            OfficeLocalization.format("일반 파일만 첨부할 수 있습니다: %@", name)
         }
     }
 }

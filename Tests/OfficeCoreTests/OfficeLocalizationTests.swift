@@ -119,7 +119,20 @@ final class OfficeLocalizationTests: XCTestCase {
             ("오늘 할당량 끝, 퇴근 모드 🌙", "Quota reached for today, off duty 🌙"),
             ("앗, 작업 멈춤\n%@", "Oops, task stopped\n%@"),
             ("작업 정리 중... 🧹", "Cleaning up tasks... 🧹"),
-            ("작업이 멈췄어요.", "Task has stopped.")
+            ("작업이 멈췄어요.", "Task has stopped."),
+            ("이전 기록 보기", "Show previous record"),
+            ("다음 기록 보기", "Show next record"),
+            ("목록", "List"),
+            ("기록 목록으로 돌아가기", "Back to record list"),
+            ("펼쳐 보기", "Expand"),
+            ("기록을 넓은 창으로 펼치기", "Open the record in a larger view"),
+            ("펼쳐 보기 닫기", "Close the expanded view"),
+            ("Antigravity 준비", "Set Up Antigravity"),
+            ("Antigravity, Claude Code 또는 Codex가 확인할 파일을 선택하세요.", "Select files for Antigravity, Claude Code, or Codex to review."),
+            ("응답 중인 터미널이 있습니다. 대화 모드로 돌아가면 해당 CLI 프로세스가 종료됩니다.", "A terminal is currently responding. Switching to conversation mode will terminate that CLI process."),
+            ("일반 파일만 첨부할 수 있습니다: %@", "Only regular files can be attached: %@"),
+            ("%@ · 새 버전", "%@ · New Version"),
+            ("설치본 %@ → %@", "Installed %@ → %@")
         ]
 
         for testCase in testCases {

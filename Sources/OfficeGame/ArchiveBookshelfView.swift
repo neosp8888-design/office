@@ -169,8 +169,35 @@ private struct ArchiveRecordTile: View {
     }
 }
 
+/// 시트 안에서 이전·다음 기록으로 넘길 수 있는지 정한다. 목록은 12건씩
+/// 불러오므로 마지막 칸이어도 더 받아 올 기록이 남았으면 다음으로 갈 수 있다.
+enum ArchiveBookPaging {
+    static func canGoPrevious(index: Int) -> Bool {
+        index > 0
+    }
+
+    static func canGoNext(
+        index: Int,
+        loadedCount: Int,
+        totalCount: Int
+    ) -> Bool {
+        index + 1 < loadedCount || loadedCount < totalCount
+    }
+}
+
+/// 시트 툴바에 보여 줄 현재 위치와 넘기기 가능 여부.
+struct ArchiveBookNavigation {
+    let index: Int
+    let total: Int
+    let canGoPrevious: Bool
+    let canGoNext: Bool
+}
+
 struct ArchiveOpenBook: View {
     let turn: LiveFeedTurn
+    let navigation: ArchiveBookNavigation
+    let onPrevious: () -> Void
+    let onNext: () -> Void
     let onClose: () -> Void
     @State private var copiedKey: String?
 
@@ -213,19 +240,6 @@ struct ArchiveOpenBook: View {
 
     private var bookToolbar: some View {
         HStack(spacing: 9) {
-            Button(action: onClose) {
-                Label("목록", systemImage: "chevron.left")
-                    .font(.system(size: 10, weight: .bold))
-                    .padding(.horizontal, 9)
-                    .frame(height: 26)
-                    .background(
-                        Color.primary.opacity(0.055),
-                        in: Capsule()
-                    )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("기록 목록으로 돌아가기")
-
             CharacterBadge(
                 name: turn.characterName,
                 characterID: turn.characterId,
@@ -250,9 +264,74 @@ struct ArchiveOpenBook: View {
             Label(statusTitle, systemImage: "bookmark.fill")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(bookColor)
+
+            HStack(spacing: 2) {
+                pagingButton(
+                    systemImage: "chevron.left",
+                    label: "이전 기록 보기",
+                    isEnabled: navigation.canGoPrevious,
+                    shortcut: .leftArrow,
+                    action: onPrevious
+                )
+
+                Text("\(navigation.index + 1) / \(navigation.total)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 3)
+
+                pagingButton(
+                    systemImage: "chevron.right",
+                    label: "다음 기록 보기",
+                    isEnabled: navigation.canGoNext,
+                    shortcut: .rightArrow,
+                    action: onNext
+                )
+            }
+            .padding(.horizontal, 3)
+            .frame(height: 26)
+            .background(
+                Color.primary.opacity(0.055),
+                in: Capsule()
+            )
+
+            Button(action: onClose) {
+                Label(OfficeLocalization.string("닫기"), systemImage: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(
+                        Color.primary.opacity(0.055),
+                        in: Capsule()
+                    )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel(OfficeLocalization.string("닫기"))
         }
         .padding(.horizontal, 12)
         .frame(height: 43)
+    }
+
+    private func pagingButton(
+        systemImage: String,
+        label: String,
+        isEnabled: Bool,
+        shortcut: KeyEquivalent,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .bold))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.35)
+        .keyboardShortcut(shortcut, modifiers: [])
+        .accessibilityLabel(OfficeLocalization.string(label))
+        .help(OfficeLocalization.string(label))
     }
 
     private var leftPage: some View {

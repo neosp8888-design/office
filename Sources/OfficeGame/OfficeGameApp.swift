@@ -1322,7 +1322,7 @@ private struct LiveWorkspaceCommandBar: View {
                             )
                         )
                         .accessibilityLabel("직원 프로필")
-                        .help("직원 프로필 보기")
+                        .help(OfficeLocalization.string("직원 프로필 보기"))
                     }
 
                     Button {
@@ -1337,8 +1337,8 @@ private struct LiveWorkspaceCommandBar: View {
                             for: character.backend
                         )
                     )
-                    .accessibilityLabel("직원 설정")
-                    .help("이름과 업무 지침 설정")
+                    .accessibilityLabel(OfficeLocalization.string("직원 설정"))
+                    .help(OfficeLocalization.string("이름과 업무 지침 설정"))
 
                     Spacer(minLength: 0)
                 }
@@ -2598,11 +2598,11 @@ private struct AgentQuickSettingsView: View {
                     } label: {
                         if settings.model == model.id {
                             Label(
-                                model.pickerTitle(),
+                                modelTitle(model),
                                 systemImage: "checkmark"
                             )
                         } else {
-                            Text(model.pickerTitle())
+                            Text(modelTitle(model))
                         }
                     }
                 }
@@ -2735,6 +2735,12 @@ private struct AgentQuickSettingsView: View {
                 onChanged?()
             }
         }
+    }
+
+    private func modelTitle(_ model: AgentModelOption) -> String {
+        model.isRecentlyRevised()
+            ? OfficeLocalization.format("%@ · 새 버전", model.title)
+            : model.title
     }
 }
 

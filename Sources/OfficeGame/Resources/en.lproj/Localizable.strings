@@ -195,8 +195,8 @@
 "조회" = "Search";
 "실행 정보 기록 없음 · %@" = "No execution information · %@";
 "제목 없는 업무" = "Untitled task";
-"목록" = "List";
-"기록 목록으로 돌아가기" = "Back to record list";
+"이전 기록 보기" = "Show previous record";
+"다음 기록 보기" = "Show next record";
 "장서 정보" = "Record details";
 "기록 없음" = "No record";
 "모드" = "Mode";
@@ -225,7 +225,11 @@
 "취소" = "Cancel";
 "충돌 작업 거절" = "Reject conflicting work";
 "검색어 지우기" = "Clear search";
+"목록" = "List";
 "기록 목록으로 돌아가기" = "Back to record list";
+"펼쳐 보기" = "Expand";
+"기록을 넓은 창으로 펼치기" = "Open the record in a larger view";
+"펼쳐 보기 닫기" = "Close the expanded view";
 "사고" = "Thought";
 "답장 픽" = "Reply needed";
 "오늘 마감" = "Off duty today";
@@ -259,6 +263,7 @@
 "Docker 준비" = "Set Up Docker";
 "Codex 준비" = "Set Up Codex";
 "Claude Code 준비" = "Set Up Claude Code";
+"Antigravity 준비" = "Set Up Antigravity";
 "로그 열기" = "Open Logs";
 "다시 확인" = "Check Again";
 "Antigravity, Claude Code 또는 Codex 중 하나만 로그인돼도 시작할 수 있습니다." = "You can start after signing in to Antigravity, Claude Code, or Codex.";
@@ -535,4 +540,9 @@
 "이름은 1자 이상 30자 이하여야 합니다." = "Name must be between 1 and 30 characters.";
 "업무 지침은 1자 이상 1,200자 이하여야 합니다." = "Instructions must be between 1 and 1,200 characters.";
 "이 직원의 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다." = "Can be configured once this teammate's tasks or compaction finish.";
+"Antigravity, Claude Code 또는 Codex가 확인할 파일을 선택하세요." = "Select files for Antigravity, Claude Code, or Codex to review.";
+"응답 중인 터미널이 있습니다. 대화 모드로 돌아가면 해당 CLI 프로세스가 종료됩니다." = "A terminal is currently responding. Switching to conversation mode will terminate that CLI process.";
+"일반 파일만 첨부할 수 있습니다: %@" = "Only regular files can be attached: %@";
+"%@ · 새 버전" = "%@ · New Version";
+"설치본 %@ → %@" = "Installed %@ → %@";
 
