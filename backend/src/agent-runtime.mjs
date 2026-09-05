@@ -941,7 +941,9 @@ export class AgentRuntime {
 
     state.cancelRequested = true;
     if (state.claudeWorker) {
-      state.claudeWorker.cancelCurrent();
+      // 워커는 중단 result를 받을 때까지 기다리므로, 이 뒤의 사용량
+      // 저장에는 Claude Code가 보고한 비용이 들어간다.
+      await state.claudeWorker.cancelCurrent();
     } else {
       terminateProcessGroup(state.process);
     }

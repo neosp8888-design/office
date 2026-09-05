@@ -276,3 +276,77 @@ test("Claude 수동 압축은 /compact와 완료 경계의 토큰을 사용한�
   });
   worker.close();
 });
+
+test("중단 요청은 interrupt 제어 요청을 먼저 보내고 비용이 담긴 result를 받은 뒤 종료한다", async () => {
+  const child = new FakeChild();
+  const received = [];
+  const worker = new ClaudePersistentWorker({
+    executable: "claude",
+    argumentsList: ["-p"],
+    cwd: "/repo",
+    env: {},
+    signature: "same",
+    spawnProcess: () => child,
+    suggestionGraceMs: 100,
+  });
+
+  const submitted = await submittedMessage(child, () => worker.runTurn({
+    prompt: "긴 작업",
+    onLine: async (line) => received.push(JSON.parse(line)),
+  }));
+  assert.equal(submitted.message.type, "user");
+
+  const interrupt = await submittedMessage(child, () => worker.cancelCurrent());
+  assert.equal(interrupt.message.type, "control_request");
+  assert.equal(interrupt.message.request.subtype, "interrupt");
+  assert.equal(child.killed, false);
+
+  // 실제 Claude Code 2.1.261은 interrupt 뒤 이 형태의 result를 보낸다.
+  emit(child, {
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    result: "",
+    total_cost_usd: 0.002706,
+    usage: { input_tokens: 0, output_tokens: 0 },
+    modelUsage: {
+      "claude-sonnet-5": {
+        inputTokens: 1_218,
+        outputTokens: 27,
+        costUSD: 0.002706,
+      },
+    },
+  });
+
+  await submitted.promise;
+  await interrupt.promise;
+  assert.equal(child.killed, true);
+  const result = received.find((event) => event.type === "result");
+  assert.equal(result.total_cost_usd, 0.002706);
+  assert.equal(result.modelUsage["claude-sonnet-5"].inputTokens, 1_218);
+});
+
+test("중단 result가 제한 시간 안에 오지 않으면 프로세스를 그대로 종료한다", async () => {
+  const child = new FakeChild();
+  const worker = new ClaudePersistentWorker({
+    executable: "claude",
+    argumentsList: ["-p"],
+    cwd: "/repo",
+    env: {},
+    signature: "same",
+    spawnProcess: () => child,
+    suggestionGraceMs: 100,
+    interruptResultTimeoutMs: 20,
+  });
+
+  const submitted = await submittedMessage(child, () => worker.runTurn({
+    prompt: "긴 작업",
+    onLine: async () => {},
+  }));
+  const interrupt = await submittedMessage(child, () => worker.cancelCurrent());
+  assert.equal(interrupt.message.type, "control_request");
+
+  await interrupt.promise;
+  assert.equal(child.killed, true);
+  await assert.rejects(submitted.promise, /중단했습니다/);
+});

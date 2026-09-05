@@ -3084,6 +3084,61 @@ test("실행 중단은 턴을 interrupted로 저장하고 실행 목록에서 �
   assert.equal(broadcasts.length, 1);
 });
 
+test("Claude 실행 중단은 워커가 받은 중단 result의 비용을 사용량 기록으로 저장한다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = {
+    turnID: "turn-1",
+    character: { id: "boss", backend: "claude", model: "claude-opus-5" },
+    process: null,
+    cancelRequested: false,
+    externalSessionID: null,
+    claudeWorker: {
+      // 실제 워커는 interrupt 제어 요청 뒤 받은 result로 사용량을 채운다.
+      cancelCurrent: async () => {
+        state.usage = {
+          inputTokens: 1_218,
+          outputTokens: 27,
+          cachedInputTokens: 0,
+          reasoningOutputTokens: null,
+          cacheWriteInputTokens: 0,
+          cacheWrite5mInputTokens: null,
+          cacheWrite1hInputTokens: null,
+          reportedCostUsd: 0.002706,
+        };
+      },
+    },
+  };
+  runtime.running.set("boss", state);
+
+  await runtime.cancel("boss");
+
+  const usageInsert = queries.find(({ text }) =>
+    /INSERT INTO usage_records/.test(text)
+  );
+  assert.deepEqual(usageInsert.values, [
+    "turn-1",
+    1_218,
+    27,
+    0,
+    null,
+    0.002706,
+    0,
+    null,
+    null,
+  ]);
+});
+
 test("실행 중단은 남은 실행 중 활동도 실패 상태로 닫는다", async () => {
   const queries = [];
   const runtime = new AgentRuntime({

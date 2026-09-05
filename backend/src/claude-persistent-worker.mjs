@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const DEFAULT_SUGGESTION_GRACE_MS = 3_000;
+// 중단 제어 요청을 보내면 Claude Code는 보통 수십 ms 안에 비용이 담긴
+// result를 돌려준다. 이 시간 안에 오지 않으면 프로세스를 그대로 종료한다.
+const DEFAULT_INTERRUPT_RESULT_TIMEOUT_MS = 3_000;
 const FORCE_KILL_DELAY_MS = 5_000;
 const COMPACT_PROMPT =
   "/compact OFFICESTRA 직원 이름과 직급 호칭을 쓰지 말고, " +
@@ -19,12 +22,14 @@ export class ClaudePersistentWorker {
     onExit = () => {},
     spawnProcess = spawn,
     suggestionGraceMs = DEFAULT_SUGGESTION_GRACE_MS,
+    interruptResultTimeoutMs = DEFAULT_INTERRUPT_RESULT_TIMEOUT_MS,
   }) {
     this.signature = signature;
     this.cwd = cwd;
     this.sessionID = sessionID;
     this.onExit = onExit;
     this.suggestionGraceMs = suggestionGraceMs;
+    this.interruptResultTimeoutMs = interruptResultTimeoutMs;
     this.current = null;
     this.closed = false;
     this.exitNotified = false;
@@ -84,36 +89,40 @@ export class ClaudePersistentWorker {
         new Error("Claude Code 지속 세션이 이전 업무를 아직 처리 중입니다."),
       );
     }
-    return new Promise((resolve, reject) => {
-      const current = {
+    let current;
+    const promise = new Promise((resolve, reject) => {
+      current = {
         onLine,
         resolve,
         reject,
         resultSeen: false,
         suggestionTimer: null,
       };
-      this.current = current;
-      const message = {
-        type: "user",
-        message: {
-          role: "user",
-          content: String(prompt ?? ""),
-        },
-        parent_tool_use_id: null,
-      };
-      try {
-        if (!this.child.stdin?.writable) {
-          throw new Error("Claude Code 지속 세션의 입력 스트림이 닫혔습니다.");
-        }
-        this.child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
-          if (error) {
-            this.fail(error);
-          }
-        });
-      } catch (error) {
-        this.fail(error);
-      }
     });
+    // 중단 요청은 turn이 어떻게든 끝난 시점만 기다린다.
+    current.settled = promise.then(() => {}, () => {});
+    this.current = current;
+    const message = {
+      type: "user",
+      message: {
+        role: "user",
+        content: String(prompt ?? ""),
+      },
+      parent_tool_use_id: null,
+    };
+    try {
+      if (!this.child.stdin?.writable) {
+        throw new Error("Claude Code 지속 세션의 입력 스트림이 닫혔습니다.");
+      }
+      this.child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+        if (error) {
+          this.fail(error);
+        }
+      });
+    } catch (error) {
+      this.fail(error);
+    }
+    return promise;
   }
 
   async compact() {
@@ -159,8 +168,41 @@ export class ClaudePersistentWorker {
     };
   }
 
-  cancelCurrent() {
-    this.close(new Error("사용자가 Claude Code 업무를 중단했습니다."));
+  // 프로세스를 바로 죽이면 result가 오지 않아 중단된 턴의 비용이 비어
+  // 남는다. 먼저 interrupt 제어 요청을 보내 비용과 모델별 토큰이 담긴
+  // result를 받은 뒤 종료한다. 제한 시간 안에 오지 않으면 그대로 끝낸다.
+  async cancelCurrent() {
+    const reason = new Error("사용자가 Claude Code 업무를 중단했습니다.");
+    const current = this.current;
+    if (current && !this.closed && this.requestInterrupt()) {
+      let timer;
+      await Promise.race([
+        current.settled,
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, this.interruptResultTimeoutMs);
+          timer.unref?.();
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+    this.close(reason);
+  }
+
+  requestInterrupt() {
+    if (!this.child.stdin?.writable) {
+      return false;
+    }
+    const request = {
+      type: "control_request",
+      request_id: `interrupt-${Date.now()}`,
+      request: { subtype: "interrupt" },
+    };
+    try {
+      this.child.stdin.write(`${JSON.stringify(request)}\n`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   close(reason = new Error("Claude Code 지속 세션을 종료했습니다.")) {
