@@ -1,6 +1,7 @@
 // 이 파일은 생성 이미지 탐색과 Markdown 미리보기 첨부를 검증한다.
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   mkdirSync,
   mkdtempSync,
@@ -8,6 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +19,72 @@ import {
   appendLocalImagePreviews,
   generatedImageRoot,
   generatedImagesForTurn,
+  listGeneratedImages,
 } from "../src/local-artifacts.mjs";
+
+for (const code of ["EPERM", "EACCES", "ENOENT", "ENOTDIR", "EIO", "ESTALE", "ENXIO"]) {
+  test(`생성 이미지 폴더 ${code} 오류가 대화 조회를 막지 않는다`, (t) => {
+    const root = mkdtempSync(join(tmpdir(), "officellm-unavailable-images-"));
+    const sessionDirectory = join(root, "session-1");
+    mkdirSync(sessionDirectory);
+    const originalReaddir = fs.readdirSync;
+    const mocked = t.mock.method(fs, "readdirSync", (path, ...args) => {
+      if (path === sessionDirectory) {
+        throw Object.assign(new Error(`scandir ${code}`), { code });
+      }
+      return originalReaddir(path, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.deepEqual(listGeneratedImages("session-1", root), []);
+      const images = generatedImagesForTurn({
+        sessionID: "session-1",
+        startedAt: "2026-09-05T00:00:00Z",
+        endedAt: "2026-09-05T01:00:00Z",
+        generatedRoot: root,
+      });
+      assert.equal(appendLocalImagePreviews("대화 본문은 유지", images), "대화 본문은 유지");
+    } finally {
+      mocked.mock.restore();
+      syncBuiltinESMExports();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("이미지 탐색 후 파일이 사라져도 다른 이미지와 대화는 유지한다", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "officellm-disappearing-image-"));
+  const sessionDirectory = join(root, "session-1");
+  mkdirSync(sessionDirectory);
+  const missingImage = join(sessionDirectory, "missing.png");
+  const visibleImage = join(sessionDirectory, "visible.png");
+  const generatedAt = new Date("2026-09-05T00:30:00Z");
+  for (const image of [missingImage, visibleImage]) {
+    writeFileSync(image, "png");
+    utimesSync(image, generatedAt, generatedAt);
+  }
+  let missingImageStatCount = 0;
+  const originalStat = fs.statSync;
+  const mocked = t.mock.method(fs, "statSync", (path, ...args) => {
+    if (path === missingImage && ++missingImageStatCount > 1) {
+      throw Object.assign(new Error("image disappeared"), { code: "ENOENT" });
+    }
+    return originalStat(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.deepEqual(generatedImagesForTurn({
+      sessionID: "session-1",
+      startedAt: "2026-09-05T00:00:00Z",
+      endedAt: "2026-09-05T01:00:00Z",
+      generatedRoot: root,
+    }), [visibleImage]);
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("Antigravity 생성 이미지는 전용 brain 디렉터리에서 찾는다", () => {
   assert.match(

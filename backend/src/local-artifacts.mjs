@@ -32,6 +32,11 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 const imageIdentityCache = new Map();
 const IMAGE_IDENTITY_CACHE_LIMIT = 256;
+// 미리보기는 선택적인 보강 정보다. 외장 디스크 권한·분리·파일 이동으로
+// 읽을 수 없는 경우에도 DB 대화와 턴 기록은 정상적으로 반환해야 한다.
+const UNAVAILABLE_ARTIFACT_CODES = new Set([
+  "EPERM", "EACCES", "ENOENT", "ENOTDIR", "EIO", "ESTALE", "ENXIO",
+]);
 
 export function listGeneratedImages(
   sessionID,
@@ -45,7 +50,16 @@ export function listGeneratedImages(
     return [];
   }
 
-  return readdirSync(directory, { withFileTypes: true })
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (UNAVAILABLE_ARTIFACT_CODES.has(error?.code)) {
+      return [];
+    }
+    throw error;
+  }
+  return entries
     .filter((entry) => entry.isFile())
     .map((entry) => join(directory, entry.name))
     .filter(isLocalImage)
@@ -75,8 +89,15 @@ export function generatedImagesForTurn({
     sessionID,
     generatedRoot ?? generatedImageRoot(backend),
   ).filter((path) => {
-    const modifiedAt = statSync(path).mtimeMs;
-    return modifiedAt >= start - 2_000 && modifiedAt <= end + 2_000;
+    try {
+      const modifiedAt = statSync(path).mtimeMs;
+      return modifiedAt >= start - 2_000 && modifiedAt <= end + 2_000;
+    } catch (error) {
+      if (UNAVAILABLE_ARTIFACT_CODES.has(error?.code)) {
+        return false;
+      }
+      throw error;
+    }
   });
 }
 
