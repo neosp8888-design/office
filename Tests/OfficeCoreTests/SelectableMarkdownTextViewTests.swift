@@ -317,6 +317,125 @@ final class SelectableMarkdownTextViewTests: XCTestCase {
         XCTAssertTrue(foundTableBlock)
     }
 
+    func testEmptyTableCellsPreserveEveryColumnAndRow() {
+        let rendered = SelectableMarkdownAttributedRenderer.render(
+            source: """
+            | 항목 | | 비용 |
+            | --- | ---: | ---: |
+            | 일반 입력 | 118,672 | $1.186720 |
+            | 합계 | | **$1.210208** |
+            | | 가운데 | |
+            | | | |
+            | 마지막 행 |
+            | | | |
+            """,
+            fontSize: 12,
+            fallbackDirectory: nil,
+            isDark: false
+        )
+        var columnsByRow: [Int: Set<Int>] = [:]
+        var tables = Set<ObjectIdentifier>()
+        rendered.enumerateAttribute(
+            .paragraphStyle,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, _, _ in
+            guard let style = value as? NSParagraphStyle,
+                  let block = style.textBlocks.first as? NSTextTableBlock
+            else { return }
+            columnsByRow[block.startingRow, default: []].insert(block.startingColumn)
+            tables.insert(ObjectIdentifier(block.table))
+            XCTAssertEqual(block.table.numberOfColumns, 3)
+            XCTAssertEqual(block.columnSpan, 1)
+        }
+        XCTAssertEqual(columnsByRow.count, 7)
+        for row in 0..<7 {
+            XCTAssertEqual(columnsByRow[row], Set([0, 1, 2]), "row \(row)")
+        }
+        XCTAssertEqual(tables.count, 1)
+        XCTAssertFalse(rendered.string.contains("\u{2060}"))
+        XCTAssertTrue(rendered.string.contains("합계\n\n$1.210208\n"))
+    }
+
+    func testCostTableCopiesAcrossEmptyCellWithoutPlaceholder() throws {
+        let source = """
+        계산 결과입니다.
+
+        | 항목 | 토큰 | 환산 비용 |
+        |---|---:|---:|
+        | 일반 입력 | 118,672 | $1.186720 |
+        | 캐시 입력 | 12,288 | $0.012288 |
+        | 출력·추론 포함 | 224 | $0.011200 |
+        | 합계 | | **$1.210208** |
+
+        기존 본문과 [링크](https://example.com)는 그대로입니다.
+        """
+        for isDark in [false, true] {
+            let documentView = SelectableMarkdownDocumentView(fontSize: 15)
+            documentView.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+            documentView.apply(source: source, fallbackDirectory: nil, isDark: isDark)
+            let height = documentView.heightThatFits(width: 960)
+            documentView.frame = NSRect(x: 0, y: 0, width: 960, height: height)
+            documentView.layoutSubtreeIfNeeded()
+
+            let textView = documentView.textView
+            textView.setSelectedRange(NSRange(location: 0, length: textView.string.utf16.count))
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            XCTAssertTrue(textView.writeSelection(to: pasteboard, types: textView.writablePasteboardTypes))
+            let copied = try XCTUnwrap(pasteboard.string(forType: .string))
+            XCTAssertEqual(copied, textView.string)
+            XCTAssertTrue(copied.contains("계산 결과입니다."))
+            XCTAssertTrue(copied.contains("합계\n\n$1.210208"))
+            XCTAssertTrue(copied.contains("기존 본문과 링크는 그대로입니다."))
+            XCTAssertFalse(copied.contains("\u{2060}"))
+
+            // 필요할 때 실제 TextKit 렌더링 결과를 눈으로 확인할 수 있다.
+            if let directory = ProcessInfo.processInfo.environment["OFFICESTRA_TABLE_SNAPSHOT_DIRECTORY"] {
+                textView.setSelectedRange(NSRange(location: 0, length: 0))
+                documentView.wantsLayer = true
+                documentView.layer?.backgroundColor = (isDark ? NSColor.black : .white).cgColor
+                let bitmap = try XCTUnwrap(documentView.bitmapImageRepForCachingDisplay(in: documentView.bounds))
+                documentView.cacheDisplay(in: documentView.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: directory)
+                    .appendingPathComponent(isDark ? "table-dark.png" : "table-light.png"))
+            }
+        }
+    }
+
+    func testEmptyCellPreparationPreservesCodeAndEscapedPipes() {
+        let indentedCode = "    | A | B |\n    | --- | --- |\n    | | |"
+        XCTAssertEqual(
+            SelectableMarkdownSegmenter.preservingEmptyTableCells(
+                in: indentedCode, placeholder: "EMPTY"
+            ),
+            indentedCode
+        )
+        let source = """
+        ```text
+        | A | B |
+        | --- | --- |
+        | | |
+        ```
+
+        | A | B | C |
+        | --- | --- | --- |
+        | left\\|right | | `code` |
+
+        본문의 원래 기호 \u{2060}도 보존합니다.
+        """
+        let prepared = SelectableMarkdownSegmenter.preservingEmptyTableCells(
+            in: source, placeholder: "EMPTY"
+        )
+        XCTAssertTrue(prepared.contains("| | |\n```"))
+        XCTAssertTrue(prepared.contains("| left\\|right | EMPTY | `code` |"))
+        let rendered = SelectableMarkdownAttributedRenderer.render(
+            source: source, fontSize: 12, fallbackDirectory: nil, isDark: false
+        )
+        XCTAssertTrue(rendered.string.contains("left|right\n\ncode"))
+        XCTAssertTrue(rendered.string.contains("본문의 원래 기호 \u{2060}도 보존합니다."))
+    }
+
     func testSingleNewlinesRemainVisibleAndSelectable() {
         let rendered = SelectableMarkdownAttributedRenderer.render(
             source: "첫째 줄\n둘째 줄\n셋째 줄",

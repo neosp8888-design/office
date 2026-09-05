@@ -728,6 +728,58 @@ struct SelectableMarkdownSegment: Equatable {
 }
 
 enum SelectableMarkdownSegmenter {
+    // Foundation은 텍스트가 없는 표 셀의 presentation intent를 생략한다.
+    // 파싱 동안만 자리표시자를 넣어 빈 셀·행도 같은 열 수를 유지한다.
+    static func preservingEmptyTableCells(
+        in source: String,
+        placeholder: String
+    ) -> String {
+        guard source.contains("|") else { return source }
+        var lines = source.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            if let openingFence = fence(in: lines[index]) {
+                index += 1
+                while index < lines.count {
+                    let closes = isClosingFence(lines[index], matching: openingFence)
+                    index += 1
+                    if closes { break }
+                }
+                continue
+            }
+            guard
+                !lines[index].hasPrefix("    "),
+                !lines[index].hasPrefix("\t"),
+                lines.indices.contains(index + 1),
+                let columnCount = tableColumnCount(
+                    header: lines[index],
+                    delimiter: lines[index + 1]
+                )
+            else {
+                index += 1
+                continue
+            }
+
+            let delimiterIndex = index + 1
+            while index < lines.count {
+                if index == delimiterIndex {
+                    index += 1
+                    continue
+                }
+                guard let cells = tableCells(in: lines[index]) else { break }
+                if cells.count < columnCount || cells.prefix(columnCount).contains("") {
+                    let padded = (0..<columnCount).map { column in
+                        cells.indices.contains(column) && !cells[column].isEmpty
+                            ? cells[column] : placeholder
+                    }
+                    lines[index] = "| " + padded.joined(separator: " | ") + " |"
+                }
+                index += 1
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func split(_ source: String) -> [SelectableMarkdownSegment] {
         let lines = source.split(
             separator: "\n",
@@ -1095,9 +1147,18 @@ enum SelectableMarkdownAttributedRenderer {
         let markdownWithVisibleLineBreaks = preservingVisibleLineBreaks(
             in: markdown
         )
+        // 원문에 없는 기호를 쓰고 렌더링할 때 제거해 복사 내용은 보존한다.
+        var emptyCellPlaceholder = "\u{2060}"
+        while markdown.contains(emptyCellPlaceholder) {
+            emptyCellPlaceholder += "\u{2060}"
+        }
+        let markdownWithTableCells = SelectableMarkdownSegmenter.preservingEmptyTableCells(
+            in: markdownWithVisibleLineBreaks,
+            placeholder: emptyCellPlaceholder
+        )
         guard
             let parsed = try? AttributedString(
-                markdown: markdownWithVisibleLineBreaks,
+                markdown: markdownWithTableCells,
                 options: .init(interpretedSyntax: .full),
                 baseURL: fallbackDirectory
             )
@@ -1112,6 +1173,7 @@ enum SelectableMarkdownAttributedRenderer {
         let output = NSMutableAttributedString()
         var previousBlockIdentity: Int?
         var previousAttributes: [NSAttributedString.Key: Any]?
+        var previousWasTableCell = false
         var prefixedListItems = Set<Int>()
         var textTables: [Int: NSTextTable] = [:]
 
@@ -1130,7 +1192,8 @@ enum SelectableMarkdownAttributedRenderer {
             if previousBlockIdentity != descriptor.identity {
                 appendParagraphBoundary(
                     to: output,
-                    attributes: previousAttributes ?? attributes
+                    attributes: previousAttributes ?? attributes,
+                    force: previousWasTableCell
                 )
                 if
                     let listItemIdentity = descriptor.listItemIdentity,
@@ -1148,14 +1211,16 @@ enum SelectableMarkdownAttributedRenderer {
                 }
             }
 
+            let text = String(parsed.characters[run.range])
             output.append(
                 NSAttributedString(
-                    string: String(parsed.characters[run.range]),
+                    string: text.replacingOccurrences(of: emptyCellPlaceholder, with: ""),
                     attributes: attributes
                 )
             )
             previousBlockIdentity = descriptor.identity
             previousAttributes = attributes
+            previousWasTableCell = descriptor.tableCell != nil
         }
 
         appendParagraphBoundary(
@@ -1163,7 +1228,8 @@ enum SelectableMarkdownAttributedRenderer {
             attributes: previousAttributes ?? baseAttributes(
                 fontSize: fontSize,
                 isDark: isDark
-            )
+            ),
+            force: previousWasTableCell
         )
         return output
     }
@@ -1228,9 +1294,10 @@ enum SelectableMarkdownAttributedRenderer {
 
     private static func appendParagraphBoundary(
         to output: NSMutableAttributedString,
-        attributes: [NSAttributedString.Key: Any]
+        attributes: [NSAttributedString.Key: Any],
+        force: Bool = false
     ) {
-        guard output.length > 0, !output.string.hasSuffix("\n") else {
+        guard force || (output.length > 0 && !output.string.hasSuffix("\n")) else {
             return
         }
         output.append(
