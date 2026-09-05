@@ -105,7 +105,7 @@ GUI로 돌아오면 터미널에서 진행한 내용도 같은 직원의 기록�
 
 이미 사용 중인 Codex, Claude Code 또는 Antigravity에 아래 문장을 그대로 보내세요.
 
-> “`https://github.com/neosp8888-design/office.git`을 이 Mac에 내려받고 OFFICESTRA를
+> “`https://github.com/neosp8888-design/officestra.git`을 이 Mac에 내려받고 OFFICESTRA를
 > 실행해줘. 기존 AI CLI 로그인과 프로젝트는 건드리지 말고, 먼저 환경을 확인한 뒤 빠진
 > 의존성만 설치해. 앱과 로컬 백엔드가 정상 실행되는 것까지 확인해줘.”
 
@@ -170,7 +170,7 @@ Docker 설치에 문제가 있으면 [Docker Desktop 공식 안내](https://docs
 ### 3. 저장소 내려받기
 
 ```sh
-git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone https://github.com/neosp8888-design/officestra.git "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
 ```
 

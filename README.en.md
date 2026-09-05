@@ -113,7 +113,7 @@ account and installed CLI version.
 Send the following request to Codex, Claude Code, or Antigravity if you already
 use one of them:
 
-> “Download `https://github.com/neosp8888-design/office.git` to this Mac and run
+> “Download `https://github.com/neosp8888-design/officestra.git` to this Mac and run
 > OFFICESTRA. Preserve my existing AI CLI logins and projects, inspect the
 > environment first, and install only missing dependencies. Verify that both the
 > app and its local backend are running.”
@@ -179,7 +179,7 @@ If Docker installation fails, see the
 ### 3. Download the repository
 
 ```sh
-git clone https://github.com/neosp8888-design/office.git "$HOME/OFFICESTRA"
+git clone https://github.com/neosp8888-design/officestra.git "$HOME/OFFICESTRA"
 cd "$HOME/OFFICESTRA"
 ```
 

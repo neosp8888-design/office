@@ -16,7 +16,7 @@ it to `main`. Users can download the new snapshot from **Code → Download ZIP**
 or clone the repository without a tag:
 
 ```sh
-git clone --depth 1 https://github.com/neosp8888-design/office.git
+git clone --depth 1 https://github.com/neosp8888-design/officestra.git
 ```
 
 Historical release incident reports remain as records. They do not describe the
