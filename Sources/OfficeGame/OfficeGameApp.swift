@@ -2779,13 +2779,15 @@ private struct AgentModelVisibilitySettingsView: View {
                                 }
                                 Spacer()
                                 if isModelInUse(model.id) {
-                                    Text("사용 중")
+                                    Text("직원 사용 중")
                                         .font(.system(size: 10, weight: .semibold))
                                         .foregroundStyle(.orange)
                                 }
-                                Text("제외")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.secondary)
+                                if isExcluded(model.id) {
+                                    Text("선택에서 제외됨")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.red)
+                                }
                             }
                         }
                         .toggleStyle(.checkbox)
@@ -2892,6 +2894,10 @@ private struct AgentModelVisibilitySettingsView: View {
             )
         }
         return parts.joined(separator: "  |  ")
+    }
+
+    private func isExcluded(_ modelID: String) -> Bool {
+        draftExclusions[selectedBackend, default: []].contains(modelID)
     }
 
     private func isModelInUse(_ modelID: String) -> Bool {
