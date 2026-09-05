@@ -1,0 +1,144 @@
+/* OFFICESTRA 소개 페이지 공통 스타일 */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1c1c1e;
+  --muted: #5f6368;
+  --card: #f4f5f7;
+  --line: #e2e4e8;
+  --accent: #2f6fed;
+  --accent-fg: #ffffff;
+  --code-bg: #f0f1f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101114;
+    --fg: #f2f2f4;
+    --muted: #a5a8b0;
+    --card: #1a1c21;
+    --line: #2a2d34;
+    --accent: #6d9cff;
+    --accent-fg: #0b1220;
+    --code-bg: #1e2027;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI",
+    Roboto, "Noto Sans KR", sans-serif;
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 0;
+  font-size: 15px;
+}
+.top .brand { font-weight: 700; letter-spacing: 0.04em; color: var(--fg); }
+.top nav a { margin-left: 18px; color: var(--muted); }
+
+.hero { padding: 40px 0 24px; text-align: center; }
+.hero h1 { font-size: 40px; line-height: 1.2; margin: 0 0 12px; letter-spacing: -0.01em; }
+.hero .lead { font-size: 20px; margin: 0 auto 8px; max-width: 720px; }
+.hero .sub { color: var(--muted); margin: 0 auto 24px; max-width: 720px; }
+.hero .meta { color: var(--muted); font-size: 15px; margin: 0 0 24px; }
+
+.buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn {
+  display: inline-block;
+  padding: 11px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font-weight: 600;
+  background: var(--card);
+}
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn:hover { text-decoration: none; filter: brightness(1.05); }
+
+.shot { margin: 32px 0 0; }
+.shot img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); display: block; }
+.shot .tagline { text-align: center; font-weight: 600; margin: 14px 0 0; }
+
+section { padding: 48px 0 0; }
+section h2 { font-size: 28px; line-height: 1.3; margin: 0 0 12px; letter-spacing: -0.01em; }
+section > p { margin: 0 0 8px; }
+
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 20px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.card h3 { margin: 0 0 8px; font-size: 18px; }
+.card p { margin: 0; color: var(--muted); font-size: 16px; }
+
+.modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 20px; }
+.modes figure { margin: 0; }
+.modes img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); display: block; }
+.modes figcaption { text-align: center; margin-top: 10px; }
+.modes figcaption strong { display: block; }
+.modes figcaption span { color: var(--muted); font-size: 15px; }
+
+ul.plain { padding-left: 22px; margin: 12px 0 0; }
+ul.plain li { margin: 6px 0; }
+
+blockquote {
+  margin: 16px 0;
+  padding: 14px 18px;
+  border-left: 4px solid var(--accent);
+  background: var(--card);
+  border-radius: 0 10px 10px 0;
+}
+blockquote p { margin: 0; }
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.note { color: var(--muted); font-size: 15px; }
+
+footer {
+  margin-top: 56px;
+  padding: 24px 0 40px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 700px) {
+  body { font-size: 16px; }
+  .hero h1 { font-size: 30px; }
+  .hero .lead { font-size: 18px; }
+  .grid, .modes { grid-template-columns: 1fr; }
+  section h2 { font-size: 24px; }
+}
