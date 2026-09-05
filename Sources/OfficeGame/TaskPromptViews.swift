@@ -25,11 +25,14 @@ struct TaskPromptAttachmentList: View {
                         isThumbnail: true
                     ))
                     .accessibilityLabel(
-                        "첨부 썸네일 \(attachment.name), "
-                            + taskAttachmentOpenActionTitle(
+                        OfficeLocalization.format(
+                            "첨부 썸네일 %@, %@",
+                            attachment.name,
+                            taskAttachmentOpenActionTitle(
                                 for: attachment.path,
                                 isThumbnail: true
                             )
+                        )
                     )
 
                     Button {
@@ -51,10 +54,18 @@ struct TaskPromptAttachmentList: View {
                     .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("\(attachment.path)\nFinder에서 보기")
+                    .help(
+                        OfficeLocalization.format(
+                            "%@\nFinder에서 보기",
+                            attachment.path
+                        )
+                    )
                     .accessibilityLabel(
-                        "첨부 파일 \(attachment.name), Finder에서 보기, "
-                            + "경로 \(attachment.path)"
+                        OfficeLocalization.format(
+                            "첨부 파일 %@, Finder에서 보기, 경로 %@",
+                            attachment.name,
+                            attachment.path
+                        )
                     )
                 }
                 .padding(.horizontal, 8)
@@ -91,11 +102,14 @@ struct TaskPromptAttachmentSummary: View {
                     isThumbnail: true
                 ))
                 .accessibilityLabel(
-                    "첨부 썸네일 \(attachment.name), "
-                        + taskAttachmentOpenActionTitle(
+                    OfficeLocalization.format(
+                        "첨부 썸네일 %@, %@",
+                        attachment.name,
+                        taskAttachmentOpenActionTitle(
                             for: attachment.path,
                             isThumbnail: true
                         )
+                    )
                 )
 
                 Button {
@@ -112,10 +126,18 @@ struct TaskPromptAttachmentSummary: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("\(attachment.path)\nFinder에서 보기")
+                .help(
+                    OfficeLocalization.format(
+                        "%@\nFinder에서 보기",
+                        attachment.path
+                    )
+                )
                 .accessibilityLabel(
-                    "첨부 파일 \(attachment.name), Finder에서 보기, "
-                        + "경로 \(attachment.path)"
+                    OfficeLocalization.format(
+                        "첨부 파일 %@, Finder에서 보기, 경로 %@",
+                        attachment.name,
+                        attachment.path
+                    )
                 )
             }
             .font(.system(size: 8.5, weight: .medium))
@@ -224,8 +246,8 @@ func taskAttachmentOpenActionTitle(
     isThumbnail: Bool
 ) -> String {
     isThumbnail && taskAttachmentIsImage(path)
-        ? "미리보기에서 열기"
-        : "Finder에서 보기"
+        ? OfficeLocalization.string("미리보기에서 열기")
+        : OfficeLocalization.string("Finder에서 보기")
 }
 
 private func taskAttachmentIsImage(_ path: String) -> Bool {

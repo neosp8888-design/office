@@ -326,8 +326,8 @@ private struct AnimatedProfileCloseButton: View {
             .spring(response: 0.38, dampingFraction: 0.72),
             value: isHovered
         )
-        .accessibilityLabel("닫기")
-        .help("닫기")
+        .accessibilityLabel(OfficeLocalization.string("닫기"))
+        .help(OfficeLocalization.string("닫기"))
     }
 }
 
@@ -360,7 +360,7 @@ private struct CharacterFullBodyProfileVideo: NSViewRepresentable {
         player.isMuted = true
 
         let view = PlayerLayerView(player: player)
-        view.setAccessibilityLabel("직원 전신 프로필 동영상")
+        view.setAccessibilityLabel(OfficeLocalization.string("직원 전신 프로필 동영상"))
         context.coordinator.startLooping(player)
         player.play()
         return view

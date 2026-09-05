@@ -188,11 +188,15 @@ struct CommandEntryRow: View {
     private var queueHelp: String {
         switch director.selectedCharacterQueueAvailability {
         case .available:
-            return "지금 응답이 끝나면 이어서 보냅니다 · 최대 "
-                + "\(QueuedCommandQueue.maximumCount)개"
+            return OfficeLocalization.format(
+                "지금 응답이 끝나면 이어서 보냅니다 · 최대 %d개",
+                QueuedCommandQueue.maximumCount
+            )
         case .full:
-            return "예약이 가득 찼습니다 · 최대 "
-                + "\(QueuedCommandQueue.maximumCount)개"
+            return OfficeLocalization.format(
+                "예약이 가득 찼습니다 · 최대 %d개",
+                QueuedCommandQueue.maximumCount
+            )
         case .unavailable:
             return OfficeLocalization.string(
                 "현재는 다음 업무를 예약할 수 없습니다"
@@ -219,9 +223,11 @@ struct CommandEntryRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
-                isPreparingAttachments ? "첨부 준비 중" : "파일 첨부"
+                isPreparingAttachments
+                    ? OfficeLocalization.string("첨부 준비 중")
+                    : OfficeLocalization.string("파일 첨부")
             )
-            .help("파일 첨부 · 한 번에 최대 20개")
+            .help(OfficeLocalization.string("파일 첨부 · 한 번에 최대 20개"))
             .disabled(attachmentSelectionIsDisabled)
             .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
 
@@ -251,8 +257,8 @@ struct CommandEntryRow: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("대화 중단")
-                .help("현재 직원의 업무 중단")
+                .accessibilityLabel(OfficeLocalization.string("대화 중단"))
+                .help(OfficeLocalization.string("현재 직원의 업무 중단"))
                 .disabled(director.isCancellingSelectedCharacter)
                 .opacity(
                     director.isCancellingSelectedCharacter ? 0.42 : 1
@@ -272,7 +278,7 @@ struct CommandEntryRow: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("다음 턴에 예약")
+                .accessibilityLabel(OfficeLocalization.string("다음 턴에 예약"))
                 .help(queueHelp)
                 .disabled(!canSubmit)
                 .opacity(canSubmit ? 1 : 0.42)
@@ -291,7 +297,7 @@ struct CommandEntryRow: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("보내기")
+                .accessibilityLabel(OfficeLocalization.string("보내기"))
                 .disabled(!canSubmit)
                 .opacity(canSubmit ? 1 : 0.42)
             }
@@ -334,8 +340,11 @@ struct QueuedCommandStrip: View {
         if !commands.isEmpty {
             VStack(alignment: .leading, spacing: 5) {
                 Text(
-                    "다음 턴 예약 \(commands.count)/"
-                        + "\(QueuedCommandQueue.maximumCount)"
+                    OfficeLocalization.format(
+                        "다음 턴 예약 %d/%d",
+                        commands.count,
+                        QueuedCommandQueue.maximumCount
+                    )
                 )
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
@@ -390,8 +399,13 @@ struct QueuedCommandStrip: View {
                     .foregroundStyle(DashboardPalette.accent)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(command.summary) 바로 적용")
-            .help("지금 작업을 중단하고 이 예약으로 다시 질문")
+            .accessibilityLabel(
+                OfficeLocalization.format(
+                    "%@ 바로 적용",
+                    command.summary
+                )
+            )
+            .help(OfficeLocalization.string("지금 작업을 중단하고 이 예약으로 다시 질문"))
 
             Button {
                 director.cancelQueuedCommand(
@@ -404,8 +418,13 @@ struct QueuedCommandStrip: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(command.summary) 예약 취소")
-            .help("예약 취소")
+            .accessibilityLabel(
+                OfficeLocalization.format(
+                    "%@ 예약 취소",
+                    command.summary
+                )
+            )
+            .help(OfficeLocalization.string("예약 취소"))
         }
         .padding(.horizontal, 9)
         .frame(height: 27)
@@ -471,7 +490,7 @@ struct CommandComposerView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.setAccessibilityLabel("업무 입력")
+        textView.setAccessibilityLabel(OfficeLocalization.string("업무 입력"))
         scrollView.documentView = textView
 
         updateTextView(textView)

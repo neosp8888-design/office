@@ -1,5 +1,4 @@
-// 이 파일은 일반 대화 응답의 시간과 복사 및 평가 아이콘을 배치한다.
-
+import OfficeCore
 import SwiftUI
 
 struct ResponseMessageFooter: View {
@@ -50,7 +49,9 @@ struct ResponseMessageFooter: View {
                     .buttonStyle(.plain)
                     .disabled(isUpdatingFeedback)
                     .accessibilityLabel(
-                        feedback == .disliked ? "싫어요 취소" : "싫어요"
+                        feedback == .disliked
+                            ? OfficeLocalization.string("싫어요 취소")
+                            : OfficeLocalization.string("싫어요")
                     )
                     .accessibilityIdentifier(
                         "dislikeMessage-\(feedbackAccessibilityIDPrefix)"
@@ -75,7 +76,9 @@ struct ResponseMessageFooter: View {
                     .buttonStyle(.plain)
                     .disabled(isUpdatingFeedback)
                     .accessibilityLabel(
-                        feedback == .liked ? "좋아요 취소" : "좋아요"
+                        feedback == .liked
+                            ? OfficeLocalization.string("좋아요 취소")
+                            : OfficeLocalization.string("좋아요")
                     )
                     .accessibilityIdentifier(
                         "likeMessage-\(feedbackAccessibilityIDPrefix)"
@@ -93,7 +96,11 @@ struct ResponseMessageFooter: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(copied ? "복사됨" : "복사")
+                .accessibilityLabel(
+                    copied
+                        ? OfficeLocalization.string("복사됨")
+                        : OfficeLocalization.string("복사")
+                )
                 .accessibilityIdentifier(accessibilityID)
             }
         }

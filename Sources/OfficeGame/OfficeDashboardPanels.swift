@@ -21,7 +21,7 @@ enum OfficeDetailSelection: String, CaseIterable, Identifiable {
         case .usage:
             OfficeLocalization.string("화이트보드")
         case .wiki:
-            "사내 위키"
+            OfficeLocalization.string("사내 위키")
         }
     }
 
@@ -32,7 +32,7 @@ enum OfficeDetailSelection: String, CaseIterable, Identifiable {
         case .usage:
             OfficeLocalization.string("현재 사용 가능량")
         case .wiki:
-            "승인된 지식과 확인"
+            OfficeLocalization.string("승인된 지식과 확인")
         }
     }
 
@@ -112,11 +112,11 @@ struct OfficeDetailPanel: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(usageIsRefreshing)
-                            .accessibilityLabel("한도 새로고침")
+                            .accessibilityLabel(OfficeLocalization.string("한도 새로고침"))
                             .accessibilityValue(
-                                usageIsRefreshing ? "새로고침 중" : ""
+                                usageIsRefreshing ? OfficeLocalization.string("새로고침 중") : ""
                             )
-                            .help("한도 새로고침")
+                            .help(OfficeLocalization.string("한도 새로고침"))
                         }
                     }
                 }
@@ -179,7 +179,7 @@ struct OfficeDetailPanel: View {
                         : Color.secondary
                 )
                 .accessibilityLabel(item.title)
-                .accessibilityValue(selection == item ? "선택됨" : "")
+                .accessibilityValue(selection == item ? OfficeLocalization.string("선택됨") : "")
                 .accessibilityIdentifier("officeDetailTab-\(item.rawValue)")
                 .help(item.title)
             }
@@ -222,29 +222,29 @@ private struct ArchiveShelfContent: View {
                     searchBar
 
                     if isLoading && turns.isEmpty {
-                        ProgressView("기록을 불러오는 중")
+                        ProgressView(OfficeLocalization.string("기록을 불러오는 중"))
                             .font(.system(size: 11, weight: .medium))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let errorMessage, turns.isEmpty {
                         ContentUnavailableView(
-                            "기록을 불러오지 못했습니다",
+                            OfficeLocalization.string("기록을 불러오지 못했습니다"),
                             systemImage: "exclamationmark.triangle",
                             description: Text(errorMessage)
                         )
                     } else if turns.isEmpty && normalizedSearchText.isEmpty {
                         ContentUnavailableView(
-                            "아직 저장된 기록이 없습니다",
+                            OfficeLocalization.string("아직 저장된 기록이 없습니다"),
                             systemImage: "tray",
                             description: Text(
-                                "직원에게 업무를 보내면 여기에 쌓입니다."
+                                OfficeLocalization.string("직원에게 업무를 보내면 여기에 쌓입니다.")
                             )
                         )
                     } else if turns.isEmpty {
                         ContentUnavailableView(
-                            "검색 결과가 없습니다",
+                            OfficeLocalization.string("검색 결과가 없습니다"),
                             systemImage: "text.magnifyingglass",
                             description: Text(
-                                "다른 이름이나 대화 내용으로 검색해보세요."
+                                OfficeLocalization.string("다른 이름이나 대화 내용으로 검색해보세요.")
                             )
                         )
                     } else {
@@ -290,7 +290,7 @@ private struct ArchiveShelfContent: View {
                 .foregroundStyle(.secondary)
 
             TextField(
-                "전체 기록 검색 · 업무, 응답, 세션, 모델",
+                OfficeLocalization.string("전체 기록 검색 · 업무, 응답, 세션, 모델"),
                 text: $searchText
             )
             .textFieldStyle(.plain)
@@ -304,7 +304,7 @@ private struct ArchiveShelfContent: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("검색어 지우기")
+                .accessibilityLabel(OfficeLocalization.string("검색어 지우기"))
             }
 
             if isLoading {
@@ -349,7 +349,7 @@ private struct ArchiveShelfContent: View {
                         .controlSize(.mini)
                 } else {
                     Image(systemName: "chevron.down")
-                    Text("다음 12건 보기")
+                    Text(OfficeLocalization.string("다음 12건 보기"))
                     Text("\(turns.count)/\(totalTurnCount)")
                         .foregroundStyle(.tertiary)
                 }
@@ -368,7 +368,7 @@ private struct ArchiveShelfContent: View {
         }
         .buttonStyle(.plain)
         .disabled(isLoadingMore)
-        .accessibilityLabel("다음 12개 기록 보기")
+        .accessibilityLabel(OfficeLocalization.string("다음 12개 기록 보기"))
     }
 
     private var normalizedSearchText: String {
@@ -479,7 +479,7 @@ private struct UsageBoardContent: View {
             } else if let errorMessage {
                 VStack(spacing: 10) {
                     ContentUnavailableView(
-                        "한도를 불러오지 못했습니다",
+                        OfficeLocalization.string("한도를 불러오지 못했습니다"),
                         systemImage: "wifi.exclamationmark",
                         description: Text(errorMessage)
                     )
@@ -489,14 +489,14 @@ private struct UsageBoardContent: View {
                         }
                     } label: {
                         Label(
-                            "다시 시도",
+                            OfficeLocalization.string("다시 시도"),
                             systemImage: "arrow.clockwise"
                         )
                     }
                     .disabled(isRefreshing)
                 }
             } else {
-                ProgressView("계정 한도를 확인하는 중")
+                ProgressView(OfficeLocalization.string("계정 한도를 확인하는 중"))
             }
         }
         .task(id: refreshRequestID) {
@@ -523,7 +523,7 @@ private struct UsageBoardContent: View {
                     .transition(
                         .move(edge: .bottom).combined(with: .opacity)
                     )
-                    .accessibilityLabel("업데이트 실패 \(updateErrorMessage)")
+                    .accessibilityLabel(OfficeLocalization.format("업데이트 실패 %@", updateErrorMessage))
             }
         }
         .animation(.easeOut(duration: 0.18), value: updateErrorMessage)
@@ -738,7 +738,7 @@ private struct UsageProviderCard: View {
                 if let update, update.checkFailed == true {
                     // 조회 실패를 최신처럼 보이게 두면 사용자가 오래된
                     // 버전을 계속 쓰게 된다.
-                    Text("확인 실패")
+                    Text(OfficeLocalization.string("확인 실패"))
                         .font(.system(size: 8.5, weight: .bold))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -746,14 +746,14 @@ private struct UsageProviderCard: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.secondary.opacity(0.12), in: Capsule())
-                        .help("설치본이나 최신 버전을 확인하지 못했습니다.")
-                        .accessibilityLabel("\(update.label) 버전 확인 실패")
+                        .help(OfficeLocalization.string("설치본이나 최신 버전을 확인하지 못했습니다."))
+                        .accessibilityLabel(OfficeLocalization.format("%@ 버전 확인 실패", update.label))
                 } else if let update, update.updateAvailable {
                     // 옆의 구독 배지와 같은 모양으로 둔다. 버전을 적으면
                     // 길어져 줄이 접히므로 문구는 고정하고 자세한 값은
                     // 도움말로 옮긴다.
                     Button(action: applyUpdate) {
-                        Text(isUpdating ? "업데이트 중" : "Update")
+                        Text(isUpdating ? OfficeLocalization.string("업데이트 중") : "Update")
                             .font(.system(size: 8.5, weight: .bold))
                             .foregroundStyle(tint)
                             .lineLimit(1)
@@ -768,7 +768,7 @@ private struct UsageProviderCard: View {
                         "설치본 \(update.installedVersion ?? "?") → "
                             + "\(update.latestVersion ?? "?")"
                     )
-                    .accessibilityLabel("\(update.label) 업데이트")
+                    .accessibilityLabel(OfficeLocalization.format("%@ 업데이트", update.label))
                 }
 
                 Spacer()
@@ -779,7 +779,7 @@ private struct UsageProviderCard: View {
             }
             if showsFiveHour {
                 UsageMeter(
-                    label: "5시간",
+                    label: OfficeLocalization.string("5시간"),
                     value: fiveHour,
                     resetAt: fiveHourResetAt,
                     fetchedAt: fetchedAt,
@@ -787,7 +787,7 @@ private struct UsageProviderCard: View {
                 )
             }
             UsageMeter(
-                label: "7일",
+                label: OfficeLocalization.string("7일"),
                 value: weekly,
                 resetAt: weeklyResetAt,
                 fetchedAt: fetchedAt,
@@ -800,14 +800,14 @@ private struct UsageProviderCard: View {
                 ) { reset in
                         HStack(spacing: 4) {
                             Label(
-                                "이미지 쿨다운",
+                                OfficeLocalization.string("이미지 쿨다운"),
                                 systemImage: "photo.badge.exclamationmark"
                             )
                             .foregroundStyle(
                                 Color(red: 0.85, green: 0.45, blue: 0.12)
                             )
                             Spacer()
-                            Text("초기화까지 \(reset)")
+                            Text(OfficeLocalization.format("초기화까지 %@", reset))
                                 .font(.system(size: 8.5, weight: .semibold))
                                 .foregroundStyle(
                                     Color(red: 0.85, green: 0.45, blue: 0.12)
@@ -852,9 +852,9 @@ private struct UsageProviderCard: View {
         let values = showsFiveHour ? [fiveHour, weekly] : [weekly]
         guard let lowest = values.compactMap({ $0 }).min()
         else {
-            return "정보 없음"
+            return OfficeLocalization.string("정보 없음")
         }
-        return lowest > 25 ? "사용 가능" : "잔여량 낮음"
+        return lowest > 25 ? OfficeLocalization.string("사용 가능") : OfficeLocalization.string("잔여량 낮음")
     }
 }
 
@@ -865,7 +865,7 @@ private struct UsageSubscriptionSummary: View {
     var body: some View {
         HStack(spacing: 4) {
             Label(
-                "상품 만료",
+                OfficeLocalization.string("상품 만료"),
                 systemImage: "calendar.badge.clock"
             )
             .foregroundStyle(tint)
@@ -905,7 +905,7 @@ private struct UsageActivitySummary: View {
     var body: some View {
         HStack(spacing: 4) {
             Label(
-                "API 요금 추정",
+                OfficeLocalization.string("API 요금 추정"),
                 systemImage: "chart.bar.xaxis"
             )
             .foregroundStyle(tint)
@@ -913,11 +913,11 @@ private struct UsageActivitySummary: View {
             Spacer(minLength: 2)
 
             HStack(spacing: 2) {
-                Text("오늘 비용")
+                Text(OfficeLocalization.string("오늘 비용"))
                 Text(costText(activity?.todayCostUSD))
                     .fontWeight(.bold)
                 Text("/")
-                Text("30일 비용")
+                Text(OfficeLocalization.string("30일 비용"))
                 Text(costText(activity?.last30DaysCostUSD))
                     .fontWeight(.bold)
             }
@@ -1029,7 +1029,7 @@ private struct UsageMeter: View {
                 fetchedAt: fetchedAt
             ) { reset in
                 Label(
-                    "초기화까지 \(reset)",
+                    OfficeLocalization.format("초기화까지 %@", reset),
                     systemImage: "clock.arrow.circlepath"
                 )
                 .font(.system(size: 8.5, weight: .semibold))
@@ -3089,7 +3089,7 @@ struct LiveWorkspaceFeed: View, Equatable {
                         VStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text("대화를 불러오는 중")
+                            Text(OfficeLocalization.string("대화를 불러오는 중"))
                                 .font(
                                     .system(
                                         size: 12,
@@ -3101,14 +3101,14 @@ struct LiveWorkspaceFeed: View, Equatable {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityElement(children: .combine)
-                        .accessibilityLabel("대화를 불러오는 중")
+                        .accessibilityLabel(OfficeLocalization.string("대화를 불러오는 중"))
                     } else {
                         ContentUnavailableView(
-                            "아직 업무 대화가 없습니다",
+                            OfficeLocalization.string("아직 업무 대화가 없습니다"),
                             systemImage:
                                 "bubble.left.and.text.bubble.right",
                             description: Text(
-                                "오피스에서 직원을 선택하고 첫 업무를 보내보세요."
+                                OfficeLocalization.string("오피스에서 직원을 선택하고 첫 업무를 보내보세요.")
                             )
                         )
                     }
@@ -3555,8 +3555,8 @@ struct LiveWorkspaceFeed: View, Equatable {
             .shadow(color: .black.opacity(0.12), radius: 3, y: 2)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("맨 아래로 이동")
-        .help("맨 아래로 이동")
+        .accessibilityLabel(OfficeLocalization.string("맨 아래로 이동"))
+        .help(OfficeLocalization.string("맨 아래로 이동"))
     }
 
     private func markAtBottom() {
@@ -4067,7 +4067,7 @@ struct LiveTurnPromptBlock: View {
 
             Button(action: copyPrompt) {
                 Label(
-                    didCopy ? "복사함" : "복사",
+                    didCopy ? OfficeLocalization.string("복사함") : OfficeLocalization.string("복사"),
                     systemImage: didCopy ? "checkmark" : "doc.on.doc"
                 )
                 .font(.system(size: 10, weight: .semibold))
@@ -4076,8 +4076,8 @@ struct LiveTurnPromptBlock: View {
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("질문 복사")
-            .help("질문 복사")
+            .accessibilityLabel(OfficeLocalization.string("질문 복사"))
+            .help(OfficeLocalization.string("질문 복사"))
         }
     }
 
@@ -4236,7 +4236,7 @@ private struct LiveTurnCard: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("이전 기록")
+                Text(OfficeLocalization.string("이전 기록"))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
@@ -4256,7 +4256,7 @@ private struct LiveTurnCard: View {
                 )
 
             if turn.origin == "terminal" {
-                Text("터미널")
+                Text(OfficeLocalization.string("터미널"))
                     .font(.system(size: 9.5, weight: .bold))
                     .foregroundStyle(DashboardPalette.accent)
                     .padding(.horizontal, 6)
@@ -4417,7 +4417,7 @@ private struct AgentPromptSuggestionList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("다음 질문 추천", systemImage: "sparkles")
+            Label(OfficeLocalization.string("다음 질문 추천"), systemImage: "sparkles")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(DashboardPalette.accent)
 
@@ -4431,7 +4431,7 @@ private struct AgentPromptSuggestionList: View {
                     .buttonStyle(.plain)
                     .disabled(isSending)
                     .opacity(isSending ? 0.45 : 1)
-                    .help("눌러서 이 질문 보내기")
+                    .help(OfficeLocalization.string("눌러서 이 질문 보내기"))
                     .accessibilityIdentifier(
                         "promptSuggestion.\(index + 1)"
                     )
@@ -5202,8 +5202,8 @@ struct CharacterBadge: View {
                     }
                 }
             }
-            .help("\(name) 프로필 보기")
-            .accessibilityLabel("\(name) 프로필 보기")
+            .help(OfficeLocalization.format("%@ 프로필 보기", name))
+            .accessibilityLabel(OfficeLocalization.format("%@ 프로필 보기", name))
         } else {
             avatar
         }

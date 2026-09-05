@@ -3,6 +3,7 @@
 import AppKit
 import Foundation
 import MarkdownUI
+import OfficeCore
 import SwiftUI
 
 struct ConversationCodeBlockView: View {
@@ -88,7 +89,7 @@ struct ConversationCodeBlockView: View {
 
             Button(action: copyCode) {
                 Label(
-                    didCopy ? "복사됨" : "복사",
+                    didCopy ? OfficeLocalization.string("복사됨") : OfficeLocalization.string("복사"),
                     systemImage: didCopy
                         ? "checkmark"
                         : "doc.on.doc"
@@ -102,7 +103,8 @@ struct ConversationCodeBlockView: View {
                 .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
-            .help("코드 복사")
+            .help(OfficeLocalization.string("코드 복사"))
+            .accessibilityLabel(OfficeLocalization.string("코드 복사"))
             .accessibilityIdentifier("conversationCodeBlockCopyButton")
         }
         .padding(.horizontal, 13)

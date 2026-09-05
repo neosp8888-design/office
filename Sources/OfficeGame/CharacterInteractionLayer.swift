@@ -127,7 +127,10 @@ struct CharacterInteractionLayer: View, Equatable {
                             + hitbox.midY * scale
                     )
                     .accessibilityLabel(
-                        "\(presentation.displayNames[character.id] ?? character.name) 선택"
+                        OfficeLocalization.format(
+                            "%@ 선택",
+                            presentation.displayNames[character.id] ?? character.name
+                        )
                     )
                 }
 
@@ -152,8 +155,8 @@ struct CharacterInteractionLayer: View, Equatable {
                     y: fittedFrame.minY
                         + archiveCabinetHitbox.midY * scale
                 )
-                .accessibilityLabel("전체 대화 보관함 열기")
-                .help("전체 대화 보관함")
+                .accessibilityLabel(OfficeLocalization.string("전체 대화 보관함 열기"))
+                .help(OfficeLocalization.string("전체 대화 보관함"))
 
                 let whiteboardHitbox =
                     OfficeWhiteboardGeometry.interactionRect(
@@ -175,8 +178,8 @@ struct CharacterInteractionLayer: View, Equatable {
                     y: fittedFrame.minY
                         + whiteboardHitbox.midY * scale
                 )
-                .accessibilityLabel("화이트보드 상세 열기")
-                .help("CLI 한도 상세")
+                .accessibilityLabel(OfficeLocalization.string("화이트보드 상세 열기"))
+                .help(OfficeLocalization.string("CLI 한도 상세"))
 
                 ForEach(presentation.characters) { character in
                     let monitorHitbox =
@@ -204,10 +207,16 @@ struct CharacterInteractionLayer: View, Equatable {
                             + monitorHitbox.midY * scale
                     )
                     .accessibilityLabel(
-                        "\(presentation.displayNames[character.id] ?? character.name) 대화 열기"
+                        OfficeLocalization.format(
+                            "%@ 대화 열기",
+                            presentation.displayNames[character.id] ?? character.name
+                        )
                     )
                     .help(
-                        "\(presentation.displayNames[character.id] ?? character.name) 대화 내역"
+                        OfficeLocalization.format(
+                            "%@ 대화 내역",
+                            presentation.displayNames[character.id] ?? character.name
+                        )
                     )
                 }
 
@@ -291,22 +300,19 @@ struct CharacterSpeechBubbleLayer: View {
                 .allowsHitTesting(!isThinking)
                 .transition(.scale(scale: 0.88).combined(with: .opacity))
                 .accessibilityLabel(
-                    isQuestion
-                        ? "\(displayName(for: character)) 질문에 답변하기"
-                        : isOffDuty
-                        ? "\(displayName(for: character)) 퇴근 사유 보기"
-                        : isFailure
-                        ? "\(displayName(for: character)) 중단 원인 보기"
-                        : "\(displayName(for: character)) 응답 전문 보기"
+                    bubbleAccessibilityLabel(
+                        for: character,
+                        isQuestion: isQuestion,
+                        isOffDuty: isOffDuty,
+                        isFailure: isFailure
+                    )
                 )
                 .help(
-                    isQuestion
-                        ? "질문에 답변하기"
-                        : isOffDuty
-                        ? "퇴근 사유 보기"
-                        : isFailure
-                        ? "중단 원인 보기"
-                        : "응답 전문 보기"
+                    bubbleHelpText(
+                        isQuestion: isQuestion,
+                        isOffDuty: isOffDuty,
+                        isFailure: isFailure
+                    )
                 )
             }
         }
@@ -314,6 +320,40 @@ struct CharacterSpeechBubbleLayer: View {
             .spring(response: 0.30, dampingFraction: 0.72),
             value: speechBubbleStore.bubbles
         )
+    }
+
+    private func bubbleAccessibilityLabel(
+        for character: CharacterConfiguration,
+        isQuestion: Bool,
+        isOffDuty: Bool,
+        isFailure: Bool
+    ) -> String {
+        let name = displayName(for: character)
+        if isQuestion {
+            return OfficeLocalization.format("%@ 질문에 답변하기", name)
+        } else if isOffDuty {
+            return OfficeLocalization.format("%@ 퇴근 사유 보기", name)
+        } else if isFailure {
+            return OfficeLocalization.format("%@ 중단 원인 보기", name)
+        } else {
+            return OfficeLocalization.format("%@ 응답 전문 보기", name)
+        }
+    }
+
+    private func bubbleHelpText(
+        isQuestion: Bool,
+        isOffDuty: Bool,
+        isFailure: Bool
+    ) -> String {
+        if isQuestion {
+            return OfficeLocalization.string("질문에 답변하기")
+        } else if isOffDuty {
+            return OfficeLocalization.string("퇴근 사유 보기")
+        } else if isFailure {
+            return OfficeLocalization.string("중단 원인 보기")
+        } else {
+            return OfficeLocalization.string("응답 전문 보기")
+        }
     }
 
     private func displayName(for character: CharacterConfiguration) -> String {
@@ -439,23 +479,32 @@ private struct CharacterSpeechBubble: View {
     @ViewBuilder
     private var statusLabel: some View {
         if isQuestion {
-            Label("답장 픽", systemImage: "questionmark.bubble.fill")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(
-                    Color(red: 0.56, green: 0.35, blue: 0.08)
-                )
+            Label(
+                OfficeLocalization.string("답장 픽"),
+                systemImage: "questionmark.bubble.fill"
+            )
+            .font(.system(size: 7, weight: .bold))
+            .foregroundStyle(
+                Color(red: 0.56, green: 0.35, blue: 0.08)
+            )
         } else if isOffDuty {
-            Label("오늘 마감", systemImage: "moon.zzz.fill")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(
-                    Color(red: 0.23, green: 0.32, blue: 0.57)
-                )
+            Label(
+                OfficeLocalization.string("오늘 마감"),
+                systemImage: "moon.zzz.fill"
+            )
+            .font(.system(size: 7, weight: .bold))
+            .foregroundStyle(
+                Color(red: 0.23, green: 0.32, blue: 0.57)
+            )
         } else if isFailure {
-            Label("앗차", systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(
-                    Color(red: 0.67, green: 0.14, blue: 0.12)
-                )
+            Label(
+                OfficeLocalization.string("앗차"),
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.system(size: 7, weight: .bold))
+            .foregroundStyle(
+                Color(red: 0.67, green: 0.14, blue: 0.12)
+            )
         }
     }
 

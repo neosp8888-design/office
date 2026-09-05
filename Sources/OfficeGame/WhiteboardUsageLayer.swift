@@ -32,7 +32,7 @@ struct WhiteboardUsageLayer: View {
         }
         .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("AI 잔여 한도")
+        .accessibilityLabel(OfficeLocalization.string("AI 잔여 한도"))
         .accessibilityValue(accessibilityValue)
         .task(id: isActive) {
             guard isActive else {
@@ -66,7 +66,9 @@ struct WhiteboardUsageLayer: View {
 
     private var accessibilityValue: String {
         guard let snapshot else {
-            return isLoading ? "조회 중" : "조회할 수 없음"
+            return isLoading
+                ? OfficeLocalization.string("조회 중")
+                : OfficeLocalization.string("조회할 수 없음")
         }
 
         return [
@@ -340,7 +342,9 @@ struct WhiteboardUsageLayer: View {
     }
 
     private func percentText(_ value: Int?) -> String {
-        value.map { "\($0)퍼센트" } ?? "정보 없음"
+        value.map {
+            OfficeLocalization.format("%d퍼센트", $0)
+        } ?? OfficeLocalization.string("정보 없음")
     }
 
     private func compactLimitText(
@@ -361,11 +365,12 @@ struct WhiteboardUsageLayer: View {
         remaining: Int?,
         resetAt: Date?
     ) -> String {
-        let limit = "\(provider) \(window) \(percentText(remaining))"
+        let localizedWindow = OfficeLocalization.string(window)
+        let limit = "\(provider) \(localizedWindow) \(percentText(remaining))"
         guard let reset = usageResetRemainingText(resetAt) else {
             return limit
         }
-        return "\(limit), 초기화까지 \(reset)"
+        return OfficeLocalization.format("%@, 초기화까지 %@", limit, reset)
     }
 }
 
@@ -400,9 +405,9 @@ func usageResetRemainingText(minutes totalMinutes: Int?) -> String? {
     let hours = totalMinutes / 60
     let minutes = totalMinutes % 60
     if hours == 0 {
-        return "\(minutes)분"
+        return OfficeLocalization.format("%d분", minutes)
     }
-    return "\(hours)시간 \(minutes)분"
+    return OfficeLocalization.format("%d시간 %d분", hours, minutes)
 }
 
 /// 직원이 쓰는 CLI의 설치본과 배포 최신본 비교 결과다.

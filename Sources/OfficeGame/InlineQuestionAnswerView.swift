@@ -37,8 +37,8 @@ struct InlineQuestionAnswerView: View {
                     .font(.system(size: 11, weight: .bold))
                 Text(
                     presentation.choices.isEmpty
-                        ? "답변하기"
-                        : "선택지에서 고르거나 직접 답변하기"
+                        ? OfficeLocalization.string("답변하기")
+                        : OfficeLocalization.string("선택지에서 고르거나 직접 답변하기")
                 )
                     .font(.system(size: 11, weight: .bold))
 
@@ -53,7 +53,7 @@ struct InlineQuestionAnswerView: View {
 
             if let error = director.questionSubmissionError(for: character) {
                 Label(
-                    "전송하지 못했습니다. \(error)",
+                    OfficeLocalization.format("전송하지 못했습니다. %@", error),
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.system(size: 10.5, weight: .semibold))
@@ -87,7 +87,7 @@ struct InlineQuestionAnswerView: View {
                 .stroke(Color.orange.opacity(0.28))
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("확인 질문 답변")
+        .accessibilityLabel(OfficeLocalization.string("확인 질문 답변"))
     }
 
     private func choiceButton(
@@ -134,7 +134,9 @@ struct InlineQuestionAnswerView: View {
         .disabled(isSending)
         .opacity(isSending ? 0.5 : 1)
         .accessibilityIdentifier("inlineNeedsInputChoice.\(index + 1)")
-        .accessibilityLabel("\(index + 1)번 \(choice.title)")
+        .accessibilityLabel(
+            OfficeLocalization.format("%d번 %@", index + 1, choice.title)
+        )
     }
 
     private func answerField(isSending: Bool) -> some View {
@@ -154,7 +156,7 @@ struct InlineQuestionAnswerView: View {
                 }
                 .focused($answerIsFocused)
                 .disabled(isSending)
-                .accessibilityLabel("답변 입력")
+                .accessibilityLabel(OfficeLocalization.string("답변 입력"))
                 .accessibilityIdentifier("inlineNeedsInputAnswer")
 
             Button {
@@ -175,8 +177,8 @@ struct InlineQuestionAnswerView: View {
             .buttonStyle(.plain)
             .disabled(isSending || trimmedAnswer.isEmpty)
             .opacity(isSending || trimmedAnswer.isEmpty ? 0.42 : 1)
-            .help("답변 보내기")
-            .accessibilityLabel("답변 보내기")
+            .help(OfficeLocalization.string("답변 보내기"))
+            .accessibilityLabel(OfficeLocalization.string("답변 보내기"))
             .accessibilityIdentifier("inlineNeedsInputSend")
         }
     }

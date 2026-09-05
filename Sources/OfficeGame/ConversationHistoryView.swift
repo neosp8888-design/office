@@ -29,27 +29,32 @@ struct CharacterConversationHistoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             historyHeader(
-                title: "\(director.displayName(for: character)) 대화 내역",
-                subtitle: "모니터에 연결된 CLI 세션"
+                title: OfficeLocalization.format(
+                    "%@ 대화 내역",
+                    director.displayName(for: character)
+                ),
+                subtitle: OfficeLocalization.string("모니터에 연결된 CLI 세션")
             )
 
             Divider()
 
             Group {
                 if isLoading {
-                    ProgressView("대화 내역을 불러오는 중")
+                    ProgressView(OfficeLocalization.string("대화 내역을 불러오는 중"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let errorMessage {
                     ContentUnavailableView(
-                        "대화 내역을 불러오지 못했습니다",
+                        OfficeLocalization.string("대화 내역을 불러오지 못했습니다"),
                         systemImage: "exclamationmark.triangle",
                         description: Text(errorMessage)
                     )
                 } else if let history, history.sessions.isEmpty {
                     ContentUnavailableView(
-                        "저장된 세션이 없습니다",
+                        OfficeLocalization.string("저장된 세션이 없습니다"),
                         systemImage: "bubble.left.and.bubble.right",
-                        description: Text("이 캐릭터에게 업무를 보내면 여기에 기록됩니다.")
+                        description: Text(
+                            OfficeLocalization.string("이 캐릭터에게 업무를 보내면 여기에 기록됩니다.")
+                        )
                     )
                 } else if let history {
                     ScrollView {
@@ -88,7 +93,7 @@ struct CharacterConversationHistoryView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("닫기") {
+            Button(OfficeLocalization.string("닫기")) {
                 dismiss()
             }
             .keyboardShortcut(.cancelAction)
@@ -115,10 +120,13 @@ private struct SessionHistoryCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("세션 ID")
+                    Text(OfficeLocalization.string("세션 ID"))
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.secondary)
-                    Text(session.externalId ?? "외부 세션 ID 없음")
+                    Text(
+                        session.externalId
+                            ?? OfficeLocalization.string("외부 세션 ID 없음")
+                    )
                         .font(.system(size: 14, design: .monospaced))
                 }
 
@@ -135,7 +143,7 @@ private struct SessionHistoryCard: View {
                         Image(systemName: "doc.on.doc")
                     }
                     .buttonStyle(.borderless)
-                    .help("세션 ID 복사")
+                    .help(OfficeLocalization.string("세션 ID 복사"))
                 }
             }
 
@@ -148,13 +156,18 @@ private struct SessionHistoryCard: View {
                     systemImage: "calendar"
                 )
                 Spacer()
-                Text("\(session.turns.count)개 업무")
+                Text(
+                    OfficeLocalization.format(
+                        "%d개 업무",
+                        session.turns.count
+                    )
+                )
             }
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.secondary)
 
             if session.turns.isEmpty {
-                Text("저장된 업무가 없습니다.")
+                Text(OfficeLocalization.string("저장된 업무가 없습니다."))
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             } else {
@@ -179,7 +192,10 @@ private struct TurnDisclosure: View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
                 taskPromptBlock
-                transcriptBlock(title: "응답", text: turn.response)
+                transcriptBlock(
+                    title: OfficeLocalization.string("응답"),
+                    text: turn.response
+                )
                 if let warning = turn.responseSourceWarning, !warning.isEmpty {
                     ResponseSourceWarningView(message: warning)
                 }
@@ -239,7 +255,7 @@ private struct TurnDisclosure: View {
 
     private var taskPromptBlock: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("업무")
+            Text(OfficeLocalization.string("업무"))
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
             if !promptPresentation.text.isEmpty {
@@ -285,14 +301,18 @@ struct ConversationArchiveView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("전체 대화 보관함")
+                    Text(OfficeLocalization.string("전체 대화 보관함"))
                         .font(.system(size: 22, weight: .bold))
-                    Text("캐릭터와 날짜 범위로 저장된 업무를 조회합니다.")
+                    Text(
+                        OfficeLocalization.string(
+                            "캐릭터와 날짜 범위로 저장된 업무를 조회합니다."
+                        )
+                    )
                         .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("닫기") {
+                Button(OfficeLocalization.string("닫기")) {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -308,19 +328,21 @@ struct ConversationArchiveView: View {
 
             Group {
                 if isLoading {
-                    ProgressView("전체 대화를 불러오는 중")
+                    ProgressView(OfficeLocalization.string("전체 대화를 불러오는 중"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let errorMessage {
                     ContentUnavailableView(
-                        "대화 내역을 불러오지 못했습니다",
+                        OfficeLocalization.string("대화 내역을 불러오지 못했습니다"),
                         systemImage: "exclamationmark.triangle",
                         description: Text(errorMessage)
                     )
                 } else if turns.isEmpty {
                     ContentUnavailableView(
-                        "조건에 맞는 대화가 없습니다",
+                        OfficeLocalization.string("조건에 맞는 대화가 없습니다"),
                         systemImage: "archivebox",
-                        description: Text("캐릭터 또는 날짜 범위를 바꿔보세요.")
+                        description: Text(
+                            OfficeLocalization.string("캐릭터 또는 날짜 범위를 바꿔보세요.")
+                        )
                     )
                 } else {
                     ScrollView {
@@ -360,8 +382,8 @@ struct ConversationArchiveView: View {
 
     private var filterBar: some View {
         HStack(spacing: 12) {
-            Picker("캐릭터", selection: $selectedCharacter) {
-                Text("전체 캐릭터")
+            Picker(OfficeLocalization.string("캐릭터"), selection: $selectedCharacter) {
+                Text(OfficeLocalization.string("전체 캐릭터"))
                     .tag(nil as OfficeCharacter?)
                 ForEach(director.characters) { character in
                     Text(director.displayName(for: character.id))
@@ -370,25 +392,25 @@ struct ConversationArchiveView: View {
             }
             .frame(width: 210)
 
-            Toggle("날짜 지정", isOn: $usesDateRange)
+            Toggle(OfficeLocalization.string("날짜 지정"), isOn: $usesDateRange)
                 .toggleStyle(.checkbox)
 
             DatePicker(
-                "시작",
+                OfficeLocalization.string("시작"),
                 selection: $startDate,
                 displayedComponents: .date
             )
             .disabled(!usesDateRange)
 
             DatePicker(
-                "종료",
+                OfficeLocalization.string("종료"),
                 selection: $endDate,
                 in: startDate...,
                 displayedComponents: .date
             )
             .disabled(!usesDateRange)
 
-            Button("조회") {
+            Button(OfficeLocalization.string("조회")) {
                 Task {
                     await load()
                 }
@@ -452,7 +474,7 @@ private struct ArchiveTurnCard: View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
                 taskPromptBlock
-                transcriptBlock(title: "응답", text: turn.response)
+                transcriptBlock(title: OfficeLocalization.string("응답"), text: turn.response)
                 if let warning = turn.responseSourceWarning, !warning.isEmpty {
                     ResponseSourceWarningView(message: warning)
                 }
@@ -470,7 +492,7 @@ private struct ArchiveTurnCard: View {
                 }
                 if let sessionID = turn.externalSessionId {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("세션 ID")
+                        Text(OfficeLocalization.string("세션 ID"))
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.secondary)
                         Text(sessionID)
@@ -528,7 +550,7 @@ private struct ArchiveTurnCard: View {
 
     private var taskPromptBlock: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("업무")
+            Text(OfficeLocalization.string("업무"))
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
             if !promptPresentation.text.isEmpty {
@@ -565,7 +587,10 @@ private func agentExecutionSummary(
     fastMode: Bool?
 ) -> String {
     guard let backend else {
-        return "실행 정보 기록 없음 · \(agentExecutionModeTitle(fastMode))"
+        return OfficeLocalization.format(
+            "실행 정보 기록 없음 · %@",
+            agentExecutionModeTitle(fastMode)
+        )
     }
 
     var parts = [backend.title]
@@ -579,7 +604,7 @@ private func agentExecutionSummary(
         let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines),
         !effort.isEmpty
     {
-        parts.append("추론 \(effort)")
+        parts.append(OfficeLocalization.format("추론 %@", effort))
     }
     parts.append(agentExecutionModeTitle(fastMode))
     return parts.joined(separator: " · ")

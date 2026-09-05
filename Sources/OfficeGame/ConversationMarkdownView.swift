@@ -535,7 +535,12 @@ private struct ConversationChangedFilesView: View {
                             )
 
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("변경 파일 \(files.count)개")
+                            Text(
+                                OfficeLocalization.format(
+                                    "변경 파일 %d개",
+                                    files.count
+                                )
+                            )
                                 .font(.system(size: 11.5, weight: .semibold))
                                 .foregroundStyle(.primary)
                             Text(previewText)
@@ -556,7 +561,9 @@ private struct ConversationChangedFilesView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(
-                    isExpanded ? "변경 파일 목록 접기" : "변경 파일 목록 펼치기"
+                    isExpanded
+                        ? OfficeLocalization.string("변경 파일 목록 접기")
+                        : OfficeLocalization.string("변경 파일 목록 펼치기")
                 )
 
                 Button(action: copyFiles) {
@@ -568,9 +575,15 @@ private struct ConversationChangedFilesView: View {
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
-                .help(copied ? "파일 목록 복사됨" : "파일 목록 복사")
+                .help(
+                    copied
+                        ? OfficeLocalization.string("파일 목록 복사됨")
+                        : OfficeLocalization.string("파일 목록 복사")
+                )
                 .accessibilityLabel(
-                    copied ? "파일 목록 복사됨" : "파일 목록 복사"
+                    copied
+                        ? OfficeLocalization.string("파일 목록 복사됨")
+                        : OfficeLocalization.string("파일 목록 복사")
                 )
             }
 
@@ -608,7 +621,9 @@ private struct ConversationChangedFilesView: View {
     private var previewText: String {
         let visible = files.prefix(2).map(\.title).joined(separator: " · ")
         let remaining = files.count - min(files.count, 2)
-        return remaining > 0 ? "\(visible) 외 \(remaining)개" : visible
+        return remaining > 0
+            ? OfficeLocalization.format("%@ 외 %d개", visible, remaining)
+            : visible
     }
 
     private func copyFiles() {
@@ -655,7 +670,7 @@ private final class ConversationMarkdownCache {
             in: .whitespacesAndNewlines
         )
         let rendered = trimmed.isEmpty
-            ? "내용 없음"
+            ? OfficeLocalization.string("내용 없음")
             : LocalMarkdownResource.addingLinkedImagePreviews(
                 to: trimmed,
                 fallbackDirectory: fallbackDirectory
@@ -750,7 +765,11 @@ private struct LocalMarkdownFileVideo: View {
                     .background(.black.opacity(0.58), in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isPlaying ? "영상 일시 정지" : "영상 재생")
+            .accessibilityLabel(
+                isPlaying
+                    ? OfficeLocalization.string("영상 일시 정지")
+                    : OfficeLocalization.string("영상 재생")
+            )
         }
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -861,7 +880,7 @@ private struct LocalMarkdownVideoSurface: NSViewRepresentable {
         let player = AVPlayer(url: url)
         player.isMuted = true
         let view = PlayerLayerView(player: player)
-        view.setAccessibilityLabel("대화 로컬 동영상")
+        view.setAccessibilityLabel(OfficeLocalization.string("대화 로컬 동영상"))
         context.coordinator.startLooping(player)
         return view
     }
@@ -965,8 +984,8 @@ private struct LocalMarkdownFileImage: View {
             }
         }
         .buttonStyle(.plain)
-        .help("이미지 열기")
-        .accessibilityLabel("이미지 열기")
+        .help(OfficeLocalization.string("이미지 열기"))
+        .accessibilityLabel(OfficeLocalization.string("이미지 열기"))
         .task(id: url) {
             await loadImage()
         }

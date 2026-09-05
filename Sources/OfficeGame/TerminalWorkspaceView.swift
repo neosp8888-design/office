@@ -232,7 +232,9 @@ private final class TerminalProcessHostView:
     private var applicationTerminationObserver: NSObjectProtocol?
 
     private lazy var statusLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "터미널을 시작하는 중입니다…")
+        let label = NSTextField(
+            labelWithString: OfficeLocalization.string("터미널을 시작하는 중입니다…")
+        )
         label.textColor = .secondaryLabelColor
         label.alignment = .center
         label.font = .systemFont(ofSize: 13, weight: .medium)
@@ -241,7 +243,11 @@ private final class TerminalProcessHostView:
     }()
 
     private lazy var restartButton: NSButton = {
-        let button = NSButton(title: "다시 시작", target: self, action: #selector(restartPressed))
+        let button = NSButton(
+            title: OfficeLocalization.string("다시 시작"),
+            target: self,
+            action: #selector(restartPressed)
+        )
         button.bezelStyle = .rounded
         button.isHidden = true
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -288,7 +294,7 @@ private final class TerminalProcessHostView:
         generation &+= 1
         let requestedGeneration = generation
         launchTask?.cancel()
-        statusLabel.stringValue = "터미널을 시작하는 중입니다…"
+        statusLabel.stringValue = OfficeLocalization.string("터미널을 시작하는 중입니다…")
         statusLabel.isHidden = false
         restartButton.isHidden = true
         launchTask = Task { [weak self] in
@@ -310,7 +316,10 @@ private final class TerminalProcessHostView:
             } catch {
                 guard requestedGeneration == generation else { return }
                 showStopped(
-                    "터미널을 열지 못했습니다.\n\(error.localizedDescription)"
+                    OfficeLocalization.format(
+                        "터미널을 열지 못했습니다.\n%@",
+                        error.localizedDescription
+                    )
                 )
             }
         }
@@ -330,7 +339,7 @@ private final class TerminalProcessHostView:
         oldTerminal?.processDelegate = nil
         oldTerminal?.terminate()
         oldTerminal?.removeFromSuperview()
-        statusLabel.stringValue = "터미널을 다시 시작하는 중입니다…"
+        statusLabel.stringValue = OfficeLocalization.string("터미널을 다시 시작하는 중입니다…")
         statusLabel.isHidden = false
         restartButton.isHidden = true
         Task { [weak self] in
@@ -415,8 +424,13 @@ private final class TerminalProcessHostView:
         terminal?.processDelegate = nil
         terminal = nil
         source.removeFromSuperview()
-        let suffix = exitCode.map { " (종료 코드 \($0))" } ?? ""
-        showStopped("터미널이 종료됐습니다\(suffix).")
+        let message: String
+        if let exitCode {
+            message = OfficeLocalization.format("터미널이 종료됐습니다 (종료 코드 %d).", exitCode)
+        } else {
+            message = OfficeLocalization.string("터미널이 종료됐습니다.")
+        }
+        showStopped(message)
         Task { [database, character] in
             try? await database.closeTerminalSession(character: character)
         }

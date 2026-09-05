@@ -1143,7 +1143,9 @@ enum SelectableMarkdownAttributedRenderer {
         let trimmed = source.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        let markdown = trimmed.isEmpty ? "내용 없음" : trimmed
+        let markdown = trimmed.isEmpty
+            ? OfficeLocalization.string("내용 없음")
+            : trimmed
         let markdownWithVisibleLineBreaks = preservingVisibleLineBreaks(
             in: markdown
         )

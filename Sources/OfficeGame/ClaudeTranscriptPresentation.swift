@@ -1,6 +1,7 @@
 // 이 파일은 Claude Code 활동 기록을 도구 중심 타임라인 항목으로 해석한다.
 
 import Foundation
+import OfficeCore
 
 /// Claude 활동 텍스트에서 복원한 도구 호출 한 건이다.
 struct ClaudeToolCall: Equatable {
@@ -300,7 +301,7 @@ struct ClaudeToolRun: Identifiable, Equatable {
         }
         let remainder = order.count - visible.count
         return visible.joined(separator: " · ")
-            + (remainder > 0 ? " 외 \(remainder)종" : "")
+            + (remainder > 0 ? OfficeLocalization.format(" 외 %d종", remainder) : "")
     }
 
     var latestStep: ClaudeToolStep? {
@@ -431,13 +432,13 @@ struct ClaudeEditRun: Identifiable, Equatable {
     var title: String {
         switch status {
         case .running:
-            "파일을 편집하는 중"
+            OfficeLocalization.string("파일을 편집하는 중")
         case .failed:
-            "파일 편집에 실패했습니다"
+            OfficeLocalization.string("파일 편집에 실패했습니다")
         case .completed:
             fileCount > 0
-                ? "파일 \(fileCount)개를 편집했습니다"
-                : "파일을 편집했습니다"
+                ? OfficeLocalization.format("파일 %d개를 편집했습니다", fileCount)
+                : OfficeLocalization.string("파일을 편집했습니다")
         }
     }
 

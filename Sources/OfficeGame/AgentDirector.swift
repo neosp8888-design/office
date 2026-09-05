@@ -968,32 +968,118 @@ final class AgentDirector: ObservableObject {
         "🛌 오늘의 목표, 무사 퇴근"
     ]
     private static let englishWorkingBubbleMessages = [
-        "🫡 Got it, on it",
-        "🧠 Thinking it through",
-        "⚡ Moving quickly",
-        "🧩 Putting the pieces together",
-        "👀 Checking the details",
-        "🛠️ Working on it",
-        "🔎 Tracing the issue",
-        "🧪 Verifying the result",
-        "🎯 Focusing on the key point",
-        "⌨️ Coding away",
-        "📌 Setting priorities",
-        "✅ Result coming soon",
+        "🫡 Order received, on it",
+        "🧠 Full brainpower ON",
+        "⚡ Speeding right through",
+        "🧩 Putting the puzzle together",
+        "👀 Watching the details",
+        "🛠️ Moving fast",
+        "🔎 Sniffing out issues",
+        "🚀 Gaining momentum",
+        "🧪 Thorough verification",
+        "🎯 Hitting key points",
+        "⌨️ Keyboard on fire",
+        "📌 Prioritizing tasks",
+        "🔥 Max concentration",
+        "🧯 Spark spotted, putting it out",
+        "🧭 Staying on track",
+        "📦 Packaging deliverables",
+        "💻 Syncing with code",
+        "⚙️ Rolling smoothly",
+        "🧠 Brainstorming internally",
+        "📈 Progress soaring",
+        "🪄 Clearing blockers",
+        "🧱 Building step by step",
+        "🔬 Polishing fine details",
+        "🗺️ Reading the next move",
+        "🏃 Racing against the clock",
+        "📎 Checking edge cases",
+        "🧰 Toolbox open",
+        "🧪 Testing till the end",
+        "🎮 Boss fight with bugs",
+        "🌊 Riding the flow",
+        "🕵️ Root cause hunting",
+        "📚 Diving into docs",
+        "⚡ Fingers speeding up",
+        "🧷 Beating the deadline",
+        "🧠 Thoughts organized",
+        "🔄 Cross-checking once more",
+        "🫧 Untangling complexity",
+        "💎 Shining up the quality",
+        "🐞 Hunting down bugs",
+        "🧨 Cutting risks early",
+        "📐 Tidying up edges",
+        "🧹 Cleaning up clutter",
+        "🏁 Finish line in sight",
+        "🪜 Clearing step by step",
+        "💬 Summing up key takeaways",
+        "🛰️ Pinpointing the solution",
+        "🥷 Handling it quietly",
+        "🍀 Everything clicking into place",
+        "🧋 Craving some bubble tea",
+        "✅ Results landing shortly",
     ]
     private static let englishIdleChatterMessages = [
-        "☕ Ready for the next task",
-        "👀 Standing by",
-        "🧠 Thinking ahead",
-        "🌱 Growing new ideas",
-        "🎧 Finding focus",
-        "🚀 Waiting for the next request",
-        "📌 Organizing today's work",
-        "🔍 Checking for missed details",
-        "🧩 Looking for improvements",
-        "🛠️ Watching the workflow",
-        "📚 Exploring new ideas",
-        "🎯 Ready when you are",
+        "☕ Running on 1% caffeine",
+        "👀 Ready to jump on new tasks",
+        "🧠 Brain fully booted up",
+        "🫠 Spacing out is part of the job",
+        "🍪 Snack radar all clear",
+        "😎 Keeping it pro even while idle",
+        "🪑 Synchronized with my chair",
+        "🌱 Sprouting new ideas",
+        "🎧 Picking a focus playlist",
+        "🚀 Standing by for the next order",
+        "📌 Organizing today's agenda",
+        "🔍 Scanning for missed details",
+        "🧭 Sniffing for the next task",
+        "🧩 Gathering improvement ideas",
+        "🛠️ Observing repetitive workflows",
+        "📈 Imagining today's growth curve",
+        "🤝 Waiting for a teammate call",
+        "💬 Question locked and loaded",
+        "🧪 Start small, celebrate big",
+        "📚 Browsing new features",
+        "📝 Leaving notes for future me",
+        "🎯 Picking the top priority",
+        "🌤️ Eyes need loading time too",
+        "🪴 Leveling up quietly",
+        "🎵 Finding the focus switch",
+        "🕰️ Double-checking before rushing",
+        "🛰️ Viewing from another angle",
+        "🧹 Closing tabs in my brain",
+        "🔄 Adding a twist of reverse thinking",
+        "💡 Friction is a chance to improve",
+        "📩 Staring down unread emails",
+        "🔔 Distracted by another ping",
+        "🗓️ Meetings giving birth to meetings",
+        "⏰ Why is it always busy 5m before clocking out?",
+        "🧾 Looking for final_v2_final.txt",
+        "📎 Serious about file naming",
+        "🫥 'Wait, what was I doing?' mode",
+        "☕ Focus before the coffee gets cold",
+        "🖨️ Staring contest with the printer",
+        "💬 'Quick favor', is it really?",
+        "📊 Staring at numbers",
+        "🧠 Multitasking is just a tab party",
+        "🚇 Commute drained my stamina already",
+        "🍱 Lunch menu: the biggest dilemma",
+        "🪫 I need a charger too",
+        "🧑‍💻 Hitting save one more time",
+        "🕔 Clock ticking in slow motion",
+        "📝 Writing todos only adds more todos",
+        "🔁 Remixing the same explanation",
+        "📞 Hanging up and deleting memory simultaneously",
+        "🧯 Urgent task on top of an emergency",
+        "🗂️ Cleaning folders while searching for a file",
+        "🪑 Meeting over, homework begins",
+        "🫠 Said 'Sure, I can do that' way too fast",
+        "😶 Spoke up and got assigned as owner",
+        "🧩 Requirements dancing around again",
+        "🌙 Late-night typos with 100% confidence",
+        "🧘 Three deep breaths before hitting send",
+        "🏃 Deadlines moving faster than me",
+        "🛌 Today's goal: clock out in peace"
     ]
     private static var workingBubbleMessages: [String] {
         OfficeLocalization.usesKorean
@@ -1265,7 +1351,7 @@ final class AgentDirector: ObservableObject {
         refreshBubblesAfterSelection(
             character.id,
             readyMessage: shouldShowReadyBubble
-                ? "🫡 콜! 준비 완료"
+                ? OfficeLocalization.string("🫡 콜! 준비 완료")
                 : nil
         )
     }
@@ -1397,7 +1483,7 @@ final class AgentDirector: ObservableObject {
                         latestQuestion = nil
                     }
                     showBubble(
-                        "오늘 할당량 끝, 퇴근 모드 🌙",
+                        OfficeLocalization.string("오늘 할당량 끝, 퇴근 모드 🌙"),
                         for: character.id,
                         autoDismiss: false
                     )
@@ -1419,7 +1505,7 @@ final class AgentDirector: ObservableObject {
                 } else {
                     failedCharacters[character.id] = message
                     showBubble(
-                        "앗, 작업 멈춤\n\(message)",
+                        OfficeLocalization.format("앗, 작업 멈춤\n%@", message),
                         for: character.id,
                         autoDismiss: false
                     )
@@ -1445,7 +1531,7 @@ final class AgentDirector: ObservableObject {
 
         cancellingCharacters.insert(character)
         showBubble(
-            "작업 정리 중... 🧹",
+            OfficeLocalization.string("작업 정리 중... 🧹"),
             for: character,
             autoDismiss: false
         )
@@ -1461,7 +1547,7 @@ final class AgentDirector: ObservableObject {
                 scheduleRealtimeFeedRefresh(turnID: cancelled.turnId)
             } catch {
                 turnPersistenceErrors[character] =
-                    "중단 요청이 삐끗했어요 · \(error.localizedDescription)"
+                    OfficeLocalization.format("중단 요청이 삐끗했어요 · %@", error.localizedDescription)
                 immediateQueueDrainCharacters.remove(character)
                 scheduleRealtimeFeedRefresh(turnID: nil)
             }
@@ -1760,7 +1846,7 @@ final class AgentDirector: ObservableObject {
         guard isReadyForSubmissions else {
             throw CharacterIdentitySettingsError.notReady(
                 sessionRestoreError
-                    ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+                    ?? OfficeLocalization.string("세션 복구가 끝난 뒤 설정할 수 있습니다.")
             )
         }
         guard
@@ -1801,7 +1887,7 @@ final class AgentDirector: ObservableObject {
             if trimmedName != currentName {
                 names[character] = trimmedName
             }
-            settingsStatus = "설정을 저장했습니다."
+            settingsStatus = OfficeLocalization.string("설정을 저장했습니다.")
         } catch {
             await restorePersistentState()
             settingsStatus = error.localizedDescription
@@ -1816,7 +1902,7 @@ final class AgentDirector: ObservableObject {
         settingsStatus = nil
         guard isReadyForSubmissions else {
             settingsStatus =
-                sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+                sessionRestoreError ?? OfficeLocalization.string("세션 복구가 끝난 뒤 설정할 수 있습니다.")
             return
         }
         guard
@@ -1824,11 +1910,11 @@ final class AgentDirector: ObservableObject {
             !compactingCharacters.contains(character)
         else {
             settingsStatus =
-                "진행 중인 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다."
+                OfficeLocalization.string("진행 중인 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다.")
             return
         }
         guard !isUpdatingConfiguration else {
-            settingsStatus = "다른 설정을 저장하는 중입니다."
+            settingsStatus = OfficeLocalization.string("다른 설정을 저장하는 중입니다.")
             return
         }
         isUpdatingConfiguration = true
@@ -1838,7 +1924,7 @@ final class AgentDirector: ObservableObject {
         do {
             try await database.updateSettings(settings, for: character)
             apply(settings, to: character)
-            settingsStatus = "설정을 저장했습니다."
+            settingsStatus = OfficeLocalization.string("설정을 저장했습니다.")
         } catch {
             let message = error.localizedDescription
             await restorePersistentState()
@@ -1885,7 +1971,7 @@ final class AgentDirector: ObservableObject {
     ) async throws {
         guard isReadyForSubmissions else {
             throw AgentContextCompactionError.notReady(
-                sessionRestoreError ?? "세션 복구가 끝난 뒤 설정할 수 있습니다."
+                sessionRestoreError ?? OfficeLocalization.string("세션 복구가 끝난 뒤 설정할 수 있습니다.")
             )
         }
         guard
@@ -1914,7 +2000,7 @@ final class AgentDirector: ObservableObject {
     ) async throws -> ContextCompactionResult {
         guard isReadyForSubmissions else {
             throw AgentContextCompactionError.notReady(
-                sessionRestoreError ?? "세션 복구가 끝난 뒤 압축할 수 있습니다."
+                sessionRestoreError ?? OfficeLocalization.string("세션 복구가 끝난 뒤 압축할 수 있습니다.")
             )
         }
         guard
@@ -2738,7 +2824,7 @@ final class AgentDirector: ObservableObject {
             }
         case .failed, .interrupted:
             let message =
-                turn.errorMessage ?? "작업이 멈췄어요."
+                turn.errorMessage ?? OfficeLocalization.string("작업이 멈췄어요.")
             if AgentUsageLimitClassifier.isLimitReached(message) {
                 if failedCharacters[character] != nil {
                     failedCharacters[character] = nil
@@ -2748,7 +2834,7 @@ final class AgentDirector: ObservableObject {
                 }
                 if !isWarningAcknowledged(for: character) {
                     showBubble(
-                        "오늘 할당량 끝, 퇴근 모드 🌙",
+                        OfficeLocalization.string("오늘 할당량 끝, 퇴근 모드 🌙"),
                         for: character,
                         autoDismiss: false
                     )
@@ -2762,7 +2848,7 @@ final class AgentDirector: ObservableObject {
                 }
                 if !isWarningAcknowledged(for: character) {
                     showBubble(
-                        "앗, 작업 멈춤\n\(message)",
+                        OfficeLocalization.format("앗, 작업 멈춤\n%@", message),
                         for: character,
                         autoDismiss: false
                     )
@@ -2890,11 +2976,11 @@ private enum AgentContextCompactionError: LocalizedError {
         case let .notReady(message):
             message
         case .noSession:
-            "압축할 활성 CLI 세션이 없습니다."
+            OfficeLocalization.string("압축할 활성 CLI 세션이 없습니다.")
         case .busy:
-            "현재 업무나 컨텍스트 압축이 끝난 뒤 다시 시도하세요."
+            OfficeLocalization.string("현재 업무나 컨텍스트 압축이 끝난 뒤 다시 시도하세요.")
         case .configurationBusy:
-            "다른 설정 저장이 끝난 뒤 다시 시도하세요."
+            OfficeLocalization.string("다른 설정 저장이 끝난 뒤 다시 시도하세요.")
         }
     }
 }
@@ -2910,17 +2996,17 @@ private enum CharacterIdentitySettingsError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .characterNotFound:
-            "직원 설정을 찾을 수 없습니다."
+            OfficeLocalization.string("직원 설정을 찾을 수 없습니다.")
         case .invalidNameLength:
-            "이름은 1자 이상 30자 이하여야 합니다."
+            OfficeLocalization.string("이름은 1자 이상 30자 이하여야 합니다.")
         case .invalidIdentityPromptLength:
-            "업무 지침은 1자 이상 1,200자 이하여야 합니다."
+            OfficeLocalization.string("업무 지침은 1자 이상 1,200자 이하여야 합니다.")
         case let .notReady(message):
             message
         case .busy:
-            "이 직원의 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다."
+            OfficeLocalization.string("이 직원의 업무나 컨텍스트 압축이 끝난 뒤 설정할 수 있습니다.")
         case .configurationBusy:
-            "다른 설정을 저장하는 중입니다."
+            OfficeLocalization.string("다른 설정을 저장하는 중입니다.")
         }
     }
 }

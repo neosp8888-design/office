@@ -1,5 +1,6 @@
 // 이 파일은 응답이 근거로 사용한 출처를 종류별로 한눈에 표시한다.
 
+import OfficeCore
 import SwiftUI
 
 enum ResponseSourceDisplayPolicy {
@@ -14,31 +15,35 @@ enum ResponseSourceDisplayPolicy {
 
 struct ResponseSourceWarningView: View {
     let message: String
-    let accessibilityIdentifier: String
-
-    init(
-        message: String,
-        accessibilityIdentifier: String = "responseSourceWarning"
-    ) {
-        self.message = message
-        self.accessibilityIdentifier = accessibilityIdentifier
-    }
+    var accessibilityIdentifier: String?
 
     var body: some View {
-        Label {
-            Text(message)
-        } icon: {
+        HStack(alignment: .top, spacing: 7) {
             Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.system(size: 11, weight: .semibold))
+
+            Text(message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 10.5, weight: .semibold))
-        .foregroundStyle(Color.orange)
-        .padding(9)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             Color.orange.opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
-        .accessibilityIdentifier(accessibilityIdentifier)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.18))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(
+            accessibilityIdentifier ?? "responseSourceWarning"
+        )
     }
 }
 
@@ -51,9 +56,12 @@ struct ResponseSourceList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Label("응답 근거", systemImage: "link")
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(.secondary)
+            Label(
+                OfficeLocalization.string("응답 근거"),
+                systemImage: "link"
+            )
+            .font(.system(size: 10.5, weight: .bold))
+            .foregroundStyle(.secondary)
 
             ForEach(visibleSources) { source in
                 ResponseSourceRow(
@@ -68,8 +76,11 @@ struct ResponseSourceList: View {
                 } label: {
                     Label(
                         showsAllSources
-                            ? "출처 접기"
-                            : "출처 \(sources.count - Self.collapsedLimit)개 더 보기",
+                            ? OfficeLocalization.string("출처 접기")
+                            : OfficeLocalization.format(
+                                "출처 %d개 더 보기",
+                                sources.count - Self.collapsedLimit
+                            ),
                         systemImage:
                             showsAllSources ? "chevron.up" : "chevron.down"
                     )

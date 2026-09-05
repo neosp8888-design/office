@@ -113,17 +113,17 @@ extension ClaudeToolGroupKind {
     var historyNoun: String {
         switch self {
         case .shell:
-            "명령"
+            OfficeLocalization.string("명령")
         case .read:
-            "읽기"
+            OfficeLocalization.string("읽기")
         case .search:
-            "검색"
+            OfficeLocalization.string("검색")
         case .web:
-            "조회"
+            OfficeLocalization.string("조회")
         case .delegate:
-            "위임"
+            OfficeLocalization.string("위임")
         case .other:
-            "도구 사용"
+            OfficeLocalization.string("도구 사용")
         }
     }
 }
@@ -191,7 +191,7 @@ struct ClaudeTranscriptView: View {
                     }
                 } label: {
                     Label(
-                        "이전 기록 \(hiddenCount)개 보기",
+                        OfficeLocalization.format("이전 기록 %d개 보기", hiddenCount),
                         systemImage: "clock.arrow.circlepath"
                     )
                     .font(.system(size: 10.5, weight: .semibold))
@@ -301,7 +301,7 @@ private struct ClaudeWaitingView: View {
             .frame(width: 20, height: 16)
             .accessibilityHidden(true)
 
-            Text("생각 중")
+            Text(OfficeLocalization.string("생각 중"))
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(.secondary)
 
@@ -314,7 +314,7 @@ private struct ClaudeWaitingView: View {
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("생각 중")
+        .accessibilityLabel(OfficeLocalization.string("생각 중"))
     }
 }
 
@@ -358,7 +358,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
                                     showsAllHistory = true
                                 } label: {
                                     Label(
-                                        "더 이전 추론 \(hiddenCount)개 보기",
+                                        OfficeLocalization.format("더 이전 추론 %d개 보기", hiddenCount),
                                         systemImage: "clock.arrow.circlepath"
                                     )
                                     .font(
@@ -379,8 +379,8 @@ private struct ClaudeThoughtRunView: View, Equatable {
                 } label: {
                     Text(
                         isExpanded
-                            ? "이전 추론 숨기기"
-                            : "이전 추론 \(historyCount)개 보기"
+                            ? OfficeLocalization.string("이전 추론 숨기기")
+                            : OfficeLocalization.format("이전 추론 %d개 보기", historyCount)
                     )
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -426,7 +426,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
                     .frame(width: 18)
             }
 
-            Text("추론")
+            Text(OfficeLocalization.string("추론"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
 
@@ -467,7 +467,7 @@ private struct ClaudeThoughtRunView: View, Equatable {
         }
         .padding(.vertical, isLatest ? 4 : 3)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("추론, \(thought.text)")
+        .accessibilityLabel(OfficeLocalization.format("추론, %@", thought.text))
     }
 
     private var visibleHistory: [ClaudeThought] {
@@ -516,7 +516,7 @@ private struct ClaudeToolRunView: View, Equatable {
                                     showsAllSteps = true
                                 } label: {
                                     Label(
-                                        "더 이전 호출 \(hiddenCount)개 보기",
+                                        OfficeLocalization.format("더 이전 호출 %d개 보기", hiddenCount),
                                         systemImage: "clock.arrow.circlepath"
                                     )
                                     .font(
@@ -537,8 +537,8 @@ private struct ClaudeToolRunView: View, Equatable {
                 } label: {
                     Text(
                         isExpanded
-                            ? "이전 \(run.kind.historyNoun) 숨기기"
-                            : "이전 \(run.kind.historyNoun) \(historyCount)개 보기"
+                            ? OfficeLocalization.format("이전 %@ 숨기기", run.kind.historyNoun)
+                            : OfficeLocalization.format("이전 %@ %d개 보기", run.kind.historyNoun, historyCount)
                     )
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -648,7 +648,7 @@ private struct ClaudeToolRunView: View, Equatable {
     /// Bash만 셸 프롬프트를 붙여 명령임을 드러낸다.
     private func detailText(_ step: ClaudeToolStep) -> String {
         guard !step.call.detail.isEmpty else {
-            return "실행"
+            return OfficeLocalization.string("실행")
         }
         return step.call.family == .shell
             ? "$ \(step.call.detail)"
@@ -745,9 +745,15 @@ private struct ClaudeEditRunView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help(copied ? "편집 목록 복사됨" : "편집 목록 복사")
+                .help(
+                    copied
+                        ? OfficeLocalization.string("편집 목록 복사됨")
+                        : OfficeLocalization.string("편집 목록 복사")
+                )
                 .accessibilityLabel(
-                    copied ? "편집 목록 복사됨" : "편집 목록 복사"
+                    copied
+                        ? OfficeLocalization.string("편집 목록 복사됨")
+                        : OfficeLocalization.string("편집 목록 복사")
                 )
                 .accessibilityIdentifier("copyEdits-\(run.id)")
             }
@@ -857,7 +863,7 @@ private struct ClaudePlanBoardView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(ClaudePalette.accent(for: backend))
 
-                Text("작업 계획")
+                Text(OfficeLocalization.string("작업 계획"))
                     .font(.system(size: 12, weight: .bold))
 
                 Text("\(board.doneCount)/\(board.steps.count)")
@@ -921,8 +927,14 @@ private struct ClaudePlanBoardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "작업 계획 \(board.steps.count)단계 중 \(board.doneCount)단계 완료"
-                + (board.activeStep.map { ", 진행 중 \($0.text)" } ?? "")
+            OfficeLocalization.format(
+                "작업 계획 %d단계 중 %d단계 완료",
+                board.steps.count,
+                board.doneCount
+            )
+                + (board.activeStep.map {
+                    OfficeLocalization.format(", 진행 중 %@", $0.text)
+                } ?? "")
         )
     }
 
@@ -1026,9 +1038,11 @@ private struct ClaudeMessageView: View {
 
     private var headerTitle: String {
         if needsInput {
-            return "답변 필요"
+            return OfficeLocalization.string("답변 필요")
         }
-        return isStreaming ? "작성 중인 응답" : "최종 응답"
+        return isStreaming
+            ? OfficeLocalization.string("작성 중인 응답")
+            : OfficeLocalization.string("최종 응답")
     }
 
     private var headerIcon: String {

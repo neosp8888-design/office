@@ -242,9 +242,10 @@ enum ConversationModeSwitchPolicy {
         guard !runningCharacterNames.isEmpty else {
             return nil
         }
-        return "직원이 일하는 중입니다. 작업이 끝난 뒤 다시 시도하세요.\n"
-            + "일하는 직원: "
-            + runningCharacterNames.joined(separator: ", ")
+        return OfficeLocalization.format(
+            "직원이 일하는 중입니다. 작업이 끝난 뒤 다시 시도하세요.\n일하는 직원: %@",
+            runningCharacterNames.joined(separator: ", ")
+        )
     }
 
     static func toggleOpacity(
@@ -449,28 +450,29 @@ private struct OfficeGameView: View {
             switch alert {
             case .confirmRunningTurn:
                 Alert(
-                    title: Text("터미널을 종료할까요?"),
+                    title: Text(OfficeLocalization.string("터미널을 종료할까요?")),
                     message: Text(
-                        "응답 중인 터미널이 있습니다. 대화 모드로 돌아가면 " +
-                        "해당 CLI 프로세스가 종료됩니다."
+                        OfficeLocalization.string(
+                            "응답 중인 터미널이 있습니다. 대화 모드로 돌아가면 해당 CLI 프로세스가 종료됩니다."
+                        )
                     ),
-                    primaryButton: .cancel(Text("계속 사용")),
-                    secondaryButton: .destructive(Text("대화로 전환")) {
+                    primaryButton: .cancel(Text(OfficeLocalization.string("계속 사용"))),
+                    secondaryButton: .destructive(Text(OfficeLocalization.string("대화로 전환"))) {
                         selectedConversationModeRawValue =
                             OfficeConversationMode.chat.rawValue
                     }
                 )
             case .blockedByRunningWork(let message):
                 Alert(
-                    title: Text("터미널 모드로 전환할 수 없습니다"),
-                    message: Text(message),
-                    dismissButton: .default(Text("확인"))
+                    title: Text(OfficeLocalization.string("터미널 모드로 전환할 수 없습니다")),
+                    message: Text(OfficeLocalization.string(message)),
+                    dismissButton: .default(Text(OfficeLocalization.string("확인")))
                 )
             case .statusError(let message):
                 Alert(
-                    title: Text("터미널 상태를 확인하지 못했습니다"),
-                    message: Text(message),
-                    dismissButton: .default(Text("확인"))
+                    title: Text(OfficeLocalization.string("터미널 상태를 확인하지 못했습니다")),
+                    message: Text(OfficeLocalization.string(message)),
+                    dismissButton: .default(Text(OfficeLocalization.string("확인")))
                 )
             }
         }
@@ -773,10 +775,14 @@ private struct OfficeGameView: View {
         }
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
         .fixedSize()
-        .accessibilityLabel("오피스 테마")
+        .accessibilityLabel(OfficeLocalization.string("오피스 테마"))
         .accessibilityValue(theme.title)
         .accessibilityIdentifier("officeThemeMenu")
-        .help(theme.isNight ? "낮 테마로 전환" : "밤 테마로 전환")
+        .help(
+            theme.isNight
+                ? OfficeLocalization.string("낮 테마로 전환")
+                : OfficeLocalization.string("밤 테마로 전환")
+        )
     }
 
     private var conversationModeToggle: some View {
@@ -796,16 +802,17 @@ private struct OfficeGameView: View {
         .frame(height: 32)
         .background(
             theme.isNight
-                ? Color.black.opacity(0.72)
+                ? Color.white.opacity(0.14)
                 : Color.white.opacity(0.92),
-            in: Capsule()
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
         )
         .overlay {
-            Capsule().stroke(
-                theme.isNight
-                    ? Color.white.opacity(0.25)
-                    : Color.black.opacity(0.08)
-            )
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(
+                    theme.isNight
+                        ? Color.white.opacity(0.25)
+                        : Color.black.opacity(0.08)
+                )
         }
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
         .opacity(
@@ -815,17 +822,19 @@ private struct OfficeGameView: View {
             )
         )
         .fixedSize()
-        .accessibilityLabel("대화 표시 방식")
+        .accessibilityLabel(OfficeLocalization.string("대화 표시 방식"))
         .accessibilityValue(
-            conversationMode == .terminal ? "터미널" : "대화"
+            conversationMode == .terminal
+                ? OfficeLocalization.string("터미널")
+                : OfficeLocalization.string("대화")
         )
         .accessibilityIdentifier("officeConversationModeToggle")
         .help(
             conversationMode == .terminal
-                ? "대화 모드로 전환"
+                ? OfficeLocalization.string("대화 모드로 전환")
                 : director.runningCharacters.isEmpty
-                    ? "터미널 모드로 전환"
-                    : "직원이 일하는 중이라 터미널 모드로 전환할 수 없습니다"
+                    ? OfficeLocalization.string("터미널 모드로 전환")
+                    : OfficeLocalization.string("직원이 일하는 중이라 터미널 모드로 전환할 수 없습니다")
         )
     }
 
@@ -893,13 +902,13 @@ private struct OfficeGameView: View {
                 )
         }
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
-        .accessibilityLabel("오피스 표현 방식")
+        .accessibilityLabel(OfficeLocalization.string("오피스 표현 방식"))
         .accessibilityValue(artStyle.title)
         .accessibilityIdentifier("officeArtStyleToggle")
         .help(
             artStyle == .twoD
-                ? "3D 오피스로 전환"
-                : "2D 오피스로 전환"
+                ? OfficeLocalization.string("3D 오피스로 전환")
+                : OfficeLocalization.string("2D 오피스로 전환")
         )
     }
 
@@ -917,46 +926,58 @@ private struct OfficeGameView: View {
         .buttonStyle(.plain)
         .disabled(backendController.status == .changing)
         .environment(\.colorScheme, theme.isNight ? .dark : .light)
-        .foregroundStyle(
-            backendController.status.showsStoppedWarning
-                ? Color.white
-                : theme.isNight
-                    ? Color.white
-                    : Color.black.opacity(0.72)
-        )
+        .foregroundStyle(backendForegroundStyle)
         .background(
-            backendController.status.showsStoppedWarning
-                ? Color(red: 0.87, green: 0.53, blue: 0.53)
-                : theme.isNight
-                    ? Color.black.opacity(0.72)
-                    : Color.white.opacity(0.92),
+            backendBackgroundStyle,
             in: Circle()
         )
         .overlay {
             Circle()
-                .stroke(
-                    backendController.status.showsStoppedWarning
-                        ? Color.white.opacity(0.32)
-                        : theme.isNight
-                            ? Color.white.opacity(0.25)
-                            : Color.black.opacity(0.08)
-                )
+                .stroke(backendStrokeStyle)
         }
         .shadow(color: .black.opacity(0.16), radius: 7, y: 3)
-        .accessibilityLabel("백엔드 서버")
-        .accessibilityValue(
-            backendController.status == .running
-                ? "실행 중"
-                : backendController.status == .stopped
-                    ? "중지됨"
-                    : "상태 확인 중"
-        )
+        .accessibilityLabel(OfficeLocalization.string("백엔드 서버"))
+        .accessibilityValue(backendAccessibilityValue)
         .accessibilityIdentifier("officeBackendToggle")
-        .help(
-            backendController.status == .running
-                ? "백엔드 중지. 실행 중인 업무도 중단될 수 있습니다."
-                : "백엔드 시작"
-        )
+        .help(backendHelpText)
+    }
+
+    private var backendForegroundStyle: Color {
+        if backendController.status.showsStoppedWarning {
+            return Color.white
+        }
+        return theme.isNight ? Color.white : Color.black.opacity(0.72)
+    }
+
+    private var backendBackgroundStyle: Color {
+        if backendController.status.showsStoppedWarning {
+            return Color(red: 0.87, green: 0.53, blue: 0.53)
+        }
+        return theme.isNight ? Color.black.opacity(0.72) : Color.white.opacity(0.92)
+    }
+
+    private var backendStrokeStyle: Color {
+        if backendController.status.showsStoppedWarning {
+            return Color.white.opacity(0.32)
+        }
+        return theme.isNight ? Color.white.opacity(0.25) : Color.black.opacity(0.08)
+    }
+
+    private var backendAccessibilityValue: String {
+        switch backendController.status {
+        case .running:
+            return OfficeLocalization.string("실행 중")
+        case .stopped:
+            return OfficeLocalization.string("중지됨")
+        default:
+            return OfficeLocalization.string("상태 확인 중")
+        }
+    }
+
+    private var backendHelpText: String {
+        backendController.status == .running
+            ? OfficeLocalization.string("백엔드 중지. 실행 중인 업무도 중단될 수 있습니다.")
+            : OfficeLocalization.string("백엔드 시작")
     }
 
     private func setArtStyle(_ nextStyle: OfficeArtStyle) {
@@ -1027,35 +1048,35 @@ private struct LiveWorkspaceHeader: View {
                 )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("실시간 대화")
-                    .font(.system(size: 17, weight: .bold))
-                Text(subtitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
+                    Text(OfficeLocalization.string("실시간 대화"))
+                        .font(.system(size: 17, weight: .bold))
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
 
-            Spacer()
+                Spacer()
 
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(
-                        director.isRealtimeConnected
-                            ? Color.green
-                            : Color.orange
-                    )
-                    .frame(width: 7, height: 7)
-                Text(director.isRealtimeConnected ? "LIVE" : "연결 중")
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(
+                            director.isRealtimeConnected
+                                ? Color.green
+                                : Color.orange
+                        )
+                        .frame(width: 7, height: 7)
+                    Text(director.isRealtimeConnected ? "LIVE" : OfficeLocalization.string("연결 중"))
+                }
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .help(
+                    director.realtimeConnectionError
+                        ?? OfficeLocalization.string("백엔드 WebSocket 실시간 연결")
+                )
             }
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(.secondary)
-            .help(
-                director.realtimeConnectionError
-                    ?? "백엔드 WebSocket 실시간 연결"
-            )
+            .padding(.horizontal, 17)
+            .padding(.vertical, 13)
         }
-        .padding(.horizontal, 17)
-        .padding(.vertical, 13)
-    }
 
     private var selectedName: String {
         guard
@@ -1140,9 +1161,9 @@ private struct LiveWorkspaceCommandBar: View {
         _ alert: ContextCompactionAlert
     ) -> Alert {
         Alert(
-            title: Text(alert.title),
-            message: Text(alert.message),
-            dismissButton: .default(Text("확인"))
+            title: Text(OfficeLocalization.string(alert.title)),
+            message: Text(OfficeLocalization.string(alert.message)),
+            dismissButton: .default(Text(OfficeLocalization.string("확인")))
         )
     }
 
@@ -1151,17 +1172,21 @@ private struct LiveWorkspaceCommandBar: View {
             let result = try await director.compactContext(for: character)
             let detail: String
             if let before = result.preTokens, let after = result.postTokens {
-                detail = "\(compactTokenCount(before)) → \(compactTokenCount(after)) 토큰"
+                detail = OfficeLocalization.format(
+                    "%@ → %@ 토큰",
+                    compactTokenCount(before),
+                    compactTokenCount(after)
+                )
             } else {
-                detail = "활성 세션을 요약 압축했습니다."
+                detail = OfficeLocalization.string("활성 세션을 요약 압축했습니다.")
             }
             contextCompactionAlert = .message(
-                title: "컨텍스트 압축 완료",
+                title: OfficeLocalization.string("컨텍스트 압축 완료"),
                 message: detail
             )
         } catch {
             contextCompactionAlert = .message(
-                title: "컨텍스트 압축 실패",
+                title: OfficeLocalization.string("컨텍스트 압축 실패"),
                 message: error.localizedDescription
             )
         }
@@ -1214,7 +1239,10 @@ private struct LiveWorkspaceCommandBar: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.red)
                 .accessibilityLabel(
-                    "첨부 오류: \(attachmentSelectionError)"
+                    OfficeLocalization.format(
+                        "첨부 오류: %@",
+                        attachmentSelectionError
+                    )
                 )
             }
 
@@ -1334,7 +1362,7 @@ private struct LiveWorkspaceCommandBar: View {
         HStack(spacing: 9) {
             Image(systemName: "terminal")
                 .foregroundStyle(.secondary)
-            Text("터미널에서 직접 입력하세요")
+            Text(OfficeLocalization.string("터미널에서 직접 입력하세요"))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
@@ -1351,7 +1379,7 @@ private struct LiveWorkspaceCommandBar: View {
     ) -> some View {
         HStack(spacing: 8) {
             Label(
-                "변경한 설정은 터미널을 다시 시작해야 적용됩니다.",
+                OfficeLocalization.string("변경한 설정은 터미널을 다시 시작해야 적용됩니다."),
                 systemImage: "arrow.clockwise.circle"
             )
             .font(.system(size: 10.5, weight: .medium))
@@ -1359,7 +1387,7 @@ private struct LiveWorkspaceCommandBar: View {
 
             Spacer(minLength: 0)
 
-            Button("다시 시작") {
+            Button(OfficeLocalization.string("다시 시작")) {
                 terminalRestartRequiredCharacters.remove(character)
                 director.requestTerminalRestart(for: character)
             }
@@ -1389,7 +1417,10 @@ private struct LiveWorkspaceCommandBar: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(
-                            "\(attachment.displayName) 첨부 제거"
+                            OfficeLocalization.format(
+                                "%@ 첨부 제거",
+                                attachment.displayName
+                            )
                         )
                     }
                     .padding(.horizontal, 9)
@@ -1498,10 +1529,14 @@ private struct LiveWorkspaceCommandBar: View {
                     )
                     }
                     .buttonStyle(.plain)
-                    .help("\(name) 선택")
-                    .accessibilityLabel("\(name) 선택")
+                    .help(OfficeLocalization.format("%@ 선택", name))
+                    .accessibilityLabel(
+                        OfficeLocalization.format("%@ 선택", name)
+                    )
                     .accessibilityValue(
-                        isSelected ? "선택됨" : "선택되지 않음"
+                        isSelected
+                            ? OfficeLocalization.string("선택됨")
+                            : OfficeLocalization.string("선택되지 않음")
                     )
                     .accessibilityIdentifier(
                         "commandCharacter-\(character.id.rawValue)"
@@ -1531,7 +1566,7 @@ private struct LiveWorkspaceCommandBar: View {
                 }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("직원 선택")
+        .accessibilityLabel(OfficeLocalization.string("직원 선택"))
     }
 
     private var commandPlaceholder: String {
@@ -1687,9 +1722,10 @@ private extension LiveWorkspaceCommandBar {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.allowsOtherFileTypes = true
-        panel.prompt = "첨부"
-        panel.message =
+        panel.prompt = OfficeLocalization.string("첨부")
+        panel.message = OfficeLocalization.string(
             "Antigravity, Claude Code 또는 Codex가 확인할 파일을 선택하세요."
+        )
 
         guard panel.runModal() == .OK else {
             return
@@ -1763,8 +1799,8 @@ private struct CharacterTaskStatusIndicator: View {
                     .controlSize(.mini)
                     .tint(compactionColor)
                     .frame(width: 19, height: 19)
-                    .accessibilityLabel("컨텍스트 압축 중")
-                    .help("컨텍스트 압축 중")
+                    .accessibilityLabel(OfficeLocalization.string("컨텍스트 압축 중"))
+                    .help(OfficeLocalization.string("컨텍스트 압축 중"))
             } else if let compactionNotice {
                 switch compactionNotice {
                 case .completed:
@@ -1773,7 +1809,7 @@ private struct CharacterTaskStatusIndicator: View {
                         .foregroundStyle(.white)
                         .frame(width: 19, height: 19)
                         .background(Color.green, in: Circle())
-                        .accessibilityLabel("컨텍스트 압축 완료")
+                        .accessibilityLabel(OfficeLocalization.string("컨텍스트 압축 완료"))
                         .help(compactionNoticeHelp(compactionNotice))
                 case .failed:
                     Image(systemName: "exclamationmark")
@@ -1781,7 +1817,7 @@ private struct CharacterTaskStatusIndicator: View {
                         .foregroundStyle(.white)
                         .frame(width: 19, height: 19)
                         .background(Color.red, in: Circle())
-                        .accessibilityLabel("컨텍스트 압축 실패")
+                        .accessibilityLabel(OfficeLocalization.string("컨텍스트 압축 실패"))
                         .help(compactionNoticeHelp(compactionNotice))
                 }
             } else if isRunning {
@@ -1798,7 +1834,7 @@ private struct CharacterTaskStatusIndicator: View {
                     isAnimated: !reduceMotion
                 )
                 .frame(width: 20, height: 14)
-                .accessibilityLabel("업무 중")
+                .accessibilityLabel(OfficeLocalization.string("업무 중"))
             } else if isCompleted {
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 11, weight: .black))
@@ -1810,7 +1846,7 @@ private struct CharacterTaskStatusIndicator: View {
                         radius: 4,
                         y: 2
                     )
-                    .accessibilityLabel("업무 완료")
+                    .accessibilityLabel(OfficeLocalization.string("업무 완료"))
             }
         }
         .frame(width: 24, height: 24)
@@ -1822,17 +1858,21 @@ private struct CharacterTaskStatusIndicator: View {
         switch notice {
         case let .completed(automatic, preTokens, postTokens):
             let title = automatic
-                ? "자동 컨텍스트 압축 완료"
-                : "컨텍스트 압축 완료"
+                ? OfficeLocalization.string("자동 컨텍스트 압축 완료")
+                : OfficeLocalization.string("컨텍스트 압축 완료")
             guard let preTokens, let postTokens else {
                 return title
             }
-            return "\(title) · \(compactTokenCount(preTokens)) → "
-                + "\(compactTokenCount(postTokens)) 토큰"
+            return OfficeLocalization.format(
+                "%@ · %@ → %@ 토큰",
+                title,
+                compactTokenCount(preTokens),
+                compactTokenCount(postTokens)
+            )
         case let .failed(automatic, message):
             let title = automatic
-                ? "자동 컨텍스트 압축 실패"
-                : "컨텍스트 압축 실패"
+                ? OfficeLocalization.string("자동 컨텍스트 압축 실패")
+                : OfficeLocalization.string("컨텍스트 압축 실패")
             guard let message, !message.isEmpty else {
                 return title
             }
@@ -1863,8 +1903,10 @@ private struct OfficeColumnResizeHandle: View {
                     onDragEnded()
                 }
         )
-        .accessibilityLabel("좌우 화면 폭 조절")
-        .accessibilityHint("드래그해서 사무실과 실시간 대화 영역의 폭을 조절합니다")
+        .accessibilityLabel(OfficeLocalization.string("좌우 화면 폭 조절"))
+        .accessibilityHint(
+            OfficeLocalization.string("드래그해서 사무실과 실시간 대화 영역의 폭을 조절합니다")
+        )
     }
 }
 
@@ -1890,8 +1932,10 @@ private struct OfficeRowResizeHandle: View {
                     onDragEnded()
                 }
         )
-        .accessibilityLabel("상하 화면 높이 조절")
-        .accessibilityHint("드래그해서 사무실과 상세 영역의 높이를 조절합니다")
+        .accessibilityLabel(OfficeLocalization.string("상하 화면 높이 조절"))
+        .accessibilityHint(
+            OfficeLocalization.string("드래그해서 사무실과 상세 영역의 높이를 조절합니다")
+        )
     }
 }
 
@@ -1968,18 +2012,18 @@ private struct BubbleDetailView: View {
                         .font(.system(size: 19, weight: .bold))
                     Text(
                         isQuestion
-                            ? "질문 원문을 확인하고 아래에 답변하세요"
+                            ? OfficeLocalization.string("질문 원문을 확인하고 아래에 답변하세요")
                             : isOffDuty
-                            ? "모델 한도 소진 원문과 재설정 안내"
+                            ? OfficeLocalization.string("모델 한도 소진 원문과 재설정 안내")
                             : isFailure
-                            ? "CLI 작업이 중단된 원인 전문"
-                            : "말풍선에 표시된 응답 전문"
+                            ? OfficeLocalization.string("CLI 작업이 중단된 원인 전문")
+                            : OfficeLocalization.string("말풍선에 표시된 응답 전문")
                     )
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("닫기") {
+                Button(OfficeLocalization.string("닫기")) {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -2008,8 +2052,8 @@ private struct BubbleDetailView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(
                         presentation.choices.isEmpty
-                            ? "답변"
-                            : "선택지"
+                            ? OfficeLocalization.string("답변")
+                            : OfficeLocalization.string("선택지")
                     )
                         .font(.system(size: 13, weight: .bold))
 
@@ -2019,7 +2063,7 @@ private struct BubbleDetailView: View {
                         )
                     {
                         Label(
-                            "전송하지 못했습니다. \(error)",
+                            OfficeLocalization.format("전송하지 못했습니다. %@", error),
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .font(.system(size: 11, weight: .semibold))
@@ -2098,14 +2142,14 @@ private struct BubbleDetailView: View {
                                     "needsInputChoice.\(index + 1)"
                                 )
                                 .accessibilityLabel(
-                                    "\(index + 1)번 \(choice.title)"
+                                    OfficeLocalization.format("%d번 %@", index + 1, choice.title)
                                 )
                             }
                         }
 
                         Divider()
 
-                        Text("직접 입력")
+                        Text(OfficeLocalization.string("직접 입력"))
                             .font(.system(size: 13, weight: .bold))
                     }
 
@@ -2131,11 +2175,11 @@ private struct BubbleDetailView: View {
                         .focused($answerIsFocused)
 
                     HStack {
-                        Text("답변은 같은 CLI 세션으로 이어집니다.")
+                        Text(OfficeLocalization.string("답변은 같은 CLI 세션으로 이어집니다."))
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("답변 보내기", action: submitTypedAnswer)
+                        Button(OfficeLocalization.string("답변 보내기"), action: submitTypedAnswer)
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.defaultAction)
                             .disabled(
@@ -2179,15 +2223,15 @@ private struct BubbleDetailView: View {
 
     private var detailTitle: String {
         if isQuestion {
-            return "\(name) 확인 질문"
+            return OfficeLocalization.format("%@ 확인 질문", name)
         }
         if isOffDuty {
-            return "\(name) 퇴근"
+            return OfficeLocalization.format("%@ 퇴근", name)
         }
         if isFailure {
-            return "\(name) 업무 중단"
+            return OfficeLocalization.format("%@ 업무 중단", name)
         }
-        return "\(name) 응답"
+        return OfficeLocalization.format("%@ 응답", name)
     }
 }
 
@@ -2304,9 +2348,13 @@ private struct ContextCompactionControls: View {
 
     private var thresholdHelp: String {
         guard let contextLimit else {
-            return "세션의 실제 최대 컨텍스트 대비 자동 압축 기준"
+            return OfficeLocalization.string("세션의 실제 최대 컨텍스트 대비 자동 압축 기준")
         }
-        return "실제 최대 \(compactTokenCount(contextLimit)) 토큰 중 \(thresholdText)에서 자동 압축"
+        return OfficeLocalization.format(
+            "실제 최대 %@ 토큰 중 %@에서 자동 압축",
+            compactTokenCount(contextLimit),
+            thresholdText
+        )
     }
 
     var body: some View {
@@ -2314,7 +2362,7 @@ private struct ContextCompactionControls: View {
             if ContextCompactionPresentation.usesAdjustableThreshold(
                 backend: character.backend
             ) {
-                Label("자동", systemImage: "gauge.with.dots.needle.33percent")
+                Label(OfficeLocalization.string("자동"), systemImage: "gauge.with.dots.needle.33percent")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(accent)
 
@@ -2327,8 +2375,8 @@ private struct ContextCompactionControls: View {
                 .frame(width: 92)
                 .tint(accent)
                 .disabled(!availability.canAdjustThreshold)
-                .accessibilityLabel("자동 컨텍스트 압축 기준")
-                .accessibilityValue("\(roundedPercent)퍼센트")
+                .accessibilityLabel(OfficeLocalization.string("자동 컨텍스트 압축 기준"))
+                .accessibilityValue(OfficeLocalization.format("%d퍼센트", roundedPercent))
                 .help(thresholdHelp)
 
                 Text(thresholdText)
@@ -2350,12 +2398,12 @@ private struct ContextCompactionControls: View {
                     HStack(spacing: 4) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("압축 중")
+                        Text(OfficeLocalization.string("압축 중"))
                     }
                     .font(.system(size: 11, weight: .semibold))
                 } else {
                     Label(
-                        "지금 압축",
+                        OfficeLocalization.string("지금 압축"),
                         systemImage: "arrow.down.right.and.arrow.up.left"
                     )
                     .font(.system(size: 11, weight: .semibold))
@@ -2364,20 +2412,20 @@ private struct ContextCompactionControls: View {
             .buttonStyle(.plain)
             .foregroundStyle(accent)
             .disabled(!availability.canRequestCompaction)
-            .accessibilityLabel("컨텍스트 지금 압축")
+            .accessibilityLabel(OfficeLocalization.string("컨텍스트 지금 압축"))
             .help(
                 availability.hasActiveSession
-                    ? "현재 CLI 세션의 컨텍스트를 즉시 요약 압축"
-                    : "첫 대화 뒤 활성 세션이 생기면 압축할 수 있습니다"
+                    ? OfficeLocalization.string("현재 CLI 세션의 컨텍스트를 즉시 요약 압축")
+                    : OfficeLocalization.string("첫 대화 뒤 활성 세션이 생기면 압축할 수 있습니다")
             )
 
             if !availability.isCompacting, let compactionNotice {
                 switch compactionNotice {
                 case .completed:
-                    Label("압축 완료", systemImage: "checkmark.circle.fill")
+                    Label(OfficeLocalization.string("압축 완료"), systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 case .failed:
-                    Label("압축 실패", systemImage: "exclamationmark.circle.fill")
+                    Label(OfficeLocalization.string("압축 실패"), systemImage: "exclamationmark.circle.fill")
                         .foregroundStyle(.red)
                 }
             }
@@ -2406,7 +2454,7 @@ private struct ContextCompactionControls: View {
                     director.autoCompactPercent(for: character.id)
                 )
                 onAlert(.message(
-                    title: "자동 압축 기준 저장 실패",
+                    title: OfficeLocalization.string("자동 압축 기준 저장 실패"),
                     message: error.localizedDescription
                 ))
             }
@@ -2427,7 +2475,11 @@ enum ContextCompactionPresentation {
         displayName: String,
         backendTitle: String
     ) -> String {
-        "\(displayName)의 \(backendTitle) 대화 내용을 요약으로 바꿉니다. 이전 세부 내용은 되돌릴 수 없습니다."
+        OfficeLocalization.format(
+            "%@의 %@ 대화 내용을 요약으로 바꿉니다. 이전 세부 내용은 되돌릴 수 없습니다.",
+            displayName,
+            backendTitle
+        )
     }
 }
 
@@ -2567,7 +2619,7 @@ private struct AgentQuickSettingsView: View {
                 Button {
                     isShowingModelVisibilitySettings = true
                 } label: {
-                    Label("표시 모델 관리…", systemImage: "slider.horizontal.3")
+                    Label(OfficeLocalization.string("표시 모델 관리…"), systemImage: "slider.horizontal.3")
                 }
             } label: {
                 QuickSettingLabel(
@@ -2602,7 +2654,11 @@ private struct AgentQuickSettingsView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help(settings.fastMode ? "Fast 모드 끄기" : "Fast 모드 켜기")
+                .help(
+                    settings.fastMode
+                        ? OfficeLocalization.string("Fast 모드 끄기")
+                        : OfficeLocalization.string("Fast 모드 켜기")
+                )
                 .disabled(!availability.canChangeCurrentBackendSettings)
             }
 
@@ -2742,9 +2798,9 @@ private struct AgentModelVisibilitySettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("표시 모델 관리")
+                    Text(OfficeLocalization.string("표시 모델 관리"))
                         .font(.system(size: 18, weight: .bold))
-                    Text("체크한 모델은 하단 선택기에서 제외됩니다. 새 모델은 자동으로 표시됩니다.")
+                    Text(OfficeLocalization.string("체크한 모델은 하단 선택기에서 제외됩니다. 새 모델은 자동으로 표시됩니다."))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -2779,12 +2835,12 @@ private struct AgentModelVisibilitySettingsView: View {
                                 }
                                 Spacer()
                                 if isModelInUse(model.id) {
-                                    Text("직원 사용 중")
+                                    Text(OfficeLocalization.string("직원 사용 중"))
                                         .font(.system(size: 10, weight: .semibold))
                                         .foregroundStyle(.orange)
                                 }
                                 if isExcluded(model.id) {
-                                    Text("선택에서 제외됨")
+                                    Text(OfficeLocalization.string("선택에서 제외됨"))
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(.red)
                                 }
@@ -2807,13 +2863,16 @@ private struct AgentModelVisibilitySettingsView: View {
                 HStack(spacing: 8) {
                     if let fetchedAt = catalog.fetchedAt {
                         Text(
-                            "최근 수집 \(fetchedAt.formatted(date: .abbreviated, time: .shortened))"
+                            OfficeLocalization.format(
+                                "최근 수집 %@",
+                                fetchedAt.formatted(date: .abbreviated, time: .shortened)
+                            )
                         )
                     } else {
-                        Text("내장 기본 목록 사용 중")
+                        Text(OfficeLocalization.string("내장 기본 목록 사용 중"))
                     }
                     if let lastError = catalog.lastError, !lastError.isEmpty {
-                        Text("· 마지막 갱신 실패")
+                        Text(OfficeLocalization.string("· 마지막 갱신 실패"))
                             .foregroundStyle(.orange)
                             .help(lastError)
                     }
@@ -2833,18 +2892,18 @@ private struct AgentModelVisibilitySettingsView: View {
                 Button {
                     refresh()
                 } label: {
-                    Label("목록 새로고침", systemImage: "arrow.clockwise")
+                    Label(OfficeLocalization.string("목록 새로고침"), systemImage: "arrow.clockwise")
                 }
                 .disabled(isRefreshing || isSaving)
 
                 Spacer()
 
-                Button("취소") {
+                Button(OfficeLocalization.string("취소")) {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button(isSaving ? "저장 중…" : "저장") {
+                Button(isSaving ? OfficeLocalization.string("저장 중…") : OfficeLocalization.string("저장")) {
                     save()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -2878,19 +2937,22 @@ private struct AgentModelVisibilitySettingsView: View {
     }
 
     private func modelDetail(_ model: AgentModelOption) -> String {
-        var parts = ["추론 " + model.efforts.joined(separator: " · ")]
+        var parts = [OfficeLocalization.format("추론 %@", model.efforts.joined(separator: " · "))]
         if model.supportsFastMode {
-            parts.append("Fast 지원")
+            parts.append(OfficeLocalization.string("Fast 지원"))
         }
         if let resolved = model.resolvedModel {
-            parts.append("실제 모델 " + resolved)
+            parts.append(OfficeLocalization.format("실제 모델 %@", resolved))
         }
         if let previous = model.previousResolvedModel,
            let changedAt = model.resolvedModelChangedAt
         {
             parts.append(
-                "\(changedAt.formatted(date: .abbreviated, time: .omitted))에 "
-                    + "\(previous)에서 바뀜"
+                OfficeLocalization.format(
+                    "%@에 %@에서 바뀜",
+                    changedAt.formatted(date: .abbreviated, time: .omitted),
+                    previous
+                )
             )
         }
         return parts.joined(separator: "  |  ")
@@ -2983,30 +3045,30 @@ private struct CharacterIdentitySettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("\(director.displayName(for: character)) 설정")
+            Text(OfficeLocalization.format("%@ 설정", director.displayName(for: character)))
                 .font(.system(size: 17, weight: .bold))
 
-            Text("선택한 직원의 이름과 업무 지침만 저장합니다.")
+            Text(OfficeLocalization.string("선택한 직원의 이름과 업무 지침만 저장합니다."))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
             Group {
                 if isLoading {
-                    ProgressView("최신 설정을 불러오는 중입니다.")
+                    ProgressView(OfficeLocalization.string("최신 설정을 불러오는 중입니다."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if hasLoaded {
                     VStack(alignment: .leading, spacing: 14) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("이름")
+                            Text(OfficeLocalization.string("이름"))
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
-                            TextField("이름", text: $nameDraft)
+                            TextField(OfficeLocalization.string("이름"), text: $nameDraft)
                                 .textFieldStyle(.roundedBorder)
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("업무 지침")
+                                Text(OfficeLocalization.string("업무 지침"))
                                     .font(
                                         .system(size: 11, weight: .semibold)
                                     )
@@ -3049,9 +3111,9 @@ private struct CharacterIdentitySettingsView: View {
                     }
                 } else {
                     VStack(spacing: 10) {
-                        Text("최신 설정을 불러오지 못했습니다.")
+                        Text(OfficeLocalization.string("최신 설정을 불러오지 못했습니다."))
                             .font(.system(size: 12, weight: .semibold))
-                        Button("다시 시도") {
+                        Button(OfficeLocalization.string("다시 시도")) {
                             Task {
                                 await load()
                             }
@@ -3070,10 +3132,10 @@ private struct CharacterIdentitySettingsView: View {
 
             HStack {
                 Spacer()
-                Button("취소") {
+                Button(OfficeLocalization.string("취소")) {
                     dismiss()
                 }
-                Button("저장") {
+                Button(OfficeLocalization.string("저장")) {
                     Task {
                         await save()
                     }

@@ -1,5 +1,4 @@
-// 이 파일은 승인된 사내 지식과 사용자 확인 대기 제안을 독립 패널로 표시한다.
-
+import OfficeCore
 import SwiftUI
 
 enum WikiKnowledgeSection: String, CaseIterable, Identifiable {
@@ -13,9 +12,9 @@ enum WikiKnowledgeSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .knowledge:
-            "현재 지식"
+            OfficeLocalization.string("현재 지식")
         case .pending:
-            "확인 대기"
+            OfficeLocalization.string("확인 대기")
         }
     }
 
@@ -128,7 +127,7 @@ struct WikiKnowledgeView: View {
                     )
                     .accessibilityLabel(item.title)
                     .accessibilityValue(
-                        section == item ? "선택됨" : ""
+                        section == item ? OfficeLocalization.string("선택됨") : ""
                     )
                     .accessibilityIdentifier("wikiSection-\(item.rawValue)")
                 }
@@ -144,9 +143,9 @@ struct WikiKnowledgeView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isLoading)
-                .accessibilityLabel("위키 새로고침")
+                .accessibilityLabel(OfficeLocalization.string("위키 새로고침"))
                 .accessibilityIdentifier("wikiRefreshButton")
-                .help("위키 새로고침")
+                .help(OfficeLocalization.string("위키 새로고침"))
             }
 
             if section == .knowledge {
@@ -164,10 +163,10 @@ struct WikiKnowledgeView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            TextField("제목·본문 검색", text: $searchText)
+            TextField(OfficeLocalization.string("제목·본문 검색"), text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                .accessibilityLabel("위키 검색")
+                .accessibilityLabel(OfficeLocalization.string("위키 검색"))
                 .accessibilityIdentifier("wikiSearchField")
 
             if !searchText.isEmpty {
@@ -178,7 +177,7 @@ struct WikiKnowledgeView: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("위키 검색어 지우기")
+                .accessibilityLabel(OfficeLocalization.string("위키 검색어 지우기"))
             }
         }
         .padding(.horizontal, 10)
@@ -194,18 +193,18 @@ struct WikiKnowledgeView: View {
         if isLoading {
             ProgressView(
                 section == .knowledge
-                    ? "지식을 불러오는 중"
-                    : "확인 대상을 불러오는 중"
+                    ? OfficeLocalization.string("지식을 불러오는 중")
+                    : OfficeLocalization.string("확인 대상을 불러오는 중")
             )
             .font(.system(size: 11, weight: .medium))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("wikiLoadingState")
         } else if let loadError {
             WikiUnavailableState(
-                title: "위키를 불러오지 못했습니다",
+                title: OfficeLocalization.string("위키를 불러오지 못했습니다"),
                 systemImage: "exclamationmark.triangle",
                 description: loadError,
-                actionTitle: "다시 시도"
+                actionTitle: OfficeLocalization.string("다시 시도")
             ) {
                 reloadID = UUID()
             }
@@ -225,14 +224,14 @@ struct WikiKnowledgeView: View {
         if pages.isEmpty {
             WikiUnavailableState(
                 title: normalizedSearchText.isEmpty
-                    ? "아직 승인된 지식이 없습니다"
-                    : "검색 결과가 없습니다",
+                    ? OfficeLocalization.string("아직 승인된 지식이 없습니다")
+                    : OfficeLocalization.string("검색 결과가 없습니다"),
                 systemImage: normalizedSearchText.isEmpty
                     ? "books.vertical"
                     : "text.magnifyingglass",
                 description: normalizedSearchText.isEmpty
-                    ? "승인된 제안이 이곳에 축적됩니다."
-                    : "다른 검색어로 다시 찾아보세요."
+                    ? OfficeLocalization.string("승인된 제안이 이곳에 축적됩니다.")
+                    : OfficeLocalization.string("다른 검색어로 다시 찾아보세요.")
             )
             .accessibilityIdentifier("wikiKnowledgeEmptyState")
         } else {
@@ -317,7 +316,7 @@ struct WikiKnowledgeView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(page.title)
                     .accessibilityValue(
-                        selectedPageID == page.id ? "선택됨" : ""
+                        selectedPageID == page.id ? OfficeLocalization.string("선택됨") : ""
                     )
                     .accessibilityIdentifier("wikiPage-\(page.id)")
                 }
@@ -363,13 +362,16 @@ struct WikiKnowledgeView: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         Label(
-                            "근거 \(selectedPage.sources.count)건",
+                            OfficeLocalization.format(
+                                "근거 %d건",
+                                selectedPage.sources.count
+                            ),
                             systemImage: "link"
                         )
                         .font(.system(size: 11, weight: .bold))
 
                         if selectedPage.sources.isEmpty {
-                            Text("연결된 업무 기록이 없습니다.")
+                            Text(OfficeLocalization.string("연결된 업무 기록이 없습니다."))
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         } else {
@@ -385,9 +387,9 @@ struct WikiKnowledgeView: View {
             .accessibilityIdentifier("wikiPageDetail")
         } else {
             WikiUnavailableState(
-                title: "지식을 선택하세요",
+                title: OfficeLocalization.string("지식을 선택하세요"),
                 systemImage: "doc.text",
-                description: "목록에서 문서를 선택하면 본문과 근거가 열립니다."
+                description: OfficeLocalization.string("목록에서 문서를 선택하면 본문과 근거가 열립니다.")
             )
         }
     }
@@ -396,9 +398,9 @@ struct WikiKnowledgeView: View {
     private var pendingContent: some View {
         if proposals.isEmpty {
             WikiUnavailableState(
-                title: "확인할 제안이 없습니다",
+                title: OfficeLocalization.string("확인할 제안이 없습니다"),
                 systemImage: "checkmark.circle",
-                description: "사용자 승인이 필요한 지식 제안이 여기에 표시됩니다."
+                description: OfficeLocalization.string("사용자 승인이 필요한 지식 제안이 여기에 표시됩니다.")
             )
             .accessibilityIdentifier("wikiPendingEmptyState")
         } else {
@@ -538,7 +540,10 @@ struct WikiKnowledgeView: View {
             switch decision {
             case .approve:
                 _ = try await client.approveWikiProposal(id: proposal.id)
-                actionNotice = "‘\(proposal.title)’ 제안을 승인했습니다."
+                actionNotice = OfficeLocalization.format(
+                    "‘%@’ 제안을 승인했습니다.",
+                    proposal.title
+                )
             case .reject:
                 let reason = WikiKnowledgeSelection.normalizedRejectionReason(
                     rejectionReasons[proposal.id, default: ""]
@@ -547,7 +552,10 @@ struct WikiKnowledgeView: View {
                     id: proposal.id,
                     reason: reason
                 )
-                actionNotice = "‘\(proposal.title)’ 제안을 거절했습니다."
+                actionNotice = OfficeLocalization.format(
+                    "‘%@’ 제안을 거절했습니다.",
+                    proposal.title
+                )
             }
 
             proposals.removeAll(where: { $0.id == proposal.id })
@@ -637,7 +645,7 @@ private struct WikiProposalCard: View {
 
             if !proposal.sourceRecordIds.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("근거 업무 기록")
+                    Text(OfficeLocalization.string("근거 업무 기록"))
                         .font(.system(size: 10, weight: .semibold))
                     Text(proposal.sourceRecordIds.joined(separator: " · "))
                         .font(.system(size: 9, design: .monospaced))
@@ -647,15 +655,18 @@ private struct WikiProposalCard: View {
             }
 
             HStack(spacing: 7) {
-                TextField("거절 사유 (선택)", text: $rejectionReason)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-                    .disabled(isSubmitting)
-                    .accessibilityIdentifier(
-                        "wikiRejectReason-\(proposal.id)"
-                    )
+                TextField(
+                    OfficeLocalization.string("거절 사유 (선택)"),
+                    text: $rejectionReason
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+                .disabled(isSubmitting)
+                .accessibilityIdentifier(
+                    "wikiRejectReason-\(proposal.id)"
+                )
 
-                Button("승인") {
+                Button(OfficeLocalization.string("승인")) {
                     approve()
                 }
                 .buttonStyle(.borderedProminent)
@@ -663,7 +674,10 @@ private struct WikiProposalCard: View {
                 .disabled(isSubmitting)
                 .accessibilityIdentifier("wikiApprove-\(proposal.id)")
 
-                Button("거절", role: .destructive) {
+                Button(
+                    OfficeLocalization.string("거절"),
+                    role: .destructive
+                ) {
                     reject()
                 }
                 .buttonStyle(.bordered)
@@ -673,7 +687,7 @@ private struct WikiProposalCard: View {
                 if isSubmitting {
                     ProgressView()
                         .controlSize(.small)
-                        .accessibilityLabel("처리 중")
+                        .accessibilityLabel(OfficeLocalization.string("처리 중"))
                 }
             }
 
