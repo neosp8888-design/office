@@ -1088,6 +1088,7 @@ private struct LiveWorkspaceCommandBar: View {
     @State private var attachmentSelectionError: String?
     @State private var isPreparingAttachments = false
     @State private var identitySettingsCharacter: OfficeCharacter?
+    @State private var contextCompactionAlert: ContextCompactionAlert?
     @State private var terminalRestartRequiredCharacters:
         Set<OfficeCharacter> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1129,6 +1130,41 @@ private struct LiveWorkspaceCommandBar: View {
                     character: character
                 )
             }
+            .alert(
+                item: $contextCompactionAlert,
+                content: contextCompactionAlertView
+            )
+    }
+
+    private func contextCompactionAlertView(
+        _ alert: ContextCompactionAlert
+    ) -> Alert {
+        Alert(
+            title: Text(alert.title),
+            message: Text(alert.message),
+            dismissButton: .default(Text("확인"))
+        )
+    }
+
+    private func compactContext(for character: OfficeCharacter) async {
+        do {
+            let result = try await director.compactContext(for: character)
+            let detail: String
+            if let before = result.preTokens, let after = result.postTokens {
+                detail = "\(compactTokenCount(before)) → \(compactTokenCount(after)) 토큰"
+            } else {
+                detail = "활성 세션을 요약 압축했습니다."
+            }
+            contextCompactionAlert = .message(
+                title: "컨텍스트 압축 완료",
+                message: detail
+            )
+        } catch {
+            contextCompactionAlert = .message(
+                title: "컨텍스트 압축 실패",
+                message: error.localizedDescription
+            )
+        }
     }
 
     private func isEnabled(
@@ -1225,7 +1261,13 @@ private struct LiveWorkspaceCommandBar: View {
                     ) {
                         ContextCompactionControls(
                             director: director,
-                            character: character
+                            character: character,
+                            onCompact: {
+                                Task {
+                                    await compactContext(for: character.id)
+                                }
+                            },
+                            onAlert: { contextCompactionAlert = $0 }
                         )
                         .id(character.id)
                     }
@@ -1270,6 +1312,11 @@ private struct LiveWorkspaceCommandBar: View {
 
                     Spacer(minLength: 0)
                 }
+                .frame(
+                    height: ConversationFooterLayout.controlRowHeight(
+                        for: character.backend
+                    )
+                )
 
                 if
                     conversationMode == .terminal,
@@ -2185,20 +2232,35 @@ struct ContextCompactionAvailability: Equatable {
     var canCompactNow: Bool {
         canAdjustThreshold && hasActiveSession
     }
+
+    var canRequestCompaction: Bool {
+        canAdjustThreshold
+    }
+}
+
+enum ConversationFooterLayout {
+    static func controlRowHeight(for _: AgentBackend) -> CGFloat {
+        return 28
+    }
 }
 
 private struct ContextCompactionControls: View {
     @ObservedObject var director: AgentDirector
     let character: CharacterConfiguration
+    let onCompact: () -> Void
+    let onAlert: (ContextCompactionAlert) -> Void
     @State private var draftPercent: Double
-    @State private var alert: ContextCompactionAlert?
 
     init(
         director: AgentDirector,
-        character: CharacterConfiguration
+        character: CharacterConfiguration,
+        onCompact: @escaping () -> Void,
+        onAlert: @escaping (ContextCompactionAlert) -> Void
     ) {
         self.director = director
         self.character = character
+        self.onCompact = onCompact
+        self.onAlert = onAlert
         _draftPercent = State(
             initialValue: Double(
                 director.autoCompactPercent(for: character.id)
@@ -2282,7 +2344,7 @@ private struct ContextCompactionControls: View {
             }
 
             Button {
-                alert = .confirmation
+                onCompact()
             } label: {
                 if availability.isCompacting {
                     HStack(spacing: 4) {
@@ -2301,7 +2363,7 @@ private struct ContextCompactionControls: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(accent)
-            .disabled(!availability.canCompactNow)
+            .disabled(!availability.canRequestCompaction)
             .accessibilityLabel("컨텍스트 지금 압축")
             .help(
                 availability.hasActiveSession
@@ -2326,7 +2388,6 @@ private struct ContextCompactionControls: View {
         ) { _, value in
             draftPercent = Double(value)
         }
-        .alert(item: $alert, content: compactionAlert)
     }
 
     private func thresholdEditingChanged(_ editing: Bool) {
@@ -2344,56 +2405,11 @@ private struct ContextCompactionControls: View {
                 draftPercent = Double(
                     director.autoCompactPercent(for: character.id)
                 )
-                alert = .message(
+                onAlert(.message(
                     title: "자동 압축 기준 저장 실패",
                     message: error.localizedDescription
-                )
+                ))
             }
-        }
-    }
-
-    private func compactionAlert(
-        _ alert: ContextCompactionAlert
-    ) -> Alert {
-        switch alert {
-        case .confirmation:
-            return Alert(
-                title: Text("컨텍스트를 지금 압축할까요?"),
-                message: Text(
-                    ContextCompactionPresentation.confirmationMessage(
-                        displayName: director.displayName(for: character.id),
-                        backendTitle: character.backend.title
-                    )
-                ),
-                primaryButton: .destructive(Text("압축")) {
-                    Task { await compactNow() }
-                },
-                secondaryButton: .cancel(Text("취소"))
-            )
-        case let .message(title, message):
-            return Alert(
-                title: Text(title),
-                message: Text(message),
-                dismissButton: .default(Text("확인"))
-            )
-        }
-    }
-
-    private func compactNow() async {
-        do {
-            let result = try await director.compactContext(for: character.id)
-            let detail: String
-            if let before = result.preTokens, let after = result.postTokens {
-                detail = "\(compactTokenCount(before)) → \(compactTokenCount(after)) 토큰"
-            } else {
-                detail = "활성 세션을 요약 압축했습니다."
-            }
-            alert = .message(title: "컨텍스트 압축 완료", message: detail)
-        } catch {
-            alert = .message(
-                title: "컨텍스트 압축 실패",
-                message: error.localizedDescription
-            )
         }
     }
 }
@@ -2416,15 +2432,23 @@ enum ContextCompactionPresentation {
 }
 
 private enum ContextCompactionAlert: Identifiable {
-    case confirmation
     case message(title: String, message: String)
 
     var id: String {
+        "message:\(title):\(message)"
+    }
+
+    var title: String {
         switch self {
-        case .confirmation:
-            "confirmation"
-        case let .message(title, message):
-            "message:\(title):\(message)"
+        case let .message(title, _):
+            title
+        }
+    }
+
+    var message: String {
+        switch self {
+        case let .message(_, message):
+            message
         }
     }
 }

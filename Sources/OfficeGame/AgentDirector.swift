@@ -1856,6 +1856,16 @@ final class AgentDirector: ObservableObject {
             .isEmpty
     }
 
+    func refreshActiveSessionAvailability(
+        for character: OfficeCharacter
+    ) async throws -> Bool {
+        let activeSessions = try await database.fetchActiveSessions()
+        let restored = ActiveSessionRestoreState(activeSessions: activeSessions)
+        conversationIDs[character] = restored.conversationIDs[character]
+        sessionIDs[character] = restored.sessionIDs[character]
+        return hasActiveSession(for: character)
+    }
+
     func sessionContextLimit(for character: OfficeCharacter) -> Int? {
         liveTurns.first {
             $0.characterId == character.rawValue &&
@@ -1907,9 +1917,6 @@ final class AgentDirector: ObservableObject {
                 sessionRestoreError ?? "세션 복구가 끝난 뒤 압축할 수 있습니다."
             )
         }
-        guard hasActiveSession(for: character) else {
-            throw AgentContextCompactionError.noSession
-        }
         guard
             !runningCharacters.contains(character),
             !compactingCharacters.contains(character)
@@ -1918,6 +1925,9 @@ final class AgentDirector: ObservableObject {
         }
         guard !isUpdatingConfiguration else {
             throw AgentContextCompactionError.configurationBusy
+        }
+        guard try await refreshActiveSessionAvailability(for: character) else {
+            throw AgentContextCompactionError.noSession
         }
         compactingCharacters.insert(character)
         defer { compactingCharacters.remove(character) }

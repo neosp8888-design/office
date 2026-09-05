@@ -81,8 +81,10 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
 
         XCTAssertTrue(available.canAdjustThreshold)
         XCTAssertTrue(available.canCompactNow)
+        XCTAssertTrue(available.canRequestCompaction)
         XCTAssertTrue(noSession.canAdjustThreshold)
         XCTAssertFalse(noSession.canCompactNow)
+        XCTAssertTrue(noSession.canRequestCompaction)
     }
 
     func testContextCompactionLocksControlsWhileRunning() {
@@ -96,6 +98,17 @@ final class AgentInteractionAvailabilityTests: XCTestCase {
 
         XCTAssertFalse(availability.canAdjustThreshold)
         XCTAssertFalse(availability.canCompactNow)
+        XCTAssertFalse(availability.canRequestCompaction)
+    }
+
+    func testConversationFooterUsesOneHeightForEveryBackend() {
+        let heights = Set(
+            AgentBackend.allCases.map {
+                ConversationFooterLayout.controlRowHeight(for: $0)
+            }
+        )
+
+        XCTAssertEqual(heights, [28])
     }
 
     func testStoredCharacterProfileDecodesAutoCompactPercent() throws {
