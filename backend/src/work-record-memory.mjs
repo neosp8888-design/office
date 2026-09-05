@@ -82,6 +82,7 @@ export async function persistCompletedTurnWorkRecord(client, {
   headCommit = null,
   changedFiles = [],
   recordedAt = null,
+  refreshTerminalResult = false,
 }) {
   const root = String(repositoryRoot ?? "").trim();
   if (!root) {
@@ -105,6 +106,9 @@ export async function persistCompletedTurnWorkRecord(client, {
     ...(backend ? { backend } : {}),
     ...(model ? { model } : {}),
   };
+  if (refreshTerminalResult) {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`officestra:work-record:${turnID}`]);
+  }
   const result = await client.query(
     `
       WITH selected_project AS (
@@ -208,6 +212,40 @@ export async function persistCompletedTurnWorkRecord(client, {
       recordedAt,
     ],
   );
+  if (refreshTerminalResult) {
+    // 일반 완료의 멱등 동작은 유지한다. CLI 후속 응답 갱신만 별도 허용해
+    // 보관함과 파생 RAG가 최초의 대기 문구에 고정되지 않게 한다.
+    await client.query(
+      `
+        WITH previous AS MATERIALIZED (
+          SELECT record.* FROM work_records AS record
+          JOIN turns AS turn ON turn.id = record.source_turn_id
+          WHERE record.source_turn_id = $1 AND record.record_type = 'result'
+            AND record.import_id IS NULL AND turn.origin = 'terminal'
+            AND turn.backend = 'antigravity' AND turn.status = 'completed'
+          FOR UPDATE OF record
+        ), updated_record AS (
+          UPDATE work_records AS record
+          SET body = $2, metadata = record.metadata || $3::jsonb, updated_at = now()
+          FROM previous
+          WHERE record.id = previous.id
+            AND (record.body IS DISTINCT FROM $2 OR record.metadata IS DISTINCT FROM record.metadata || $3::jsonb)
+          RETURNING record.*
+        )
+        INSERT INTO work_record_events (
+          record_id, record_version, event_type, actor_character_id, actor_type,
+          source_turn_id, previous_value, next_value, occurred_at
+        )
+        SELECT record.id,
+          COALESCE((SELECT max(event.record_version) FROM work_record_events AS event WHERE event.record_id = record.id), 0) + 1,
+          'updated', $4, 'character', $1,
+          jsonb_build_object('body', previous.body, 'metadata', previous.metadata),
+          jsonb_build_object('body', record.body, 'metadata', record.metadata), now()
+        FROM updated_record AS record JOIN previous ON previous.id = record.id
+      `,
+      [turnID, body, JSON.stringify(metadata), characterID],
+    );
+  }
   return result.rows?.[0] ?? null;
 }
 

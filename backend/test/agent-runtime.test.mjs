@@ -5725,6 +5725,23 @@ test("터미널 사용량 읽기는 대화 ID나 시작 시각이 없으면 건�
   );
 });
 
+test("완료 턴 후속 갱신은 Antigravity 터미널에만 허용한다", async () => {
+  const runtime = terminalTurnRuntime();
+  let sql;
+  const original = runtime.pool.query;
+  runtime.pool.query = async (query, values) => {
+    sql = query;
+    assert.deepEqual(values, ["turn-1", "left-man", true]);
+    return original(query, values);
+  };
+  await assert.rejects(runtime.completeTerminalTurn({
+    characterID: "left-man", turnID: "turn-1", response: "후속 응답", refreshCompleted: true,
+  }), /Antigravity 터미널 후속 응답만/);
+  assert.match(sql, /turn.origin = 'terminal'/);
+  assert.match(sql, /\$3::boolean AND turn.backend = 'antigravity' AND turn.status = 'completed'/);
+  assert.doesNotMatch(sql, /status = 'interrupted'/);
+});
+
 function terminalTurnRuntime() {
   return new AgentRuntime({
     pool: {

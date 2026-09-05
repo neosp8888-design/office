@@ -20,6 +20,7 @@ import {
   identityPromptWithStructuredResult,
   inspectStructuredTurnResult,
   prepareStructuredTurnResult,
+  readStructuredTurnResult,
   structuredResultToolDirectory,
   submitStructuredResponseSource,
   submitStructuredWikiProposal,
@@ -27,6 +28,18 @@ import {
 
 const RAG_DOCUMENT_ID = "11111111-1111-4111-8111-111111111111";
 const WORK_RECORD_ID = "22222222-2222-4222-8222-222222222222";
+
+test("후속 응답용 근거 조회는 파일을 소비하지 않고 새 근거도 보존한다", () => {
+  const path = prepareStructuredTurnResult({ workdir: "/followup-test", characterID: "followup-test" });
+  try {
+    submitStructuredResponseSource(path, { kind: "file", title: "첫 근거", locator: "first.mjs" });
+    assert.equal(readStructuredTurnResult(path).sources.length, 1);
+    assert.equal(existsSync(path), true);
+    submitStructuredResponseSource(path, { kind: "file", title: "후속 근거", locator: "last.mjs" });
+    assert.equal(consumeStructuredTurnResult(path).sources.length, 2);
+    assert.equal(existsSync(path), false);
+  } finally { rmSync(path, { force: true }); }
+});
 
 test("시스템 지침에서는 긴 JSON 계약을 제거하고 내부 결과 통로만 짧게 안내한다", () => {
   const prompt = `역할 지침

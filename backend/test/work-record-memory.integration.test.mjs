@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { AgentRuntime } from "../src/agent-runtime.mjs";
+import { normalizeResponseSources } from "../src/work-record-provenance.mjs";
 
 import {
   persistCompletedTurnWorkRecord,
@@ -15,6 +17,62 @@ import {
 
 const { Pool } = pg;
 const databaseURL = process.env.OFFICE_TEST_DATABASE_URL ?? "";
+
+test("Antigravity 후속 응답은 메시지·활동·비용·작업 기록·RAG를 함께 갱신한다", { skip: !databaseURL }, async () => {
+  const pool = new Pool({ connectionString: databaseURL });
+  const client = await pool.connect();
+  const suffix = randomUUID();
+  const characterID = `terminal-followup-${suffix}`;
+  const conversationID = randomUUID();
+  const sessionID = randomUUID();
+  const root = `/terminal-followup-test-${suffix}`;
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO characters (id, name, seat, backend, model, effort, permission, identity_prompt, config)
+      VALUES ($1, '후속 응답 검증', 'test', 'antigravity', 'gemini-3.8-flash', 'high', 'dangerously-skip-permissions', '', '{}')`, [characterID]);
+    await client.query("INSERT INTO conversations (id, title, workdir) VALUES ($1, '후속 응답 검증', $2)", [conversationID, root]);
+    await client.query("INSERT INTO cli_sessions (id, conversation_id, character_id) VALUES ($1, $2, $3)", [sessionID, conversationID, characterID]);
+    const runtime = new AgentRuntime({
+      pool: { query: client.query.bind(client) }, withTransaction: (operation) => operation(client),
+      repositoryRoot: root, workdir: root, broadcast() {},
+    });
+    const { turnID } = await runtime.beginTerminalTurn({ characterID, sessionID, prompt: "테스트 결과를 알려줘" });
+    const thinking = { kind: "thinking", text: "테스트 확인", eventKey: "terminal:step:2", status: "completed" };
+    const first = {
+      characterID, turnID, response: "작업 중입니다.", activities: [thinking],
+      usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningOutputTokens: 0 },
+    };
+    await runtime.completeTerminalTurn(first);
+    const revision = {
+      ...first, response: "실제 최종 결과입니다.", refreshCompleted: true,
+      activities: [thinking, { kind: "message", text: first.response, eventKey: "terminal:step:3", status: "completed" }],
+      usage: { inputTokens: 175, outputTokens: 18, cachedInputTokens: 0, reasoningOutputTokens: 0 },
+      structured: { sourcesSubmitted: true, sources: normalizeResponseSources([{ kind: "file", title: "검증", locator: "README.md" }]) },
+    };
+    await runtime.completeTerminalTurn(revision);
+    await runtime.completeTerminalTurn(revision);
+    const messages = await client.query("SELECT text FROM messages WHERE turn_id = $1 AND role = 'assistant'", [turnID]);
+    assert.deepEqual(messages.rows.map((row) => row.text), [revision.response]);
+    const activities = await client.query("SELECT text FROM turn_activities WHERE turn_id = $1 ORDER BY seq", [turnID]);
+    assert.deepEqual(activities.rows.map((row) => row.text), [thinking.text, first.response]);
+    const usage = (await client.query("SELECT input_tokens, output_tokens FROM usage_records WHERE turn_id = $1", [turnID])).rows[0];
+    assert.equal(Number(usage.input_tokens), 175);
+    assert.equal(Number(usage.output_tokens), 18);
+    const records = await client.query("SELECT id, body FROM work_records WHERE source_turn_id = $1", [turnID]);
+    assert.equal(records.rowCount, 1);
+    assert.match(records.rows[0].body, /실제 최종 결과입니다/);
+    const documents = await client.query("SELECT content FROM rag_documents WHERE work_record_id = $1", [records.rows[0].id]);
+    assert.equal(documents.rowCount, 1);
+    assert.match(documents.rows[0].content, /실제 최종 결과입니다/);
+    const events = await client.query("SELECT event_type, previous_value FROM work_record_events WHERE record_id = $1 ORDER BY record_version", [records.rows[0].id]);
+    assert.deepEqual(events.rows.map((row) => row.event_type), ["created", "updated"]);
+    assert.match(events.rows[1].previous_value.body, /작업 중입니다/);
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+    await pool.end();
+  }
+});
 
 test(
   "완료·승인·거절 기록과 RAG 수명주기는 PostgreSQL에서 멱등이다",

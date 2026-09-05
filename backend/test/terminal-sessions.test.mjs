@@ -514,7 +514,8 @@ test("Antigravity 파일 알림을 놓쳐도 주기 확인으로 턴을 완료�
     assert.equal(runtime.completed[0].response, "답변");
     assert.deepEqual(runtime.completed[0].activities.map((a) => a.kind), ["thinking", "tool"]);
     assert.equal(runtime.completed[0].structured.sources[0].locator, "agy.mjs");
-    assert.equal(state.activities.finish().length, 0);
+    // 다음 사용자 경계까지 같은 턴의 활동/근거를 보존한다.
+    assert.equal(state.activities.finish("답변").length, 2);
     assert.equal(state.runningTurnID, null);
   } finally {
     clearInterval(notificationStorm);
@@ -522,6 +523,121 @@ test("Antigravity 파일 알림을 놓쳐도 주기 확인으로 턴을 완료�
     await manager.close("boss");
   }
 });
+
+test("Antigravity 비동기 작업 뒤 후속 응답은 같은 턴을 갱신하고 다음 질문에 섞이지 않는다", async (t) => {
+  const h = await antigravityWatcherHarness(t);
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/antigravity-background-replies.json", import.meta.url)));
+  for (const snapshot of fixture.snapshots) {
+    for (const row of snapshot) h.insert(row);
+    await h.watcher.sweep();
+  }
+  assert.equal(h.runtime.begun.length, 2);
+  assert.deepEqual(h.runtime.completed.map((value) => value.turnID), ["turn-1", "turn-2", "turn-2", "turn-2", "turn-2"]);
+  assert.deepEqual(h.runtime.completed.map((value) => value.refreshCompleted), [false, false, true, true, true]);
+  const final = h.runtime.completed.at(-1);
+  assert.equal(final.response, fixture.snapshots.at(-1)[1].text);
+  assert.deepEqual(final.activities.filter((value) => value.kind === "message").map((value) => value.text), [
+    fixture.snapshots[1][2].text, fixture.snapshots[2][2].text, fixture.snapshots[3][2].text,
+  ]);
+  assert.equal(h.watcher.pendingIndexes.size, 0);
+  await h.watcher.sweep();
+  assert.equal(h.runtime.completed.length, 5, "변경 없는 재조회는 중복 저장하지 않는다");
+  h.insert({ idx: 4344, kind: "user", text: "새 질문" });
+  h.insert({ idx: 4345, kind: "assistant", text: "새 답변" });
+  await h.watcher.sweep();
+  assert.equal(h.runtime.completed.at(-1).turnID, "turn-3");
+  assert.deepEqual(h.runtime.completed.at(-1).activities, []);
+});
+
+test("Antigravity 늦게 완료된 이전 단계와 모드 진입 전 고아 응답을 새 질문에 붙이지 않는다", async (t) => {
+  const h = await antigravityWatcherHarness(t);
+  h.insert({ idx: 1, kind: "assistant", text: "모드 진입 전 응답" });
+  h.insert({ idx: 2, kind: "user", text: "응답 전 중단할 질문" });
+  h.insert({ idx: 3, kind: "assistant", text: "늦은 이전 답변", status: 1 });
+  await h.watcher.sweep();
+  h.insert({ idx: 4, kind: "user", text: "지금 질문" });
+  h.insert({ idx: 5, kind: "assistant", text: "지금 답변" });
+  await h.watcher.sweep();
+  h.database.prepare("UPDATE steps SET status = 3 WHERE idx = 3").run();
+  await h.watcher.sweep();
+  assert.deepEqual(h.runtime.interrupted.map((value) => value.turnID), ["turn-1"]);
+  assert.deepEqual(h.runtime.completed.map((value) => value.response), ["지금 답변"]);
+  assert.deepEqual(h.runtime.completed[0].activities, []);
+  assert.equal(h.watcher.pendingIndexes.size, 0);
+});
+
+test("Antigravity 후속 응답은 전체 단계 토큰·근거를 보존하며 재시도 때 중복 합산하지 않는다", async (t) => {
+  const h = await antigravityWatcherHarness(t);
+  const metadata = (input, output) => message(
+    bytesField(12, Buffer.from("execution")),
+    bytesField(1, message(numberField(1, 1_788_618_000))),
+    bytesField(9, message(numberField(2, input), numberField(3, output))),
+  );
+  h.insert({ idx: 1, kind: "user", text: "질문" });
+  await h.watcher.sweep();
+  submitStructuredResponseSource(h.state.structuredResultPath, { kind: "file", title: "첫 근거", locator: "first.mjs" });
+  h.insert({ idx: 2, kind: "assistant", text: "", metadata: metadata(100, 10) });
+  h.insert({ idx: 3, kind: "assistant", text: "작업 중", metadata: metadata(50, 5) });
+  await h.watcher.sweep();
+  assert.equal(h.runtime.completed[0].usage.inputTokens, 150);
+  submitStructuredResponseSource(h.state.structuredResultPath, { kind: "file", title: "후속 근거", locator: "last.mjs" });
+  h.insert({ idx: 4, kind: "assistant", text: "최종 답변", metadata: metadata(25, 3) });
+  const complete = h.runtime.completeTerminalTurn.bind(h.runtime);
+  let fail = true;
+  h.runtime.completeTerminalTurn = async (entry) => {
+    if (fail) { fail = false; throw new Error("일시적 저장 실패"); }
+    return complete(entry);
+  };
+  await assert.rejects(h.watcher.sweep(), /일시적 저장 실패/);
+  await h.watcher.sweep();
+  await h.watcher.sweep();
+  assert.equal(h.runtime.completed.length, 2);
+  assert.equal(h.runtime.completed[1].usage.inputTokens, 175);
+  assert.equal(h.runtime.completed[1].usage.outputTokens, 18);
+  assert.deepEqual(h.runtime.completed[1].structured.sources.map((value) => value.locator), ["first.mjs", "last.mjs"]);
+  assert.equal(h.runtime.completed[1].response, "최종 답변");
+});
+
+test("Antigravity 명시적 중단 뒤 늦은 응답은 중단 턴을 되살리지 않는다", async (t) => {
+  const h = await antigravityWatcherHarness(t);
+  h.insert({ idx: 1, kind: "user", text: "중단할 질문" });
+  await h.watcher.sweep();
+  await h.manager.interrupt("boss");
+  h.insert({ idx: 2, kind: "assistant", text: "중단 뒤 늦은 응답" });
+  await h.watcher.sweep();
+  assert.equal(h.runtime.completed.length, 0);
+  h.insert({ idx: 3, kind: "user", text: "다음 질문" });
+  h.insert({ idx: 4, kind: "assistant", text: "다음 답변" });
+  await h.watcher.sweep();
+  assert.deepEqual(h.runtime.completed.map((entry) => entry.response), ["다음 답변"]);
+  assert.deepEqual(h.runtime.completed[0].activities, []);
+});
+
+async function antigravityWatcherHarness(t) {
+  const root = await mkdtemp(join(tmpdir(), "officestra-antigravity-followups-"));
+  const externalSessionID = "01a0c0de-3333-7000-8000-000000000003";
+  await mkdir(join(root, "conversations"));
+  const database = new DatabaseSync(join(root, "conversations", `${externalSessionID}.db`));
+  database.exec("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, metadata BLOB, step_payload BLOB)");
+  const runtime = fakeRuntime({ backend: "antigravity", externalSessionID, permission: "dangerously-skip-permissions" });
+  const manager = new TerminalSessionManager({ runtime, broadcast() {}, antigravityRoot: root, antigravityPollIntervalMs: 60_000 });
+  await manager.open("boss");
+  const state = manager.sessions.get("boss");
+  await state.watcher.sweepPromise;
+  clearInterval(state.watcher.pollTimer);
+  for (const watcher of state.watcher.watchers) watcher.close();
+  state.watcher.watchers = [];
+  t.after(async () => { await manager.close("boss"); database.close(); });
+  return { runtime, manager, state, watcher: state.watcher, database, insert(row) {
+    const type = { user: 14, assistant: 15, tool: 132, notification: 101 }[row.kind];
+    const text = row.kind === "user"
+      ? bytesField(19, message(bytesField(2, Buffer.from(row.text ?? ""))))
+      : row.kind === "assistant" ? bytesField(20, message(bytesField(1, Buffer.from(row.text ?? "")))) : Buffer.alloc(0);
+    database.prepare("INSERT INTO steps VALUES (?, ?, ?, ?, ?)").run(
+      row.idx, type, row.status ?? 3, row.metadata ?? null, message(numberField(1, type), text),
+    );
+  } };
+}
 
 test("turn origin migration은 gui 기본값과 terminal 제약을 둔다", () => {
   const sql = readFileSync(new URL("../../database/migrations/034_turn_origin.sql", import.meta.url), "utf8");

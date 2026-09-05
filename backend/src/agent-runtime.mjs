@@ -1755,11 +1755,13 @@ export class AgentRuntime {
     structured = null,
     reportedCostUsd = null,
     activities = [],
+    refreshCompleted = false,
   }) {
     const result = await this.pool.query(
       `
         SELECT
           turn.id,
+          turn.status,
           turn.cli_session_id AS "sessionID",
           turn.prompt,
           turn.backend AS "executionBackend",
@@ -1786,14 +1788,20 @@ export class AgentRuntime {
         WHERE turn.id = $1
           AND session.character_id = $2
           AND turn.origin = 'terminal'
-          AND turn.status = 'running'
+          AND (
+            turn.status = 'running'
+            OR ($3::boolean AND turn.backend = 'antigravity' AND turn.status = 'completed')
+          )
       `,
-      [turnID, characterID],
+      [turnID, characterID, refreshCompleted === true],
     );
     if (result.rowCount === 0) {
       throw new AgentJobNotFoundError("완료할 터미널 턴을 찾을 수 없습니다.");
     }
     const row = result.rows[0];
+    if (refreshCompleted && row.executionBackend !== "antigravity") {
+      throw new AgentJobNotFoundError("Antigravity 터미널 후속 응답만 갱신할 수 있습니다.");
+    }
     const decoded = applyStructuredTurnResult(
       decodeAgentResponse(String(response ?? "")),
       structured,
@@ -1836,7 +1844,22 @@ export class AgentRuntime {
       endedAt,
       cancelRequested: false,
       structuredResultPath: null,
+      refreshTerminalResult: refreshCompleted === true,
     };
+    if (refreshCompleted) {
+      const previous = await this.pool.query(
+        `SELECT seq, kind, text, event_key AS "eventKey", status, collaboration
+         FROM turn_activities WHERE turn_id = $1 ORDER BY seq`,
+        [turnID],
+      );
+      for (const entry of previous.rows) {
+        state.sequence = Math.max(state.sequence, Number(entry.seq));
+        if (entry.eventKey) state.activityRecords.set(entry.eventKey, {
+          sequence: Number(entry.seq), kind: entry.kind, text: entry.text,
+          status: entry.status, collaboration: entry.collaboration ?? null,
+        });
+      }
+    }
     state.usage ??= await this.terminalTurnUsage(state, row.startedAt);
     if (reportedCostUsd !== null) {
       state.usage = {
@@ -3209,6 +3232,7 @@ export class AgentRuntime {
         reviewTree: workspaceReview?.reviewTree ?? null,
         headCommit: workspaceReview?.headCommit ?? null,
         changedFiles: workspaceReview?.changedFiles ?? [],
+        refreshTerminalResult: state.refreshTerminalResult === true,
       });
       completedWorkRecordID = storedRecord?.workRecordId ?? null;
       const wikiProposalWarning = await persistTurnWikiProposals(client, {

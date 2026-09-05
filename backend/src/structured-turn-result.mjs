@@ -120,7 +120,7 @@ export function inspectStructuredTurnResult(path) {
   return readStoredState(path);
 }
 
-export function consumeStructuredTurnResult(path) {
+export function readStructuredTurnResult(path) {
   if (!path) return emptyConsumedResult();
   try {
     const state = readStoredState(path);
@@ -138,6 +138,12 @@ export function consumeStructuredTurnResult(path) {
         "별도 응답 메타데이터를 읽지 못했습니다. " +
         (error instanceof Error ? error.message : String(error)),
     };
+  }
+}
+
+export function consumeStructuredTurnResult(path) {
+  try {
+    return readStructuredTurnResult(path);
   } finally {
     discardStructuredTurnResult(path);
   }

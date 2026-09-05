@@ -41,6 +41,7 @@ import {
   consumeStructuredTurnResult,
   discardStructuredTurnResult,
   prepareStructuredTurnResult,
+  readStructuredTurnResult,
   identityPromptWithStructuredResult,
 } from "./structured-turn-result.mjs";
 import { antigravityStepPayloadReasoning } from "./antigravity-reasoning.mjs";
@@ -193,7 +194,7 @@ export function parseAntigravityTerminalStep(row) {
           metadata: parseAntigravityStepMetadata(row.metadata),
           activities,
         }
-        : activities.length ? { kind: "activity", activities } : null;
+        : { kind: "activity", activities, metadata: parseAntigravityStepMetadata(row.metadata) };
     }
     if (stepType === 132) {
       return { kind: "activity", activities: [{
@@ -278,6 +279,9 @@ class AntigravityTerminalWatcher {
       : null;
     this.lastIndex = this.path ? this.maximumIndex(this.path) : -1;
     this.pendingIndexes = new Set();
+    // 응답 뒤 background task 알림으로 같은 질문의 후속 응답이 올 수 있다.
+    // running 잠금과 별개로 마지막 사용자 경계를 다음 질문까지 보존한다.
+    this.currentTurn = null;
     this.baseline = new Map(this.databaseFiles().map((entry) => [entry.path, entry.mtimeMs]));
     this.watchers = [];
     this.timer = null;
@@ -405,10 +409,18 @@ class AntigravityTerminalWatcher {
     for (const row of this.rows()) {
       const index = Number(row.idx);
       this.lastIndex = Math.max(this.lastIndex, index);
+      if (this.currentTurn && index < this.currentTurn.userIndex) {
+        this.pendingIndexes.delete(index);
+        continue;
+      }
       // Antigravity는 한 idx의 행을 먼저 미완료 상태로 INSERT한 뒤 UPDATE한다.
       // 커서만 넘기면 완료된 같은 행을 다시 볼 수 없으므로 따로 재조회한다.
       if (Number(row.status) !== 3) {
-        this.pendingIndexes.add(index);
+        // 실패/중단된 도구 행은 완료로 UPDATE되지 않는다.
+        if ([6, 7].includes(Number(row.status))) this.pendingIndexes.delete(index);
+        else this.pendingIndexes.add(index);
+        // 미완료 사용자 행 뒤 응답을 이전 질문에 붙이지 않는다.
+        if (Number(row.step_type) === 14) break;
         continue;
       }
       const event = parseAntigravityTerminalStep(row);
@@ -417,11 +429,13 @@ class AntigravityTerminalWatcher {
         continue;
       }
       if (event.kind === "user") {
-        if (this.state.runningTurnID) {
-          this.pendingIndexes.add(index);
-          continue;
-        }
         this.pendingIndexes.add(index);
+        await this.publishCurrentTurn();
+        if (this.state.runningTurnID) {
+          await this.runtime.interruptTerminalTurn(this.state.characterID, this.state.runningTurnID);
+          this.state.runningTurnID = null;
+        }
+        if (this.currentTurn) resetTerminalArtifacts(this.state);
         const turn = await this.runtime.beginTerminalTurn({
           characterID: this.state.characterID,
           sessionID: this.state.sessionID,
@@ -429,61 +443,69 @@ class AntigravityTerminalWatcher {
           execution: this.state.character,
         });
         this.state.runningTurnID = turn.turnID;
+        this.currentTurn = {
+          turnID: turn.turnID, userIndex: index, responseIndex: -1,
+          response: null, usageByIndex: new Map(), published: false, dirty: false,
+        };
         this.pendingIndexes.delete(index);
         continue;
       }
-      if (!this.state.runningTurnID) {
-        this.pendingIndexes.add(index);
+      if (!this.currentTurn) {
+        // 모드 진입 전의 고아 단계는 미래의 새 질문에 이월하지 않는다.
+        this.pendingIndexes.delete(index);
         continue;
       }
       for (const activity of event.activities ?? []) this.state.activities.add(activity);
-      if (event.kind === "activity") {
-        this.pendingIndexes.delete(index);
-        continue;
+      if (event.metadata?.usage) {
+        this.currentTurn.usageByIndex.set(index, event.metadata.usage);
       }
-      const turnID = this.state.runningTurnID;
-      const usage = event.metadata?.usage
-        ? {
-          ...event.metadata.usage,
-          cacheWriteInputTokens: null,
-          cacheWrite5mInputTokens: null,
-          cacheWrite1hInputTokens: null,
-        }
-        : null;
-      const structured = consumeStructuredTurnResult(
-        this.state.structuredResultPath,
-      );
-      this.state.structuredResultPath = null;
-      // 완료 저장이 실패해도 턴을 running으로 두면 안 된다. 이미 읽은
-      // 단계는 다시 오지 않으므로 세션이 그 턴에 영영 묶인다.
-      this.pendingIndexes.add(index);
-      try {
-        await this.runtime.completeTerminalTurn({
-          characterID: this.state.characterID,
-          turnID,
-          response: event.text,
-          endedAt: event.metadata?.at
-            ? new Date(event.metadata.at)
-            : new Date(),
-          usage,
-          initialGeneratedImages: this.state.initialGeneratedImages,
-          structured,
-          activities: this.state.activities.finish(event.text),
+      this.currentTurn.dirty = true;
+      if (event.kind === "assistant") {
+        this.state.activities.add({
+          kind: "message", text: event.text, eventKey: `step:${index}:message`,
         });
-        this.state.runningTurnID = null;
-        this.pendingIndexes.delete(index);
-        resetTerminalArtifacts(this.state);
-      } catch (error) {
-        await this.runtime.interruptTerminalTurn(
-          this.state.characterID,
-          turnID,
-        );
-        this.state.runningTurnID = null;
-        this.pendingIndexes.delete(index);
-        resetTerminalArtifacts(this.state);
-        throw error;
+        if (index > this.currentTurn.responseIndex) {
+          this.currentTurn.responseIndex = index;
+          this.currentTurn.response = event;
+        }
+      }
+      this.pendingIndexes.delete(index);
+    }
+    await this.publishCurrentTurn();
+  }
+
+  async publishCurrentTurn() {
+    const turn = this.currentTurn;
+    if (!turn?.dirty || !turn.response) return;
+    const totals = {};
+    for (const usage of turn.usageByIndex.values()) {
+      for (const key of ["inputTokens", "outputTokens", "cachedInputTokens", "reasoningOutputTokens"]) {
+        totals[key] = (totals[key] ?? 0) + (usage[key] ?? 0);
       }
     }
+    // 같은 질문의 전체 스냅샷으로 덮어쓴다. 재시도/후속 응답에 토큰을
+    // 더하기만 하거나 마지막 응답 한 단계의 사용량만 남기지 않는다.
+    await this.runtime.completeTerminalTurn({
+      characterID: this.state.characterID,
+      turnID: turn.turnID,
+      response: turn.response.text,
+      endedAt: turn.response.metadata?.at ? new Date(turn.response.metadata.at) : new Date(),
+      usage: turn.usageByIndex.size ? {
+        ...totals, cacheWriteInputTokens: null, cacheWrite5mInputTokens: null, cacheWrite1hInputTokens: null,
+      } : null,
+      initialGeneratedImages: this.state.initialGeneratedImages,
+      structured: readStructuredTurnResult(this.state.structuredResultPath),
+      activities: this.state.activities.finish(turn.response.text),
+      refreshCompleted: turn.published,
+    });
+    turn.published = true;
+    turn.dirty = false;
+    this.state.runningTurnID = null;
+  }
+
+  forgetCurrentTurn() {
+    this.currentTurn = null;
+    this.pendingIndexes.clear();
   }
 
   async stop({ finalSweep = true } = {}) {
@@ -1031,6 +1053,7 @@ export class TerminalSessionManager {
     await this.runtime.interruptTerminalTurn(id, turnID);
     state.runningTurnID = null;
     state.codexTurnID = null;
+    if (state.backend === "antigravity") state.watcher?.forgetCurrentTurn();
     this.resetTurnArtifacts(state);
     this.broadcast({ type: "terminal.changed", characterId: id });
     return { interrupted: true, turnId: turnID };
