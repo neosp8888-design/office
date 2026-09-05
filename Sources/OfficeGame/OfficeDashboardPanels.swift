@@ -281,10 +281,10 @@ private struct ArchiveShelfContent: View {
                     }
                 )
                 .frame(
-                    minWidth: 1_080,
-                    idealWidth: 1_160,
-                    minHeight: 720,
-                    idealHeight: 760
+                    minWidth: ArchiveBookSheetLayout.minimumWidth,
+                    idealWidth: ArchiveBookSheetLayout.idealWidth,
+                    minHeight: ArchiveBookSheetLayout.minimumHeight,
+                    idealHeight: ArchiveBookSheetLayout.idealHeight
                 )
             }
         }

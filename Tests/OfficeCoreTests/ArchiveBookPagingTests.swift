@@ -5,6 +5,13 @@ import XCTest
 @testable import OfficeGame
 
 final class ArchiveBookPagingTests: XCTestCase {
+    func testSheetAddsFortyPointsOnBothSides() {
+        XCTAssertEqual(ArchiveBookSheetLayout.minimumWidth, 1_080 + 40 * 2)
+        XCTAssertEqual(ArchiveBookSheetLayout.idealWidth, 1_160)
+        XCTAssertEqual(ArchiveBookSheetLayout.minimumHeight, 720)
+        XCTAssertEqual(ArchiveBookSheetLayout.idealHeight, 760)
+    }
+
     // 첫 기록에서는 이전이 없고, 그 뒤부터는 있다.
     func testPreviousNeedsAnEarlierIndex() {
         XCTAssertFalse(ArchiveBookPaging.canGoPrevious(index: 0))

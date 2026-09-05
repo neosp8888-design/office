@@ -169,6 +169,15 @@ private struct ArchiveRecordTile: View {
     }
 }
 
+enum ArchiveBookSheetLayout {
+    // SwiftUI 시트는 idealWidth보다 minWidth를 먼저 채택할 수 있다.
+    // 이전 1080pt에서 좌우 40pt씩 넓힌 실제 최소 폭도 함께 지정한다.
+    static let minimumWidth: CGFloat = 1_160
+    static let idealWidth: CGFloat = 1_160
+    static let minimumHeight: CGFloat = 720
+    static let idealHeight: CGFloat = 760
+}
+
 /// 시트 안에서 이전·다음 기록으로 넘길 수 있는지 정한다. 목록은 12건씩
 /// 불러오므로 마지막 칸이어도 더 받아 올 기록이 남았으면 다음으로 갈 수 있다.
 enum ArchiveBookPaging {
@@ -235,7 +244,10 @@ struct ArchiveOpenBook: View {
                 endPoint: .bottomTrailing
             )
         )
-        .conversationTextSelectionRegion("archive-book-\(turn.id)")
+        // 모달에는 기록 하나만 보이므로 선택을 호버에 따라 켜고 끌 필요가 없다.
+        // 공용 region의 조건 분기를 쓰면 커서 출입마다 두 ScrollView와
+        // 본문·표·코드 뷰가 재생성된다. 선택을 유지해 본문과 스크롤 위치를 보존한다.
+        .textSelection(.enabled)
     }
 
     private var bookToolbar: some View {

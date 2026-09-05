@@ -129,9 +129,9 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
             events: 160,
             samplePath: "/tmp/archivescroll/inactive-sample.txt"
         )
-        print("[archive-scroll] 1.선택 꺼짐 + 휠 160회: \(inactive.description)")
+        print("[archive-scroll] 1.기본 상태 + 휠 160회: \(inactive.description)")
 
-        // 선택이 켜지면 브랜치가 바뀌어 scroll view 인스턴스도 바뀌므로 다시 찾는다.
+        // 다른 대화의 선택 coordinator가 바뀌어도 팝업의 뷰는 그대로여야 한다.
         coordinator.activate("archive-book-\(turn.id)")
         host.layoutSubtreeIfNeeded()
         try await settle(for: .milliseconds(200))
@@ -140,16 +140,17 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
             return
         }
         print(
-            "[archive-scroll] 선택 켜진 뒤 같은 scroll view 인스턴스: "
+            "[archive-scroll] 공용 선택 변경 뒤 같은 scroll view 인스턴스: "
                 + "\(activeResponseScroll === firstResponseScroll)"
         )
+        XCTAssertTrue(activeResponseScroll === firstResponseScroll)
         let active = try await measureScrollStorm(
             host: host,
             scrollView: activeResponseScroll,
             events: 160,
             samplePath: "/tmp/archivescroll/active-sample.txt"
         )
-        print("[archive-scroll] 2.선택 켜짐 + 휠 160회: \(active.description)")
+        print("[archive-scroll] 2.공용 선택 변경 + 휠 160회: \(active.description)")
 
         // 화면에 올라간 창만 실제로 그린다. 창을 화면 오른쪽 아래 구석에
         // 거의 다 가려지게 두어 사용자 눈에 띄지 않게 하면서 그리기 비용을 잰다.
@@ -203,6 +204,105 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
         XCTAssertGreaterThan(abs(inactive.scrolledBy), 0, "휠 이벤트가 scroll view에 닿지 않았습니다.")
     }
 
+    func testArchiveHoverKeepsScrollViewsAndSelectedText() async throws {
+        let coordinator = ConversationTextSelectionCoordinator.shared
+        coordinator.reset()
+        defer { coordinator.reset() }
+
+        let turn = makeTurn()
+        let host = NSHostingView(rootView: ArchiveOpenBook(
+            turn: turn,
+            navigation: ArchiveBookNavigation(
+                index: 0,
+                total: 1,
+                canGoPrevious: false,
+                canGoNext: false
+            ),
+            onPrevious: {},
+            onNext: {},
+            onClose: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 1_160, height: 760)
+        let window = NSWindow(
+            contentRect: host.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        defer { window.contentView = nil }
+        host.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(150))
+
+        let documents = allDescendants(of: host)
+            .compactMap { $0 as? SelectableMarkdownDocumentView }
+        let scrollViews = allDescendants(of: host)
+            .compactMap { $0 as? NSScrollView }
+        let firstDocument = try XCTUnwrap(documents.first)
+        let selection = NSRange(location: 0, length: min(8, firstDocument.textView.string.utf16.count))
+        XCTAssertGreaterThan(selection.length, 0)
+        firstDocument.textView.setSelectedRange(selection)
+        let selectedText = (firstDocument.textView.string as NSString)
+            .substring(with: selection)
+        let responseScroll = try XCTUnwrap(responseScrollView(in: host))
+        responseScroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
+        responseScroll.reflectScrolledClipView(responseScroll.contentView)
+        let scrollOrigin = responseScroll.contentView.bounds.origin
+        let createdBefore = SelectableMarkdownDocumentView.createdCount
+
+        let cpu = try await measureCPUUtilization {
+            for index in 0..<20 {
+                if index.isMultiple(of: 2) {
+                    coordinator.handleHover(true, in: "archive-book-\(turn.id)")
+                } else {
+                    coordinator.handleHover(false, in: "archive-book-\(turn.id)")
+                    coordinator.activate("another-conversation")
+                }
+                host.layoutSubtreeIfNeeded()
+                try await settle(for: .milliseconds(8))
+            }
+        }
+
+        let currentDocuments = allDescendants(of: host)
+            .compactMap { $0 as? SelectableMarkdownDocumentView }
+        let currentScrollViews = allDescendants(of: host)
+            .compactMap { $0 as? NSScrollView }
+        let created = SelectableMarkdownDocumentView.createdCount - createdBefore
+        print("[archive-hover] changes=20 cpu=\(String(format: "%.3f", cpu)) created=\(created)")
+        XCTAssertEqual(created, 0, "호버 때문에 보관함 본문을 다시 만들면 안 됩니다.")
+        XCTAssertEqual(currentDocuments.map(ObjectIdentifier.init), documents.map(ObjectIdentifier.init))
+        XCTAssertEqual(currentScrollViews.map(ObjectIdentifier.init), scrollViews.map(ObjectIdentifier.init))
+        XCTAssertEqual(currentDocuments.first?.textView.selectedRange(), selection)
+        XCTAssertTrue(currentDocuments.allSatisfy { $0.textView.isSelectable })
+        XCTAssertEqual(responseScrollView(in: host)?.contentView.bounds.origin, scrollOrigin)
+
+        let textView = try XCTUnwrap(currentDocuments.first?.textView)
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        XCTAssertTrue(textView.writeSelection(to: pasteboard, types: textView.writablePasteboardTypes))
+        XCTAssertEqual(pasteboard.string(forType: .string), selectedText)
+
+        // 뷰를 유지하더라도 이전·다음으로 넘어가면 새 기록의 내용은 갱신돼야 한다.
+        host.rootView = ArchiveOpenBook(
+            turn: makeTurn(id: "next-record", response: "새 기록 검증: 다음 페이지의 응답입니다."),
+            navigation: ArchiveBookNavigation(
+                index: 1,
+                total: 2,
+                canGoPrevious: true,
+                canGoNext: false
+            ),
+            onPrevious: {},
+            onNext: {},
+            onClose: {}
+        )
+        host.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(100))
+        let nextPageText = allDescendants(of: host)
+            .compactMap { ($0 as? SelectableMarkdownDocumentView)?.textView.string }
+            .joined(separator: "\n")
+        XCTAssertEqual(nextPageText.trimmingCharacters(in: .whitespacesAndNewlines), "새 기록 검증: 다음 페이지의 응답입니다.")
+    }
+
     // 앱과 같은 SwiftUI 시트로 띄운다. 시트 창은 부모 창 위쪽 가운데에 붙으므로
     // 부모를 화면 오른쪽 아래 밖에 두면 시트도 거의 보이지 않는다.
     private struct SheetHarnessRoot: View {
@@ -226,10 +326,10 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
                         onClose: { isPresented = false }
                     )
                     .frame(
-                        minWidth: 1_080,
-                        idealWidth: 1_160,
-                        minHeight: 720,
-                        idealHeight: 760
+                        minWidth: ArchiveBookSheetLayout.minimumWidth,
+                        idealWidth: ArchiveBookSheetLayout.idealWidth,
+                        minHeight: ArchiveBookSheetLayout.minimumHeight,
+                        idealHeight: ArchiveBookSheetLayout.idealHeight
                     )
                 }
         }
@@ -282,6 +382,7 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
                 + "at \(Int(sheetWindow.frame.minX)),\(Int(sheetWindow.frame.minY)) "
                 + "visible=\(sheetWindow.isVisible)"
         )
+        XCTAssertGreaterThanOrEqual(sheetWindow.frame.width, ArchiveBookSheetLayout.minimumWidth)
         guard let firstScroll = responseScrollView(in: sheetHost) else {
             XCTFail("시트 안 응답 scroll view를 찾지 못했습니다.")
             return
@@ -293,7 +394,7 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
             events: 160,
             samplePath: "/tmp/archivescroll/sheet-inactive-sample.txt"
         )
-        print("[archive-sheet] 1.시트 + 선택 꺼짐 + 휠 160회: \(inactive.description)")
+        print("[archive-sheet] 1.시트 기본 상태 + 휠 160회: \(inactive.description)")
 
         coordinator.activate("archive-book-\(turn.id)")
         sheetHost.layoutSubtreeIfNeeded()
@@ -302,13 +403,14 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
             XCTFail("선택이 켜진 뒤 시트 안 scroll view를 찾지 못했습니다.")
             return
         }
+        XCTAssertTrue(activeScroll === firstScroll)
         let active = try await measureScrollStorm(
             host: sheetHost,
             scrollView: activeScroll,
             events: 160,
             samplePath: "/tmp/archivescroll/sheet-active-sample.txt"
         )
-        print("[archive-sheet] 2.시트 + 선택 켜짐 + 휠 160회: \(active.description)")
+        print("[archive-sheet] 2.시트 공용 선택 변경 + 휠 160회: \(active.description)")
 
         let trackpad = try await measureScrollStorm(
             host: sheetHost,
@@ -324,6 +426,10 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
         }
         print("[archive-sheet] 4.스크롤 뒤 유휴 600ms: cpu=\(String(format: "%.3f", idle))")
         XCTAssertGreaterThan(abs(inactive.scrolledBy), 0, "휠 이벤트가 시트 scroll view에 닿지 않았습니다.")
+        for measurement in [inactive, active, trackpad] {
+            XCTAssertEqual(measurement.created, 0)
+            XCTAssertEqual(measurement.textMeasurements, 0)
+        }
     }
 
     // 오른쪽 페이지의 세로 scroll view다. 코드 블록의 가로 스크롤러는
@@ -499,10 +605,13 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
         return NSEvent(cgEvent: cgEvent)
     }
 
-    private func makeTurn() -> LiveFeedTurn {
+    private func makeTurn(
+        id: String = "archive-scroll-measure",
+        response: String? = nil
+    ) -> LiveFeedTurn {
         let timestamp = Date(timeIntervalSinceReferenceDate: 10_000)
         return LiveFeedTurn(
-            id: "archive-scroll-measure",
+            id: id,
             characterId: OfficeCharacter.boss.rawValue,
             characterName: "백부장",
             characterBackend: .claude,
@@ -513,7 +622,7 @@ final class ArchiveBookScrollCPUTests: XCTestCase {
             externalSessionId: "0123456789abcdef",
             conversationWorkdir: "/repo",
             prompt: "시트 스크롤 재현용 업무입니다.",
-            response: Self.responseSource,
+            response: response ?? Self.responseSource,
             feedback: nil,
             status: .completed,
             needsInput: false,
