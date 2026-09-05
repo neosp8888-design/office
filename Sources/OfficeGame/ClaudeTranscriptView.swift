@@ -113,17 +113,17 @@ extension ClaudeToolGroupKind {
     var historyNoun: String {
         switch self {
         case .shell:
-            OfficeLocalization.string("명령")
+            OfficeLocalization.historyNoun("명령")
         case .read:
-            OfficeLocalization.string("읽기")
+            OfficeLocalization.historyNoun("읽기")
         case .search:
-            OfficeLocalization.string("검색")
+            OfficeLocalization.historyNoun("검색")
         case .web:
-            OfficeLocalization.string("조회")
+            OfficeLocalization.historyNoun("조회")
         case .delegate:
-            OfficeLocalization.string("위임")
+            OfficeLocalization.historyNoun("위임")
         case .other:
-            OfficeLocalization.string("도구 사용")
+            OfficeLocalization.historyNoun("도구 사용")
         }
     }
 }
@@ -458,8 +458,8 @@ private struct ClaudeThoughtRunView: View, Equatable {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(thought.occurredAt.formatted(
-                date: .omitted,
+            Text(OfficeLocalization.date(thought.occurredAt,
+                dateStyle: .omitted,
                 time: .standard
             ))
                 .font(.system(size: 8.5, design: .monospaced))
@@ -624,8 +624,8 @@ private struct ClaudeToolRunView: View, Equatable {
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(step.occurredAt.formatted(
-                date: .omitted,
+            Text(OfficeLocalization.date(step.occurredAt,
+                dateStyle: .omitted,
                 time: .standard
             ))
                 .font(.system(size: 8.5, design: .monospaced))
@@ -652,7 +652,7 @@ private struct ClaudeToolRunView: View, Equatable {
         }
         return step.call.family == .shell
             ? "$ \(step.call.detail)"
-            : step.call.detail
+            : step.call.displayDetail
     }
 }
 
@@ -884,8 +884,8 @@ private struct ClaudePlanBoardView: View {
 
                 Spacer(minLength: 6)
 
-                Text(board.occurredAt.formatted(
-                    date: .omitted,
+                Text(OfficeLocalization.date(board.occurredAt,
+                    dateStyle: .omitted,
                     time: .standard
                 ))
                     .font(.system(size: 8.5, design: .monospaced))

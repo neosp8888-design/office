@@ -1162,6 +1162,26 @@ struct LiveFeedActivity: Decodable, Identifiable, Equatable, Sendable {
     let collaboration: LiveFeedCollaboration?
     let occurredAt: Date
 
+    // Keep transcript/command contents intact; translate only generated wrappers.
+    var displayText: String {
+        switch kind {
+        case "tool":
+            // Only the first line is our wrapper. Tool stdout can contain any
+            // user data (or large logs) and must not be translated or scanned.
+            if let newline = text.firstIndex(of: "\n") {
+                OfficeLocalization.systemMessage(String(text[..<newline])) + text[newline...]
+            } else {
+                OfficeLocalization.systemMessage(text)
+            }
+        case "thinking" where text == "추론 중":
+            OfficeLocalization.systemMessage(text)
+        case "command" where text.hasSuffix(" [민감 인자 숨김]"):
+            OfficeLocalization.systemMessage(text)
+        default:
+            text
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case kind
@@ -1662,9 +1682,9 @@ enum OfficeDatabaseError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .requestFailed:
-            "PostgreSQL 백엔드에 연결할 수 없습니다."
+            OfficeLocalization.string("PostgreSQL 백엔드에 연결할 수 없습니다.")
         case .backend(let message):
-            message
+            OfficeLocalization.systemMessage(message)
         }
     }
 }

@@ -22,9 +22,10 @@ enum OfficeLocalization {
     }
 
     static func languageIdentifier(for languages: [String]) -> String {
-        languages.contains { $0.lowercased().hasPrefix("ko") }
-            ? "ko"
-            : "en"
+        languages.lazy.compactMap { language -> String? in
+            let code = language.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init)
+            return code == "ko" || code == "en" ? code : nil
+        }.first ?? "en"
     }
 
     static func string(_ key: String) -> String {
@@ -40,11 +41,23 @@ enum OfficeLocalization {
     }
 
     static func format(_ key: String, _ arguments: CVarArg...) -> String {
-        String(
-            format: string(key),
-            locale: locale,
-            arguments: arguments
-        )
+        format(key, arguments: arguments, languages: preferredLanguages)
+    }
+
+    static func format(_ key: String, arguments: [CVarArg], languages: [String]) -> String {
+        let language = languageIdentifier(for: languages)
+        let singular = arguments.compactMap { $0 as? Int }.first == 1
+            ? translationsByLanguage[language]?[key + ".one"] : nil
+        return String(format: singular ?? string(key, languages: languages),
+                      locale: Locale(identifier: language), arguments: arguments)
+    }
+
+    static func date(_ date: Date, dateStyle: Date.FormatStyle.DateStyle, time: Date.FormatStyle.TimeStyle) -> String {
+        date.formatted(Date.FormatStyle(date: dateStyle, time: time).locale(locale))
+    }
+
+    static func historyNoun(_ key: String) -> String {
+        usesKorean ? key : translationsByLanguage["en"]?[key + ".history"] ?? string(key)
     }
 
     static func displayIdentityPrompt(_ prompt: String) -> String {

@@ -58,7 +58,8 @@ public struct TaskPromptPresentation: Equatable, Sendable {
 
     public static func canonicalPrompt(
         text: String,
-        attachmentPaths: [String]
+        attachmentPaths: [String],
+        emptyPrompt: String = "첨부 파일을 확인해줘."
     ) -> String {
         var seenPaths: Set<String> = []
         let paths = attachmentPaths.compactMap { source -> String? in
@@ -74,7 +75,7 @@ public struct TaskPromptPresentation: Equatable, Sendable {
             in: .whitespacesAndNewlines
         )
         let effectivePrompt = prompt.isEmpty
-            ? "첨부 파일을 확인해줘."
+            ? emptyPrompt
             : prompt
         guard !paths.isEmpty else {
             return effectivePrompt

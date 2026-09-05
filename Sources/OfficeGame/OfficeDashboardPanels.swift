@@ -216,7 +216,7 @@ private struct ArchiveShelfContent: View {
                 ContentUnavailableView(
                     OfficeLocalization.string("기록을 불러오지 못했습니다"),
                     systemImage: "exclamationmark.triangle",
-                    description: Text(errorMessage)
+                    description: Text(OfficeLocalization.systemMessage(errorMessage))
                 )
             } else if turns.isEmpty && normalizedSearchText.isEmpty {
                 ContentUnavailableView(
@@ -537,7 +537,7 @@ private struct UsageBoardContent: View {
                     ContentUnavailableView(
                         OfficeLocalization.string("한도를 불러오지 못했습니다"),
                         systemImage: "wifi.exclamationmark",
-                        description: Text(errorMessage)
+                        description: Text(OfficeLocalization.systemMessage(errorMessage))
                     )
                     Button {
                         Task {
@@ -950,9 +950,9 @@ private struct UsageSubscriptionSummary: View {
 
     private static let expirationFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.locale = OfficeLocalization.locale
         formatter.timeZone = .autoupdatingCurrent
-        formatter.dateFormat = "M/d HH:mm"
+        formatter.setLocalizedDateFormatFromTemplate("MdHm")
         return formatter
     }()
 }
@@ -1551,9 +1551,9 @@ private struct HostedLiveWorkspaceFeed: View {
         .environment(\.locale, OfficeLocalization.locale)
         // 긴 대화 전체의 Text에 SelectionOverlay가 붙으면 스크롤 중
         // AttributeGraph 레이아웃이 끝나지 않을 수 있다. 피드 경계에서는
-        // 선택을 끄고, 마우스가 올라간 질문·응답 카드 하나만 별도의
-        // 선택 영역으로 켜 같은 CPU 회귀 없이 드래그 복사를 제공한다.
+        // 선택을 끄고, 질문·응답 카드별로 고정된 선택 영역을 제공한다.
         .textSelection(.disabled)
+        .background { ConversationPointerMoveBoundary() }
         .overlay {
             LiveWorkspaceFeedMountReadyReporter(
                 readinessRevision:
@@ -4118,7 +4118,7 @@ struct LiveTurnPromptBlock: View {
         HStack(spacing: 8) {
             if let sentAt {
                 Text(
-                    sentAt.formatted(date: .omitted, time: .shortened)
+                    OfficeLocalization.date(sentAt, dateStyle: .omitted, time: .shortened)
                 )
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
@@ -4410,7 +4410,7 @@ private struct LiveTurnCard: View {
     }
 
     private func errorBlock(_ error: String) -> some View {
-        Label(error, systemImage: "exclamationmark.triangle.fill")
+        Label(OfficeLocalization.systemMessage(error), systemImage: "exclamationmark.triangle.fill")
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(Color.red.opacity(0.88))
     }

@@ -5,6 +5,16 @@ import XCTest
 @testable import OfficeGame
 
 final class TaskPromptPresentationTests: XCTestCase {
+    func testAttachmentOnlyPromptAcceptsLocalizedDefaultWithoutChangingAttachments() {
+        let prompt = TaskPromptPresentation.canonicalPrompt(
+            text: "", attachmentPaths: ["/tmp/원본.png"],
+            emptyPrompt: "Please review the attached files."
+        )
+        let presentation = TaskPromptPresentation(prompt: prompt)
+        XCTAssertEqual(presentation.text, "Please review the attached files.")
+        XCTAssertEqual(presentation.attachments.first?.path, "/tmp/원본.png")
+    }
+
     func testOnlyImageThumbnailUsesPreviewAction() {
         XCTAssertEqual(
             taskAttachmentOpenActionTitle(

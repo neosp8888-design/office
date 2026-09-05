@@ -21,7 +21,7 @@ struct CommandEntryDraft: Equatable {
             return nil
         }
         return enteredPrompt.isEmpty
-            ? "첨부 파일을 확인해줘."
+            ? OfficeLocalization.string("첨부 파일을 확인해줘.")
             : enteredPrompt
     }
 

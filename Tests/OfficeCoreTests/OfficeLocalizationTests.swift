@@ -11,6 +11,164 @@ final class OfficeLocalizationTests: XCTestCase {
         )
     }
 
+    func testLanguageOrderUsesTheFirstSupportedLanguage() {
+        XCTAssertEqual(OfficeLocalization.languageIdentifier(for: ["en-US", "ko-KR"]), "en")
+        XCTAssertEqual(OfficeLocalization.languageIdentifier(for: ["ja-JP", "ko-KR", "en"]), "ko")
+        XCTAssertEqual(OfficeLocalization.languageIdentifier(for: ["EN_us", "ko"]), "en")
+        XCTAssertEqual(OfficeLocalization.languageIdentifier(for: []), "en")
+        XCTAssertEqual(OfficeLocalization.languageIdentifier(for: ["ja-JP"]), "en")
+    }
+
+    func testCountFormattingHandlesSingularPluralAndArgumentOrder() {
+        let cases: [(String, [CVarArg], String)] = [
+            ("변경 파일 %d개", [1], "1 changed file"),
+            ("변경 파일 %d개", [2], "2 changed files"),
+            ("%d건", [1], "1 record"),
+            ("이전 기록 %d개 보기", [1], "Show 1 earlier record"),
+            ("더 이전 기록 %d개 보기", [2], "Show 2 earlier records"),
+            ("이전 %@ %d개 보기", ["command", 3], "Show command history (3)"),
+            ("%d명 · %d명 완료 · %d명 오류", [1, 0, 1], "1 reviewer · 0 completed · 1 failed"),
+            ("추가 요청 %d건", [1], "1 follow-up request"),
+            ("작업 계획 %d단계 중 %d단계 완료", [1, 0], "Work plan: 0 of 1 step completed"),
+            ("첨부 파일 %@, 경로 %@", ["보고서.pdf", "/tmp/보고서.pdf"], "Attachment 보고서.pdf, path /tmp/보고서.pdf")
+        ]
+        for (key, arguments, expected) in cases {
+            XCTAssertEqual(OfficeLocalization.format(key, arguments: arguments, languages: ["en", "ko"]), expected)
+        }
+        XCTAssertEqual(OfficeLocalization.format("변경 파일 %d개", arguments: [1], languages: ["ko"]), "변경 파일 1개")
+    }
+
+    func testAuditRegressionKeysAreTranslated() {
+        let keys = [
+            "모던 낮", "모던 밤", "보스", "왼쪽 남자", "왼쪽 여자", "오른쪽 남자",
+            "첨부 파일을 확인해줘.", "제목 없는 업무", "기록", "장서 정보", "세션 ID",
+            "기록 없음", "응답 복사", "%@, Finder에서 보기", "변경 결과 복사",
+            "협업 검토 접기", "협업 검토 자세히 보기", "최근 요청", "최근 결과", "요청",
+            "추가 요청", "검토 결과 접기", "검토 결과 자세히", "검토 중", "오류",
+            "AI CLI 로그인을 확인하는 중", "characters.json 설정 파일을 찾을 수 없습니다.",
+            "백엔드 요청에 실패했습니다.", "PostgreSQL 백엔드에 연결할 수 없습니다.",
+            "사용자 승인", "구형 OFFICESTRA 백엔드가 4317을 사용 중입니다."
+        ]
+        for key in keys {
+            let result = OfficeLocalization.string(key, languages: ["en-US", "ko-KR"])
+            XCTAssertNotEqual(result, key, key)
+            XCTAssertFalse(result.containsHangul, key)
+        }
+    }
+
+    func testSystemMessageCatalogAndEveryTemplate() {
+        let entries = OfficeSystemMessageLocalization.entries
+        XCTAssertGreaterThan(entries.count, 200, "The diagnostic catalog must be bundled in the app.")
+        XCTAssertEqual(Set(entries.map(\.source)).count, entries.count)
+        for entry in entries {
+            var source = entry.source
+            var expected = entry.translation
+            for index in 0..<10 {
+                source = source.replacingOccurrences(of: "{\(index)}", with: "arg_\(index)")
+                expected = expected.replacingOccurrences(of: "{\(index)}", with: "arg_\(index)")
+            }
+            let existing = OfficeLocalization.string(source, languages: ["en"])
+            if existing != source { expected = existing }
+            XCTAssertFalse(entry.translation.isEmpty, entry.source)
+            XCTAssertFalse(entry.translation.containsHangul, entry.source)
+            XCTAssertEqual(OfficeSystemMessageLocalization.string(source, languages: ["en"]), expected, entry.source)
+            XCTAssertEqual(OfficeSystemMessageLocalization.string(source, languages: ["ko"]), source, entry.source)
+        }
+    }
+
+    func testSystemMessagesPreserveInsertedPathsUnknownTextAndNestedErrors() {
+        XCTAssertEqual(
+            OfficeSystemMessageLocalization.string("캐릭터를 찾을 수 없습니다: /tmp/사용자/{1}/100%", languages: ["en"]),
+            "Teammate not found: /tmp/사용자/{1}/100%"
+        )
+        XCTAssertEqual(
+            OfficeSystemMessageLocalization.string("오류 · 위키 수정안 2번을 저장하지 못했습니다: 제안을 찾을 수 없습니다.", languages: ["en"]),
+            "Error · Could not save wiki proposal 2: Proposal not found."
+        )
+        XCTAssertEqual(
+            OfficeSystemMessageLocalization.string("CLI 원본 출력\n사용자가 업무를 중단했습니다.", languages: ["en"]),
+            "CLI 원본 출력\nThe user stopped the task."
+        )
+        let userText = "사용자가 직접 쓴 본문과 /tmp/한글.txt는 바꾸지 않습니다."
+        XCTAssertEqual(OfficeSystemMessageLocalization.string(userText, languages: ["en"]), userText)
+    }
+
+    func testBackendDiagnosticLiteralsStayCoveredByEnglishResources() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let modules = [
+            "character-settings", "model-catalog", "runtime-cli-paths", "cli-updates",
+            "codex-context-compactor", "claude-persistent-worker", "terminal-sessions",
+            "work-record-provenance", "wiki-knowledge", "turn-feedback", "server",
+            "agent-runtime", "structured-turn-result"
+        ]
+        // Extract direct error constructors and JSON error literals, not arbitrary
+        // quoted conversation content. Concatenated strings are covered by catalog tests.
+        let pattern = try NSRegularExpression(
+            pattern: #"(?:(?:new\s+\w*Error|throw\s+invalid|super)\(\s*|error:\s*)(?:"((?:\\.|[^"\\])*)"|`([^`]*?)`)"#,
+            options: [.dotMatchesLineSeparators]
+        )
+        let interpolation = try NSRegularExpression(pattern: #"\$\{[^}]*\}"#)
+        var checked = 0
+        for module in modules {
+            let source = try String(contentsOf: root.appendingPathComponent("backend/src/\(module).mjs"), encoding: .utf8)
+            let ns = source as NSString
+            for match in pattern.matches(in: source, range: NSRange(location: 0, length: ns.length)) {
+                let tail = ns.substring(from: NSMaxRange(match.range)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if tail.hasPrefix("+") { continue }
+                let message: String
+                if match.range(at: 1).location != NSNotFound {
+                    let literal = "\"" + ns.substring(with: match.range(at: 1)) + "\""
+                    message = try JSONDecoder().decode(String.self, from: Data(literal.utf8))
+                } else {
+                    let template = ns.substring(with: match.range(at: 2))
+                    message = interpolation.stringByReplacingMatches(in: template, range: NSRange(template.startIndex..., in: template), withTemplate: "argument")
+                }
+                guard message.containsHangul else { continue }
+                checked += 1
+                let value = OfficeSystemMessageLocalization.string(message, languages: ["en"])
+                XCTAssertFalse(value.containsHangul, "\(module): \(message)")
+            }
+        }
+        XCTAssertGreaterThan(checked, 200)
+    }
+
+    @MainActor
+    func testUIActivityAndToolPresentationLeaveConversationContentIntact() throws {
+        let original = UserDefaults.standard.object(forKey: "AppleLanguages")
+        UserDefaults.standard.set(["en-US", "ko-KR"], forKey: "AppleLanguages")
+        defer {
+            if let original { UserDefaults.standard.set(original, forKey: "AppleLanguages") }
+            else { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
+        }
+        for kind in ["message", "thinking", "command"] {
+            let activity = try activity(kind: kind, text: "사용자가 업무를 중단했습니다.")
+            XCTAssertEqual(activity.displayText, activity.text)
+        }
+        let tool = try activity(kind: "tool", text: "오류 · 사용자가 업무를 중단했습니다.")
+        XCTAssertEqual(tool.displayText, "Error · The user stopped the task.")
+        XCTAssertEqual(tool.text, "오류 · 사용자가 업무를 중단했습니다.")
+        XCTAssertEqual(ClaudeToolCall.parse(tool).displayName, "Tool")
+        XCTAssertEqual(ClaudeToolCall.parse(tool).displayDetail, tool.displayText)
+        let namedTool = try activity(kind: "tool", text: "도구 · Read · /tmp/사용자.txt")
+        XCTAssertEqual(ClaudeToolCall.parse(namedTool).displayDetail, "/tmp/사용자.txt")
+        XCTAssertEqual(ClaudeToolCall.parse(try activity(kind: "tool", text: "도구 · 도구")).displayName, "Tool")
+        XCTAssertEqual(ClaudeToolCall.parse(try activity(kind: "tool", text: "도구 · 연결 도구")).displayName, "Connected tool")
+        let toolWithOutput = try activity(kind: "tool", text: "도구 완료\n사용자가 업무를 중단했습니다.")
+        XCTAssertEqual(toolWithOutput.displayText, "Tool completed\n사용자가 업무를 중단했습니다.")
+        XCTAssertEqual(OfficeLocalization.historyNoun("명령"), "command")
+        let date = Date(timeIntervalSince1970: 1_788_609_600)
+        XCTAssertFalse(OfficeLocalization.date(date, dateStyle: .complete, time: .standard).containsHangul)
+    }
+
+    private func activity(kind: String, text: String) throws -> LiveFeedActivity {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": UUID().uuidString, "kind": kind, "text": text,
+            "occurredAt": 0, "status": "completed"
+        ])
+        return try JSONDecoder().decode(LiveFeedActivity.self, from: data)
+    }
+
     func testNonKoreanSystemLanguagesUseEnglish() {
         XCTAssertEqual(
             OfficeLocalization.languageIdentifier(for: ["en-US"]),
@@ -151,5 +309,11 @@ final class OfficeLocalizationTests: XCTestCase {
             XCTAssertEqual(OfficeLocalization.string("오늘 비용", languages: lang), "Today")
             XCTAssertEqual(OfficeLocalization.string("30일 비용", languages: lang), "30D")
         }
+    }
+}
+
+private extension String {
+    var containsHangul: Bool {
+        unicodeScalars.contains { (0xAC00...0xD7A3).contains($0.value) }
     }
 }

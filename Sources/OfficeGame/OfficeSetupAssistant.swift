@@ -1218,7 +1218,7 @@ enum OfficeSetupAssistant {
         case .wrongWorkspace(let actual):
             snapshot.backendReplacement = .wrongWorkspace(actual)
             snapshot.backend = .actionRequired(
-                "다른 프로젝트에 연결돼 있습니다: \(actual)"
+                OfficeLocalization.format("다른 프로젝트에 연결돼 있습니다: %@", actual)
             )
             return .needsAction(snapshot)
         case .versionMismatch:
@@ -1350,7 +1350,7 @@ enum OfficeSetupAssistant {
         case .wrongWorkspace(let actual):
             snapshot.backendReplacement = .wrongWorkspace(actual)
             snapshot.backend = .actionRequired(
-                "다른 프로젝트 백엔드가 회복됐습니다: \(actual)"
+                OfficeLocalization.format("다른 프로젝트 백엔드가 회복됐습니다: %@", actual)
             )
             return .needsAction(snapshot)
         case .versionMismatch:
@@ -1457,7 +1457,7 @@ enum OfficeSetupAssistant {
             case .wrongWorkspace(let actual):
                 snapshot.backendReplacement = .wrongWorkspace(actual)
                 snapshot.backend = .actionRequired(
-                    "다른 프로젝트에 연결돼 있습니다: \(actual)"
+                    OfficeLocalization.format("다른 프로젝트에 연결돼 있습니다: %@", actual)
                 )
                 return .needsAction(snapshot)
             case .versionMismatch:
@@ -1509,7 +1509,7 @@ enum OfficeSetupAssistant {
         let redacted = sensitive?.stringByReplacingMatches(
             in: output,
             range: range,
-            withTemplate: "[민감 정보가 포함된 줄 숨김]"
+            withTemplate: NSRegularExpression.escapedTemplate(for: OfficeLocalization.string("[민감 정보가 포함된 줄 숨김]"))
         ) ?? output
         return String(redacted.suffix(2_000))
             .trimmingCharacters(in: .whitespacesAndNewlines)

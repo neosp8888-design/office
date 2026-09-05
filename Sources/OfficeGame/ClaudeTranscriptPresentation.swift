@@ -15,6 +15,10 @@ struct ClaudeToolCall: Equatable {
     private static let prefix = "도구 · "
     private static let separator = " · "
 
+    var displayDetail: String {
+        name.isEmpty ? OfficeLocalization.systemMessage(detail) : detail
+    }
+
     static func parse(_ activity: LiveFeedActivity) -> ClaudeToolCall {
         let lines = activity.text.components(separatedBy: "\n")
         let header = lines.first ?? ""
@@ -71,7 +75,10 @@ struct ClaudeToolCall: Equatable {
     /// MCP 도구는 이름이 길어 마지막 구간만 배지에 쓴다.
     var displayName: String {
         guard !name.isEmpty else {
-            return "도구"
+            return OfficeLocalization.string("도구")
+        }
+        if name == "도구" || name == "연결 도구" {
+            return OfficeLocalization.string(name)
         }
         guard name.hasPrefix("mcp__") else {
             return name

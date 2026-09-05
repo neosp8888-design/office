@@ -71,8 +71,8 @@ private struct ArchiveRecordTile: View {
                         Spacer()
 
                         Text(
-                            turn.startedAt.formatted(
-                                date: .omitted,
+                            OfficeLocalization.date(turn.startedAt,
+                                dateStyle: .omitted,
                                 time: .shortened
                             )
                         )
@@ -120,7 +120,7 @@ private struct ArchiveRecordTile: View {
             }
         }
         .buttonStyle(.plain)
-        .help("\(turn.characterName) · \(recordTitle)")
+        .help("\(characterName) · \(recordTitle)")
         .accessibilityLabel(recordAccessibilityLabel)
         .conversationTextSelectionRegion("archive-tile-\(turn.id)")
     }
@@ -133,7 +133,7 @@ private struct ArchiveRecordTile: View {
         let title = promptPresentation.text.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        return title.isEmpty ? "제목 없는 업무" : title
+        return title.isEmpty ? OfficeLocalization.string("제목 없는 업무") : title
     }
 
     private var promptPresentation: TaskPromptPresentation {
@@ -142,10 +142,10 @@ private struct ArchiveRecordTile: View {
 
     private var recordAccessibilityLabel: String {
         let attachmentDetails = promptPresentation.attachments.map {
-            "첨부 파일 \($0.name), 경로 \($0.path)"
+            OfficeLocalization.format("첨부 파일 %@, 경로 %@", $0.name, $0.path)
         }
         return ([
-            "\(turn.characterName) 기록 · \(recordTitle)",
+            OfficeLocalization.format("%@ 기록 · %@", OfficeLocalization.string(turn.characterName), recordTitle),
             executionSummary,
         ]
             + attachmentDetails)
@@ -154,7 +154,7 @@ private struct ArchiveRecordTile: View {
 
     private var executionSummary: String {
         guard let backend = turn.backend else {
-            return "이전 기록 · \(agentExecutionModeTitle(turn.fastMode))"
+            return OfficeLocalization.format("이전 기록 · %@", agentExecutionModeTitle(turn.fastMode))
         }
 
         var parts = [backend.title]
@@ -162,7 +162,7 @@ private struct ArchiveRecordTile: View {
             parts.append(backend.modelTitle(model))
         }
         if let effort = turn.effort {
-            parts.append("추론 \(effort)")
+            parts.append(OfficeLocalization.format("추론 %@", effort))
         }
         parts.append(agentExecutionModeTitle(turn.fastMode))
         return parts.joined(separator: " · ")
@@ -253,17 +253,17 @@ struct ArchiveOpenBook: View {
     private var bookToolbar: some View {
         HStack(spacing: 9) {
             CharacterBadge(
-                name: turn.characterName,
+                name: OfficeLocalization.string(turn.characterName),
                 characterID: turn.characterId,
                 size: 25
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(turn.characterName)
+                Text(OfficeLocalization.string(turn.characterName))
                     .font(.system(size: 11, weight: .bold))
                 Text(
-                    turn.startedAt.formatted(
-                        date: .abbreviated,
+                    OfficeLocalization.date(turn.startedAt,
+                        dateStyle: .abbreviated,
                         time: .shortened
                     )
                 )
@@ -273,7 +273,7 @@ struct ArchiveOpenBook: View {
 
             Spacer()
 
-            Label(statusTitle, systemImage: "bookmark.fill")
+            Label(OfficeLocalization.string(statusTitle), systemImage: "bookmark.fill")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(bookColor)
 
@@ -354,7 +354,7 @@ struct ArchiveOpenBook: View {
                 VStack(spacing: 7) {
                     metadataRow(
                         label: "세션 ID",
-                        value: turn.externalSessionId ?? "기록 없음",
+                        value: turn.externalSessionId ?? OfficeLocalization.string("기록 없음"),
                         monospaced: true,
                         copyKey: "session",
                         copyText: turn.externalSessionId
@@ -365,7 +365,7 @@ struct ArchiveOpenBook: View {
                     )
                     metadataRow(
                         label: "추론",
-                        value: turn.effort ?? "기록 없음"
+                        value: turn.effort ?? OfficeLocalization.string("기록 없음")
                     )
                     metadataRow(
                         label: "모드",
@@ -435,7 +435,7 @@ struct ArchiveOpenBook: View {
                         fontSize: 14
                     )
                 } else if let error = turn.errorMessage {
-                    Text(error)
+                    Text(OfficeLocalization.systemMessage(error))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.red.opacity(0.86))
                 } else {
@@ -521,14 +521,14 @@ struct ArchiveOpenBook: View {
         _ title: String,
         systemImage: String
     ) -> some View {
-        Label(title, systemImage: systemImage)
+        Label(OfficeLocalization.string(title), systemImage: systemImage)
             .font(.system(size: 10, weight: .bold))
             .foregroundStyle(bookColor)
     }
 
     private var modelTitle: String {
         guard let backend = turn.backend, let model = turn.model else {
-            return "기록 없음"
+            return OfficeLocalization.string("기록 없음")
         }
         return "\(backend.title) · \(backend.modelTitle(model))"
     }
@@ -541,10 +541,10 @@ struct ArchiveOpenBook: View {
         copyText: String? = nil
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text(label)
+            Text(OfficeLocalization.string(label))
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundStyle(.secondary)
-                .frame(width: 42, alignment: .leading)
+                .frame(width: OfficeLocalization.usesKorean ? 42 : 66, alignment: .leading)
 
             Text(value)
                 .font(
@@ -561,7 +561,7 @@ struct ArchiveOpenBook: View {
                 copyButton(
                     key: copyKey,
                     text: copyText,
-                    label: "\(label) 복사",
+                    label: OfficeLocalization.format("%@ 복사", OfficeLocalization.string(label)),
                     compact: true
                 )
             }
@@ -604,8 +604,8 @@ struct ArchiveOpenBook: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .help(label)
+        .accessibilityLabel(OfficeLocalization.string(label))
+        .help(OfficeLocalization.string(label))
     }
 
     private func copyToPasteboard(_ text: String, key: String) {

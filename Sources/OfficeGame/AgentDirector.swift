@@ -1432,7 +1432,8 @@ final class AgentDirector: ObservableObject {
                 conversationWorkdir: nil,
                 prompt: TaskPromptPresentation.canonicalPrompt(
                     text: prompt,
-                    attachmentPaths: attachmentPaths
+                    attachmentPaths: attachmentPaths,
+                    emptyPrompt: OfficeLocalization.string("첨부 파일을 확인해줘.")
                 ),
                 response: "",
                 feedback: nil,
@@ -2530,7 +2531,7 @@ final class AgentDirector: ObservableObject {
             compactingCharacters.remove(character)
             contextCompactionNotices[character] = .failed(
                 automatic: event.automatic == true,
-                message: event.errorMessage
+                message: event.errorMessage.map(OfficeLocalization.systemMessage)
             )
             let title = event.automatic == true
                 ? OfficeLocalization.string("자동 컨텍스트 압축 실패")
@@ -2539,7 +2540,7 @@ final class AgentDirector: ObservableObject {
             if let detail = event.errorMessage?.trimmingCharacters(
                 in: .whitespacesAndNewlines
             ), !detail.isEmpty {
-                lines.append(detail)
+                lines.append(OfficeLocalization.systemMessage(detail))
             }
             showBubble(
                 lines.joined(separator: "\n"),
@@ -2901,9 +2902,9 @@ final class AgentDirector: ObservableObject {
                 showBubble(turn.response, for: character)
             }
         case .failed, .interrupted:
-            let message =
-                turn.errorMessage ?? OfficeLocalization.string("작업이 멈췄어요.")
-            if AgentUsageLimitClassifier.isLimitReached(message) {
+            let originalMessage = turn.errorMessage ?? OfficeLocalization.string("작업이 멈췄어요.")
+            let message = OfficeLocalization.systemMessage(originalMessage)
+            if AgentUsageLimitClassifier.isLimitReached(originalMessage) {
                 if failedCharacters[character] != nil {
                     failedCharacters[character] = nil
                 }

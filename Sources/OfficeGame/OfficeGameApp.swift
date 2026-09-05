@@ -93,7 +93,7 @@ private struct OfficeBackendCompatibilityBanner: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 if let errorMessage = notice.errorMessage {
-                    Text(errorMessage)
+                    Text(OfficeLocalization.systemMessage(errorMessage))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.red)
                 }
@@ -779,7 +779,7 @@ private struct OfficeGameView: View {
         .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
         .fixedSize()
         .accessibilityLabel(OfficeLocalization.string("오피스 테마"))
-        .accessibilityValue(theme.title)
+        .accessibilityValue(OfficeLocalization.string(theme.title))
         .accessibilityIdentifier("officeThemeMenu")
         .help(
             theme.isNight
@@ -2862,7 +2862,7 @@ private struct AgentModelVisibilitySettingsView: View {
                         Text(
                             OfficeLocalization.format(
                                 "최근 수집 %@",
-                                fetchedAt.formatted(date: .abbreviated, time: .shortened)
+                                OfficeLocalization.date(fetchedAt, dateStyle: .abbreviated, time: .shortened)
                             )
                         )
                     } else {
@@ -2871,7 +2871,7 @@ private struct AgentModelVisibilitySettingsView: View {
                     if let lastError = catalog.lastError, !lastError.isEmpty {
                         Text(OfficeLocalization.string("· 마지막 갱신 실패"))
                             .foregroundStyle(.orange)
-                            .help(lastError)
+                            .help(OfficeLocalization.systemMessage(lastError))
                     }
                 }
                 .font(.system(size: 10))
@@ -2879,7 +2879,7 @@ private struct AgentModelVisibilitySettingsView: View {
             }
 
             if let errorMessage {
-                Text(errorMessage)
+                Text(OfficeLocalization.systemMessage(errorMessage))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.red)
                     .lineLimit(2)
@@ -2947,7 +2947,7 @@ private struct AgentModelVisibilitySettingsView: View {
             parts.append(
                 OfficeLocalization.format(
                     "%@에 %@에서 바뀜",
-                    changedAt.formatted(date: .abbreviated, time: .omitted),
+                    OfficeLocalization.date(changedAt, dateStyle: .abbreviated, time: .omitted),
                     previous
                 )
             )
@@ -3122,7 +3122,7 @@ private struct CharacterIdentitySettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let errorMessage {
-                Text(errorMessage)
+                Text(OfficeLocalization.systemMessage(errorMessage))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.red)
             }

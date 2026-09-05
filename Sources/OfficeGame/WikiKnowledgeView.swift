@@ -293,8 +293,8 @@ struct WikiKnowledgeView: View {
                                 .lineLimit(1)
 
                             Text(
-                                page.updatedAt.formatted(
-                                    date: .abbreviated,
+                                OfficeLocalization.date(page.updatedAt,
+                                    dateStyle: .abbreviated,
                                     time: .shortened
                                 )
                             )
@@ -341,8 +341,8 @@ struct WikiKnowledgeView: View {
                                 .font(.system(size: 10, design: .monospaced))
                             Text("·")
                             Text(
-                                selectedPage.updatedAt.formatted(
-                                    date: .abbreviated,
+                                OfficeLocalization.date(selectedPage.updatedAt,
+                                    dateStyle: .abbreviated,
                                     time: .shortened
                                 )
                             )
@@ -629,7 +629,7 @@ private struct WikiProposalCard: View {
 
                 Spacer(minLength: 6)
 
-                Text(proposal.approvalTier)
+                Text(proposal.approvalTier == "user" ? OfficeLocalization.string("사용자 승인") : proposal.approvalTier)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(DashboardPalette.accent)
                     .padding(.horizontal, 7)
@@ -692,7 +692,7 @@ private struct WikiProposalCard: View {
             }
 
             if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                Label(OfficeLocalization.systemMessage(errorMessage), systemImage: "exclamationmark.triangle")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.red)
                     .accessibilityIdentifier(
@@ -701,8 +701,8 @@ private struct WikiProposalCard: View {
             }
 
             Text(
-                proposal.createdAt.formatted(
-                    date: .abbreviated,
+                OfficeLocalization.date(proposal.createdAt,
+                    dateStyle: .abbreviated,
                     time: .shortened
                 )
             )

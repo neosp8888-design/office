@@ -50,6 +50,7 @@ final class ConversationTableHoverCPUTests: XCTestCase {
         }
     }
 
+    @MainActor
     private final class Host {
         let window: NSWindow
         let host: NSHostingView<AnyView>
@@ -100,8 +101,9 @@ final class ConversationTableHoverCPUTests: XCTestCase {
             samplePath: "/tmp/hovermeasure/table-hover-flap-sample.txt"
         )
         print("[table-hover] 1.hover 진입/이탈 60회: \(hoverFlap.description)")
-        // 수정 전에는 전환마다 표 전체를 다시 조판·그려 코어 하나를 가득
-        // 썼다(약 0.96). 스택을 이어받은 뒤 약 0.26이다.
+        // 스택 풀로 TextKit만 재사용하던 수정은 문서 뷰를 120번 만들었다.
+        // 이제 카드 자체가 고정된 선택 영역이므로 재생성도 없어야 한다.
+        XCTAssertEqual(hoverFlap.created, 0)
         XCTAssertLessThan(
             hoverFlap.cpu,
             0.5,
@@ -195,12 +197,68 @@ final class ConversationTableHoverCPUTests: XCTestCase {
                     + "스택 재사용 횟수: \(after.textStackReuseCount)"
             )
             XCTAssertTrue(
+                before === after,
+                "호버로 카드 구조가 바뀌며 표 문서 뷰가 다시 만들어졌습니다."
+            )
+            XCTAssertTrue(
                 before.textView === after.textView,
                 "hover 전환 뒤 표의 NSTextView가 다시 만들어졌습니다. "
                     + "표 전체를 다시 조판·그리게 되어 깜빡임과 CPU 급등이 납니다."
             )
         }
         return result
+    }
+
+    func testMixedMarkdownKeepsAllDocumentsAndSelectionAcrossHover() async throws {
+        let coordinator = ConversationTextSelectionCoordinator.shared
+        coordinator.reset()
+        defer { coordinator.reset() }
+        let section = """
+        **일반 본문 선택과 복사 유지**
+
+        | 화면 | 내용 |
+        | --- | --- |
+        | 보관함 | **굵은 텍스트**와 일반 텍스트 |
+        | 표 | 선택과 복사 확인 |
+
+        ```swift
+        let value = 42
+        ```
+        """
+        // 종전 풀 용량(4)을 넘기는 실제 긴 대화 구성도 보존해야 한다.
+        let source = (0..<6).map { "절 \($0)\n\n" + section }.joined(separator: "\n\n")
+        let host = Host(source: source, regionID: "mixed-table-hover")
+        defer { host.tearDown() }
+        host.host.layoutSubtreeIfNeeded()
+        try await settle(for: .milliseconds(150))
+        let before = allDescendants(of: host.host)
+            .compactMap { $0 as? SelectableMarkdownDocumentView }
+        XCTAssertGreaterThan(before.count, 4)
+        let snapshots = before.map { $0.textView.attributedString().copy() as! NSAttributedString }
+        for document in before {
+            XCTAssertTrue(document.textView.isSelectable)
+            document.textView.setSelectedRange(NSRange(location: 0, length: 2))
+        }
+        for _ in 0..<12 {
+            coordinator.handleHover(true, in: "mixed-table-hover")
+            host.host.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(10))
+            coordinator.handleHover(false, in: "mixed-table-hover")
+            host.host.layoutSubtreeIfNeeded()
+            try await settle(for: .milliseconds(10))
+        }
+        let after = allDescendants(of: host.host)
+            .compactMap { $0 as? SelectableMarkdownDocumentView }
+        XCTAssertEqual(after.count, before.count)
+        for (index, pair) in zip(before, after).enumerated() {
+            XCTAssertTrue(pair.0 === pair.1)
+            XCTAssertEqual(pair.1.textView.selectedRange(), NSRange(location: 0, length: 2))
+            XCTAssertTrue(pair.1.textView.attributedString().isEqual(to: snapshots[index]))
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            XCTAssertTrue(pair.1.textView.writeSelection(to: pasteboard, types: pair.1.textView.writablePasteboardTypes))
+            XCTAssertEqual(pasteboard.string(forType: .string), (pair.1.textView.string as NSString).substring(to: 2))
+        }
     }
 
     private func measureMouseMovedStorm(

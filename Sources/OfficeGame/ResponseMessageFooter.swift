@@ -18,7 +18,7 @@ struct ResponseMessageFooter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(occurredAt.formatted(date: .omitted, time: .standard))
+            Text(OfficeLocalization.date(occurredAt, dateStyle: .omitted, time: .standard))
                 .font(.system(
                     size: 8.5,
                     weight: Self.timestampFontWeight,

@@ -1,5 +1,6 @@
-// 대화 카드 하나에만 SwiftUI 텍스트 선택 오버레이를 설치해 드래그
-// 복사는 제공하면서 긴 대화 전체의 AttributeGraph CPU 루프는 피한다.
+// 선택 영역은 카드별로 고정한다. 호버로 textSelection 분기를 바꾸면
+// 표·본문·코드의 하위 뷰가 재생성돼 깜빡임과 TextKit 재조판이 발생한다.
+// 피드/앱 루트에는 선택을 켜지 않고 각 카드 안에서만 선택을 제공한다.
 
 import AppKit
 import SwiftUI
@@ -167,26 +168,10 @@ final class ConversationTextSelectionCoordinator: NSObject, ObservableObject {
 private struct ConversationTextSelectionRegionModifier: ViewModifier {
     let regionID: String
 
-    @ObservedObject private var coordinator =
-        ConversationTextSelectionCoordinator.shared
-
-    @ViewBuilder
     func body(content: Content) -> some View {
-        Group {
-            if coordinator.activeRegionID == regionID {
-                content.textSelection(.enabled)
-            } else {
-                content
-            }
-        }
-            .onHover { isHovering in
-                coordinator.handleHover(isHovering, in: regionID)
-                // 카드 밖까지 드래그하는 동안에는 선택을 유지한다. 마우스를
-                // 놓은 뒤 다른 카드로 이동하면 그 카드만 새로 활성화된다.
-            }
-            .onDisappear {
-                coordinator.regionDidDisappear(regionID)
-            }
+        content
+            .textSelection(.enabled)
+            .id(regionID)
     }
 }
 

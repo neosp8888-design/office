@@ -90,7 +90,9 @@ final class UsageBoardLayoutTests: XCTestCase {
         XCTAssertTrue(summary.contains("\"상품 만료\""))
         XCTAssertTrue(summary.contains("calendar.badge.clock"))
         XCTAssertTrue(summary.contains("size: 8.5"))
-        XCTAssertTrue(summary.contains("dateFormat = \"M/d HH:mm\""))
+        XCTAssertTrue(summary.contains("formatter.locale = OfficeLocalization.locale"))
+        XCTAssertTrue(summary.contains("setLocalizedDateFormatFromTemplate(\"MdHm\")"))
+        XCTAssertFalse(summary.contains("Locale(identifier: \"ko_KR\")"))
         XCTAssertEqual(
             summary.components(separatedBy: ".fontWeight(.bold)").count - 1,
             1

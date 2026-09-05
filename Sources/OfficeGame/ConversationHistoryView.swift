@@ -46,7 +46,7 @@ struct CharacterConversationHistoryView: View {
                     ContentUnavailableView(
                         OfficeLocalization.string("대화 내역을 불러오지 못했습니다"),
                         systemImage: "exclamationmark.triangle",
-                        description: Text(errorMessage)
+                        description: Text(OfficeLocalization.systemMessage(errorMessage))
                     )
                 } else if let history, history.sessions.isEmpty {
                     ContentUnavailableView(
@@ -149,8 +149,8 @@ private struct SessionHistoryCard: View {
 
             HStack {
                 Label(
-                    session.startedAt.formatted(
-                        date: .abbreviated,
+                    OfficeLocalization.date(session.startedAt,
+                        dateStyle: .abbreviated,
                         time: .shortened
                     ),
                     systemImage: "calendar"
@@ -223,8 +223,8 @@ private struct TurnDisclosure: View {
                 )
                 HStack(spacing: 5) {
                     Text(
-                        turn.startedAt.formatted(
-                            date: .omitted,
+                        OfficeLocalization.date(turn.startedAt,
+                            dateStyle: .omitted,
                             time: .shortened
                         )
                     )
@@ -334,7 +334,7 @@ struct ConversationArchiveView: View {
                     ContentUnavailableView(
                         OfficeLocalization.string("대화 내역을 불러오지 못했습니다"),
                         systemImage: "exclamationmark.triangle",
-                        description: Text(errorMessage)
+                        description: Text(OfficeLocalization.systemMessage(errorMessage))
                     )
                 } else if turns.isEmpty {
                     ContentUnavailableView(
@@ -350,8 +350,8 @@ struct ConversationArchiveView: View {
                             ForEach(dayGroups) { group in
                                 VStack(alignment: .leading, spacing: 9) {
                                     Text(
-                                        group.date.formatted(
-                                            date: .complete,
+                                        OfficeLocalization.date(group.date,
+                                            dateStyle: .complete,
                                             time: .omitted
                                         )
                                     )
@@ -505,7 +505,7 @@ private struct ArchiveTurnCard: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(turn.characterName)
+                        Text(OfficeLocalization.string(turn.characterName))
                             .font(.system(size: 15, weight: .bold))
                         Text(
                             agentExecutionSummary(
@@ -527,8 +527,8 @@ private struct ArchiveTurnCard: View {
                 }
                 Spacer()
                 Text(
-                    turn.startedAt.formatted(
-                        date: .omitted,
+                    OfficeLocalization.date(turn.startedAt,
+                        dateStyle: .omitted,
                         time: .shortened
                     )
                 )

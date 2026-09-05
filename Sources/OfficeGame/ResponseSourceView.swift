@@ -23,7 +23,7 @@ struct ResponseSourceWarningView: View {
                 .foregroundStyle(.orange)
                 .font(.system(size: 11, weight: .semibold))
 
-            Text(message)
+            Text(OfficeLocalization.systemMessage(message))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)

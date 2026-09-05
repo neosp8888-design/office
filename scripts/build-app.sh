@@ -70,6 +70,7 @@ for required_path in \
     "$CORE_RESOURCE_BUNDLE/avatars" \
     "$CORE_RESOURCE_BUNDLE/profiles" \
     "$GAME_RESOURCE_BUNDLE/Info.plist" \
+    "$GAME_RESOURCE_BUNDLE/SystemMessages.en.json" \
     "$GAME_RESOURCE_BUNDLE/en.lproj/Localizable.strings" \
     "$GAME_RESOURCE_BUNDLE/ko.lproj/Localizable.strings"; do
     if [[ ! -e "$required_path" ]]; then

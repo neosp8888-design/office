@@ -583,22 +583,22 @@ struct CodexCollaborationSummary: Equatable {
 
     var statusText: String {
         guard !agents.isEmpty else {
-            return "협업 기록"
+            return OfficeLocalization.string("협업 기록")
         }
         if failedCount > 0 {
-            return "\(agents.count)명 · \(completedCount)명 완료 · \(failedCount)명 오류"
+            return OfficeLocalization.format("%d명 · %d명 완료 · %d명 오류", agents.count, completedCount, failedCount)
         }
         if runningCount > 0 {
-            return "\(agents.count)명 · \(completedCount)/\(agents.count) 완료"
+            return OfficeLocalization.format("%d명 · %d/%d 완료", agents.count, completedCount, agents.count)
         }
-        return "\(agents.count)명 검토 완료"
+        return OfficeLocalization.format("%d명 검토 완료", agents.count)
     }
 
     func displayLabel(for agentID: String) -> String {
         guard let index = agents.firstIndex(where: { $0.id == agentID }) else {
-            return "검토자"
+            return OfficeLocalization.string("검토자")
         }
-        return agents[index].label ?? "검토자 \(index + 1)"
+        return agents[index].label ?? OfficeLocalization.format("검토자 %d", index + 1)
     }
 
     static func isHiddenHousekeeping(_ activity: LiveFeedActivity) -> Bool {
@@ -1136,7 +1136,7 @@ struct CodexTranscriptView: View {
                     }
                 } label: {
                     Label(
-                        "이전 기록 \(hiddenCount)개 보기",
+                        OfficeLocalization.format("이전 기록 %d개 보기", hiddenCount),
                         systemImage: "clock.arrow.circlepath"
                     )
                     .font(.system(size: 10.5, weight: .semibold))
@@ -1503,8 +1503,8 @@ private struct CodexCollaborationGroupView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Text(latestEvent.occurredAt.formatted(
-                date: .omitted,
+            Text(OfficeLocalization.date(latestEvent.occurredAt,
+                dateStyle: .omitted,
                 time: .standard
             ))
                 .font(.system(size: 8.5, design: .monospaced))
@@ -1547,15 +1547,15 @@ private struct CodexCollaborationAgentView: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 7) {
-                    Text(agent.label ?? "검토자 \(index + 1)")
+                    Text(agent.label ?? OfficeLocalization.format("검토자 %d", index + 1))
                         .font(.system(size: 11.5, weight: .bold))
 
                     CollaborationStatusBadge(status: agent.status)
 
                     Spacer(minLength: 4)
 
-                    Text(agent.updatedAt.formatted(
-                        date: .omitted,
+                    Text(OfficeLocalization.date(agent.updatedAt,
+                        dateStyle: .omitted,
                         time: .standard
                     ))
                         .font(.system(size: 8.5, design: .monospaced))
@@ -1573,8 +1573,8 @@ private struct CodexCollaborationAgentView: View {
                 if let followUp = agent.followUps.last {
                     collaborationTextSection(
                         title: agent.followUps.count > 1
-                            ? "추가 요청 \(agent.followUps.count)건"
-                            : "추가 요청",
+                            ? OfficeLocalization.format("추가 요청 %d건", agent.followUps.count)
+                            : OfficeLocalization.string("추가 요청"),
                         text: followUp,
                         lineLimit: 4
                     )
@@ -1624,7 +1624,7 @@ private struct CodexCollaborationAgentView: View {
         lineLimit: Int
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title)
+            Text(OfficeLocalization.string(title))
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.tertiary)
                 .textCase(.uppercase)
@@ -1642,7 +1642,7 @@ private struct CollaborationStatusBadge: View {
     let status: LiveFeedActivityStatus
 
     var body: some View {
-        Text(label)
+        Text(OfficeLocalization.string(label))
             .font(.system(size: 8.5, weight: .bold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
@@ -1738,7 +1738,7 @@ private struct CodexActivityGroupView: View, Equatable {
                                     showsAllHistory = true
                                 } label: {
                                     Label(
-                                        "더 이전 기록 \(hiddenCount)개 보기",
+                                        OfficeLocalization.format("더 이전 기록 %d개 보기", hiddenCount),
                                         systemImage: "clock.arrow.circlepath"
                                     )
                                     .font(
@@ -1762,8 +1762,8 @@ private struct CodexActivityGroupView: View, Equatable {
                 } label: {
                     Text(
                         isExpanded
-                            ? "이전 \(historyNoun) 숨기기"
-                            : "이전 \(historyNoun) \(historyCount)개 보기"
+                            ? OfficeLocalization.format("이전 %@ 숨기기", historyNoun)
+                            : OfficeLocalization.format("이전 %@ %d개 보기", historyNoun, historyCount)
                     )
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -1838,7 +1838,7 @@ private struct CodexActivityGroupView: View, Equatable {
             statusView(activity.status)
                 .frame(width: 15, height: 15)
 
-            Text(activity.text)
+            Text(activity.displayText)
                 .font(activityFont(for: activity))
                 .foregroundStyle(.secondary)
                 .lineLimit(
@@ -1846,8 +1846,8 @@ private struct CodexActivityGroupView: View, Equatable {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(activity.occurredAt.formatted(
-                date: .omitted,
+            Text(OfficeLocalization.date(activity.occurredAt,
+                dateStyle: .omitted,
                 time: .standard
             ))
                 .font(.system(size: 8.5, design: .monospaced))
@@ -1856,9 +1856,9 @@ private struct CodexActivityGroupView: View, Equatable {
         .padding(.vertical, isLatest ? 4 : 3)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "\(groupTitle), \(activity.text), "
-                + activity.occurredAt.formatted(
-                    date: .omitted,
+            "\(groupTitle), \(activity.displayText), "
+                + OfficeLocalization.date(activity.occurredAt,
+                    dateStyle: .omitted,
                     time: .standard
                 )
         )
@@ -1920,19 +1920,19 @@ private struct CodexActivityGroupView: View, Equatable {
     private var historyNoun: String {
         switch group.kind {
         case .work:
-            "작업"
+            OfficeLocalization.historyNoun("작업")
         case .reasoning:
-            "추론"
+            OfficeLocalization.historyNoun("추론")
         case .command:
-            "명령"
+            OfficeLocalization.historyNoun("명령")
         case .tool:
-            "도구 사용"
+            OfficeLocalization.historyNoun("도구 사용")
         case .changes:
-            "파일 변경"
+            OfficeLocalization.historyNoun("파일 변경")
         case .collaboration:
-            "협업"
+            OfficeLocalization.historyNoun("협업")
         case .other:
-            "작업"
+            OfficeLocalization.historyNoun("작업")
         }
     }
 
@@ -1996,7 +1996,7 @@ private struct CodexMessageView: View {
         VStack(alignment: .leading, spacing: 7) {
             if isConclusion || needsInput {
                 Label(
-                    headerTitle,
+                    OfficeLocalization.string(headerTitle),
                     systemImage: headerIcon
                 )
                 .font(.system(size: 10.5, weight: .bold))

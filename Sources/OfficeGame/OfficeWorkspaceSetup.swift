@@ -361,10 +361,10 @@ final class OfficeLaunchCoordinator: ObservableObject {
             let source = """
             #!/bin/zsh
             clear
-            echo '\(backend.title) 로그인을 시작합니다.'
+            echo \(shellQuoted(OfficeLocalization.format("%@ 로그인을 시작합니다.", backend.title)))
             \(shellQuoted(executable.path)) \(arguments)
             echo
-            echo '로그인이 끝났습니다. 이 창을 닫고 OFFICESTRA에서 다시 확인을 누르세요.'
+            echo \(shellQuoted(OfficeLocalization.string("로그인이 끝났습니다. 이 창을 닫고 OFFICESTRA에서 다시 확인을 누르세요.")))
             """
             try Data(source.utf8).write(to: script, options: .atomic)
             guard chmod(script.path, 0o700) == 0 else {
@@ -533,7 +533,7 @@ struct OfficeWorkspaceSetupView: View {
 
             if let validationError {
                 Label(
-                    OfficeLocalization.string(validationError),
+                    OfficeLocalization.systemMessage(validationError),
                     systemImage: "exclamationmark.triangle"
                 )
                     .font(.system(size: 13, weight: .medium))
@@ -812,7 +812,7 @@ private struct OfficeSetupStatusRow: View {
              .ready(let value),
              .actionRequired(let value),
              .failed(let value):
-            OfficeLocalization.string(value)
+            OfficeLocalization.systemMessage(value)
         }
     }
 
@@ -852,7 +852,7 @@ struct OfficeLaunchFailureView: View {
         ContentUnavailableView(
             OfficeLocalization.string("앱 설정을 읽지 못했습니다"),
             systemImage: "exclamationmark.triangle",
-            description: Text(OfficeLocalization.string(message))
+            description: Text(OfficeLocalization.systemMessage(message))
         )
     }
 }
