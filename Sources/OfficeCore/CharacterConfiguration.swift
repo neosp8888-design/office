@@ -138,6 +138,11 @@ public struct AgentModelOption:
     public let contextWindow: Int?
     public let maxContextWindow: Int?
     public let available: Bool
+    /// Claude 별칭(`fable[1m]`)이 지금 가리키는 실제 모델과, 바뀌었다면 이전
+    /// 모델과 바뀐 시각이다. 다른 CLI는 비어 있다.
+    public let resolvedModel: String?
+    public let previousResolvedModel: String?
+    public let resolvedModelChangedAt: Date?
 
     public init(
         id: String,
@@ -147,7 +152,10 @@ public struct AgentModelOption:
         supportsFastMode: Bool,
         contextWindow: Int? = nil,
         maxContextWindow: Int? = nil,
-        available: Bool = true
+        available: Bool = true,
+        resolvedModel: String? = nil,
+        previousResolvedModel: String? = nil,
+        resolvedModelChangedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -157,6 +165,22 @@ public struct AgentModelOption:
         self.contextWindow = contextWindow
         self.maxContextWindow = maxContextWindow
         self.available = available
+        self.resolvedModel = resolvedModel
+        self.previousResolvedModel = previousResolvedModel
+        self.resolvedModelChangedAt = resolvedModelChangedAt
+    }
+
+    /// 같은 별칭이 새 모델을 가리키게 된 지 이 기간 안이면 화면에 알린다.
+    public static let revisionNoticeWindow: TimeInterval = 14 * 24 * 60 * 60
+
+    public func isRecentlyRevised(now: Date = Date()) -> Bool {
+        guard let changedAt = resolvedModelChangedAt else { return false }
+        return now.timeIntervalSince(changedAt) < Self.revisionNoticeWindow
+    }
+
+    /// 선택기에 보일 이름이다. 최근 바뀐 별칭은 "새 버전"을 덧붙인다.
+    public func pickerTitle(now: Date = Date()) -> String {
+        isRecentlyRevised(now: now) ? "\(title) · 새 버전" : title
     }
 }
 

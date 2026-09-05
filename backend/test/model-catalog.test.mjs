@@ -6,6 +6,7 @@ import {
   MODEL_CATALOG_REFRESH_MILLISECONDS,
   ModelCatalogService,
   ModelCatalogValidationError,
+  claudeModelTitle,
   mergeModelCatalog,
   parseAntigravityModelCatalog,
   parseClaudeModelCatalog,
@@ -101,14 +102,18 @@ test("Claude initialize 응답은 선택기 값과 추론 단계를 읽고 별�
   ]);
   assert.deepEqual(parsed.models[0], {
     id: "opus[1m]",
-    title: "Opus (1M context)",
+    title: "Opus 5 (1M)",
     efforts: ["low", "medium", "high", "xhigh", "max"],
     defaultEffort: "high",
     supportsFastMode: true,
     contextWindow: null,
     maxContextWindow: null,
     available: true,
+    resolvedModel: "claude-opus-5[1m]",
+    previousResolvedModel: null,
+    resolvedModelChangedAt: null,
   });
+  assert.equal(parsed.models[1].title, "Fable 5.1 (1M)");
   assert.equal(parsed.models[1].supportsFastMode, false);
   assert.throws(
     () =>
@@ -133,7 +138,52 @@ test("Codex JSON은 화면 노출 모델과 실제 옵션만 추린다", () => {
     contextWindow: 300_000,
     maxContextWindow: 1_000_000,
     available: true,
+    resolvedModel: null,
+    previousResolvedModel: null,
+    resolvedModelChangedAt: null,
   });
+});
+
+test("Claude 제목은 별칭이 가리키는 실제 모델의 버전을 보여준다", () => {
+  assert.equal(claudeModelTitle("Fable", "claude-fable-5-1[1m]"), "Fable 5.1 (1M)");
+  assert.equal(claudeModelTitle("Sonnet", "claude-sonnet-5"), "Sonnet 5");
+  assert.equal(claudeModelTitle("Haiku", "claude-haiku-4-5-20251001"), "Haiku 4.5");
+  assert.equal(claudeModelTitle("Custom", "my-gateway-model"), "Custom · my-gateway-model");
+  assert.equal(claudeModelTitle("Opus", null), "Opus");
+});
+
+// 같은 별칭(fable[1m])이 새 모델을 가리키게 되면 이전 값과 시각을 남기고,
+// 다음 갱신에서 변화가 없으면 그 기록을 이어 간다.
+test("같은 별칭의 실제 모델이 바뀌면 이전 모델과 시각을 남긴다", () => {
+  const first = mergeModelCatalog(
+    { version: 1, models: [] },
+    parseClaudeModelCatalog(claudePayload),
+    { now: Date.parse("2026-09-05T00:00:00Z") },
+  );
+  assert.equal(first.models[1].resolvedModelChangedAt, null);
+  const revisedPayload = claudePayload.replace(
+    "claude-fable-5-1[1m]",
+    "claude-fable-5-2[1m]",
+  );
+  const second = mergeModelCatalog(
+    first,
+    parseClaudeModelCatalog(revisedPayload),
+    { now: Date.parse("2026-10-01T00:00:00Z") },
+  );
+  const fable = second.models.find((entry) => entry.id === "fable[1m]");
+  assert.equal(fable.title, "Fable 5.2 (1M)");
+  assert.equal(fable.resolvedModel, "claude-fable-5-2[1m]");
+  assert.equal(fable.previousResolvedModel, "claude-fable-5-1[1m]");
+  assert.equal(fable.resolvedModelChangedAt, "2026-10-01T00:00:00.000Z");
+  assert.equal(second.models[0].previousResolvedModel, null);
+  const third = mergeModelCatalog(
+    second,
+    parseClaudeModelCatalog(revisedPayload),
+    { now: Date.parse("2026-10-02T00:00:00Z") },
+  );
+  const carried = third.models.find((entry) => entry.id === "fable[1m]");
+  assert.equal(carried.previousResolvedModel, "claude-fable-5-1[1m]");
+  assert.equal(carried.resolvedModelChangedAt, "2026-10-01T00:00:00.000Z");
 });
 
 test("Antigravity 목록은 Gemini 노력 변형을 한 모델로 합친다", () => {

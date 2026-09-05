@@ -56,10 +56,15 @@ final class AgentModelCatalogSelectionTests: XCTestCase {
                         models: [
                             AgentModelOption(
                                 id: "opus[1m]",
-                                title: "Opus (1M context)",
+                                title: "Opus 5.1 (1M)",
                                 efforts: ["low", "medium", "high", "xhigh", "max"],
                                 defaultEffort: "high",
-                                supportsFastMode: true
+                                supportsFastMode: true,
+                                resolvedModel: "claude-opus-5-1[1m]",
+                                previousResolvedModel: "claude-opus-5[1m]",
+                                resolvedModelChangedAt: Date(
+                                    timeIntervalSince1970: 1_788_000_000
+                                )
                             ),
                             AgentModelOption(
                                 id: "sonnet",
@@ -102,6 +107,20 @@ final class AgentModelCatalogSelectionTests: XCTestCase {
         XCTAssertEqual(
             director.modelTitle(for: .claude, model: "claude-opus-5"),
             "Opus 5"
+        )
+        // 같은 별칭이 새 모델을 가리키게 된 직후 2주 동안만 선택기에 알린다.
+        let revised = director.modelOption(for: .claude, model: "opus[1m]")!
+        let changedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        XCTAssertEqual(
+            revised.pickerTitle(now: changedAt.addingTimeInterval(24 * 60 * 60)),
+            "Opus 5.1 (1M) · 새 버전"
+        )
+        XCTAssertEqual(
+            revised.pickerTitle(now: changedAt.addingTimeInterval(15 * 24 * 60 * 60)),
+            "Opus 5.1 (1M)"
+        )
+        XCTAssertFalse(
+            director.modelOption(for: .claude, model: "sonnet")!.isRecentlyRevised()
         )
 
         XCTAssertEqual(

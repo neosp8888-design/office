@@ -2531,11 +2531,11 @@ private struct AgentQuickSettingsView: View {
                     } label: {
                         if settings.model == model.id {
                             Label(
-                                model.title,
+                                model.pickerTitle(),
                                 systemImage: "checkmark"
                             )
                         } else {
-                            Text(model.title)
+                            Text(model.pickerTitle())
                         }
                     }
                 }
@@ -2855,6 +2855,17 @@ private struct AgentModelVisibilitySettingsView: View {
         var parts = ["추론 " + model.efforts.joined(separator: " · ")]
         if model.supportsFastMode {
             parts.append("Fast 지원")
+        }
+        if let resolved = model.resolvedModel {
+            parts.append("실제 모델 " + resolved)
+        }
+        if let previous = model.previousResolvedModel,
+           let changedAt = model.resolvedModelChangedAt
+        {
+            parts.append(
+                "\(changedAt.formatted(date: .abbreviated, time: .omitted))에 "
+                    + "\(previous)에서 바뀜"
+            )
         }
         return parts.joined(separator: "  |  ")
     }

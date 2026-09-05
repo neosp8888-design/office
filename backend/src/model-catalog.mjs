@@ -271,10 +271,11 @@ export function parseClaudeModelCatalog(source) {
     .map((entry) =>
       model({
         id: entry.value,
-        title: entry.displayName,
+        title: claudeModelTitle(entry.displayName, entry.resolvedModel),
         efforts: entry.supportedEffortLevels,
         defaultEffort: "high",
         supportsFastMode: entry.supportsFastMode === true,
+        resolvedModel: entry.resolvedModel,
       })
     )
     .filter(Boolean);
@@ -284,18 +285,52 @@ export function parseClaudeModelCatalog(source) {
   return catalog(models);
 }
 
-export function mergeModelCatalog(previous, discovered) {
+// Claude Code 표시명("Fable", "Opus (1M context)")에는 버전이 없어 별칭이
+// 가리키는 실제 모델(claude-fable-5-1[1m])에서 "Fable 5.1 (1M)"을 만든다.
+// 형식을 모르는 값이면 표시명 뒤에 실제 모델을 그대로 붙인다.
+export function claudeModelTitle(displayName, resolvedModel) {
+  const display = String(displayName ?? "").trim();
+  const resolved = String(resolvedModel ?? "").trim();
+  if (!resolved) return display;
+  const oneMillion = resolved.endsWith("[1m]");
+  const bare = oneMillion ? resolved.slice(0, -4) : resolved;
+  const match = bare.match(/^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:-\d{8})?$/);
+  if (!match) return display ? `${display} · ${resolved}` : resolved;
+  const family = match[1][0].toUpperCase() + match[1].slice(1);
+  const version = match[3] ? `${match[2]}.${match[3]}` : match[2];
+  return `${family} ${version}${oneMillion ? " (1M)" : ""}`;
+}
+
+// 같은 식별자(별칭)가 가리키는 실제 모델이 바뀌면 이전 값과 시각을 남겨
+// 화면에서 새 버전임을 알릴 수 있게 한다. 바뀌지 않은 동안은 지난 기록을
+// 그대로 이어 간다.
+export function mergeModelCatalog(previous, discovered, { now = Date.now() } = {}) {
   const oldCatalog = normalizeCatalog(previous);
   const newCatalog = normalizeCatalog(discovered);
   if (newCatalog.models.length === 0) {
     throw new Error("새 모델 카탈로그가 비어 있습니다.");
   }
+  const previousByID = new Map(oldCatalog.models.map((entry) => [entry.id, entry]));
   const discoveredIDs = new Set(newCatalog.models.map((entry) => entry.id));
   const unavailable = oldCatalog.models
     .filter((entry) => !discoveredIDs.has(entry.id))
     .map((entry) => ({ ...entry, available: false }));
   return catalog([
-    ...newCatalog.models.map((entry) => ({ ...entry, available: true })),
+    ...newCatalog.models.map((entry) => {
+      const prior = previousByID.get(entry.id);
+      const revised = prior?.resolvedModel && entry.resolvedModel &&
+        prior.resolvedModel !== entry.resolvedModel;
+      return {
+        ...entry,
+        available: true,
+        previousResolvedModel: revised
+          ? prior.resolvedModel
+          : prior?.previousResolvedModel ?? null,
+        resolvedModelChangedAt: revised
+          ? new Date(now).toISOString()
+          : prior?.resolvedModelChangedAt ?? null,
+      };
+    }),
     ...unavailable,
   ]);
 }
@@ -512,7 +547,11 @@ export class ModelCatalogService {
     this.rows.set(provider, normalizedRow(claimed));
     try {
       const discovered = await this.fetchProvider(provider);
-      const merged = mergeModelCatalog(this.catalogFor(provider), discovered);
+      const merged = mergeModelCatalog(
+        this.catalogFor(provider),
+        discovered,
+        { now: this.now() },
+      );
       const fetchedAt = new Date(this.now());
       const saved = await this.store.saveSuccess({
         provider,
@@ -647,6 +686,9 @@ function model({
   contextWindow = null,
   maxContextWindow = null,
   available = true,
+  resolvedModel = null,
+  previousResolvedModel = null,
+  resolvedModelChangedAt = null,
 }) {
   if (!validModelID(id)) return null;
   const normalizedEfforts = uniqueEfforts(efforts);
@@ -662,7 +704,21 @@ function model({
     contextWindow: safePositiveInteger(contextWindow),
     maxContextWindow: safePositiveInteger(maxContextWindow),
     available: available !== false,
+    resolvedModel: optionalText(resolvedModel),
+    previousResolvedModel: optionalText(previousResolvedModel),
+    resolvedModelChangedAt: optionalTimestamp(resolvedModelChangedAt),
   };
+}
+
+function optionalText(value) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function optionalTimestamp(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const time = timestamp(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
 function catalog(models) {
