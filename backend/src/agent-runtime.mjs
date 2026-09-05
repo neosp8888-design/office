@@ -5331,6 +5331,8 @@ function antigravityArguments(
     antigravityExecutionPrompt(character, prompt, workdir),
     "--output-format",
     "stream-json",
+    "--print-timeout",
+    "24h",
     "--model",
     character.model,
     "--effort",

@@ -972,6 +972,10 @@ test("Antigravity 신규와 재개는 모델·추론·대화 ID와 업무 폴더
       argumentsList[argumentsList.indexOf("--effort") + 1],
       "high",
     );
+    assert.equal(
+      argumentsList[argumentsList.indexOf("--print-timeout") + 1],
+      "24h",
+    );
     assert.equal(argumentsList.includes("--sandbox"), true);
     assert.equal(
       argumentsList.includes("--dangerously-skip-permissions"),
