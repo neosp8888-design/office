@@ -12,6 +12,32 @@ enum TerminalWorkspaceAppearance {
     )
 }
 
+/// 하단 입력창의 글을 CLI에 넣을 때 쓰는 바이트열이다. CLI가 bracketed paste를
+/// 켜 두었으면 붙여넣기로 감싸 여러 줄이 중간에 제출되지 않게 하고, 마지막에
+/// Enter를 붙여 바로 보낸다. 멈춤은 세 CLI 모두 Esc가 진행 중인 응답을 끊는다.
+enum TerminalInputEncoding {
+    static let bracketedPasteStart: [UInt8] = Array("\u{1b}[200~".utf8)
+    static let bracketedPasteEnd: [UInt8] = Array("\u{1b}[201~".utf8)
+    static let enter: [UInt8] = [0x0d]
+    static let interrupt: [UInt8] = [0x1b]
+
+    static func submission(
+        _ text: String,
+        bracketedPaste: Bool
+    ) -> [UInt8] {
+        var bytes: [UInt8] = []
+        if bracketedPaste {
+            bytes += bracketedPasteStart
+        }
+        bytes += Array(text.utf8)
+        if bracketedPaste {
+            bytes += bracketedPasteEnd
+        }
+        bytes += enter
+        return bytes
+    }
+}
+
 struct TerminalWorkspaceCachePolicy: Equatable {
     private(set) var cachedCharacters: Set<OfficeCharacter> = []
     private(set) var selectedCharacter: OfficeCharacter?
@@ -56,6 +82,7 @@ struct CachedTerminalWorkspaces: NSViewRepresentable {
 
     func makeNSView(context: Context) -> CachedTerminalWorkspacesNSView {
         let view = CachedTerminalWorkspacesNSView()
+        view.attachInputSink(to: director)
         configure(view)
         return view
     }
@@ -95,6 +122,7 @@ final class CachedTerminalWorkspacesNSView: NSView {
     private var sessionRevision = 0
     private weak var characterSelectionStore: CharacterSelectionStore?
     private var lastFocusRequest: OfficeCharacter?
+    private weak var inputSinkOwner: AgentDirector?
 
     var startsProcesses = true
 
@@ -120,6 +148,13 @@ final class CachedTerminalWorkspacesNSView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    // 터미널 화면이 붙어 있는 동안 하단 입력창·예약·멈춤이 이리로 오도록
+    // director에 등록한다. 화면이 내려가면 tearDown이 등록을 푼다.
+    func attachInputSink(to director: AgentDirector) {
+        inputSinkOwner = director
+        director.terminalInputSink = self
+    }
 
     func configure(
         selectedCharacterID: OfficeCharacter?,
@@ -208,6 +243,10 @@ final class CachedTerminalWorkspacesNSView: NSView {
     }
 
     func tearDown() {
+        if inputSinkOwner?.terminalInputSink === self {
+            inputSinkOwner?.terminalInputSink = nil
+        }
+        inputSinkOwner = nil
         _ = cachePolicy.tearDown()
         for entry in entries.values {
             entry.terminateAndUnlock()
@@ -215,6 +254,16 @@ final class CachedTerminalWorkspacesNSView: NSView {
         }
         entries.removeAll()
         selectedCharacterID = nil
+    }
+}
+
+extension CachedTerminalWorkspacesNSView: TerminalInputSink {
+    func sendText(_ text: String, to character: OfficeCharacter) -> Bool {
+        entries[character]?.sendText(text) ?? false
+    }
+
+    func interrupt(_ character: OfficeCharacter) -> Bool {
+        entries[character]?.sendInterrupt() ?? false
     }
 }
 
@@ -411,6 +460,24 @@ private final class TerminalProcessHostView:
     func focusTerminal() {
         guard let terminal else { return }
         window?.makeFirstResponder(terminal)
+    }
+
+    // 하단 입력창의 글을 붙여넣기처럼 넣고 Enter를 친다. 프로세스가 없으면
+    // 받지 않아 호출자가 예약을 되돌릴 수 있다.
+    func sendText(_ text: String) -> Bool {
+        guard let terminal else { return false }
+        let bytes = TerminalInputEncoding.submission(
+            text,
+            bracketedPaste: terminal.getTerminal().bracketedPasteMode
+        )
+        terminal.send(data: bytes[...])
+        return true
+    }
+
+    func sendInterrupt() -> Bool {
+        guard let terminal else { return false }
+        terminal.send(data: TerminalInputEncoding.interrupt[...])
+        return true
     }
 
     private func showStopped(_ message: String) {

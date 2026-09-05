@@ -315,6 +315,104 @@ test("Claude Stop 훅의 완료 저장이 실패하면 턴을 중단 처리하�
   await manager.close("boss");
 });
 
+// 앱의 멈춤 버튼은 터미널에 Esc를 보낸 뒤 이 경로를 부른다. Claude는 중단 때
+// Stop 훅이 오지 않으므로 여기서 턴을 풀어야 화면과 예약이 이어진다.
+test("터미널 중단 요청은 진행 중인 턴을 중단 처리하고 세션을 푼다", async () => {
+  const events = [];
+  const runtime = fakeRuntime();
+  const manager = new TerminalSessionManager({
+    runtime,
+    broadcast: (event) => events.push(event),
+  });
+  await manager.open("boss");
+  await assert.rejects(() => manager.interrupt("left-man"));
+  assert.deepEqual(await manager.interrupt("boss"), {
+    interrupted: false,
+    turnId: null,
+  });
+
+  const started = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "긴 작업",
+    },
+  });
+  assert.equal(manager.list()[0].runningTurnId, started.turnId);
+
+  assert.deepEqual(await manager.interrupt("boss"), {
+    interrupted: true,
+    turnId: started.turnId,
+  });
+  assert.deepEqual(runtime.interrupted, [{
+    characterID: "boss",
+    turnID: started.turnId,
+  }]);
+  assert.equal(manager.list()[0].runningTurnId, null);
+  assert.equal(events.at(-1).type, "terminal.changed");
+
+  // 중단 뒤 도착하는 Stop 훅은 풀린 세션을 다시 잠그지 않는다.
+  const late = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "Stop",
+      session_id: "claude-session",
+      last_assistant_message: "늦은 답변",
+    },
+  });
+  assert.equal(late.accepted, false);
+  assert.equal(runtime.completed.length, 0);
+
+  const next = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "다음 질문",
+    },
+  });
+  assert.equal(next.accepted, true);
+  assert.notEqual(next.turnId, started.turnId);
+  await manager.close("boss");
+});
+
+// 터미널에서 직접 Esc를 눌러도 Stop 훅은 오지 않는다. 그대로 두면 다음 질문이
+// 전부 turn-running으로 버려져 기록이 끊긴다.
+test("Stop 훅 없이 새 질문이 오면 남아 있던 Claude 턴을 중단 처리한다", async () => {
+  const runtime = fakeRuntime();
+  const manager = new TerminalSessionManager({ runtime, broadcast() {} });
+  await manager.open("boss");
+  const first = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "첫 질문",
+    },
+  });
+  const second = await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "Esc 뒤 두 번째 질문",
+    },
+  });
+  assert.equal(second.accepted, true);
+  assert.notEqual(second.turnId, first.turnId);
+  assert.deepEqual(runtime.interrupted, [{
+    characterID: "boss",
+    turnID: first.turnId,
+  }]);
+  assert.equal(manager.list()[0].runningTurnId, second.turnId);
+  assert.deepEqual(runtime.begun.map((turn) => turn.prompt), [
+    "첫 질문",
+    "Esc 뒤 두 번째 질문",
+  ]);
+  await manager.close("boss");
+});
+
 test("Antigravity step 14/15 payload를 사용자·최종 응답으로 해독한다", () => {
   const user = parseAntigravityTerminalStep({
     step_type: 14,

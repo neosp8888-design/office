@@ -1,4 +1,4 @@
-// 터미널 모드에서 하단 바가 실행 설정만 잠그는지 검증한다.
+// 터미널 모드에서 하단 바가 실행 설정과 첨부만 잠그는지 검증한다.
 
 import XCTest
 
@@ -17,13 +17,19 @@ final class LiveWorkspaceCommandAvailabilityTests: XCTestCase {
         }
     }
 
-    func testTerminalModeLocksOnlyQuickSettings() {
-        XCTAssertFalse(
-            LiveWorkspaceCommandAvailability.isEnabled(
-                .quickSettings,
-                in: .terminal
+    // 입력창은 남고, CLI로 넘길 통로가 없는 첨부만 실행 설정과 함께 잠긴다.
+    func testTerminalModeLocksQuickSettingsAndAttachments() {
+        for control in [
+            LiveWorkspaceCommandAvailability.Control.quickSettings,
+            .attachments,
+        ] {
+            XCTAssertFalse(
+                LiveWorkspaceCommandAvailability.isEnabled(
+                    control,
+                    in: .terminal
+                )
             )
-        )
+        }
         for control in [
             LiveWorkspaceCommandAvailability.Control.characterSelector,
             .profile,
@@ -80,6 +86,9 @@ final class LiveWorkspaceCommandAvailabilityTests: XCTestCase {
     }
 
     private var allControls: [LiveWorkspaceCommandAvailability.Control] {
-        [.characterSelector, .quickSettings, .profile, .identitySettings]
+        [
+            .characterSelector, .quickSettings, .profile, .identitySettings,
+            .attachments,
+        ]
     }
 }

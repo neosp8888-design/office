@@ -275,12 +275,13 @@ function routeAgentJob(pathname) {
 
 function routeTerminalSession(pathname) {
   const match = pathname.match(
-    /^\/api\/terminal-sessions\/([^/]+)(?:\/(events))?$/,
+    /^\/api\/terminal-sessions\/([^/]+)(?:\/(events|interrupt))?$/,
   );
   return match
     ? {
       characterID: decodeURIComponent(match[1]),
       events: match[2] === "events",
+      interrupt: match[2] === "interrupt",
     }
     : null;
 }
@@ -1570,6 +1571,20 @@ async function recordTerminalEvent(response, characterID, body) {
   }
 }
 
+async function interruptTerminalSession(response, characterID) {
+  if (!terminalSessions) {
+    send(response, 503, { error: "터미널 실행기가 준비되지 않았습니다." });
+    return;
+  }
+  try {
+    send(response, 200, await terminalSessions.interrupt(characterID));
+  } catch (error) {
+    send(response, 404, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function cancelAgentJob(response, characterID) {
   if (!runtime) {
     send(response, 503, { error: "CLI 실행기가 준비되지 않았습니다." });
@@ -2307,9 +2322,20 @@ const server = createServer(async (request, response) => {
         await readJSON(request),
       );
     } else if (
+      request.method === "POST" &&
+      terminalSessionRoute?.interrupt
+    ) {
+      if (!trustedJSONMutation(request, response)) return;
+      await readJSON(request);
+      await interruptTerminalSession(
+        response,
+        terminalSessionRoute.characterID,
+      );
+    } else if (
       request.method === "DELETE" &&
       terminalSessionRoute &&
-      !terminalSessionRoute.events
+      !terminalSessionRoute.events &&
+      !terminalSessionRoute.interrupt
     ) {
       if (!trustedJSONMutation(request, response)) return;
       await readJSON(request);

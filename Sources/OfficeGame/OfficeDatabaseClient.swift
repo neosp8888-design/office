@@ -123,6 +123,30 @@ struct OfficeDatabaseClient: Sendable {
         try validate(response, data: data)
     }
 
+    /// 터미널에 Esc를 보낸 뒤 호출해 진행 중인 터미널 턴을 중단 처리한다.
+    func interruptTerminalSession(
+        character: OfficeCharacter
+    ) async throws -> TerminalInterruptResult {
+        var request = URLRequest(
+            url: baseURL
+                .appending(path: "api/terminal-sessions")
+                .appending(path: character.rawValue)
+                .appending(path: "interrupt")
+        )
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.httpBody = Data("{}".utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try historyDecoder().decode(
+            TerminalInterruptResult.self,
+            from: data
+        )
+    }
+
     func usageSummaryURL(force: Bool = false) -> URL {
         let endpoint = baseURL
             .appending(path: "api")
@@ -982,6 +1006,11 @@ struct StoredActiveSession: Decodable, Sendable {
     let characterId: String
     let externalSessionId: String?
     let conversationId: UUID
+}
+
+struct TerminalInterruptResult: Decodable, Equatable, Sendable {
+    let interrupted: Bool
+    let turnId: String?
 }
 
 struct StoredTerminalSession: Decodable, Identifiable, Equatable, Sendable {

@@ -199,12 +199,15 @@ enum OfficePanelControl {
 
 /// 터미널 모드에서는 CLI가 직원 세션을 직접 잡고 있으므로 실행 설정을 잠근다.
 /// 직원 선택은 각 직원의 터미널로 옮겨 가는 유일한 통로라 잠그지 않는다.
+/// 하단 입력창은 글을 CLI에 타이핑한 것처럼 넘기므로 남기되, 첨부는 CLI로
+/// 넘길 통로가 없어 잠근다.
 enum LiveWorkspaceCommandAvailability {
     enum Control {
         case characterSelector
         case quickSettings
         case profile
         case identitySettings
+        case attachments
     }
 
     static let lockedOpacity: Double = 0.52
@@ -219,7 +222,7 @@ enum LiveWorkspaceCommandAvailability {
         switch control {
         case .characterSelector, .profile, .identitySettings:
             return true
-        case .quickSettings:
+        case .quickSettings, .attachments:
             return false
         }
     }
@@ -1246,25 +1249,24 @@ private struct LiveWorkspaceCommandBar: View {
                 )
             }
 
-            if conversationMode == .chat, let selectedCharacterID {
+            if let selectedCharacterID {
                 QueuedCommandStrip(
                     director: director,
                     character: selectedCharacterID
                 )
             }
 
-            if conversationMode == .terminal {
-                terminalInputHint
-            } else {
-                CommandEntryRow(
-                    director: director,
-                    placeholder: commandPlaceholder,
-                    attachmentCount: attachments.count,
-                    isPreparingAttachments: isPreparingAttachments,
-                    onChooseAttachments: chooseAttachments,
-                    onSubmit: submitCommand
-                )
-            }
+            // 터미널 모드에서도 같은 입력창을 쓴다. 터미널의 한글 입력이
+            // 불편해서, 여기서 쓴 글을 CLI에 타이핑한 것처럼 넘긴다.
+            CommandEntryRow(
+                director: director,
+                placeholder: commandPlaceholder,
+                attachmentCount: attachments.count,
+                isPreparingAttachments: isPreparingAttachments,
+                supportsAttachments: isEnabled(.attachments),
+                onChooseAttachments: chooseAttachments,
+                onSubmit: submitCommand
+            )
 
             if let character = selectedCharacter {
                 HStack {
@@ -1356,22 +1358,6 @@ private struct LiveWorkspaceCommandBar: View {
 
         }
         .padding(14)
-    }
-
-    private var terminalInputHint: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "terminal")
-                .foregroundStyle(.secondary)
-            Text(OfficeLocalization.string("터미널에서 직접 입력하세요"))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 13)
-        .frame(height: 44)
-        .background(Color.primary.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityIdentifier("terminalCommandInputHint")
     }
 
     private func terminalRestartNotice(
@@ -1685,7 +1671,8 @@ private extension LiveWorkspaceCommandBar {
 
         // 응답 생성 중이면 같은 입력을 다음 턴 예약으로 넘긴다.
         // 첨부는 예약이 실제로 제출될 때까지 director가 들고 있다가
-        // 정리하므로 여기서 목록만 비운다.
+        // 정리하므로 여기서 목록만 비운다. 터미널 모드도 같은 예약을 쓰고,
+        // 응답이 끝나면 director가 CLI에 타이핑한 것처럼 흘려보낸다.
         if director.runningCharacters.contains(selectedCharacterID) {
             let queued = director.enqueueCommand(
                 prompt,
@@ -1696,6 +1683,10 @@ private extension LiveWorkspaceCommandBar {
                 attachments = []
             }
             return queued
+        }
+
+        if conversationMode == .terminal {
+            return director.submitToTerminal(prompt, for: selectedCharacterID)
         }
 
         let submittedAttachments = attachments

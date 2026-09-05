@@ -492,7 +492,6 @@
 "터미널 모드로 전환" = "Switch to Terminal mode";
 "터미널 모드로 전환할 수 없습니다" = "Cannot switch to Terminal mode";
 "터미널 상태를 확인하지 못했습니다" = "Could not check terminal status";
-"터미널에서 직접 입력하세요" = "Type directly into the terminal";
 "터미널을 다시 시작하는 중입니다…" = "Restarting terminal…";
 "터미널을 시작하는 중입니다…" = "Starting terminal…";
 "터미널을 열지 못했습니다.\n%@" = "Couldn't open terminal.\n%@";

@@ -845,7 +845,17 @@ export class TerminalSessionManager {
       return await this.recordClaudeSessionCost(state, payload.cost);
     }
     if (event === "UserPromptSubmit") {
-      if (state.runningTurnID) return { accepted: false, reason: "turn-running" };
+      // Esc로 중단된 턴은 Stop 훅이 오지 않아 running으로 남는다. 새 질문이
+      // 제출됐다는 것은 이전 턴이 끝났다는 뜻이므로, 남은 턴을 중단 처리하고
+      // 세션을 풀어 이 질문부터 다시 기록한다.
+      if (state.runningTurnID) {
+        await this.runtime.interruptTerminalTurn(
+          state.characterID,
+          state.runningTurnID,
+        );
+        state.runningTurnID = null;
+        this.resetTurnArtifacts(state);
+      }
       const path = payload.transcript_path;
       let offset = 0;
       try { if (path) offset = statSync(path).size; } catch {}
@@ -1005,6 +1015,25 @@ export class TerminalSessionManager {
       this.broadcast({ type: "terminal.changed", characterId: state.characterID });
     }
     return { accepted: true, turnId: turnID };
+  }
+
+  // 앱이 터미널에 Esc를 보낸 뒤 호출한다. Claude는 중단 때 Stop 훅이 오지
+  // 않으므로 여기서 턴을 중단 처리해야 화면과 예약이 풀린다. Codex는 뒤따르는
+  // turn_aborted가 runningTurnID를 못 찾아 그대로 지나간다.
+  async interrupt(characterID) {
+    const id = String(characterID ?? "");
+    const state = this.sessions.get(id);
+    if (!state || state.closed) {
+      throw new Error("열린 터미널 세션을 찾을 수 없습니다.");
+    }
+    const turnID = state.runningTurnID;
+    if (!turnID) return { interrupted: false, turnId: null };
+    await this.runtime.interruptTerminalTurn(id, turnID);
+    state.runningTurnID = null;
+    state.codexTurnID = null;
+    this.resetTurnArtifacts(state);
+    this.broadcast({ type: "terminal.changed", characterId: id });
+    return { interrupted: true, turnId: turnID };
   }
 
   async close(characterID) {

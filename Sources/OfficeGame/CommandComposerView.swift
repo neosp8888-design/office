@@ -151,6 +151,8 @@ struct CommandEntryRow: View {
     let placeholder: String
     let attachmentCount: Int
     let isPreparingAttachments: Bool
+    /// 터미널 모드는 글만 CLI로 넘기므로 첨부 버튼을 두지 않는다.
+    var supportsAttachments = true
     let onChooseAttachments: () -> Void
     let onSubmit: (String) -> Bool
 
@@ -208,28 +210,30 @@ struct CommandEntryRow: View {
         let canSubmit = submissionPrompt != nil
 
         HStack(spacing: 9) {
-            Button(action: onChooseAttachments) {
-                Group {
-                    if isPreparingAttachments {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.secondary)
+            if supportsAttachments {
+                Button(action: onChooseAttachments) {
+                    Group {
+                        if isPreparingAttachments {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .frame(width: 32, height: 32)
                 }
-                .frame(width: 32, height: 32)
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    isPreparingAttachments
+                        ? OfficeLocalization.string("첨부 준비 중")
+                        : OfficeLocalization.string("파일 첨부")
+                )
+                .help(OfficeLocalization.string("파일 첨부 · 한 번에 최대 20개"))
+                .disabled(attachmentSelectionIsDisabled)
+                .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                isPreparingAttachments
-                    ? OfficeLocalization.string("첨부 준비 중")
-                    : OfficeLocalization.string("파일 첨부")
-            )
-            .help(OfficeLocalization.string("파일 첨부 · 한 번에 최대 20개"))
-            .disabled(attachmentSelectionIsDisabled)
-            .opacity(attachmentSelectionIsDisabled ? 0.42 : 1)
 
             CommandComposerView(
                 text: $draft.text,

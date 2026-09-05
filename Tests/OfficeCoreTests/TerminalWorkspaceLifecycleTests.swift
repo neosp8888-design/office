@@ -133,4 +133,63 @@ final class TerminalWorkspaceLifecycleTests: XCTestCase {
         XCTAssertTrue(policy.cachedCharacters.isEmpty)
         XCTAssertNil(policy.selectedCharacter)
     }
+
+    // 터미널 화면이 붙어 있는 동안만 하단 입력창·멈춤이 터미널로 간다.
+    // 화면이 내려가면 등록이 풀려 대화 모드의 기존 경로로 돌아가야 한다.
+    @MainActor
+    func testInputSinkStaysRegisteredUntilTearDown() {
+        let director = AgentDirector(startBackgroundTasks: false)
+        let view = CachedTerminalWorkspacesNSView()
+        view.startsProcesses = false
+
+        view.attachInputSink(to: director)
+        XCTAssertTrue(director.terminalInputSink === view)
+
+        view.tearDown()
+        XCTAssertNil(director.terminalInputSink)
+    }
+
+    // 프로세스가 붙지 않은 터미널이나 열린 적 없는 직원에게는 글이 가지 않아야
+    // 호출자가 예약을 되돌릴 수 있다.
+    @MainActor
+    func testInputWithoutProcessIsRejected() async {
+        let selectionStore = CharacterSelectionStore()
+        let view = CachedTerminalWorkspacesNSView()
+        view.startsProcesses = false
+        view.configure(
+            selectedCharacterID: .boss,
+            characterSelectionStore: selectionStore,
+            databaseBaseURL: URL(string: "http://127.0.0.1:4317")!,
+            sessionRevision: 0,
+            restartRequest: nil
+        )
+        await Task.yield()
+
+        XCTAssertFalse(view.sendText("안녕하세요", to: .boss))
+        XCTAssertFalse(view.interrupt(.boss))
+        XCTAssertFalse(view.sendText("안녕하세요", to: .leftMan))
+        XCTAssertFalse(view.interrupt(.leftMan))
+    }
+
+    // CLI가 bracketed paste를 켜 두었으면 여러 줄이 중간에 제출되지 않게 감싸고,
+    // 마지막 Enter로 바로 보낸다. 한글은 UTF-8 그대로 들어간다.
+    func testSubmissionEncodingWrapsPasteAndEndsWithEnter() {
+        let text = "안녕하세요\n두 번째 줄"
+        let bracketed = TerminalInputEncoding.submission(
+            text,
+            bracketedPaste: true
+        )
+        XCTAssertEqual(
+            bracketed,
+            Array("\u{1b}[200~".utf8) + Array(text.utf8)
+                + Array("\u{1b}[201~".utf8) + [0x0d]
+        )
+
+        let plain = TerminalInputEncoding.submission(
+            text,
+            bracketedPaste: false
+        )
+        XCTAssertEqual(plain, Array(text.utf8) + [0x0d])
+        XCTAssertEqual(TerminalInputEncoding.interrupt, [0x1b])
+    }
 }

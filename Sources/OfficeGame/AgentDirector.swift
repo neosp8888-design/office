@@ -179,6 +179,15 @@ struct TerminalRestartRequest: Equatable, Sendable {
     let revision: Int
 }
 
+/// 터미널 모드에서 하단 입력창의 글과 멈춤 요청을 실제 CLI 터미널로 흘려보낸다.
+/// 터미널 화면이 붙어 있는 동안만 등록되므로, 등록돼 있으면 곧 터미널 모드다.
+/// 그 직원의 터미널 프로세스가 없으면 false를 돌려 호출자가 되돌릴 수 있게 한다.
+@MainActor
+protocol TerminalInputSink: AnyObject {
+    func sendText(_ text: String, to character: OfficeCharacter) -> Bool
+    func interrupt(_ character: OfficeCharacter) -> Bool
+}
+
 extension RealtimeFeedEvent {
     var officeCharacter: OfficeCharacter? {
         characterId.flatMap(OfficeCharacter.init(rawValue:))
@@ -779,6 +788,8 @@ final class AgentDirector: ObservableObject {
     @Published private(set) var terminalSessionRevision = 0
     @Published private(set) var terminalRestartRequest:
         TerminalRestartRequest?
+    /// 터미널 화면이 붙어 있는 동안만 채워진다. 입력·예약·멈춤이 이리로 간다.
+    weak var terminalInputSink: TerminalInputSink?
 
     let liveFeedStore = LiveFeedStore()
     let archiveFeedStore = ArchiveFeedStore()
@@ -1521,6 +1532,36 @@ final class AgentDirector: ObservableObject {
         cancelJob(for: character)
     }
 
+    /// 터미널 모드에서 하단 입력창의 글을 그 직원의 CLI에 타이핑한 것처럼 보낸다.
+    /// 응답 생성 중이면 호출자가 예약으로 돌리므로 여기서는 받지 않는다.
+    @discardableResult
+    func submitToTerminal(
+        _ prompt: String,
+        for character: OfficeCharacter
+    ) -> Bool {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmed.isEmpty,
+            isReadyForSubmissions,
+            !isUpdatingConfiguration,
+            !runningCharacters.contains(character),
+            !compactingCharacters.contains(character),
+            let sink = terminalInputSink,
+            sink.sendText(trimmed, to: character)
+        else {
+            return false
+        }
+        hasUserChosenCharacter = true
+        pendingQuestions[character] = nil
+        pendingQuestionTurnIDs[character] = nil
+        questionSubmissionErrors[character] = nil
+        unreviewedCompletedCharacters.remove(character)
+        if latestQuestion?.character == character {
+            latestQuestion = nil
+        }
+        return true
+    }
+
     private func cancelJob(for character: OfficeCharacter) {
         guard
             runningCharacters.contains(character),
@@ -1535,6 +1576,30 @@ final class AgentDirector: ObservableObject {
             for: character,
             autoDismiss: false
         )
+
+        // 터미널 모드에서는 CLI에 Esc를 보내 실제로 멈춘 뒤, 백엔드에 턴을
+        // 중단 처리하게 한다. Claude는 중단 때 Stop 훅이 오지 않아 백엔드가
+        // 스스로 알 수 없다. 그 직원의 터미널이 없으면 GUI 업무이므로
+        // 기존 경로로 내려간다.
+        if let sink = terminalInputSink, sink.interrupt(character) {
+            Task {
+                defer {
+                    cancellingCharacters.remove(character)
+                }
+                do {
+                    let result = try await database.interruptTerminalSession(
+                        character: character
+                    )
+                    scheduleRealtimeFeedRefresh(turnID: result.turnId)
+                } catch {
+                    turnPersistenceErrors[character] =
+                        OfficeLocalization.format("중단 요청이 삐끗했어요 · %@", error.localizedDescription)
+                    immediateQueueDrainCharacters.remove(character)
+                    scheduleRealtimeFeedRefresh(turnID: nil)
+                }
+            }
+            return
+        }
 
         Task {
             defer {
@@ -1634,6 +1699,19 @@ final class AgentDirector: ObservableObject {
             return
         }
         queuedCommands[character] = queue
+        if let sink = terminalInputSink {
+            // 터미널 모드에서는 예약을 CLI에 타이핑한 것처럼 보낸다. 첨부는
+            // 경로를 이어 적어 CLI가 직접 읽게 한다. 그 직원의 터미널이 없어
+            // 전달이 안 되면 예약을 되돌려 적어 둔 업무가 사라지지 않게 한다.
+            let lines = [next.prompt]
+                + next.attachments.map(\.stagedURL.path)
+            if !sink.sendText(lines.joined(separator: "\n"), to: character) {
+                var restored = queuedCommands[character] ?? QueuedCommandQueue()
+                restored.restoreToFront(next)
+                queuedCommands[character] = restored
+            }
+            return
+        }
         submit(
             next.prompt,
             attachmentPaths: next.attachments.map(\.stagedURL.path),
