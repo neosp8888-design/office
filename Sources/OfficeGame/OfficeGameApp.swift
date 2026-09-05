@@ -2681,17 +2681,14 @@ private struct AgentModelVisibilitySettingsView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    private let managedBackends: [AgentBackend] = [.codex, .antigravity]
+    private let managedBackends: [AgentBackend] = AgentBackend.allCases
 
     init(director: AgentDirector, initialBackend: AgentBackend) {
         self.director = director
-        let selected = initialBackend == .antigravity
-            ? AgentBackend.antigravity
-            : AgentBackend.codex
-        _selectedBackend = State(initialValue: selected)
+        _selectedBackend = State(initialValue: initialBackend)
         _draftExclusions = State(
             initialValue: Dictionary(
-                uniqueKeysWithValues: [AgentBackend.codex, .antigravity].map {
+                uniqueKeysWithValues: AgentBackend.allCases.map {
                     ($0, director.excludedModels(for: $0))
                 }
             )

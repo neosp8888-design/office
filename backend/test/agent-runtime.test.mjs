@@ -1705,7 +1705,9 @@ test("Claude는 같은 작업 공간에 세션이 남아 있으면 재개한다"
   });
 });
 
-test("Claude는 Fast 비활성화를 명시하고 다른 모델의 Fast를 거절한다", () => {
+// Fast 지원 여부는 Claude Code 모델 카탈로그가 알려주고 직원 설정 저장 때
+// 검증하므로, 실행 인자는 모델 이름을 따지지 않고 설정값을 그대로 전달한다.
+test("Claude는 Fast 설정을 모델 이름과 무관하게 그대로 명시한다", () => {
   const argumentsList = buildArguments({
     character: {
       backend: "claude",
@@ -1726,23 +1728,25 @@ test("Claude는 Fast 비활성화를 명시하고 다른 모델의 Fast를 거�
     { fastMode: false },
   );
 
-  assert.throws(
-    () => buildArguments({
-      character: {
-        backend: "claude",
-        model: "claude-sonnet-5",
-        effort: "high",
-        fastMode: true,
-        permission: "auto",
-        name: "클대리",
-        seat: "좌측 아래",
-        identityPrompt: "업무를 정확히 처리한다.",
-      },
-      prompt: "상태를 확인해줘.",
-      previousSessionID: null,
-    }),
-    /Opus 5/,
+  const fastArguments = buildArguments({
+    character: {
+      backend: "claude",
+      model: "opus[1m]",
+      effort: "high",
+      fastMode: true,
+      permission: "auto",
+      name: "클대리",
+      seat: "좌측 아래",
+      identityPrompt: "업무를 정확히 처리한다.",
+    },
+    prompt: "상태를 확인해줘.",
+    previousSessionID: null,
+  });
+  assert.deepEqual(
+    JSON.parse(fastArguments[fastArguments.indexOf("--settings") + 1]),
+    { fastMode: true },
   );
+  assert.equal(fastArguments[fastArguments.indexOf("--model") + 1], "opus[1m]");
 });
 
 test("같은 이벤트 ID의 시작과 완료는 한 활동 행을 갱신한다", async () => {

@@ -1751,6 +1751,7 @@ export class AgentRuntime {
     usage = null,
     initialGeneratedImages = new Set(),
     structured = null,
+    reportedCostUsd = null,
   }) {
     const result = await this.pool.query(
       `
@@ -1834,11 +1835,48 @@ export class AgentRuntime {
       structuredResultPath: null,
     };
     state.usage ??= await this.terminalTurnUsage(state, row.startedAt);
+    if (reportedCostUsd !== null) {
+      state.usage = {
+        ...(state.usage ?? emptyUsage()),
+        reportedCostUsd,
+      };
+    }
     await this.complete(state, decoded);
   }
 
-  // Claude와 Codex 터미널 턴은 CLI가 사용량을 알려주지 않는다. 두 CLI가
+  // Claude 상태줄 누적 비용의 마지막 갱신은 Stop 훅보다 늦게 도착한다. 이미
+  // 완료한 터미널 턴의 비용에 그 차액을 더한다.
+  async addTerminalTurnReportedCost({ characterID, turnID, costUsd }) {
+    const amount = Number(costUsd);
+    if (!turnID || !Number.isFinite(amount) || amount <= 0) return false;
+    const result = await this.pool.query(
+      `
+        INSERT INTO usage_records (turn_id, cost_usd)
+        SELECT turn.id, $3
+        FROM turns AS turn
+        JOIN cli_sessions AS session ON session.id = turn.cli_session_id
+        WHERE turn.id = $1
+          AND session.character_id = $2
+          AND turn.origin = 'terminal'
+          AND turn.backend = 'claude'
+        ON CONFLICT (turn_id) DO UPDATE
+        SET cost_usd = COALESCE(usage_records.cost_usd, 0) + EXCLUDED.cost_usd
+        RETURNING turn_id
+      `,
+      [turnID, characterID, amount],
+    );
+    if (result.rowCount === 0) return false;
+    this.broadcast({
+      type: "feed.changed",
+      turnId: turnID,
+      characterId: characterID,
+    });
+    return true;
+  }
+
+  // Claude와 Codex 터미널 턴은 CLI가 토큰 사용량을 알려주지 않는다. 두 CLI가
   // 디스크에 남긴 기록에서 이 턴 구간만 합산해 GUI 턴과 같은 값을 채운다.
+  // Claude 비용만은 기록에 없고 상태줄이 알려준 값을 호출자가 따로 넣는다.
   async terminalTurnUsage(state, startedAt) {
     const backend = state.character?.backend;
     if (!state.externalSessionID || !startedAt) {
@@ -4591,6 +4629,22 @@ function nonnegativeTokenCount(value) {
     : null;
 }
 
+function emptyUsage() {
+  return {
+    inputTokens: null,
+    outputTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    cacheWrite5mInputTokens: null,
+    cacheWrite1hInputTokens: null,
+    reasoningOutputTokens: null,
+    serviceTier: null,
+    speed: null,
+    inferenceGeo: null,
+    reportedCostUsd: null,
+  };
+}
+
 function rolloutFileChangeStatistics(reader, workdir, changes) {
   if (!reader || !readRolloutEvents(reader, workdir)) {
     return null;
@@ -5229,9 +5283,6 @@ function claudeArguments(
   prompt,
   previousSessionID,
 ) {
-  if (character.fastMode && character.model !== "claude-opus-5") {
-    throw new Error("Claude Code Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
-  }
   const argumentsList = [
     "-p",
     prompt,
@@ -5336,9 +5387,6 @@ function antigravityExecutionPrompt(character, prompt, workdir) {
 }
 
 export function claudePersistentArguments(character, previousSessionID) {
-  if (character.fastMode && character.model !== "claude-opus-5") {
-    throw new Error("Claude Code Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
-  }
   const argumentsList = [
     "-p",
     "--output-format",

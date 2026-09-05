@@ -52,6 +52,15 @@ function quotedConfig(value) {
   return JSON.stringify(String(value ?? ""));
 }
 
+function nonnegativeCost(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+// 상태줄 명령은 Claude Code가 세션 누적 비용(cost.total_cost_usd)을 JSON으로
+// 넘겨주는 유일한 대화형 경로다. 훅과 같은 스크립트가 받아 백엔드로 보내고
+// 화면에는 아무것도 출력하지 않는다.
 function terminalHookSettings(character) {
   const hook = { hooks: [{ type: "command", command: "officestra-terminal-hook" }] };
   return JSON.stringify({
@@ -60,6 +69,7 @@ function terminalHookSettings(character) {
       UserPromptSubmit: [hook],
       Stop: [hook],
     },
+    statusLine: { type: "command", command: "officestra-terminal-hook" },
   });
 }
 
@@ -88,9 +98,6 @@ export function terminalArguments({
 }) {
   switch (character.backend) {
     case "claude": { // print 모드 플래그 없이 원래 대화형 CLI를 실행한다.
-      if (character.fastMode && character.model !== "claude-opus-5") {
-        throw new Error("Claude Code Fast 모드는 Opus 5에서만 사용할 수 있습니다.");
-      }
       const args = [
         "--effort", character.effort,
         "--permission-mode", character.permission,
@@ -701,6 +708,9 @@ export class TerminalSessionManager {
         workdir: launch.workdir,
         startedAt: Date.now(),
         runningTurnID: null,
+        lastCompletedTurnID: null,
+        // Claude 상태줄이 알려준 세션 누적 비용과 이미 턴에 반영한 몫이다.
+        claudeCost: { reported: null, settled: 0 },
         initialGeneratedImages: new Set(listGeneratedImages(
           launch.externalSessionID,
           generatedImageRoot(character.backend),
@@ -806,8 +816,13 @@ export class TerminalSessionManager {
   }
 
   async handleClaudeEvent(state, payload) {
-    const event = String(payload.hook_event_name ?? "");
+    // 상태줄 payload에는 hook_event_name이 없고 cost 객체가 있다.
+    const event = String(payload.hook_event_name ?? "") ||
+      (payload.cost && typeof payload.cost === "object" ? "StatusLine" : "");
     await this.bindIfNeeded(state, payload.session_id);
+    if (event === "StatusLine") {
+      return await this.recordClaudeSessionCost(state, payload.cost);
+    }
     if (event === "UserPromptSubmit") {
       if (state.runningTurnID) return { accepted: false, reason: "turn-running" };
       const turn = await this.runtime.beginTerminalTurn({
@@ -839,8 +854,10 @@ export class TerminalSessionManager {
         response,
         structured,
         initialGeneratedImages: state.initialGeneratedImages,
+        reportedCostUsd: this.settleClaudeTurnCost(state),
       });
       state.runningTurnID = null;
+      state.lastCompletedTurnID = turnID;
       this.resetTurnArtifacts(state);
     } catch (error) {
       await this.runtime.interruptTerminalTurn(state.characterID, turnID);
@@ -853,6 +870,42 @@ export class TerminalSessionManager {
       });
     }
     return { accepted: true, turnId: turnID };
+  }
+
+  // Claude Code 상태줄은 cost.total_cost_usd로 세션 누적 비용을 알려준다.
+  // 값이 줄어들면 CLI 프로세스가 새로 시작한 것(resume 포함)이라 기준을
+  // 0으로 되돌린다. 실측상 턴 마지막 갱신은 Stop 훅보다 늦게 오므로, 진행
+  // 중인 턴이 없으면 방금 끝난 턴에 차액을 더한다.
+  async recordClaudeSessionCost(state, cost) {
+    const total = nonnegativeCost(cost?.total_cost_usd);
+    if (total === null) return { accepted: false, reason: "no-cost" };
+    const tracker = state.claudeCost;
+    if (total < tracker.settled) tracker.settled = 0;
+    tracker.reported = total;
+    if (state.runningTurnID) {
+      return { accepted: true, turnId: state.runningTurnID };
+    }
+    const delta = total - tracker.settled;
+    tracker.settled = total;
+    if (delta <= 0 || !state.lastCompletedTurnID) {
+      return { accepted: true, turnId: null };
+    }
+    await this.runtime.addTerminalTurnReportedCost({
+      characterID: state.characterID,
+      turnID: state.lastCompletedTurnID,
+      costUsd: delta,
+    });
+    return { accepted: true, turnId: state.lastCompletedTurnID };
+  }
+
+  // 지금까지 보고된 누적 비용 중 아직 어느 턴에도 반영하지 않은 몫이다.
+  // 상태줄이 한 번도 오지 않았으면 null을 돌려 비용을 꾸며내지 않는다.
+  settleClaudeTurnCost(state) {
+    const tracker = state.claudeCost;
+    if (tracker.reported === null) return null;
+    const delta = Math.max(tracker.reported - tracker.settled, 0);
+    tracker.settled = tracker.reported;
+    return delta;
   }
 
   async handleCodexEvent(state, payload) {

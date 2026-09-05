@@ -146,6 +146,98 @@ test("Claude UserPromptSubmit과 Stop 훅이 같은 터미널 턴을 생성·완
   await manager.close("boss");
 });
 
+// Claude Code 상태줄은 세션 누적 비용만 알려주고, 턴 마지막 갱신은 실측상
+// Stop 훅보다 늦게 온다. 턴 완료 시점의 차액을 저장하고 늦은 갱신은 직전
+// 턴에 더하며, 누적값이 줄면 새 프로세스로 보고 기준을 되돌린다.
+test("Claude 상태줄 누적 비용을 턴별 차액으로 나눠 저장하고 늦은 갱신은 직전 턴에 더한다", async () => {
+  const runtime = fakeRuntime();
+  const added = [];
+  runtime.addTerminalTurnReportedCost = async (entry) => {
+    added.push(entry);
+    return true;
+  };
+  const manager = new TerminalSessionManager({ runtime, broadcast() {} });
+  await manager.open("boss");
+  const status = (total) => manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      session_id: "claude-session",
+      cost: { total_cost_usd: total, total_duration_ms: 10 },
+    },
+  });
+  const prompt = (text) => manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: text,
+    },
+  });
+  const stop = () => manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "Stop",
+      session_id: "claude-session",
+      last_assistant_message: "답변",
+    },
+  });
+
+  await status(0);
+  await prompt("첫 질문");
+  await status(0.1);
+  await stop();
+  assert.equal(runtime.completed[0].reportedCostUsd, 0.1);
+  // 턴이 끝난 뒤 도착한 마지막 갱신은 직전 턴에 차액만 더한다.
+  await status(0.25);
+  await status(0.25);
+  assert.deepEqual(added, [{
+    characterID: "boss",
+    turnID: "turn-1",
+    costUsd: 0.15,
+  }]);
+  // 두 번째 턴 중 누적값이 줄면 CLI가 새로 시작한 것이므로 0부터 센다.
+  await prompt("둘째 질문");
+  await status(0.05);
+  await stop();
+  assert.equal(runtime.completed[1].reportedCostUsd, 0.05);
+  assert.equal(added.length, 1);
+  await manager.close("boss");
+});
+
+test("Claude 상태줄이 한 번도 오지 않으면 터미널 턴 비용을 비워 둔다", async () => {
+  const runtime = fakeRuntime();
+  const manager = new TerminalSessionManager({ runtime, broadcast() {} });
+  await manager.open("boss");
+  await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session",
+      prompt: "질문",
+    },
+  });
+  await manager.handleEvent("boss", {
+    source: "claude",
+    payload: {
+      hook_event_name: "Stop",
+      session_id: "claude-session",
+      last_assistant_message: "답변",
+    },
+  });
+  assert.equal(runtime.completed[0].reportedCostUsd, null);
+  const settings = JSON.parse(
+    terminalArguments({
+      character: { ...baseCharacter, backend: "claude" },
+      workdir: "/tmp/office",
+    }).find((value) => value.startsWith("{")),
+  );
+  assert.deepEqual(settings.statusLine, {
+    type: "command",
+    command: "officestra-terminal-hook",
+  });
+  await manager.close("boss");
+});
+
 // 완료 저장이 실패했을 때 턴을 running으로 남기면 세션이 그 턴에 묶여
 // 이후 질문이 전부 turn-running으로 거절된다.
 test("Claude Stop 훅의 완료 저장이 실패하면 턴을 중단 처리하고 세션을 푼다", async () => {

@@ -39,6 +39,10 @@ export function claudeContextWindow(model) {
   if (!id) {
     return null;
   }
+  // Claude Code 선택값의 `[1m]` 접미사는 모델과 무관하게 1M 컨텍스트 창이다.
+  if (id.endsWith("[1m]")) {
+    return 1_000_000;
+  }
   for (const [prefix, window] of CLAUDE_CONTEXT_WINDOWS) {
     if (id.startsWith(prefix)) {
       return window;

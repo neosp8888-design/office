@@ -50,8 +50,58 @@ final class AgentModelCatalogSelectionTests: XCTestCase {
                         lastAttemptedAt: nil,
                         lastError: nil
                     ),
+                    // Claude Code initialize 응답의 선택값은 대괄호 접미사를 쓴다.
+                    AgentModelProviderCatalog(
+                        backend: .claude,
+                        models: [
+                            AgentModelOption(
+                                id: "opus[1m]",
+                                title: "Opus (1M context)",
+                                efforts: ["low", "medium", "high", "xhigh", "max"],
+                                defaultEffort: "high",
+                                supportsFastMode: true
+                            ),
+                            AgentModelOption(
+                                id: "sonnet",
+                                title: "Sonnet",
+                                efforts: ["low", "medium", "high", "xhigh", "max"],
+                                defaultEffort: "high",
+                                supportsFastMode: false
+                            ),
+                            AgentModelOption(
+                                id: "claude-opus-5",
+                                title: "Opus 5",
+                                efforts: ["high", "xhigh", "max"],
+                                defaultEffort: "high",
+                                supportsFastMode: true,
+                                available: false
+                            ),
+                        ],
+                        excludedModels: ["sonnet"],
+                        fetchedAt: Date(timeIntervalSince1970: 1_788_000_000),
+                        lastAttemptedAt: Date(timeIntervalSince1970: 1_788_000_000),
+                        lastError: nil
+                    ),
                 ]
             )
+        )
+
+        XCTAssertEqual(
+            director.modelOptions(for: .claude).map(\.id),
+            ["opus[1m]", "claude-opus-5"]
+        )
+        XCTAssertEqual(director.excludedModels(for: .claude), ["sonnet"])
+        XCTAssertTrue(
+            director.supportsFastMode(for: .claude, model: "opus[1m]")
+        )
+        XCTAssertEqual(
+            director.effortOptions(for: .claude, model: "opus[1m]"),
+            ["low", "medium", "high", "xhigh", "max"]
+        )
+        // 목록에서 내려간 기존 설정값도 이름과 옵션을 계속 찾을 수 있다.
+        XCTAssertEqual(
+            director.modelTitle(for: .claude, model: "claude-opus-5"),
+            "Opus 5"
         )
 
         XCTAssertEqual(

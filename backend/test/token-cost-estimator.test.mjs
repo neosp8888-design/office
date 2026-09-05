@@ -202,67 +202,46 @@ test("Claude Sonnet 5 공급자 비용은 정가 전환일부터 그대로 보�
   );
 });
 
-test("Claude Sonnet 5 프로모션 비용은 실제 캐시 미스 토큰으로도 계산한다", () => {
-  assert.equal(
-    estimateTokenCost({
-      backend: "claude",
-      model: "claude-sonnet-5",
-      fastMode: false,
-      pricedAt: new Date("2026-08-19T00:00:00Z"),
-      usage: {
-        inputTokens: 2,
-        outputTokens: 30,
-        cachedInputTokens: 28_601,
-        cacheWriteInputTokens: 191_159,
-        cacheWrite5mInputTokens: 0,
-        cacheWrite1hInputTokens: 191_159,
-        speed: "standard",
-        inferenceGeo: "global",
-      },
-    }),
-    0.7706602,
-  );
+// Claude 비용은 Claude Code가 보고한 값만 저장한다. 보고값이 없으면 토큰과
+// 단가로 다시 계산하지 않고 비운다.
+test("Claude 보고 비용이 없으면 토큰으로 추정하지 않는다", () => {
+  for (const [model, speed] of [
+    ["claude-opus-5", "standard"],
+    ["claude-opus-5", "fast"],
+    ["claude-sonnet-5", "standard"],
+    ["opus[1m]", "standard"],
+  ]) {
+    assert.equal(
+      estimateTokenCost({
+        backend: "claude",
+        model,
+        fastMode: speed === "fast",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cachedInputTokens: 100,
+          cacheWriteInputTokens: 50,
+          cacheWrite5mInputTokens: 20,
+          cacheWrite1hInputTokens: 30,
+          speed,
+          inferenceGeo: "global",
+          reportedCostUsd: null,
+        },
+      }),
+      null,
+    );
+  }
 });
 
-test("Claude Opus 5 토큰 비용은 캐시 생성과 읽기를 분리한다", () => {
+test("Claude 상태줄 차액 0도 보고값으로 보존한다", () => {
   assert.equal(
     estimateTokenCost({
       backend: "claude",
-      model: "claude-opus-5",
+      model: "opus[1m]",
       fastMode: false,
-      usage: {
-        inputTokens: 2,
-        outputTokens: 4,
-        cachedInputTokens: 0,
-        cacheWriteInputTokens: 21_741,
-        cacheWrite5mInputTokens: 21_741,
-        cacheWrite1hInputTokens: 0,
-        speed: "standard",
-        inferenceGeo: "global",
-      },
+      usage: { inputTokens: 10, outputTokens: 5, reportedCostUsd: 0 },
     }),
-    0.13599125,
-  );
-});
-
-test("Claude Opus 5 Fast 비용은 실제 speed와 캐시 배수를 사용한다", () => {
-  assert.equal(
-    estimateTokenCost({
-      backend: "claude",
-      model: "claude-opus-5",
-      fastMode: false,
-      usage: {
-        inputTokens: 10,
-        outputTokens: 5,
-        cachedInputTokens: 100,
-        cacheWriteInputTokens: 50,
-        cacheWrite5mInputTokens: 20,
-        cacheWrite1hInputTokens: 30,
-        speed: "fast",
-        inferenceGeo: "global",
-      },
-    }),
-    0.0013,
+    0,
   );
 });
 

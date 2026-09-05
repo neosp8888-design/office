@@ -1,4 +1,4 @@
-// 설치된 Codex·Antigravity CLI의 모델 목록과 모델별 실행 옵션을 수집한다.
+// 설치된 Codex·Antigravity·Claude CLI의 모델 목록과 모델별 실행 옵션을 수집한다.
 
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
@@ -6,11 +6,36 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+// Claude Code는 모델 나열 명령이 없지만 stream-json 입력으로 SDK initialize
+// 요청을 받으면 계정이 고를 수 있는 모델 목록을 control_response로 돌려준다.
+// 프롬프트를 보내지 않으므로 API 호출과 비용이 생기지 않는다.
+const CLAUDE_INITIALIZE_REQUEST = JSON.stringify({
+  type: "control_request",
+  request_id: "officestra-model-catalog",
+  request: { subtype: "initialize" },
+}) + "\n";
+
+async function runCatalogCommand(executable, argumentsList, options = {}) {
+  const { input = null, ...execOptions } = options;
+  const pending = execFileAsync(executable, argumentsList, execOptions);
+  if (input !== null) {
+    pending.child.stdin.on("error", () => {});
+    pending.child.stdin.end(input);
+  }
+  return await pending;
+}
+
 export const MODEL_CATALOG_REFRESH_MILLISECONDS = 12 * 60 * 60 * 1000;
 export const MODEL_CATALOG_PROVIDERS = Object.freeze([
   "codex",
   "antigravity",
+  "claude",
 ]);
+const CATALOG_EXECUTABLES = Object.freeze({
+  codex: "codex",
+  antigravity: "agy",
+  claude: "claude",
+});
 
 const COMMAND_TIMEOUT_MILLISECONDS = 30_000;
 const MAX_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -63,6 +88,27 @@ const BUILTIN_CATALOGS = Object.freeze({
       defaultEffort: "high",
     }),
   ]),
+  claude: catalog([
+    model({
+      id: "claude-opus-5",
+      title: "Opus 5",
+      efforts: ["high", "xhigh", "max"],
+      defaultEffort: "high",
+      supportsFastMode: true,
+    }),
+    model({
+      id: "fable",
+      title: "Fable",
+      efforts: ["high", "xhigh", "max"],
+      defaultEffort: "high",
+    }),
+    model({
+      id: "claude-sonnet-5",
+      title: "Sonnet 5",
+      efforts: ["high", "xhigh", "max"],
+      defaultEffort: "high",
+    }),
+  ]),
 });
 
 const SOURCES = Object.freeze({
@@ -73,6 +119,18 @@ const SOURCES = Object.freeze({
   antigravity: Object.freeze({
     arguments: Object.freeze(["models"]),
     parse: parseAntigravityModelCatalog,
+  }),
+  claude: Object.freeze({
+    arguments: Object.freeze([
+      "-p",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+    ]),
+    input: CLAUDE_INITIALIZE_REQUEST,
+    parse: parseClaudeModelCatalog,
   }),
 });
 
@@ -172,6 +230,56 @@ export function parseAntigravityModelCatalog(source) {
   const models = [...collected.values()].filter(Boolean);
   if (models.length === 0) {
     throw new Error("Antigravity 모델 목록 형식이 올바르지 않습니다.");
+  }
+  return catalog(models);
+}
+
+// Claude Code stream-json 출력에서 initialize control_response의 models를
+// 읽는다. 항목은 /model 선택기와 같은 값(`opus[1m]`, `sonnet` 등)이며
+// `default`는 다른 항목의 별칭이라 제외한다. 추론 단계를 지원하지 않는
+// 모델은 직원 설정에 effort가 필수라 목록에 올리지 않는다.
+export function parseClaudeModelCatalog(source) {
+  let entries = null;
+  for (const line of String(source ?? "").split(/\r?\n/)) {
+    let object;
+    try {
+      object = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (object?.type !== "control_response") continue;
+    const response = object.response;
+    if (response?.subtype !== "success") {
+      throw new Error(
+        `Claude Code initialize 요청이 실패했습니다: ${response?.error ?? "원인 미상"}`,
+      );
+    }
+    if (Array.isArray(response.response?.models)) {
+      entries = response.response.models;
+      break;
+    }
+  }
+  if (!entries) {
+    throw new Error("Claude Code 응답에 models 배열이 없습니다.");
+  }
+  const models = entries
+    .filter((entry) =>
+      entry && typeof entry === "object" &&
+      entry.value !== "default" &&
+      entry.disabled !== true
+    )
+    .map((entry) =>
+      model({
+        id: entry.value,
+        title: entry.displayName,
+        efforts: entry.supportedEffortLevels,
+        defaultEffort: "high",
+        supportsFastMode: entry.supportsFastMode === true,
+      })
+    )
+    .filter(Boolean);
+  if (models.length === 0) {
+    throw new Error("Claude Code에서 선택 가능한 모델을 찾지 못했습니다.");
   }
   return catalog(models);
 }
@@ -300,8 +408,8 @@ export function createPostgresModelCatalogStore(pool) {
 export class ModelCatalogService {
   constructor({
     store,
-    resolveExecutable = (provider) => provider === "codex" ? "codex" : "agy",
-    runCommand = execFileAsync,
+    resolveExecutable = (provider) => CATALOG_EXECUTABLES[provider] ?? provider,
+    runCommand = runCatalogCommand,
     now = () => Date.now(),
     logger = console,
     onChanged = () => {},
@@ -486,6 +594,7 @@ export class ModelCatalogService {
         env: process.env,
         timeout: COMMAND_TIMEOUT_MILLISECONDS,
         maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
+        ...(source.input ? { input: source.input } : {}),
       },
     );
     if (Buffer.byteLength(stdout, "utf8") > MAX_COMMAND_OUTPUT_BYTES) {
@@ -626,8 +735,10 @@ function safePositiveInteger(value) {
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
+// Claude Code의 선택값은 `opus[1m]`처럼 컨텍스트 창 접미사를 붙이므로
+// 대괄호도 허용한다.
 function validModelID(value) {
-  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(String(value ?? ""));
+  return /^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,119}$/.test(String(value ?? ""));
 }
 
 function timestamp(value) {

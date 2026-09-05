@@ -8,6 +8,7 @@ import {
   ModelCatalogValidationError,
   mergeModelCatalog,
   parseAntigravityModelCatalog,
+  parseClaudeModelCatalog,
   parseCodexModelCatalog,
 } from "../src/model-catalog.mjs";
 
@@ -45,6 +46,80 @@ const antigravityPayload = [
   "claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)",
   "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)",
 ].join("\n");
+
+// Claude Code stream-json은 initialize control_response 앞뒤로 다른 줄을 낼 수 있다.
+const claudePayload = [
+  JSON.stringify({ type: "system", subtype: "init", session_id: "s" }),
+  JSON.stringify({
+    type: "control_response",
+    response: {
+      subtype: "success",
+      request_id: "officestra-model-catalog",
+      response: {
+        models: [
+          {
+            value: "default",
+            resolvedModel: "claude-opus-5[1m]",
+            displayName: "Default (recommended)",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+            supportsFastMode: true,
+          },
+          {
+            value: "opus[1m]",
+            resolvedModel: "claude-opus-5[1m]",
+            displayName: "Opus (1M context)",
+            supportsEffort: true,
+            supportedEffortLevels: ["max", "low", "medium", "high", "xhigh"],
+            supportsFastMode: true,
+          },
+          {
+            value: "fable[1m]",
+            resolvedModel: "claude-fable-5-1[1m]",
+            displayName: "Fable",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+          },
+          { value: "haiku", displayName: "Haiku" },
+          {
+            value: "restricted",
+            displayName: "Restricted",
+            disabled: true,
+            supportedEffortLevels: ["high"],
+          },
+        ],
+      },
+    },
+  }),
+].join("\n");
+
+test("Claude initialize 응답은 선택기 값과 추론 단계를 읽고 별칭·비추론·비활성 모델은 뺀다", () => {
+  const parsed = parseClaudeModelCatalog(claudePayload);
+  assert.deepEqual(parsed.models.map((entry) => entry.id), [
+    "opus[1m]",
+    "fable[1m]",
+  ]);
+  assert.deepEqual(parsed.models[0], {
+    id: "opus[1m]",
+    title: "Opus (1M context)",
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    defaultEffort: "high",
+    supportsFastMode: true,
+    contextWindow: null,
+    maxContextWindow: null,
+    available: true,
+  });
+  assert.equal(parsed.models[1].supportsFastMode, false);
+  assert.throws(
+    () =>
+      parseClaudeModelCatalog(JSON.stringify({
+        type: "control_response",
+        response: { subtype: "error", error: "not logged in" },
+      })),
+    /not logged in/,
+  );
+  assert.throws(() => parseClaudeModelCatalog(""), /models 배열/);
+});
 
 test("Codex JSON은 화면 노출 모델과 실제 옵션만 추린다", () => {
   const parsed = parseCodexModelCatalog(codexPayload);
@@ -96,26 +171,52 @@ test("서비스는 12시간 게이트와 제외 모델을 영속 저장한다", 
   let now = Date.parse("2026-09-05T00:00:00Z");
   const store = fakeStore();
   let commandCount = 0;
+  const claudeInputs = [];
+  const payloads = {
+    codex: codexPayload,
+    antigravity: antigravityPayload,
+    claude: claudePayload,
+  };
   const service = new ModelCatalogService({
     store,
     now: () => now,
     resolveExecutable: (provider) => provider,
-    runCommand: async (executable) => {
+    runCommand: async (executable, argumentsList, options) => {
       commandCount += 1;
-      return {
-        stdout: executable === "codex" ? codexPayload : antigravityPayload,
-      };
+      if (executable === "claude") {
+        claudeInputs.push({ argumentsList, input: options.input });
+      }
+      return { stdout: payloads[executable] };
     },
   });
   await service.loadCached();
   const first = await service.refreshDue();
-  assert.deepEqual(first.map((entry) => entry.status), ["updated", "updated"]);
-  assert.equal(commandCount, 2);
+  assert.deepEqual(
+    first.map((entry) => entry.status),
+    ["updated", "updated", "updated"],
+  );
+  assert.equal(commandCount, 3);
+  // Claude는 프롬프트 없이 initialize 요청만 stdin으로 보내야 비용이 없다.
+  assert.equal(claudeInputs.length, 1);
+  assert.ok(claudeInputs[0].argumentsList.includes("--input-format"));
+  assert.match(claudeInputs[0].input, /"subtype":"initialize"/);
+  assert.equal(
+    service.modelCapabilities("claude", "opus[1m]")?.supportsFastMode,
+    true,
+  );
+  // 내장 기본 목록의 기존 설정값은 선택 목록에서 내려가되 검증용으로 남는다.
+  assert.equal(
+    service.modelCapabilities("claude", "claude-opus-5")?.available,
+    false,
+  );
 
   now += MODEL_CATALOG_REFRESH_MILLISECONDS - 1;
   const fresh = await service.refreshDue();
-  assert.deepEqual(fresh.map((entry) => entry.status), ["fresh", "fresh"]);
-  assert.equal(commandCount, 2);
+  assert.deepEqual(
+    fresh.map((entry) => entry.status),
+    ["fresh", "fresh", "fresh"],
+  );
+  assert.equal(commandCount, 3);
 
   const snapshot = await service.setExclusions("codex", ["gpt-next"])
     .catch((error) => error);
@@ -164,6 +265,12 @@ test("마이그레이션은 모델 카탈로그와 동적 effort 저장을 준�
   assert.match(source, /CREATE TABLE IF NOT EXISTS agent_model_catalogs/);
   assert.match(source, /excluded_models text\[\]/);
   assert.match(source, /effort ~ '\^\[a-z\]/);
+  const claude = readFileSync(
+    new URL("../../database/migrations/037_claude_model_catalog.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(claude, /DROP CONSTRAINT IF EXISTS agent_model_catalogs_provider_check/);
+  assert.match(claude, /CHECK \(provider IN \('codex', 'antigravity', 'claude'\)\)/);
 });
 
 function fakeStore() {
