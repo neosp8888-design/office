@@ -36,6 +36,13 @@ a different role and model. Their conversations never get mixed together, and
 each coworker resumes its own session when you return. However, all conversation
 history is shared through the database, RAG, and the internal wiki.
 
+### New models and reasoning options, automatically — you choose
+
+OFFICESTRA automatically refreshes the available models and supported reasoning
+levels from Claude Code, Codex, and Antigravity. New models appear in the picker
+automatically. In settings, hide only the models you do not want to see, then
+choose each coworker's model and reasoning level yourself.
+
 ### Run work in parallel and see it all
 
 Give different tasks to several coworkers at once. For each coworker, see who is
