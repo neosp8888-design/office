@@ -12,6 +12,8 @@ OFFICESTRA는 Claude Code, Codex, Antigravity 같은 AI 코딩 에이전트를 �
 오가는 대신 한 화면에서 일을 나누고, 진행 상황을 보고, 다음 직원을 이어서 투입할 수
 있습니다.
 
+앱 지원 언어: **영어(English) · 한국어**
+
 <p align="center">
   <img src="docs/images/officestra-social-preview.png" alt="Claude Code, Codex, Antigravity를 한곳에서 운영하는 OFFICESTRA" width="100%">
 </p>

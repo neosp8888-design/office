@@ -12,6 +12,8 @@ coworker keeps its own provider, model, role, and conversation session. Instead
 of jumping between terminals and chat windows, you can divide the work, watch it
 unfold, and bring in the next AI from one place.
 
+App interface languages: **English · Korean (한국어)**
+
 <p align="center">
   <img src="docs/images/officestra-social-preview.png" alt="OFFICESTRA orchestrating Claude Code, Codex, and Antigravity in one place" width="100%">
 </p>
