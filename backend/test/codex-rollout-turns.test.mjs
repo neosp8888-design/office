@@ -156,3 +156,25 @@ test("신규 세션은 rollout source cli만 허용한다", async () => {
   const gate = new CodexTerminalTurnGate({ cwd, sessionsRoot: root, retryCount: 1 });
   assert.equal((await gate.accept(realNotify)).reason, "new-session-not-cli");
 });
+
+test("턴 ID 없는 활동은 현재 턴 경계 안에서만 수집하고 최종 답변은 보존한다", async () => {
+  const lines = responseItemRolloutLines();
+  const activity = (text) => ({ type: "response_item", payload: { type: "message", role: "assistant", phase: "commentary", content: [{ type: "output_text", text }] } });
+  lines.splice(4, 0,
+    activity("파일을 확인합니다"),
+    { type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "공개 요약" }], encrypted_content: "private" } },
+    { type: "response_item", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: "비공개 도구 원문" } },
+    { type: "response_item", payload: { type: "custom_tool_call_output", call_id: "c1", output: "도구 출력 전문" } },
+    { type: "response_item", payload: { ...activity("다른 턴").payload, internal_chat_message_metadata_passthrough: { turn_id: titleTurnID } } },
+  );
+  lines.push(activity("끝난 뒤 메시지"), { type: "turn_context", payload: { turn_id: titleTurnID, cwd } }, activity("다음 턴 메시지"));
+  const { path } = await fixture({ lines });
+  const turn = await readCodexRolloutTurn(path, turnID);
+  assert.equal(turn.prompt, "오 이제 보이네");
+  assert.equal(turn.response, "확인했습니다.");
+  assert.deepEqual(turn.activities.map(({ kind, text }) => ({ kind, text })), [
+    { kind: "message", text: "파일을 확인합니다" },
+    { kind: "thinking", text: "공개 요약" },
+    { kind: "tool", text: "도구 · exec" },
+  ]);
+});

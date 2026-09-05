@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { submitStructuredResponseSource, STRUCTURED_RESULT_GUIDANCE } from "../src/structured-turn-result.mjs";
 
 import {
   AgentBusyError,
@@ -57,6 +58,7 @@ test("세 CLI의 대화형 인자는 resume 유무와 권한을 보존한다", (
     const settings = JSON.parse(fresh[fresh.indexOf("--settings") + 1]);
     assert.ok(settings.hooks.UserPromptSubmit);
     assert.ok(settings.hooks.Stop);
+    assert.ok(fresh[fresh.indexOf("--append-system-prompt") + 1].includes(STRUCTURED_RESULT_GUIDANCE));
   }
 });
 
@@ -144,6 +146,29 @@ test("Claude UserPromptSubmit과 Stop 훅이 같은 터미널 턴을 생성·완
   assert.deepEqual(runtime.completed.map((turn) => turn.response), ["터미널 답변"]);
   assert.deepEqual(runtime.bound.map((entry) => entry.externalSessionID), ["claude-session"]);
   await manager.close("boss");
+});
+
+test("Claude 시작 이후 활동과 명시적으로 제출한 근거가 같은 완료 턴으로 전달된다", async () => {
+  const root = await mkdtemp(join(tmpdir(), "claude-terminal-history-"));
+  const path = join(root, "session.jsonl");
+  await writeFile(path, JSON.stringify({ type: "assistant", sessionId: "claude-session", message: { content: [{ type: "text", text: "이전 답변" }] } }) + "\n");
+  const runtime = fakeRuntime({ workdir: root });
+  const manager = new TerminalSessionManager({ runtime, broadcast() {} });
+  try {
+    const spec = await manager.open("boss");
+    assert.equal(spec.env.OFFICESTRA_RESULT_PATH, manager.sessions.get("boss").structuredResultPath);
+    await manager.handleEvent("boss", { source: "claude", payload: { hook_event_name: "UserPromptSubmit", session_id: "claude-session", prompt: "질문", transcript_path: path } });
+    await appendFile(path, JSON.stringify({ type: "assistant", sessionId: "claude-session", message: { id: "one", content: [{ type: "text", text: "확인 중" }, { type: "thinking", thinking: "공개 요약" }] } }) + "\n");
+    submitStructuredResponseSource(spec.env.OFFICESTRA_RESULT_PATH, { kind: "file", title: "근거", locator: "source.mjs" });
+    await manager.handleEvent("boss", { source: "claude", payload: { hook_event_name: "Stop", session_id: "claude-session", last_assistant_message: "완료", transcript_path: path } });
+    assert.deepEqual(runtime.completed[0].activities.map((a) => a.kind).sort(), ["message", "thinking"]);
+    assert.equal(runtime.completed[0].structured.sources[0].locator, "source.mjs");
+    assert.equal(runtime.completed[0].response, "완료");
+    await manager.handleEvent("boss", { source: "claude", payload: { hook_event_name: "UserPromptSubmit", session_id: "claude-session", prompt: "다음 질문", transcript_path: path } });
+    await manager.handleEvent("boss", { source: "claude", payload: { hook_event_name: "Stop", session_id: "claude-session", last_assistant_message: "다음 답변", transcript_path: path } });
+    assert.deepEqual(runtime.completed[1].activities, []);
+    assert.deepEqual(runtime.completed[1].structured.sources, []);
+  } finally { await manager.close("boss"); }
 });
 
 // Claude Code 상태줄은 세션 누적 비용만 알려주고, 턴 마지막 갱신은 실측상
@@ -361,6 +386,11 @@ test("Antigravity 파일 알림을 놓쳐도 주기 확인으로 턴을 완료�
     );
     await waitUntil(() => runtime.begun.length === 1);
     assert.equal(state.runningTurnID, "turn-1");
+    submitStructuredResponseSource(state.structuredResultPath, { kind: "file", title: "근거", locator: "agy.mjs" });
+    database.prepare("INSERT INTO steps(idx, step_type, status, metadata, step_payload) VALUES (?, ?, ?, ?, ?)")
+      .run(2, 15, 3, null, message(numberField(1, 15), bytesField(20, message(bytesField(3, Buffer.from("공개 추론 요약"))))));
+    database.prepare("INSERT INTO steps(idx, step_type, status, metadata, step_payload) VALUES (?, ?, ?, ?, ?)")
+      .run(3, 132, 3, null, message(numberField(1, 132)));
 
     const assistantPayload = message(
       numberField(1, 15),
@@ -369,7 +399,7 @@ test("Antigravity 파일 알림을 놓쳐도 주기 확인으로 턴을 완료�
     database.prepare(
       "INSERT INTO steps(idx, step_type, status, metadata, step_payload) VALUES (?, ?, ?, ?, ?)",
     ).run(
-      2,
+      4,
       15,
       1,
       null,
@@ -377,13 +407,16 @@ test("Antigravity 파일 알림을 놓쳐도 주기 확인으로 턴을 완료�
     );
     // 미완료 행을 한 번 읽어 커서가 지나간 뒤 같은 idx가 완료되는 실제
     // Antigravity 기록 순서를 재현한다.
-    await waitUntil(() => state.watcher.lastIndex === 2);
+    await waitUntil(() => state.watcher.lastIndex === 4);
     assert.equal(runtime.completed.length, 0);
     database.prepare(
-      "UPDATE steps SET status = 3, step_payload = ? WHERE idx = 2",
+      "UPDATE steps SET status = 3, step_payload = ? WHERE idx = 4",
     ).run(assistantPayload);
     await waitUntil(() => runtime.completed.length === 1);
     assert.equal(runtime.completed[0].response, "답변");
+    assert.deepEqual(runtime.completed[0].activities.map((a) => a.kind), ["thinking", "tool"]);
+    assert.equal(runtime.completed[0].structured.sources[0].locator, "agy.mjs");
+    assert.equal(state.activities.finish().length, 0);
     assert.equal(state.runningTurnID, null);
   } finally {
     clearInterval(notificationStorm);
@@ -478,9 +511,12 @@ test("Codex 터미널은 rollout의 시작과 질문을 보면 running 턴을 �
 
   await appendFile(rollout, [
     { type: "turn_context", payload: { turn_id: codexTurnID, cwd: workdir } },
+    { type: "response_item", payload: { type: "message", role: "assistant", phase: "commentary", content: [{ type: "output_text", text: "작업 진행" }] } },
+    { type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "공개 요약" }] } },
     { type: "event_msg", payload: { type: "item_completed", turn_id: codexTurnID, item: { type: "AgentMessage", phase: "final_answer", content: [{ type: "Text", text: "터미널 답변" }] } } },
     { type: "event_msg", payload: { type: "task_complete", turn_id: codexTurnID, last_agent_message: "터미널 답변", started_at: 1_788_347_510, completed_at: 1_788_347_513 } },
   ].map(rolloutLine).join(""));
+  submitStructuredResponseSource(state.structuredResultPath, { kind: "file", title: "근거", locator: "codex.mjs" });
   const completed = await manager.handleEvent(
     "boss",
     codexNotify(workdir, "터미널 답변"),
@@ -493,6 +529,10 @@ test("Codex 터미널은 rollout의 시작과 질문을 보면 running 턴을 �
     [["turn-1", "터미널 답변"]],
   );
   assert.equal(state.runningTurnID, null);
+  assert.deepEqual(runtime.completed[0].activities.map((a) => a.kind), ["message", "thinking"]);
+  assert.equal(runtime.completed[0].structured.sources[0].locator, "codex.mjs");
+  assert.equal((await manager.handleEvent("boss", codexNotify(workdir, "터미널 답변"))).reason, "duplicate");
+  assert.equal(runtime.completed.length, 1);
   await manager.close("boss");
 });
 

@@ -41,7 +41,10 @@ import {
   consumeStructuredTurnResult,
   discardStructuredTurnResult,
   prepareStructuredTurnResult,
+  identityPromptWithStructuredResult,
 } from "./structured-turn-result.mjs";
+import { antigravityStepPayloadReasoning } from "./antigravity-reasoning.mjs";
+import { TerminalActivityCollector, readClaudeTerminalActivities } from "./terminal-turn-activities.mjs";
 
 const require = createRequire(import.meta.url);
 const SESSION_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
@@ -104,7 +107,7 @@ export function terminalArguments({
         "--settings", terminalHookSettings(character),
       ];
       if (character.model) args.push("--model", character.model);
-      args.push("--append-system-prompt", String(character.identityPrompt ?? ""));
+      args.push("--append-system-prompt", identityPromptWithStructuredResult(character.identityPrompt));
       if (previousSessionID) args.push("--resume", previousSessionID);
       return args;
     }
@@ -117,7 +120,7 @@ export function terminalArguments({
         "-c", `service_tier=${quotedConfig(character.fastMode ? "fast" : "default")}`,
         "-c", 'model_reasoning_summary="detailed"',
         "-c", "show_raw_agent_reasoning=true",
-        "-c", `developer_instructions=${quotedConfig(character.identityPrompt)}`,
+        "-c", `developer_instructions=${quotedConfig(identityPromptWithStructuredResult(character.identityPrompt))}`,
         "-s", character.permission,
         "-c", `notify=${JSON.stringify([nodePath, hookPath])}`,
       );
@@ -179,13 +182,23 @@ export function parseAntigravityTerminalStep(row) {
     }
     if (stepType === 15) {
       const text = utf8Field(nestedFields(fields, 20), 1);
+      const reasoning = antigravityStepPayloadReasoning(row.step_payload);
+      const activities = reasoning ? [{
+        kind: "thinking", text: reasoning, eventKey: `step:${row.idx}:thinking`,
+      }] : [];
       return text
         ? {
           kind: "assistant",
           text,
           metadata: parseAntigravityStepMetadata(row.metadata),
+          activities,
         }
-        : null;
+        : activities.length ? { kind: "activity", activities } : null;
+    }
+    if (stepType === 132) {
+      return { kind: "activity", activities: [{
+        kind: "tool", text: "도구 결과 수신", eventKey: `step:${row.idx}:tool`,
+      }] };
     }
     return null;
   } catch {
@@ -201,6 +214,7 @@ function dateFromEpoch(value, fallback = new Date()) {
 }
 
 function resetTerminalArtifacts(state) {
+  state.activities = new TerminalActivityCollector(state.workdir);
   state.initialGeneratedImages = new Set(listGeneratedImages(
     state.externalSessionID,
     generatedImageRoot(state.backend),
@@ -422,6 +436,11 @@ class AntigravityTerminalWatcher {
         this.pendingIndexes.add(index);
         continue;
       }
+      for (const activity of event.activities ?? []) this.state.activities.add(activity);
+      if (event.kind === "activity") {
+        this.pendingIndexes.delete(index);
+        continue;
+      }
       const turnID = this.state.runningTurnID;
       const usage = event.metadata?.usage
         ? {
@@ -449,6 +468,7 @@ class AntigravityTerminalWatcher {
           usage,
           initialGeneratedImages: this.state.initialGeneratedImages,
           structured,
+          activities: this.state.activities.finish(event.text),
         });
         this.state.runningTurnID = null;
         this.pendingIndexes.delete(index);
@@ -718,6 +738,7 @@ export class TerminalSessionManager {
         closed: false,
         watcher: null,
         codexTurnID: null,
+        activities: new TerminalActivityCollector(launch.workdir),
         codexGate: character.backend === "codex"
           ? new CodexTerminalTurnGate({
             cwd: launch.workdir,
@@ -825,6 +846,10 @@ export class TerminalSessionManager {
     }
     if (event === "UserPromptSubmit") {
       if (state.runningTurnID) return { accepted: false, reason: "turn-running" };
+      const path = payload.transcript_path;
+      let offset = 0;
+      try { if (path) offset = statSync(path).size; } catch {}
+      state.claudeTranscript = { path, offset };
       const turn = await this.runtime.beginTerminalTurn({
         characterID: state.characterID,
         sessionID: state.sessionID,
@@ -841,6 +866,15 @@ export class TerminalSessionManager {
     const turnID = state.runningTurnID;
     const response = String(payload.last_assistant_message ?? "").trim() ||
       lastClaudeAssistantMessage(payload.transcript_path);
+    // 시작 훅이 지목한 같은 원본만 읽는다. 경로가 다르면 과거 세션을 섞지 않는다.
+    const activities = state.claudeTranscript?.path &&
+        state.claudeTranscript.path === payload.transcript_path
+      ? await readClaudeTerminalActivities(payload.transcript_path, {
+        offset: state.claudeTranscript.offset,
+        sessionID: state.externalSessionID,
+        workdir: state.workdir,
+        finalResponse: response,
+      }) : [];
     const structured = consumeStructuredTurnResult(
       state.structuredResultPath,
     );
@@ -855,6 +889,7 @@ export class TerminalSessionManager {
         structured,
         initialGeneratedImages: state.initialGeneratedImages,
         reportedCostUsd: this.settleClaudeTurnCost(state),
+        activities,
       });
       state.runningTurnID = null;
       state.lastCompletedTurnID = turnID;
@@ -955,6 +990,7 @@ export class TerminalSessionManager {
         characterID: state.characterID,
         turnID,
         response: turn.response,
+        activities: turn.activities,
         structured,
         endedAt: dateFromEpoch(turn.completedAt),
         initialGeneratedImages: state.initialGeneratedImages,

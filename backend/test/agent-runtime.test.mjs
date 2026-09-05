@@ -5601,6 +5601,36 @@ test("사용량 없이 끝난 터미널 턴은 CLI 기록에서 사용량을 채
   }]);
 });
 
+test("세 CLI 터미널 활동은 기존 DB 활동 경로로 저장하며 본문을 바꾸지 않는다", async () => {
+  for (const backend of ["codex", "claude", "antigravity"]) {
+    const runtime = terminalTurnRuntime();
+    const originalQuery = runtime.pool.query;
+    const writes = [];
+    runtime.pool.query = async (sql, values) => {
+      if (sql.includes("SELECT")) {
+        const result = await originalQuery(sql, values);
+        result.rows[0].executionBackend = backend;
+        return result;
+      }
+      writes.push({ sql, values });
+      return { rowCount: 1, rows: [] };
+    };
+    let result;
+    runtime.complete = async (state, decoded) => { result = { state, decoded }; };
+    const activities = [
+      { kind: "message", text: "진행 설명", eventKey: "terminal:message:1", status: "completed" },
+      { kind: "thinking", text: "공개 요약", eventKey: "terminal:thinking:1", status: "completed" },
+      { kind: "command", text: "swift test", eventKey: "terminal:command:1", status: "completed" },
+    ];
+    await runtime.completeTerminalTurn({ characterID: "left-man", turnID: "turn-1", response: "최종 답변", usage: {}, activities });
+    const inserts = writes.filter(({ sql }) => sql.includes("INSERT INTO turn_activities"));
+    assert.equal(inserts.length, 3);
+    assert.deepEqual(inserts.map(({ values }) => values.slice(1, 4)), [[1, "message", "진행 설명"], [2, "thinking", "공개 요약"], [3, "command", "swift test"]]);
+    assert.equal(result.state.responseText, "최종 답변");
+    assert.equal(runtime.completedResponseText(result.state, result.decoded), "최종 답변");
+  }
+});
+
 test("터미널 사용량 읽기는 대화 ID나 시작 시각이 없으면 건너뛴다", async () => {
   const runtime = terminalTurnRuntime();
   const startedAt = new Date("2026-09-02T14:00:00.000Z");

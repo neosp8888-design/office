@@ -1752,6 +1752,7 @@ export class AgentRuntime {
     initialGeneratedImages = new Set(),
     structured = null,
     reportedCostUsd = null,
+    activities = [],
   }) {
     const result = await this.pool.query(
       `
@@ -1840,6 +1841,11 @@ export class AgentRuntime {
         ...(state.usage ?? emptyUsage()),
         reportedCostUsd,
       };
+    }
+    // 터미널에서도 GUI와 같은 활동 테이블/이벤트 경로를 사용한다.
+    // 최종 답변은 별도로 보존하며 활동을 본문에 다시 이어 붙이지 않는다.
+    for (const activity of activities) {
+      await this.addActivity(state, activity);
     }
     await this.complete(state, decoded);
   }

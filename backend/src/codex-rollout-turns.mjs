@@ -5,6 +5,7 @@ import { opendir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { TerminalActivityCollector } from "./terminal-turn-activities.mjs";
 
 const THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const DEFAULT_RETRY_COUNT = 7;
@@ -126,13 +127,19 @@ export async function readCodexRolloutTurn(path, turnID) {
   const eventFinalAnswers = [];
   const responseItemPrompts = [];
   const responseItemFinalAnswers = [];
+  const activities = new TerminalActivityCollector();
+  let activeTurnID = null;
 
   let stream;
   try {
     stream = createReadStream(path, { encoding: "utf8" });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
     for await (const line of lines) {
-      if (!line || (!line.includes(wantedTurnID) && source !== null)) {
+      // 활동 줄에는 turn_id가 없는 형식도 있다. 명시적인 턴 경계 안에서만
+      // 읽고, 다른 턴의 큰 본문은 JSON 파싱도 하지 않는다.
+      if (!line || (activeTurnID !== wantedTurnID && source !== null &&
+          !line.includes(wantedTurnID) && !line.includes('"turn_context"') &&
+          !line.includes('"task_started"'))) {
         continue;
       }
       let record;
@@ -146,10 +153,21 @@ export async function readCodexRolloutTurn(path, turnID) {
         source = String(payload.source ?? "");
         continue;
       }
-      if (record?.type === "turn_context" && payload.turn_id === wantedTurnID) {
-        cwd = String(payload.cwd ?? "").trim() || null;
+      if (record?.type === "turn_context") {
+        activeTurnID = payload.turn_id;
+        if (activeTurnID === wantedTurnID) {
+          cwd = String(payload.cwd ?? "").trim() || null;
+          activities.workdir = cwd;
+        }
         continue;
       }
+      if (record?.type === "event_msg" && payload.type === "task_started") {
+        activeTurnID = payload.turn_id;
+      }
+      const explicitTurnID = payload.turn_id ??
+        payload.internal_chat_message_metadata_passthrough?.turn_id;
+      if ((explicitTurnID ?? activeTurnID) !== wantedTurnID) continue;
+      activities.codex(record);
       if (record?.type === "response_item" && payload.type === "message") {
         const metadataTurnID = String(
           payload.internal_chat_message_metadata_passthrough?.turn_id ?? "",
@@ -177,6 +195,7 @@ export async function readCodexRolloutTurn(path, turnID) {
         taskComplete = payload;
         startedAt = Number(payload.started_at) || startedAt;
         completedAt = Number(payload.completed_at) || completedAt;
+        activeTurnID = null;
         continue;
       }
       if (payload.type !== "item_completed") continue;
@@ -216,6 +235,7 @@ export async function readCodexRolloutTurn(path, turnID) {
       finalAnswers.join("\n").trim(),
     startedAt,
     completedAt,
+    activities: activities.finish(String(taskComplete.last_agent_message ?? "").trim() || finalAnswers.join("\n").trim()),
   };
 }
 
