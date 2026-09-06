@@ -436,6 +436,36 @@ final class SelectableMarkdownTextViewTests: XCTestCase {
         XCTAssertTrue(rendered.string.contains("본문의 원래 기호 \u{2060}도 보존합니다."))
     }
 
+    func testListMarkerBeforeLinkIsNotPartOfTheLink() {
+        let rendered = SelectableMarkdownAttributedRenderer.render(
+            source: "- [공식 스펙](https://example.com/spec)\n- 일반 항목",
+            fontSize: 12,
+            fallbackDirectory: nil,
+            isDark: false
+        )
+
+        let text = rendered.string as NSString
+        let markerRange = text.range(of: "•\t")
+        XCTAssertNotEqual(markerRange.location, NSNotFound)
+        let markerAttributes = rendered.attributes(
+            at: markerRange.location,
+            effectiveRange: nil
+        )
+        XCTAssertNil(markerAttributes[.link])
+        XCTAssertNil(markerAttributes[.underlineStyle])
+
+        let linkRange = text.range(of: "공식 스펙")
+        let linkAttributes = rendered.attributes(
+            at: linkRange.location,
+            effectiveRange: nil
+        )
+        XCTAssertNotNil(linkAttributes[.link])
+        XCTAssertEqual(
+            linkAttributes[.underlineStyle] as? Int,
+            NSUnderlineStyle.single.rawValue
+        )
+    }
+
     func testSingleNewlinesRemainVisibleAndSelectable() {
         let rendered = SelectableMarkdownAttributedRenderer.render(
             source: "첫째 줄\n둘째 줄\n셋째 줄",

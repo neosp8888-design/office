@@ -1204,10 +1204,19 @@ enum SelectableMarkdownAttributedRenderer {
                     let marker = descriptor.isOrderedList
                         ? "\(descriptor.listItemOrdinal ?? 1).\t"
                         : "•\t"
+                    // 항목이 링크로 시작해도 글머리표는 링크가 아니다. 첫 run의
+                    // 링크·밑줄·링크 색을 글머리표에 그대로 옮기지 않는다.
+                    var markerAttributes = attributes
+                    markerAttributes[.link] = nil
+                    markerAttributes[.underlineStyle] = nil
+                    markerAttributes[.foregroundColor] = baseAttributes(
+                        fontSize: fontSize,
+                        isDark: isDark
+                    )[.foregroundColor]
                     output.append(
                         NSAttributedString(
                             string: marker,
-                            attributes: attributes
+                            attributes: markerAttributes
                         )
                     )
                 }
