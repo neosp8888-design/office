@@ -1229,6 +1229,17 @@ private struct LiveWorkspaceCommandBar: View {
             characterSelector
                 .disabled(!isEnabled(.characterSelector))
                 .opacity(controlOpacity(.characterSelector))
+                // 터미널은 응답 바닥글이 없으므로 방금 끝난 턴을 각 직원 버튼
+                // 바로 위에 떠 있는 토스트로 평가한다. 자리를 차지하지 않아
+                // 화면이 밀리지 않는다.
+                .overlay(alignment: .top) {
+                    if conversationMode == .terminal {
+                        // 높이 0 프레임의 아래쪽에 붙여 토스트 전체가
+                        // 직원 선택 줄 위쪽 바깥으로 올라가게 한다.
+                        TerminalFeedbackToastRow(director: director)
+                            .frame(height: 0, alignment: .bottom)
+                    }
+                }
 
             if conversationMode == .chat, !attachments.isEmpty {
                 attachmentStrip
