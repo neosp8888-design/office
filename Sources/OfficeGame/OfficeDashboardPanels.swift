@@ -798,6 +798,20 @@ private struct UsageProviderCard: View {
     let openDetail: () -> Void
 
     var body: some View {
+        // 보관함·위키 칸과 같은 plain 버튼이라 누를 때 같은 눌림 효과가 난다.
+        // 안의 Update 버튼은 안쪽 버튼이 먼저 받으므로 상세가 같이 열리지 않는다.
+        Button(action: openDetail) {
+            card
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(OfficeLocalization.string("사용 현황 상세"))
+        .accessibilityLabel(
+            OfficeLocalization.format("%@ 사용 현황 상세 열기", name)
+        )
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 6) {
                 Label(name, systemImage: icon)
@@ -927,14 +941,6 @@ private struct UsageProviderCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(tint.opacity(0.13))
-        }
-        // 카드를 누르면 사용 현황 상세가 열린다. 안의 Update 버튼은 버튼이
-        // 먼저 받으므로 카드 나머지 영역만 상세를 연다.
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onTapGesture(perform: openDetail)
-        .help(OfficeLocalization.string("사용 현황 상세"))
-        .accessibilityAction(named: OfficeLocalization.format("%@ 사용 현황 상세 열기", name)) {
-            openDetail()
         }
     }
 
