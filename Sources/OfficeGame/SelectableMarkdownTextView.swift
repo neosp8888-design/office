@@ -307,7 +307,10 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.heightTracksTextView = false
-        textView.isHorizontallyResizable = true
+        // 가로 폭은 updateDocumentFrame이 정한다. 가로 자동 크기 조절을 켜 두면
+        // 본문이 바뀔 때마다 NSTextView가 그 순간의 사용 폭으로 프레임을 줄이고,
+        // 높이가 같아 layout()이 다시 돌지 않으면 긴 줄의 끝이 잘린 채 남는다.
+        textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
         textView.minSize = .zero
         textView.maxSize = NSSize(
@@ -1065,6 +1068,7 @@ enum SelectableMarkdownAttributedRenderer {
             var listItemIdentity: Int?
             var listItemOrdinal: Int?
             var isOrderedList = false
+            var listKindResolved = false
             var tableIdentity: Int?
             var tableColumns: [PresentationIntent.TableColumn] = []
             var tableRowIndex: Int?
@@ -1080,11 +1084,18 @@ enum SelectableMarkdownAttributedRenderer {
                     codeLanguage = languageHint
                 case .blockQuote:
                     isBlockQuote = true
+                // 구성 요소는 안쪽부터 바깥쪽 순서다. 중첩 목록에서는 가장
+                // 안쪽 항목과 그 목록 종류만 쓴다. 바깥 항목을 잡으면 이미
+                // 글머리표를 붙인 항목으로 보고 안쪽 항목의 글머리표를 건너뛴다.
                 case .orderedList:
-                    isOrderedList = true
+                    if listItemIdentity != nil, !listKindResolved {
+                        isOrderedList = true
+                    }
+                    listKindResolved = true
                 case .unorderedList:
-                    break
+                    listKindResolved = true
                 case let .listItem(ordinal):
+                    guard listItemIdentity == nil else { break }
                     listItemIdentity = component.identity
                     listItemOrdinal = ordinal
                 case let .table(columns):

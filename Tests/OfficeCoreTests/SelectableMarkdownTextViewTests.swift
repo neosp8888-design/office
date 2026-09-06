@@ -466,6 +466,41 @@ final class SelectableMarkdownTextViewTests: XCTestCase {
         )
     }
 
+    func testNestedListItemsKeepTheirOwnMarkers() {
+        // 구성 요소는 안쪽부터 바깥쪽 순서다. 바깥 "3." 항목을 잡으면 안쪽
+        // 항목이 이미 글머리표를 붙인 항목으로 보여 글머리표가 빠진다.
+        let rendered = SelectableMarkdownAttributedRenderer.render(
+            source: "3. 바깥 항목\n   - 안쪽 첫째\n   - 안쪽 둘째",
+            fontSize: 12,
+            fallbackDirectory: nil,
+            isDark: false
+        )
+
+        XCTAssertEqual(
+            rendered.string,
+            "3.\t바깥 항목\n•\t안쪽 첫째\n•\t안쪽 둘째\n"
+        )
+    }
+
+    @MainActor
+    func testTextViewKeepsLayoutWidthAfterSourceChangesWithoutLayoutPass() {
+        // 본문이 바뀌어도 layout()이 다시 돌기 전에 NSTextView가 스스로 그 순간의
+        // 사용 폭으로 프레임을 줄이면 가장 긴 줄의 끝이 잘린 채 남는다.
+        let view = SelectableMarkdownDocumentView(fontSize: 14, minimumLayoutWidth: nil)
+        view.apply(source: "- 짧은 항목", fallbackDirectory: nil, isDark: true)
+        let width: CGFloat = 900
+        view.frame = NSRect(x: 0, y: 0, width: width, height: view.heightThatFits(width: width))
+        view.layout()
+        view.apply(
+            source: "- 앱 내 우측 메인 대화 피드에서 스크롤을 올려 상단 10건 추가 로딩 동작 확인",
+            fallbackDirectory: nil,
+            isDark: true
+        )
+
+        let textView = view.subviews.compactMap { $0 as? NSTextView }.first
+        XCTAssertEqual(textView?.frame.width, width)
+    }
+
     func testSingleNewlinesRemainVisibleAndSelectable() {
         let rendered = SelectableMarkdownAttributedRenderer.render(
             source: "첫째 줄\n둘째 줄\n셋째 줄",
