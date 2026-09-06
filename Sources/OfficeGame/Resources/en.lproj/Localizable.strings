@@ -646,6 +646,8 @@
 "%d개.one" = "%d item";
 "%d개 업무.one" = "%d task";
 "근거 %d건.one" = "%d source";
+"좋아요 %d건.one" = "%d like";
+"싫어요 %d건.one" = "%d dislike";
 "변경 파일 %d개.one" = "%d changed file";
 "출처 %d개 더 보기.one" = "Show %d more source";
 "파일 %d개를 편집하는 중.one" = "Editing %d file";

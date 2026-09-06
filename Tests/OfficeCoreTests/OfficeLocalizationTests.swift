@@ -29,6 +29,8 @@ final class OfficeLocalizationTests: XCTestCase {
             ("이전 %@ %d개 보기", ["command", 3], "Show command history (3)"),
             ("%d명 · %d명 완료 · %d명 오류", [1, 0, 1], "1 reviewer · 0 completed · 1 failed"),
             ("추가 요청 %d건", [1], "1 follow-up request"),
+            ("좋아요 %d건", [1], "1 like"),
+            ("싫어요 %d건", [1], "1 dislike"),
             ("작업 계획 %d단계 중 %d단계 완료", [1, 0], "Work plan: 0 of 1 step completed"),
             ("첨부 파일 %@, 경로 %@", ["보고서.pdf", "/tmp/보고서.pdf"], "Attachment 보고서.pdf, path /tmp/보고서.pdf")
         ]
@@ -100,7 +102,7 @@ final class OfficeLocalizationTests: XCTestCase {
             "character-settings", "model-catalog", "runtime-cli-paths", "cli-updates",
             "codex-context-compactor", "claude-persistent-worker", "terminal-sessions",
             "work-record-provenance", "wiki-knowledge", "turn-feedback", "server",
-            "agent-runtime", "structured-turn-result", "usage-summary"
+            "agent-runtime", "structured-turn-result", "usage-summary", "usage-report"
         ]
         // Extract direct error constructors and JSON error literals, not arbitrary
         // quoted conversation content. Concatenated strings are covered by catalog tests.
