@@ -138,7 +138,8 @@ struct OfficeDetailPanel: View {
                     UsageBoardContent(
                         refreshRequestID: usageRefreshRequestID,
                         isRefreshing: $usageIsRefreshing,
-                        databaseBaseURL: director.databaseBaseURL
+                        databaseBaseURL: director.databaseBaseURL,
+                        director: director
                     )
                 case .wiki:
                     WikiKnowledgeView(
@@ -504,8 +505,11 @@ private struct UsageBoardContent: View {
     let refreshRequestID: UUID
     @Binding var isRefreshing: Bool
     let databaseBaseURL: URL
+    let director: AgentDirector
     @State private var snapshot: AIUsageSnapshot?
     @State private var errorMessage: String?
+    /// 카드를 누르면 그 제공자의 사용 현황 상세 시트를 연다.
+    @State private var reportBackend: AgentBackend?
     @State private var updateStatus = CLIUpdateStatus.empty
     @State private var updatingPackageID: String?
     @State private var updateErrorMessage: String?
@@ -583,6 +587,19 @@ private struct UsageBoardContent: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: updateErrorMessage)
+        .sheet(item: $reportBackend) { backend in
+            UsageReportSheet(
+                backend: backend,
+                director: director,
+                onClose: { reportBackend = nil }
+            )
+            .frame(
+                minWidth: ArchiveBookSheetLayout.minimumWidth,
+                idealWidth: ArchiveBookSheetLayout.idealWidth,
+                minHeight: ArchiveBookSheetLayout.minimumHeight,
+                idealHeight: ArchiveBookSheetLayout.idealHeight
+            )
+        }
     }
 
     /// 알림은 5초만 띄운다. 새 알림이 오면 이전 예약은 취소한다.
@@ -653,7 +670,8 @@ private struct UsageBoardContent: View {
             subscriptionExpiresAt: nil,
             activity: snapshot.claudeActivity,
             showsFiveHour: true,
-            tint: DashboardPalette.providerAccent(for: .claude)
+            tint: DashboardPalette.providerAccent(for: .claude),
+            openDetail: { reportBackend = .claude }
         )
         UsageProviderColumn(
             name: "Codex",
@@ -670,7 +688,8 @@ private struct UsageBoardContent: View {
             subscriptionExpiresAt: snapshot.codexSubscriptionExpiresAt,
             activity: snapshot.codexActivity,
             showsFiveHour: true,
-            tint: DashboardPalette.providerAccent(for: .codex)
+            tint: DashboardPalette.providerAccent(for: .codex),
+            openDetail: { reportBackend = .codex }
         )
         UsageProviderColumn(
             name: "Antigravity",
@@ -688,7 +707,8 @@ private struct UsageBoardContent: View {
             subscriptionExpiresAt: nil,
             activity: snapshot.antigravityActivity,
             showsFiveHour: true,
-            tint: DashboardPalette.providerAccent(for: .antigravity)
+            tint: DashboardPalette.providerAccent(for: .antigravity),
+            openDetail: { reportBackend = .antigravity }
         )
     }
 
@@ -732,6 +752,7 @@ private struct UsageProviderColumn: View {
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
     let tint: Color
+    let openDetail: () -> Void
 
     var body: some View {
         UsageProviderCard(
@@ -750,7 +771,8 @@ private struct UsageProviderColumn: View {
             subscriptionExpiresAt: subscriptionExpiresAt,
             activity: activity,
             showsFiveHour: showsFiveHour,
-            tint: tint
+            tint: tint,
+            openDetail: openDetail
         )
         .frame(maxWidth: .infinity)
     }
@@ -773,6 +795,7 @@ private struct UsageProviderCard: View {
     let activity: AIUsageActivitySnapshot?
     let showsFiveHour: Bool
     let tint: Color
+    let openDetail: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -904,6 +927,14 @@ private struct UsageProviderCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(tint.opacity(0.13))
+        }
+        // 카드를 누르면 사용 현황 상세가 열린다. 안의 Update 버튼은 버튼이
+        // 먼저 받으므로 카드 나머지 영역만 상세를 연다.
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(perform: openDetail)
+        .help(OfficeLocalization.string("사용 현황 상세"))
+        .accessibilityAction(named: OfficeLocalization.format("%@ 사용 현황 상세 열기", name)) {
+            openDetail()
         }
     }
 

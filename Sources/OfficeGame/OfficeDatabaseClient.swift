@@ -232,6 +232,36 @@ struct OfficeDatabaseClient: Sendable {
         try historyDecoder().decode(AIUsageSnapshot.self, from: data)
     }
 
+    /// 화이트보드 상세용 집계다. 기간 라벨은 앱의 시간대로 자른다.
+    func usageReportURL(
+        backend: AgentBackend,
+        granularity: UsageReportGranularity,
+        timeZone: TimeZone = .autoupdatingCurrent
+    ) -> URL {
+        let endpoint = baseURL.appending(path: "api/usage-report")
+        var components = URLComponents(
+            url: endpoint,
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "backend", value: backend.rawValue),
+            URLQueryItem(name: "granularity", value: granularity.rawValue),
+            URLQueryItem(name: "tz", value: timeZone.identifier),
+        ]
+        return components?.url ?? endpoint
+    }
+
+    func fetchUsageReport(
+        backend: AgentBackend,
+        granularity: UsageReportGranularity
+    ) async throws -> UsageReport {
+        let (data, response) = try await URLSession.shared.data(
+            from: usageReportURL(backend: backend, granularity: granularity)
+        )
+        try validate(response, data: data)
+        return try historyDecoder().decode(UsageReport.self, from: data)
+    }
+
     func wikiPagesURL(query: String, limit: Int) -> URL {
         let endpoint = baseURL
             .appending(path: "api")

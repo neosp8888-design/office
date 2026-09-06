@@ -70,6 +70,7 @@ import {
   replaceTurnFeedback,
 } from "./turn-feedback.mjs";
 import { startSlackBridge } from "./slack-bridge.mjs";
+import { UsageReportError, readUsageReport } from "./usage-report.mjs";
 import {
   WikiKnowledgeError,
   approveWikiProposal,
@@ -367,6 +368,18 @@ async function usageSummary(response, url) {
     String(url.searchParams.get("force") ?? "").toLowerCase(),
   );
   send(response, 200, await readUsageSummary({ force }));
+}
+
+async function usageReport(response, url) {
+  send(
+    response,
+    200,
+    await readUsageReport(pool, {
+      backend: url.searchParams.get("backend"),
+      granularity: url.searchParams.get("granularity") ?? "day",
+      timeZone: url.searchParams.get("tz") ?? "UTC",
+    }),
+  );
 }
 
 async function cliUpdates(response, url) {
@@ -2219,6 +2232,11 @@ const server = createServer(async (request, response) => {
       await usageSummary(response, url);
     } else if (
       request.method === "GET" &&
+      url.pathname === "/api/usage-report"
+    ) {
+      await usageReport(response, url);
+    } else if (
+      request.method === "GET" &&
       url.pathname === "/api/cli-updates"
     ) {
       await cliUpdates(response, url);
@@ -2427,7 +2445,10 @@ const server = createServer(async (request, response) => {
       send(response, 404, { error: "경로를 찾을 수 없습니다." });
     }
   } catch (error) {
-    if (error instanceof WikiKnowledgeError) {
+    if (
+      error instanceof WikiKnowledgeError ||
+      error instanceof UsageReportError
+    ) {
       send(response, error.statusCode, { error: error.message });
       return;
     }
