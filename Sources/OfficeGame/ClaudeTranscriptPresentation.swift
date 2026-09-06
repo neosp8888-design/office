@@ -533,47 +533,47 @@ struct ClaudeTranscriptPresentation: Equatable {
         isRunning: Bool
     ) -> ClaudeTranscriptPresentation {
         var entries: [ClaudeTranscriptEntry] = []
-        var slotOrder: [GroupSlot] = []
+        var currentSlot: GroupSlot?
         var thoughtBuffer: [ClaudeThought] = []
-        var toolBuffers: [ClaudeToolGroupKind: [ClaudeToolStep]] = [:]
+        var toolBuffer: [ClaudeToolStep] = []
         var editBuffer: [ClaudeToolStep] = []
 
-        // 같은 갈래는 한 칸에 모으되 처음 등장한 순서를 유지한다.
-        func reserve(_ slot: GroupSlot) {
-            guard !slotOrder.contains(slot) else {
-                return
-            }
-            slotOrder.append(slot)
-        }
-
+        // 코덱스 카드와 같은 규칙이다. 연속된 같은 갈래만 한 칸에 모으고,
+        // 갈래가 바뀌면 그 자리에서 칸을 끊어 발생 순서를 그대로 지킨다.
+        // 중간에 다른 도구가 낀 같은 갈래를 앞 칸으로 끌어올리지 않는다.
         func flushGroups() {
-            for slot in slotOrder {
-                switch slot {
-                case .thoughts:
-                    guard !thoughtBuffer.isEmpty else {
-                        continue
-                    }
+            switch currentSlot {
+            case .thoughts:
+                if !thoughtBuffer.isEmpty {
                     entries.append(
                         .thoughts(ClaudeThoughtRun(thoughts: thoughtBuffer))
                     )
-                case .tools(let kind):
-                    guard let steps = toolBuffers[kind], !steps.isEmpty else {
-                        continue
-                    }
+                }
+            case .tools(let kind):
+                if !toolBuffer.isEmpty {
                     entries.append(
-                        .tools(ClaudeToolRun(kind: kind, steps: steps))
+                        .tools(ClaudeToolRun(kind: kind, steps: toolBuffer))
                     )
-                case .edits:
-                    guard !editBuffer.isEmpty else {
-                        continue
-                    }
+                }
+            case .edits:
+                if !editBuffer.isEmpty {
                     entries.append(.edits(ClaudeEditRun(steps: editBuffer)))
                 }
+            case nil:
+                break
             }
-            slotOrder.removeAll(keepingCapacity: true)
+            currentSlot = nil
             thoughtBuffer.removeAll(keepingCapacity: true)
-            toolBuffers.removeAll(keepingCapacity: true)
+            toolBuffer.removeAll(keepingCapacity: true)
             editBuffer.removeAll(keepingCapacity: true)
+        }
+
+        func reserve(_ slot: GroupSlot) {
+            guard currentSlot != slot else {
+                return
+            }
+            flushGroups()
+            currentSlot = slot
         }
 
         for activity in activities {
@@ -636,7 +636,7 @@ struct ClaudeTranscriptPresentation: Equatable {
                 default:
                     let kind = ClaudeToolGroupKind(family: call.family)
                     reserve(.tools(kind))
-                    toolBuffers[kind, default: []].append(step)
+                    toolBuffer.append(step)
                 }
             }
         }

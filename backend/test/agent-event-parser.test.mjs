@@ -95,6 +95,8 @@ test("Antigravity 응답 조각과 단계별 사용량을 추출한다", () => {
   );
 
   assert.equal(event.responseDelta, "완료했습니다.\n");
+  assert.equal(event.responseStepKey, "antigravity:conversation-1:3");
+  assert.equal(event.responseStepDone, true);
   assert.equal(event.usageIsDelta, true);
   assert.deepEqual(event.usage, {
     inputTokens: 1_200,
@@ -216,7 +218,8 @@ test("Antigravity 최종 결과 사용량은 단계 사용량이 없을 때만 �
   );
 
   assert.equal(event.sessionID, "conversation-1");
-  assert.equal(event.responseText, "완료했습니다.");
+  assert.equal(event.responseText, undefined);
+  assert.equal(event.responseFallback, "완료했습니다.");
   assert.equal(event.usage, undefined);
   assert.equal(event.usageFallback.inputTokens, 2_000);
 });

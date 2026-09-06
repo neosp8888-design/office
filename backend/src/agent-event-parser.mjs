@@ -665,8 +665,19 @@ function parseAntigravityEvent(object, workdir) {
       if (!delta && !usage && activities.length === 0) {
         return null;
       }
+      // 한 응답 단계는 ACTIVE 조각 여러 개와 DONE 조각 하나로 온다. 도구 사이에
+      // 낀 중간 메시지도 단계 단위로 끊어 발생한 자리에 남길 수 있게
+      // 단계 열쇠와 종료 여부를 함께 넘긴다.
+      const responseStepKey = [
+        "antigravity",
+        cleanText(update.conversation_id),
+        update.step_index,
+      ]
+        .filter((value) => value !== null && value !== undefined)
+        .join(":");
       return {
-        ...(delta ? { responseDelta: delta } : {}),
+        ...(delta ? { responseDelta: delta, responseStepKey } : {}),
+        ...(state === "DONE" ? { responseStepKey, responseStepDone: true } : {}),
         ...(usage ? { usage, usageIsDelta: true } : {}),
         ...(activities.length > 0 ? { activities } : {}),
       };
@@ -714,10 +725,12 @@ function parseAntigravityEvent(object, workdir) {
           "Antigravity 작업이 완료되지 못했습니다.",
       };
     }
+    // 최종 결과의 response는 단계별 메시지를 모두 이어 붙인 전문이다.
+    // 단계 메시지를 하나도 받지 못했을 때만 쓰는 fallback으로 넘긴다.
     return {
       sessionID,
       usageFallback,
-      responseText: cleanText(result.response),
+      responseFallback: cleanText(result.response),
     };
   }
 

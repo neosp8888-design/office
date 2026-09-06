@@ -2458,6 +2458,66 @@ test("Claude 최종 메시지 활동도 기계 블록을 뗀 본문으로 맞춘
   assert.equal(state.visibleAgentMessages.at(-1).text, "정리했습니다.");
 });
 
+test("Antigravity 도구 사이의 중간 메시지는 발생한 자리에 message 활동으로 남는다", async () => {
+  const queries = [];
+  const runtime = new AgentRuntime({
+    pool: {
+      query: async (text, values) => {
+        queries.push({ text, values });
+        return { rowCount: 1 };
+      },
+    },
+    withTransaction: async () => {},
+    workdir: "/tmp",
+    broadcast: () => {},
+  });
+  const state = makeCodexActivityState();
+  state.character = { id: "left-woman", backend: "antigravity" };
+  // 실제 CLI 스트림 순서다. 응답 단계는 ACTIVE 조각 뒤 DONE 조각으로 끝난다.
+  const step = (index, extra) => `${JSON.stringify({
+    event: "step_update",
+    step_update: { conversation_id: "conv-1", step_index: index, ...extra },
+  })}\n`;
+  const stream = Readable.from([
+    step(1, { state: "ACTIVE", step_type: "agent_response", text_delta: "첫 번째 메시지입니다." }),
+    step(1, { state: "DONE", step_type: "agent_response", text_delta: "\n" }),
+    step(2, { state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "echo hi" } } }),
+    step(2, { state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "echo hi" } } }),
+    step(3, { state: "DONE", step_type: "agent_response", text_delta: "두 번째 메시지입니다.\n" }),
+    step(4, { state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "echo bye" } } }),
+    step(5, { state: "DONE", step_type: "agent_response", text_delta: "끝났습니다.\n" }),
+    // 실제 기록(5109)처럼 조각 없이 사용량만 있는 빈 단계가 뒤따르기도 한다.
+    step(6, { state: "DONE", step_type: "agent_response", usage: { input_tokens: 10, output_tokens: 1 } }),
+    `${JSON.stringify({
+      event: "result",
+      result: { conversation_id: "conv-1", status: "SUCCESS", response: "첫 번째 메시지입니다.\n두 번째 메시지입니다.\n끝났습니다.\n" },
+    })}\n`,
+  ]);
+
+  await runtime.consumeOutput(state, stream);
+
+  const inserted = queries
+    .filter(({ text }) => /INSERT INTO turn_activities/.test(text))
+    .map(({ values }) => [values[2], values[3]]);
+  // 끝의 줄바꿈을 뗀 문장이어야 화면이 응답 초안에서 같은 문장을 걷어낸다.
+  assert.deepEqual(inserted, [
+    ["message", "첫 번째 메시지입니다."],
+    ["command", "echo hi"],
+    ["message", "두 번째 메시지입니다."],
+    ["command", "echo bye"],
+  ]);
+  // 마지막 메시지는 활동으로 승격하지 않고 최종 응답으로 남는다.
+  // 빈 단계가 앞 문장을 한 번 더 기록하지 않는다.
+  assert.equal(state.pendingAgentMessage.text, "끝났습니다.");
+  assert.equal(state.pendingAgentMessage.key, "antigravity:conv-1:5");
+  assert.equal(state.responseText, "끝났습니다.");
+  // 결과 이벤트의 이어 붙인 전문은 단계 메시지를 받았으면 쓰지 않는다.
+  assert.deepEqual(
+    state.visibleAgentMessages.map((message) => message.text),
+    ["첫 번째 메시지입니다.", "두 번째 메시지입니다.", "끝났습니다."],
+  );
+});
+
 test("Codex 파일 변경 통계는 현재 턴 rollout의 실제 patch diff로 계산한다", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "office-file-change-test-"));
   const filePath = join(workdir, "Feed.swift");

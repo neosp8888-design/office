@@ -136,12 +136,15 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
             isRunning: true
         )
 
-        XCTAssertEqual(presentation.entries.count, 4)
+        // 코덱스와 같은 규칙이다. 편집 뒤에 온 Bash는 앞의 Bash 칸으로
+        // 끌려 올라가지 않고 발생한 자리에 새 칸으로 남는다.
+        XCTAssertEqual(presentation.entries.count, 5)
         guard
             case .thoughts(let thoughts) = presentation.entries[0],
             case .tools(let reads) = presentation.entries[1],
-            case .tools(let commands) = presentation.entries[2],
-            case .edits(let edits) = presentation.entries[3]
+            case .tools(let build) = presentation.entries[2],
+            case .edits(let edits) = presentation.entries[3],
+            case .tools(let test) = presentation.entries[4]
         else {
             return XCTFail("Claude 타임라인 순서가 다릅니다.")
         }
@@ -152,16 +155,16 @@ final class ClaudeTranscriptPresentationTests: XCTestCase {
         XCTAssertEqual(reads.kind, .read)
         XCTAssertEqual(reads.steps.map(\.activityID), ["tool-1"])
         XCTAssertEqual(reads.title, "Read")
-        XCTAssertEqual(commands.kind, .shell)
-        XCTAssertEqual(
-            commands.steps.map(\.activityID),
-            ["tool-2", "tool-5"]
-        )
-        XCTAssertEqual(commands.title, "Bash 2")
-        XCTAssertTrue(commands.isRunning)
+        XCTAssertEqual(build.kind, .shell)
+        XCTAssertEqual(build.steps.map(\.activityID), ["tool-2"])
+        XCTAssertEqual(build.title, "Bash")
+        XCTAssertFalse(build.isRunning)
         XCTAssertEqual(edits.steps.map(\.activityID), ["tool-3", "tool-4"])
         XCTAssertEqual(edits.fileCount, 2)
         XCTAssertEqual(edits.title, "파일 2개를 편집했습니다")
+        XCTAssertEqual(test.kind, .shell)
+        XCTAssertEqual(test.steps.map(\.activityID), ["tool-5"])
+        XCTAssertTrue(test.isRunning)
         XCTAssertFalse(presentation.showsWaiting)
     }
 

@@ -2464,51 +2464,45 @@ export class AgentRuntime {
       }
     }
     if (event.agentMessage) {
-      const key = event.agentMessageKey ?? null;
-      if (state.character.backend === "codex") {
-        await this.completePendingInitialCodexReasoning(state);
-        await this.addActivity(state, {
-          kind: "message",
-          text: event.agentMessage,
-          eventKey: key ? `message:${key}` : null,
-          status: "completed",
-          preserveOccurredAt: true,
-        });
-      } else {
-        if (
-          state.pendingAgentMessage &&
-          state.pendingAgentMessage.key !== key
-        ) {
-          await this.promotePendingAgentMessage(state);
-        }
-        state.pendingAgentMessage = {
-          key,
-          text: event.agentMessage,
-        };
-      }
-      this.rememberVisibleAgentMessage(
+      await this.recordAgentMessage(
         state,
-        key,
+        event.agentMessageKey ?? null,
         event.agentMessage,
       );
-      state.responseText = event.agentMessage;
-      state.partialText = event.agentMessage;
-      await this.persistResponseDraft(
-        state,
-        this.visibleResponseText(state),
-      );
+    }
+    // Antigravity는 응답 단계마다 조각을 보낸다. 새 단계가 시작되면 앞
+    // 단계의 조각을 비워 중간 메시지가 하나로 이어 붙지 않게 한다.
+    // 조각 없이 끝나는 빈 단계도 앞 문장을 다시 기록하지 않아야 한다.
+    if (
+      event.responseStepKey &&
+      event.responseStepKey !== state.responseStepKey
+    ) {
+      state.responseStepKey = event.responseStepKey;
+      state.partialText = "";
     }
     if (event.responseDelta) {
       state.partialText += event.responseDelta;
       await this.persistPartialResponse(state);
     }
-    if (event.responseText) {
+    if (event.responseStepDone && state.partialText.trim()) {
+      // 단계가 끝난 중간 메시지는 Claude의 공개 메시지와 같은 길을 탄다.
+      // 다음 활동이 오면 그 앞자리에 message 활동으로 남는다. 끝의 줄바꿈을
+      // 떼어야 화면이 응답 초안에서 이미 보여 준 문장을 걷어낼 수 있다.
+      await this.recordAgentMessage(
+        state,
+        event.responseStepKey ?? null,
+        state.partialText.trim(),
+      );
+    }
+    const responseText = event.responseText
+      ?? (state.visibleAgentMessages?.length ? null : event.responseFallback);
+    if (responseText) {
       this.rememberVisibleAgentMessage(
         state,
         null,
-        event.responseText,
+        responseText,
       );
-      state.responseText = event.responseText;
+      state.responseText = responseText;
       await this.persistResponseDraft(
         state,
         this.visibleResponseText(state),
@@ -2713,6 +2707,34 @@ export class AgentRuntime {
     if (state.partialText === originalText) {
       state.partialText = decoded.text;
     }
+  }
+
+  async recordAgentMessage(state, key, text) {
+    if (state.character.backend === "codex") {
+      await this.completePendingInitialCodexReasoning(state);
+      await this.addActivity(state, {
+        kind: "message",
+        text,
+        eventKey: key ? `message:${key}` : null,
+        status: "completed",
+        preserveOccurredAt: true,
+      });
+    } else {
+      if (
+        state.pendingAgentMessage &&
+        state.pendingAgentMessage.key !== key
+      ) {
+        await this.promotePendingAgentMessage(state);
+      }
+      state.pendingAgentMessage = { key, text };
+    }
+    this.rememberVisibleAgentMessage(state, key, text);
+    state.responseText = text;
+    state.partialText = text;
+    await this.persistResponseDraft(
+      state,
+      this.visibleResponseText(state),
+    );
   }
 
   async promotePendingAgentMessage(state) {
