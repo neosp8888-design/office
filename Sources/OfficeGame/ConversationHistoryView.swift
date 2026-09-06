@@ -505,7 +505,7 @@ private struct ArchiveTurnCard: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(OfficeLocalization.string(turn.characterName))
+                        Text(turn.characterName)
                             .font(.system(size: 15, weight: .bold))
                         Text(
                             agentExecutionSummary(

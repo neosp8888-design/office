@@ -33,7 +33,7 @@ private struct ArchiveRecordTile: View {
     let onSelect: () -> Void
 
     var body: some View {
-        let characterName = OfficeLocalization.string(turn.characterName)
+        let characterName = turn.characterName
         Button(action: onSelect) {
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -149,7 +149,7 @@ private struct ArchiveRecordTile: View {
             OfficeLocalization.format("첨부 파일 %@, 경로 %@", $0.name, $0.path)
         }
         return ([
-            OfficeLocalization.format("%@ 기록 · %@", OfficeLocalization.string(turn.characterName), recordTitle),
+            OfficeLocalization.format("%@ 기록 · %@", turn.characterName, recordTitle),
             executionSummary,
         ]
             + attachmentDetails)
@@ -257,13 +257,13 @@ struct ArchiveOpenBook: View {
     private var bookToolbar: some View {
         HStack(spacing: 9) {
             CharacterBadge(
-                name: OfficeLocalization.string(turn.characterName),
+                name: turn.characterName,
                 characterID: turn.characterId,
                 size: 25
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(OfficeLocalization.string(turn.characterName))
+                Text(turn.characterName)
                     .font(.system(size: 11, weight: .bold))
                 Text(
                     OfficeLocalization.date(turn.startedAt,

@@ -1288,7 +1288,7 @@ final class AgentDirector: ObservableObject {
     }
 
     func displayName(for character: OfficeCharacter) -> String {
-        OfficeLocalization.string(names[character] ?? character.rawValue)
+        names[character] ?? character.rawValue
     }
 
     func identityPrompt(for character: OfficeCharacter) -> String {

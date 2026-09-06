@@ -4205,7 +4205,7 @@ private struct LiveTurnCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             CharacterBadge(
-                name: OfficeLocalization.string(turn.characterName),
+                name: turn.characterName,
                 characterID: turn.characterId,
                 size: 38
             )
@@ -4318,7 +4318,7 @@ private struct LiveTurnCard: View {
 
     private var metadata: some View {
         HStack(spacing: 7) {
-            Text(OfficeLocalization.string(turn.characterName))
+            Text(turn.characterName)
                 .font(.system(size: 13, weight: .bold))
 
             if let backend = turn.backend {

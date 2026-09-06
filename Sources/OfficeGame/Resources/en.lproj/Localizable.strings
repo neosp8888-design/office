@@ -7,7 +7,6 @@
 "실시간 대화" = "Live Conversation";
 "대화와 진행 기록" = "Conversation and progress";
 "%@의 대화와 진행 기록" = "%@ conversation and progress";
-"백부장" = "Baek";
 "연결 중" = "Connecting";
 "백엔드 WebSocket 실시간 연결" = "Live backend WebSocket connection";
 "오피스 테마" = "Office theme";
@@ -64,10 +63,6 @@
 "닫기" = "Close";
 "저장" = "Save";
 "답변" = "Answer";
-"클대리" = "Claude Code";
-"로과장" = "Rho";
-"코대리" = "Ko";
-"코과장" = "Koh";
 "3D 오피스로 전환" = "Switch to 3D office";
 "2D 오피스로 전환" = "Switch to 2D office";
 "선택됨" = "Selected";
