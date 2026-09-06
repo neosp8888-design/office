@@ -6,6 +6,43 @@ import XCTest
 
 @MainActor
 final class SelectableMarkdownTextViewTests: XCTestCase {
+    func testInlineCodeAtParagraphEndHasOnlyGlyphWidth() {
+        let rendered = SelectableMarkdownAttributedRenderer.render(
+            source: "수정: `SelectableMarkdownTextView.swift`, `SelectableMarkdownTextViewTests.swift`",
+            fontSize: 14, fallbackDirectory: nil, isDark: false
+        )
+        let storage = NSTextStorage(attributedString: rendered)
+        let manager = ConversationInlineCodeLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: 1200, height: 1000))
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        manager.ensureLayout(for: container)
+        var count = 0
+        storage.enumerateAttribute(.conversationInlineCodeBackground, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard value != nil else { return }
+            for rect in manager.codeBackgroundRects(for: range, in: container) {
+                count += 1
+                XCTAssertGreaterThan(rect.width, 100)
+                XCTAssertLessThan(rect.width, 400, "Trailing line space must not become code background")
+            }
+        }
+        XCTAssertEqual(count, 2)
+    }
+
+    func testInlineCodeUsesRoundedPaintWithoutChangingCopyText() {
+        for dark in [false, true] {
+            let rendered = SelectableMarkdownAttributedRenderer.render(
+                source: "명령 `/model`, `/compact` 입니다.",
+                fontSize: 14, fallbackDirectory: nil, isDark: dark
+            )
+            XCTAssertTrue(rendered.string.contains("명령 /model, /compact 입니다."))
+            let range = (rendered.string as NSString).range(of: "/model")
+            XCTAssertNotNil(rendered.attribute(.conversationInlineCodeBackground, at: range.location, effectiveRange: nil))
+            XCTAssertNil(rendered.attribute(.backgroundColor, at: range.location, effectiveRange: nil))
+            XCTAssertNil(rendered.attribute(.conversationInlineCodeBackground, at: 0, effectiveRange: nil))
+        }
+    }
+
     func testChangedFileMarkdownListBecomesCompactPresentation() {
         let source = """
         새 통로를 적용했습니다.

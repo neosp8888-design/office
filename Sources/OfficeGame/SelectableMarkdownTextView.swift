@@ -79,6 +79,56 @@ struct SelectableMarkdownTextView: NSViewRepresentable {
 }
 
 @MainActor
+extension NSAttributedString.Key {
+    static let conversationInlineCodeBackground = NSAttributedString.Key("conversationInlineCodeBackground")
+}
+
+/// Paint only: keeps the original characters and TextKit selection intact.
+final class ConversationInlineCodeLayoutManager: NSLayoutManager {
+    func codeBackgroundRects(for range: NSRange, in container: NSTextContainer) -> [NSRect] {
+        guard let storage = textStorage else { return [] }
+        // Paragraph separators can inherit the final run's attributes. Their
+        // glyph bounds cover the remaining line width; they are not code ink.
+        let string = storage.string as NSString
+        var ranges: [NSRange] = []
+        var start = range.location
+        for index in range.location..<NSMaxRange(range) {
+            if (CharacterSet.newlines as NSCharacterSet).characterIsMember(string.character(at: index)) {
+                if index > start { ranges.append(NSRange(location: start, length: index - start)) }
+                start = index + 1
+            }
+        }
+        if start < NSMaxRange(range) { ranges.append(NSRange(location: start, length: NSMaxRange(range) - start)) }
+        var result: [NSRect] = []
+        for range in ranges {
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, lineRange, _ in
+                let intersection = NSIntersectionRange(glyphs, lineRange)
+                if intersection.length > 0 {
+                    result.append(self.boundingRect(forGlyphRange: intersection, in: container))
+                }
+            }
+        }
+        return result
+    }
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        if let storage = textStorage, let container = textContainers.first {
+            let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+            storage.enumerateAttribute(.conversationInlineCodeBackground, in: characters) { value, range, _ in
+                guard let color = value as? NSColor else { return }
+                for rect in self.codeBackgroundRects(for: range, in: container) {
+                    let box = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: 0)
+                    color.setFill()
+                    NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
+                }
+            }
+        }
+        // Native selection highlighting remains above the code background.
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+}
+
 final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     private(set) var textView = NSTextView()
     var linkOpener: ((URL) -> Bool)?
@@ -295,6 +345,7 @@ final class SelectableMarkdownDocumentView: NSView, NSTextViewDelegate {
     }
 
     private func configureTextView() {
+        textView.textContainer?.replaceLayoutManager(ConversationInlineCodeLayoutManager())
         wantsLayer = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
@@ -1371,9 +1422,9 @@ enum SelectableMarkdownAttributedRenderer {
                 ofSize: fontSize,
                 weight: .regular
             )
-            attributes[.backgroundColor] = isDark
-                ? NSColor.white.withAlphaComponent(0.07)
-                : NSColor.black.withAlphaComponent(0.055)
+            attributes[descriptor.isCodeBlock ? .backgroundColor : .conversationInlineCodeBackground] = isDark
+                ? NSColor.white.withAlphaComponent(0.12)
+                : NSColor.black.withAlphaComponent(0.08)
             if descriptor.isCodeBlock {
                 paragraphStyle.paragraphSpacing = 12
             }
