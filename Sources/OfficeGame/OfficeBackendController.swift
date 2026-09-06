@@ -186,7 +186,7 @@ final class OfficeBackendController: ObservableObject {
             return
         }
         guard let resourceURL = Bundle.main.resourceURL else {
-            errorMessage = "앱 리소스 경로를 찾을 수 없습니다."
+            errorMessage = OfficeLocalization.string("앱 리소스 경로를 찾을 수 없습니다.")
             status = .stopped
             return
         }
@@ -356,7 +356,9 @@ final class OfficeBackendController: ObservableObject {
             let message = String(decoding: output, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw OfficeBackendControlError.launchctlFailed(
-                message.isEmpty ? "launchctl 실행에 실패했습니다." : message
+                message.isEmpty
+                    ? OfficeLocalization.string("launchctl 실행에 실패했습니다.")
+                    : OfficeLocalization.format("launchctl 실행에 실패했습니다: %@", message)
             )
         }
     }
@@ -369,7 +371,7 @@ private enum OfficeBackendControlError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .nodeExecutableMissing:
-            "Node 실행 파일을 찾을 수 없습니다."
+            OfficeLocalization.string("Node 실행 파일을 찾을 수 없습니다.")
         case let .launchctlFailed(message):
             message
         }

@@ -1310,7 +1310,7 @@ private struct LiveWorkspaceCommandBar: View {
                             onShowProfile(character.id)
                         } label: {
                             Label(
-                                "프로필",
+                                OfficeLocalization.string("프로필"),
                                 systemImage: "person.crop.rectangle"
                             )
                             .font(.system(size: 11, weight: .semibold))
@@ -1321,14 +1321,17 @@ private struct LiveWorkspaceCommandBar: View {
                                 for: character.backend
                             )
                         )
-                        .accessibilityLabel("직원 프로필")
+                        .accessibilityLabel(OfficeLocalization.string("직원 프로필"))
                         .help(OfficeLocalization.string("직원 프로필 보기"))
                     }
 
                     Button {
                         identitySettingsCharacter = character.id
                     } label: {
-                        Label("설정", systemImage: "gearshape")
+                        Label(
+                            OfficeLocalization.string("설정"),
+                            systemImage: "gearshape"
+                        )
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(.plain)

@@ -100,7 +100,7 @@ final class OfficeLocalizationTests: XCTestCase {
             "character-settings", "model-catalog", "runtime-cli-paths", "cli-updates",
             "codex-context-compactor", "claude-persistent-worker", "terminal-sessions",
             "work-record-provenance", "wiki-knowledge", "turn-feedback", "server",
-            "agent-runtime", "structured-turn-result"
+            "agent-runtime", "structured-turn-result", "usage-summary"
         ]
         // Extract direct error constructors and JSON error literals, not arbitrary
         // quoted conversation content. Concatenated strings are covered by catalog tests.
@@ -290,7 +290,12 @@ final class OfficeLocalizationTests: XCTestCase {
             ("응답 중인 터미널이 있습니다. 대화 모드로 돌아가면 해당 CLI 프로세스가 종료됩니다.", "A terminal is currently responding. Switching to conversation mode will terminate that CLI process."),
             ("일반 파일만 첨부할 수 있습니다: %@", "Only regular files can be attached: %@"),
             ("%@ · 새 버전", "%@ · New Version"),
-            ("설치본 %@ → %@", "Installed %@ → %@")
+            ("설치본 %@ → %@", "Installed %@ → %@"),
+            ("Node 실행 파일을 찾을 수 없습니다.", "Node executable not found."),
+            ("launchctl 실행에 실패했습니다.", "Failed to run launchctl."),
+            ("생각 중", "Thinking"),
+            ("협업 검토", "Review collaboration"),
+            ("업무가 진행 중입니다.", "Work is in progress.")
         ]
 
         for testCase in testCases {
@@ -302,13 +307,16 @@ final class OfficeLocalizationTests: XCTestCase {
         }
     }
 
-    func testWhiteboardLabelsAreCompactInBothLanguages() {
-        for lang in [["ko-KR"], ["en-US"]] {
-            XCTAssertEqual(OfficeLocalization.string("5시간", languages: lang), "5H")
-            XCTAssertEqual(OfficeLocalization.string("7일", languages: lang), "7D")
-            XCTAssertEqual(OfficeLocalization.string("오늘 비용", languages: lang), "Today")
-            XCTAssertEqual(OfficeLocalization.string("30일 비용", languages: lang), "30D")
-        }
+    func testWhiteboardLabelsAreCompactInEnglishAndOriginalInKorean() {
+        XCTAssertEqual(OfficeLocalization.string("5시간", languages: ["en-US"]), "5H")
+        XCTAssertEqual(OfficeLocalization.string("7일", languages: ["en-US"]), "7D")
+        XCTAssertEqual(OfficeLocalization.string("오늘 비용", languages: ["en-US"]), "Today")
+        XCTAssertEqual(OfficeLocalization.string("30일 비용", languages: ["en-US"]), "30D")
+
+        XCTAssertEqual(OfficeLocalization.string("5시간", languages: ["ko-KR"]), "5시간")
+        XCTAssertEqual(OfficeLocalization.string("7일", languages: ["ko-KR"]), "7일")
+        XCTAssertEqual(OfficeLocalization.string("오늘 비용", languages: ["ko-KR"]), "오늘 비용")
+        XCTAssertEqual(OfficeLocalization.string("30일 비용", languages: ["ko-KR"]), "30일 비용")
     }
 }
 

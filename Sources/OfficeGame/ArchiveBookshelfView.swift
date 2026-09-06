@@ -61,10 +61,10 @@ private struct ArchiveRecordTile: View {
                             .font(.system(size: 10, weight: .bold))
 
                         if turn.status.isRunning {
-                            Text("업무 중")
+                            Text(OfficeLocalization.string("업무 중"))
                                 .foregroundStyle(Color.green)
                         } else if turn.needsInput {
-                            Text("답변 필요")
+                            Text(OfficeLocalization.string("답변 필요"))
                                 .foregroundStyle(Color.orange)
                         }
 
@@ -439,7 +439,7 @@ struct ArchiveOpenBook: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.red.opacity(0.86))
                 } else {
-                    Text("업무가 진행 중입니다.")
+                    Text(OfficeLocalization.string("업무가 진행 중입니다."))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -587,7 +587,9 @@ struct ArchiveOpenBook: View {
                     )
                 } else {
                     Label(
-                        copiedKey == key ? "복사됨" : "복사",
+                        copiedKey == key
+                            ? OfficeLocalization.string("복사됨")
+                            : OfficeLocalization.string("복사"),
                         systemImage:
                             copiedKey == key
                             ? "checkmark"

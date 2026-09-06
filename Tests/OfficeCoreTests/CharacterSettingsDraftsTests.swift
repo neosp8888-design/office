@@ -45,7 +45,8 @@ final class CharacterSettingsDraftsTests: XCTestCase {
             source.contains("identitySettingsCharacter = character.id")
         )
         XCTAssertTrue(
-            source.contains("Label(\"설정\", systemImage: \"gearshape\")")
+            source.contains("OfficeLocalization.string(\"설정\")")
+                && source.contains("systemImage: \"gearshape\"")
         )
         XCTAssertTrue(source.contains("CharacterIdentitySettingsView("))
         XCTAssertFalse(source.contains("showsCharacterSettings"))

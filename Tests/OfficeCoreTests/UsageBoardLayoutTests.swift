@@ -233,12 +233,12 @@ final class UsageBoardLayoutTests: XCTestCase {
         )
         let compaction = String(source[compactionStart..<compactionEnd])
         let profileStart = try XCTUnwrap(
-            source.range(of: "Label(\n                                \"프로필\"")?
+            source.range(of: "OfficeLocalization.string(\"프로필\")")?
                 .lowerBound
         )
         let profileEnd = try XCTUnwrap(
             source.range(
-                of: ".accessibilityLabel(\"직원 프로필\")",
+                of: ".accessibilityLabel(OfficeLocalization.string(\"직원 프로필\"))",
                 range: profileStart..<source.endIndex
             )?.upperBound
         )

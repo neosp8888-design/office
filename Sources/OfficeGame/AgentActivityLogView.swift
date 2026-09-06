@@ -1301,7 +1301,7 @@ private struct CodexWaitingView: View {
             .frame(width: 20, height: 16)
             .accessibilityHidden(true)
 
-            Text("생각 중")
+            Text(OfficeLocalization.string("생각 중"))
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(.secondary)
 
@@ -1314,7 +1314,7 @@ private struct CodexWaitingView: View {
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("생각 중")
+        .accessibilityLabel(OfficeLocalization.string("생각 중"))
     }
 }
 
@@ -1347,7 +1347,9 @@ private struct CodexCollaborationGroupView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
-                isExpanded ? "협업 검토 접기" : "협업 검토 자세히 보기"
+                isExpanded
+                    ? OfficeLocalization.string("협업 검토 접기")
+                    : OfficeLocalization.string("협업 검토 자세히 보기")
             )
 
             progressBar
@@ -1419,7 +1421,7 @@ private struct CodexCollaborationGroupView: View {
                 )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("협업 검토")
+                Text(OfficeLocalization.string("협업 검토"))
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundStyle(.primary)
 
@@ -1485,7 +1487,11 @@ private struct CodexCollaborationGroupView: View {
                         .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(.secondary)
 
-                    Text(latestEvent.status == .running ? "최근 요청" : "최근 결과")
+                    Text(
+                        latestEvent.status == .running
+                            ? OfficeLocalization.string("최근 요청")
+                            : OfficeLocalization.string("최근 결과")
+                    )
                         .font(.system(size: 8.5, weight: .bold))
                         .foregroundStyle(Color.purple)
                         .padding(.horizontal, 5)
@@ -1594,8 +1600,8 @@ private struct CodexCollaborationAgentView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(
                                 isResultExpanded
-                                    ? "검토 결과 접기"
-                                    : "검토 결과 자세히"
+                                    ? OfficeLocalization.string("검토 결과 접기")
+                                    : OfficeLocalization.string("검토 결과 자세히")
                             )
                                 .font(.system(size: 9.5, weight: .bold))
                                 .foregroundStyle(Color.purple)
@@ -2132,9 +2138,15 @@ private struct CodexFileChangeSummaryView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help(copied ? "변경 결과 복사됨" : "변경 결과 복사")
+                .help(
+                    copied
+                        ? OfficeLocalization.string("변경 결과 복사됨")
+                        : OfficeLocalization.string("변경 결과 복사")
+                )
                 .accessibilityLabel(
-                    copied ? "변경 결과 복사됨" : "변경 결과 복사"
+                    copied
+                        ? OfficeLocalization.string("변경 결과 복사됨")
+                        : OfficeLocalization.string("변경 결과 복사")
                 )
                 .accessibilityIdentifier("copyChanges-\(summary.id)")
             }
@@ -2442,8 +2454,8 @@ struct WorkspaceFileRevealButton: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
-            .help("Finder에서 보기")
-            .accessibilityLabel("\(title), Finder에서 보기")
+            .help(OfficeLocalization.string("Finder에서 보기"))
+            .accessibilityLabel(OfficeLocalization.format("%@, Finder에서 보기", title))
             .accessibilityIdentifier(accessibilityIdentifier)
         } else {
             Text(title)
