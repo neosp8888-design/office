@@ -196,6 +196,10 @@
 "제목 없는 업무" = "Untitled task";
 "이전 기록 보기" = "Show previous record";
 "다음 기록 보기" = "Show next record";
+"이전 문서 보기" = "Show previous document";
+"다음 문서 보기" = "Show next document";
+"본문" = "Body";
+"문서를 넓은 창으로 펼치기" = "Open the document in a larger view";
 "장서 정보" = "Record details";
 "기록 없음" = "No record";
 "모드" = "Mode";

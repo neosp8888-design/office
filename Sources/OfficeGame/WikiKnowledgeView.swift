@@ -235,56 +235,82 @@ struct WikiKnowledgeView: View {
             )
             .accessibilityIdentifier("wikiKnowledgeEmptyState")
         } else {
-            GeometryReader { geometry in
-                if WikiKnowledgeLayout.usesStackedLayout(
-                    for: geometry.size.width
-                ) {
-                    VStack(spacing: 0) {
-                        pageList
-                            .frame(
-                                height: min(
-                                    145,
-                                    max(92, geometry.size.height * 0.34)
-                                )
-                            )
-                        Divider().opacity(0.5)
-                        pageDetail
-                    }
-                } else {
-                    HStack(spacing: 0) {
-                        pageList
-                            .frame(width: min(210, geometry.size.width * 0.36))
-                        Divider().opacity(0.5)
-                        pageDetail
+            // 대화 보관함과 같은 방식이다. 좁은 패널에서 목록과 본문을 나눠
+            // 보이지 않고, 목록만 넓게 두고 문서를 누르면 넓은 시트로 펼친다.
+            pageList
+                .sheet(isPresented: isShowingPage) {
+                    if let selectedPage, let selectedIndex {
+                        WikiOpenBook(
+                            page: selectedPage,
+                            navigation: ArchiveBookNavigation(
+                                index: selectedIndex,
+                                total: pages.count,
+                                canGoPrevious: selectedIndex > 0,
+                                canGoNext: selectedIndex + 1 < pages.count
+                            ),
+                            onPrevious: { showPage(offset: -1) },
+                            onNext: { showPage(offset: 1) },
+                            onClose: { selectedPageID = nil }
+                        )
+                        .frame(
+                            minWidth: ArchiveBookSheetLayout.minimumWidth,
+                            idealWidth: ArchiveBookSheetLayout.idealWidth,
+                            minHeight: ArchiveBookSheetLayout.minimumHeight,
+                            idealHeight: ArchiveBookSheetLayout.idealHeight
+                        )
                     }
                 }
-            }
         }
+    }
+
+    private var isShowingPage: Binding<Bool> {
+        Binding(
+            get: { selectedPage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedPageID = nil
+                }
+            }
+        )
+    }
+
+    private var selectedIndex: Int? {
+        guard let selectedPageID else {
+            return nil
+        }
+        return pages.firstIndex(where: { $0.id == selectedPageID })
+    }
+
+    private func showPage(offset: Int) {
+        guard let selectedIndex else {
+            return
+        }
+        let target = selectedIndex + offset
+        guard pages.indices.contains(target) else {
+            return
+        }
+        selectedPageID = pages[target].id
     }
 
     private var pageList: some View {
         ScrollView {
-            LazyVStack(spacing: 5) {
+            LazyVStack(spacing: 6) {
                 ForEach(pages) { page in
                     Button {
                         selectedPageID = page.id
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
                                 Text(page.title)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 12.5, weight: .semibold))
                                     .lineLimit(2)
                                     .multilineTextAlignment(.leading)
 
-                                Spacer(minLength: 2)
+                                Spacer(minLength: 4)
 
-                                if selectedPageID == page.id {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundStyle(
-                                            DashboardPalette.accent
-                                        )
-                                }
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 8.5, weight: .bold))
+                                    .foregroundStyle(DashboardPalette.accent)
                             }
 
                             Text(page.pageKey)
@@ -292,106 +318,47 @@ struct WikiKnowledgeView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
 
-                            Text(
-                                OfficeLocalization.date(page.updatedAt,
-                                    dateStyle: .abbreviated,
-                                    time: .shortened
+                            HStack(spacing: 6) {
+                                Text(
+                                    OfficeLocalization.date(page.updatedAt,
+                                        dateStyle: .abbreviated,
+                                        time: .shortened
+                                    )
                                 )
-                            )
+                                Text("·")
+                                Text(
+                                    OfficeLocalization.format(
+                                        "근거 %d건",
+                                        page.sources.count
+                                    )
+                                )
+                            }
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
                         }
-                        .padding(9)
+                        .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
-                            selectedPageID == page.id
-                                ? DashboardPalette.accent.opacity(0.10)
-                                : Color.primary.opacity(0.025),
+                            Color.primary.opacity(0.025),
                             in: RoundedRectangle(
                                 cornerRadius: 9,
                                 style: .continuous
                             )
                         )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(Color.primary.opacity(0.06))
+                        }
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(page.title)
-                    .accessibilityValue(
-                        selectedPageID == page.id ? OfficeLocalization.string("선택됨") : ""
-                    )
+                    .accessibilityHint(OfficeLocalization.string("문서를 넓은 창으로 펼치기"))
                     .accessibilityIdentifier("wikiPage-\(page.id)")
                 }
             }
             .padding(9)
         }
         .accessibilityIdentifier("wikiPageList")
-    }
-
-    @ViewBuilder
-    private var pageDetail: some View {
-        if let selectedPage {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(selectedPage.title)
-                            .font(.system(size: 17, weight: .bold))
-                            .textSelection(.enabled)
-
-                        HStack(spacing: 7) {
-                            Text(selectedPage.pageKey)
-                                .font(.system(size: 10, design: .monospaced))
-                            Text("·")
-                            Text(
-                                OfficeLocalization.date(selectedPage.updatedAt,
-                                    dateStyle: .abbreviated,
-                                    time: .shortened
-                                )
-                            )
-                        }
-                        .foregroundStyle(.secondary)
-                        .font(.system(size: 10))
-                        .textSelection(.enabled)
-                    }
-
-                    ConversationMarkdownView(
-                        source: selectedPage.body,
-                        fontSize: 12
-                    )
-                    .textSelection(.enabled)
-
-                    Divider().opacity(0.5)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            OfficeLocalization.format(
-                                "근거 %d건",
-                                selectedPage.sources.count
-                            ),
-                            systemImage: "link"
-                        )
-                        .font(.system(size: 11, weight: .bold))
-
-                        if selectedPage.sources.isEmpty {
-                            Text(OfficeLocalization.string("연결된 업무 기록이 없습니다."))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(selectedPage.sources) { source in
-                                WikiSourceCard(source: source)
-                            }
-                        }
-                    }
-                    .accessibilityIdentifier("wikiPageSources")
-                }
-                .padding(14)
-            }
-            .accessibilityIdentifier("wikiPageDetail")
-        } else {
-            WikiUnavailableState(
-                title: OfficeLocalization.string("지식을 선택하세요"),
-                systemImage: "doc.text",
-                description: OfficeLocalization.string("목록에서 문서를 선택하면 본문과 근거가 열립니다.")
-            )
-        }
     }
 
     @ViewBuilder
@@ -495,10 +462,13 @@ struct WikiKnowledgeView: View {
                     return
                 }
                 pages = nextPages
-                selectedPageID = WikiKnowledgeSelection.resolvedPageID(
-                    current: selectedPageID,
-                    pages: nextPages
-                )
+                // 시트는 문서를 눌렀을 때만 열린다. 펼쳐 둔 문서가 새 목록에서
+                // 빠졌으면 시트를 닫는다.
+                if let selectedPageID,
+                    !nextPages.contains(where: { $0.id == selectedPageID })
+                {
+                    self.selectedPageID = nil
+                }
             case .pending:
                 let nextProposals = try await client.fetchWikiProposals()
                 guard !Task.isCancelled, section == requestedSection else {
@@ -572,6 +542,247 @@ struct WikiKnowledgeView: View {
 private enum WikiProposalDecision {
     case approve
     case reject
+}
+
+/// 대화 보관함의 펼쳐 보기와 같은 두 쪽 시트다. 왼쪽에 본문, 오른쪽에 근거를 둔다.
+struct WikiOpenBook: View {
+    let page: WikiPage
+    let navigation: ArchiveBookNavigation
+    let onPrevious: () -> Void
+    let onNext: () -> Void
+    let onClose: () -> Void
+
+    private let bookColor = DashboardPalette.accent
+
+    var body: some View {
+        VStack(spacing: 0) {
+            bookToolbar
+
+            GeometryReader { geometry in
+                let pageWidth = max(0, (geometry.size.width - 30) / 2)
+
+                HStack(spacing: 0) {
+                    leftPage
+                        .frame(width: pageWidth)
+
+                    bookBinding
+                        .frame(width: 14)
+
+                    rightPage
+                        .frame(width: pageWidth)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
+            }
+        }
+        .background(
+            LinearGradient(
+                colors: [
+                    bookColor.opacity(0.055),
+                    Color.primary.opacity(0.012),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .textSelection(.enabled)
+        .accessibilityIdentifier("wikiOpenBook")
+    }
+
+    private var bookToolbar: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(bookColor)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(page.title)
+                    .font(.system(size: 11, weight: .bold))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(page.pageKey)
+                        .font(.system(size: 8.5, design: .monospaced))
+                    Text("·")
+                    Text(
+                        OfficeLocalization.date(page.updatedAt,
+                            dateStyle: .abbreviated,
+                            time: .shortened
+                        )
+                    )
+                }
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 2) {
+                pagingButton(
+                    systemImage: "chevron.left",
+                    label: "이전 문서 보기",
+                    isEnabled: navigation.canGoPrevious,
+                    shortcut: .leftArrow,
+                    action: onPrevious
+                )
+
+                Text("\(navigation.index + 1) / \(navigation.total)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 3)
+
+                pagingButton(
+                    systemImage: "chevron.right",
+                    label: "다음 문서 보기",
+                    isEnabled: navigation.canGoNext,
+                    shortcut: .rightArrow,
+                    action: onNext
+                )
+            }
+            .padding(.horizontal, 3)
+            .frame(height: 26)
+            .background(
+                Color.primary.opacity(0.055),
+                in: Capsule()
+            )
+
+            Button(action: onClose) {
+                Label(OfficeLocalization.string("닫기"), systemImage: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(
+                        Color.primary.opacity(0.055),
+                        in: Capsule()
+                    )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel(OfficeLocalization.string("닫기"))
+            .accessibilityIdentifier("wikiOpenBookClose")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 43)
+    }
+
+    private func pagingButton(
+        systemImage: String,
+        label: String,
+        isEnabled: Bool,
+        shortcut: KeyEquivalent,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .bold))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.35)
+        .keyboardShortcut(shortcut, modifiers: [])
+        .accessibilityLabel(OfficeLocalization.string(label))
+        .help(OfficeLocalization.string(label))
+    }
+
+    private var leftPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                pageHeading("본문", systemImage: "text.book.closed.fill")
+
+                Text(page.title)
+                    .font(.system(size: 17, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ConversationMarkdownView(source: page.body, fontSize: 14)
+            }
+            .padding(12)
+        }
+        .background(
+            pageBackground,
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.07))
+        }
+        .shadow(color: .black.opacity(0.08), radius: 6, x: -2, y: 3)
+        .accessibilityIdentifier("wikiPageDetail")
+    }
+
+    private var rightPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 9) {
+                Label(
+                    OfficeLocalization.format("근거 %d건", page.sources.count),
+                    systemImage: "link"
+                )
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(bookColor)
+
+                if page.sources.isEmpty {
+                    Text(OfficeLocalization.string("연결된 업무 기록이 없습니다."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(page.sources) { source in
+                        WikiSourceCard(source: source)
+                    }
+                }
+            }
+            .padding(12)
+            .accessibilityIdentifier("wikiPageSources")
+        }
+        .background(
+            pageBackground,
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.07))
+        }
+        .shadow(color: .black.opacity(0.08), radius: 6, x: 2, y: 3)
+    }
+
+    private var bookBinding: some View {
+        LinearGradient(
+            colors: [
+                Color.black.opacity(0.04),
+                bookColor.opacity(0.22),
+                Color.black.opacity(0.07),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .overlay {
+            Rectangle()
+                .fill(Color.white.opacity(0.28))
+                .frame(width: 1)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private var pageBackground: some ShapeStyle {
+        LinearGradient(
+            colors: [
+                Color(nsColor: .textBackgroundColor),
+                Color(red: 0.98, green: 0.96, blue: 0.89)
+                    .opacity(0.56),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    private func pageHeading(
+        _ title: String,
+        systemImage: String
+    ) -> some View {
+        Label(OfficeLocalization.string(title), systemImage: systemImage)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(bookColor)
+    }
 }
 
 private struct WikiSourceCard: View {
