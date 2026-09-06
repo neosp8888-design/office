@@ -126,7 +126,11 @@ private struct ArchiveRecordTile: View {
     }
 
     private var bookColor: Color {
-        DashboardPalette.characterAccent(for: turn.characterId)
+        // 대화 화면과 같은 백엔드 색을 쓴다. 코덱스 녹색, 안티그래비티 파랑,
+        // Claude 주황이 목록과 펼친 기록에서 일치한다.
+        DashboardPalette.providerAccent(
+            for: turn.backend ?? turn.characterBackend
+        )
     }
 
     private var recordTitle: String {
@@ -639,6 +643,10 @@ struct ArchiveOpenBook: View {
     }
 
     private var bookColor: Color {
-        DashboardPalette.characterAccent(for: turn.characterId)
+        // 대화 화면과 같은 백엔드 색을 쓴다. 코덱스 녹색, 안티그래비티 파랑,
+        // Claude 주황이 목록과 펼친 기록에서 일치한다.
+        DashboardPalette.providerAccent(
+            for: turn.backend ?? turn.characterBackend
+        )
     }
 }
