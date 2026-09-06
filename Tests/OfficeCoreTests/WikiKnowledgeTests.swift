@@ -60,6 +60,24 @@ final class WikiKnowledgeTests: XCTestCase {
         XCTAssertEqual(request.httpBody, Data("{}".utf8))
     }
 
+    func testDeletionRequestSendsUserDecisionHeader() {
+        let request = client.wikiPageDeletionRequest(id: "page-3")
+
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(request.url?.path, "/api/wiki/pages/page-3")
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "content-type"),
+            "application/json"
+        )
+        XCTAssertEqual(
+            request.value(
+                forHTTPHeaderField: "X-OFFICESTRA-User-Decision"
+            ),
+            "delete:page-3"
+        )
+        XCTAssertNil(request.httpBody)
+    }
+
     func testRejectionRequestKeepsOptionalReason() throws {
         let request = try client.wikiProposalRejectionRequest(
             id: "proposal-2",

@@ -259,6 +259,35 @@ struct OfficeDatabaseClient: Sendable {
         return try decodeWikiPages(data)
     }
 
+    /// 승인·거절과 같은 사용자 결정 헤더를 붙인다. 백엔드는 이 헤더가 없는
+    /// DELETE를 거절하므로 화면의 삭제 버튼만 문서를 지울 수 있다.
+    func wikiPageDeletionRequest(id: String) -> URLRequest {
+        var request = URLRequest(
+            url: baseURL
+                .appending(path: "api")
+                .appending(path: "wiki")
+                .appending(path: "pages")
+                .appending(path: id)
+        )
+        request.httpMethod = "DELETE"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "content-type"
+        )
+        request.setValue(
+            "delete:\(id)",
+            forHTTPHeaderField: "X-OFFICESTRA-User-Decision"
+        )
+        return request
+    }
+
+    func deleteWikiPage(id: String) async throws {
+        let (data, response) = try await URLSession.shared.data(
+            for: wikiPageDeletionRequest(id: id)
+        )
+        try validate(response, data: data)
+    }
+
     func decodeWikiPages(_ data: Data) throws -> [WikiPage] {
         try historyDecoder().decode(WikiPagesResponse.self, from: data).pages
     }

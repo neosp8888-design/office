@@ -73,6 +73,7 @@ import { startSlackBridge } from "./slack-bridge.mjs";
 import {
   WikiKnowledgeError,
   approveWikiProposal,
+  archiveWikiPage,
   createWikiProposal,
   getWikiPage,
   isWikiPageKeyRaceError,
@@ -2005,6 +2006,27 @@ async function wikiPageEndpoint(response, pageID) {
   send(response, 200, { page });
 }
 
+async function deleteWikiPageEndpoint(response, request, pageID) {
+  if (!trustedJSONMutation(request, response)) {
+    return;
+  }
+  // 승인·거절과 같은 intent guard다. 사내 위키 화면의 삭제 버튼만
+  // 이 헤더를 보내므로 일반 API 호출로는 문서가 지워지지 않는다.
+  const userDecision = request.headers["x-officestra-user-decision"];
+  if (userDecision !== `delete:${pageID}`) {
+    send(response, 403, {
+      error: "사내 위키 화면에서 사용자가 직접 결정해야 합니다.",
+    });
+    return;
+  }
+  const page = await withTransaction((client) =>
+    archiveWikiPage(client, {
+      pageID,
+      repositoryRoot: runtime.repositoryRoot,
+    }));
+  send(response, 200, { page });
+}
+
 async function wikiProposalsEndpoint(response, url) {
   const proposals = await listWikiProposals(pool, {
     state: url.searchParams.get("state"),
@@ -2373,6 +2395,15 @@ const server = createServer(async (request, response) => {
       routeWikiPage(url.pathname)
     ) {
       await wikiPageEndpoint(response, routeWikiPage(url.pathname));
+    } else if (
+      request.method === "DELETE" &&
+      routeWikiPage(url.pathname)
+    ) {
+      await deleteWikiPageEndpoint(
+        response,
+        request,
+        routeWikiPage(url.pathname),
+      );
     } else if (
       request.method === "GET" &&
       url.pathname === "/api/wiki/proposals"

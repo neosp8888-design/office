@@ -276,11 +276,76 @@ export async function getWikiPage(client, pageID, { repositoryRoot = null } = {}
       ${PAGE_SELECT}
       WHERE record.id = $1
         AND record.record_type = 'synthesis'
+        AND record.lifecycle_state = 'active'
         AND ($2::text IS NULL OR project.repository_root = $2)
     `,
     [pageID, repositoryRoot],
   );
   return result.rows[0] ?? null;
+}
+
+// 사용자가 위키 문서를 지우면 행을 삭제하지 않고 lifecycle을 archived로
+// 바꾼다. 목록·검색·근거 검증은 모두 active만 보므로 화면에서 사라지고,
+// 이력과 근거 링크는 남는다. 같은 키의 제안이 다시 승인되면 active로 돌아온다.
+export async function archiveWikiPage(client, {
+  pageID,
+  repositoryRoot = null,
+}) {
+  const locked = await client.query(
+    `
+      SELECT
+        record.id,
+        record.lifecycle_state AS "lifecycleState",
+        COALESCE(
+          (
+            SELECT MAX(event.record_version)
+            FROM work_record_events AS event
+            WHERE event.record_id = record.id
+          ),
+          0
+        ) AS version
+      FROM work_records AS record
+      JOIN projects AS project ON project.id = record.project_id
+      WHERE record.id = $1
+        AND record.record_type = 'synthesis'
+        AND ($2::text IS NULL OR project.repository_root = $2)
+      FOR UPDATE OF record
+    `,
+    [pageID, repositoryRoot],
+  );
+  const page = locked.rows[0];
+  if (!page || page.lifecycleState !== "active") {
+    throw invalid("위키 페이지를 찾을 수 없습니다.", 404);
+  }
+  await client.query(
+    `
+      UPDATE work_records
+      SET lifecycle_state = 'archived',
+        updated_at = now()
+      WHERE id = $1
+    `,
+    [pageID],
+  );
+  await client.query(
+    `
+      INSERT INTO work_record_events (
+        record_id,
+        record_version,
+        event_type,
+        actor_type,
+        previous_value,
+        next_value
+      )
+      VALUES ($1, $2, 'state_changed', 'user', $3::jsonb, $4::jsonb)
+    `,
+    [
+      pageID,
+      Number(page.version) + 1,
+      JSON.stringify({ lifecycleState: "active" }),
+      JSON.stringify({ lifecycleState: "archived" }),
+    ],
+  );
+  return { id: pageID, lifecycleState: "archived" };
 }
 
 export async function listWikiProposals(client, {
@@ -701,6 +766,7 @@ export async function approveWikiProposal(client, {
         UPDATE work_records
         SET title = $2,
           body = $3,
+          lifecycle_state = 'active',
           metadata = metadata || jsonb_build_object(
             'pageKey', $4::text,
             'kind', $5::text

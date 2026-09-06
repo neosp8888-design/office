@@ -9,6 +9,7 @@ import pg from "pg";
 import {
   WikiKnowledgeError,
   approveWikiProposal,
+  archiveWikiPage,
   createWikiProposal,
   getWikiPage,
   listWikiPages,
@@ -224,6 +225,18 @@ test("위키 mutation 라우트는 trustedJSONMutation을 거친다", () => {
   assert.match(
     approvalHandler,
     /사내 위키 화면에서 사용자가 직접 결정해야 합니다/,
+  );
+  const deleteHandler = serverSource.slice(
+    serverSource.indexOf("async function deleteWikiPageEndpoint"),
+    serverSource.indexOf("async function wikiProposalsEndpoint"),
+  );
+  assert.match(deleteHandler, /trustedJSONMutation\(request, response\)/);
+  assert.match(deleteHandler, /x-officestra-user-decision/);
+  assert.match(deleteHandler, /`delete:\$\{pageID\}`/);
+  assert.match(deleteHandler, /archiveWikiPage\(/);
+  assert.match(
+    serverSource,
+    /request\.method === "DELETE" &&\s*routeWikiPage\(url\.pathname\)/,
   );
 });
 
@@ -608,6 +621,56 @@ test(
         state: "published",
       });
       assert.ok(proposals.some((row) => row.id === created.id));
+
+      // 8) 사용자 삭제: archived로 바뀌어 목록·검색·단건 조회에서 사라지고,
+      //    같은 키의 제안이 다시 승인되면 active로 돌아온다.
+      const archived = await archiveWikiPage(client, { pageID });
+      assert.equal(archived.lifecycleState, "archived");
+      assert.equal(await getWikiPage(client, pageID), null);
+      assert.ok(
+        !(await listWikiPages(client)).some((row) => row.id === pageID),
+      );
+      assert.ok(
+        !(await listWikiPages(client, { query: "침해 사건" })).some(
+          (row) => row.id === pageID,
+        ),
+      );
+      await assert.rejects(
+        archiveWikiPage(client, { pageID }),
+        (error) =>
+          error instanceof WikiKnowledgeError && error.statusCode === 404,
+      );
+      const archivedEvents = await client.query(
+        `
+          SELECT event_type, actor_type, next_value
+          FROM work_record_events
+          WHERE record_id = $1
+          ORDER BY record_version DESC
+          LIMIT 1
+        `,
+        [pageID],
+      );
+      assert.equal(archivedEvents.rows[0].event_type, "state_changed");
+      assert.equal(archivedEvents.rows[0].actor_type, "user");
+      assert.equal(archivedEvents.rows[0].next_value.lifecycleState, "archived");
+
+      const revival = await createWikiProposal(client, {
+        projectId: projectID,
+        pageKey,
+        kind: "incident",
+        approvalGrade: "auto",
+        draftTitle: "삭제 뒤 다시 게시",
+        draftBody: "다시 살아난 본문",
+        sourceWorkRecordIds: [sourceA],
+        authorCharacterId: authorID,
+        baseVersion: 4,
+      });
+      const revived = await approveWikiProposal(client, {
+        proposalID: revival.id,
+        actorType: "system",
+      });
+      assert.equal(revived.proposal.state, "published");
+      assert.equal((await getWikiPage(client, pageID))?.title, "삭제 뒤 다시 게시");
     } finally {
       await client.query(
         "DELETE FROM wiki_proposals WHERE project_id = ANY($1::uuid[])",

@@ -73,6 +73,9 @@ struct WikiKnowledgeView: View {
     @State private var rejectionReasons: [String: String] = [:]
     @State private var proposalErrors: [String: String] = [:]
     @State private var actionNotice: String?
+    @State private var pendingDeletion: WikiPage?
+    @State private var deletingPageIDs: Set<String> = []
+    @State private var deletionError: String?
 
     private static let pageLimit = 60
 
@@ -238,6 +241,25 @@ struct WikiKnowledgeView: View {
             // 대화 보관함과 같은 방식이다. 좁은 패널에서 목록과 본문을 나눠
             // 보이지 않고, 목록만 넓게 두고 문서를 누르면 넓은 시트로 펼친다.
             pageList
+                .confirmationDialog(
+                    OfficeLocalization.format(
+                        "‘%@’ 문서를 삭제할까요?",
+                        pendingDeletion?.title ?? ""
+                    ),
+                    isPresented: Binding(
+                        get: { pendingDeletion != nil },
+                        set: { if !$0 { pendingDeletion = nil } }
+                    ),
+                    titleVisibility: .visible,
+                    presenting: pendingDeletion
+                ) { page in
+                    Button(OfficeLocalization.string("문서 삭제"), role: .destructive) {
+                        Task { await delete(page) }
+                    }
+                    Button(OfficeLocalization.string("취소"), role: .cancel) {}
+                } message: { _ in
+                    Text(OfficeLocalization.string(WikiKnowledgeView.deletionMessage))
+                }
                 .sheet(isPresented: isShowingPage) {
                     if let selectedPage, let selectedIndex {
                         WikiOpenBook(
@@ -248,8 +270,10 @@ struct WikiKnowledgeView: View {
                                 canGoPrevious: selectedIndex > 0,
                                 canGoNext: selectedIndex + 1 < pages.count
                             ),
+                            isDeleting: deletingPageIDs.contains(selectedPage.id),
                             onPrevious: { showPage(offset: -1) },
                             onNext: { showPage(offset: 1) },
+                            onDelete: { Task { await delete(selectedPage) } },
                             onClose: { selectedPageID = nil }
                         )
                         .frame(
@@ -292,9 +316,34 @@ struct WikiKnowledgeView: View {
         selectedPageID = pages[target].id
     }
 
+    /// 삭제 확인 대화상자의 설명. 목록 칸과 펼쳐 보기 시트가 같은 문장을 쓴다.
+    static let deletionMessage =
+        "삭제한 문서는 목록과 검색에서 사라집니다. 같은 키의 제안이 다시 승인되면 다시 나타납니다."
+
     private var pageList: some View {
         ScrollView {
             LazyVStack(spacing: 6) {
+                if let actionNotice {
+                    Label(actionNotice, systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DashboardPalette.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .accessibilityIdentifier("wikiActionNotice")
+                }
+
+                if let deletionError {
+                    Label(
+                        OfficeLocalization.systemMessage(deletionError),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .accessibilityIdentifier("wikiDeletionError")
+                }
+
                 ForEach(pages) { page in
                     Button {
                         selectedPageID = page.id
@@ -311,6 +360,8 @@ struct WikiKnowledgeView: View {
                                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                                     .font(.system(size: 8.5, weight: .bold))
                                     .foregroundStyle(DashboardPalette.accent)
+                                    // 오른쪽 위에 겹쳐 두는 삭제 버튼 자리를 비운다.
+                                    .padding(.trailing, 22)
                             }
 
                             Text(page.pageKey)
@@ -354,6 +405,25 @@ struct WikiKnowledgeView: View {
                     .accessibilityLabel(page.title)
                     .accessibilityHint(OfficeLocalization.string("문서를 넓은 창으로 펼치기"))
                     .accessibilityIdentifier("wikiPage-\(page.id)")
+                    // 펼치기 버튼 위에 겹친 별도 버튼이라 여기를 누르면
+                    // 시트가 열리지 않고 삭제 확인만 뜬다.
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            pendingDeletion = page
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(deletingPageIDs.contains(page.id))
+                        .padding(6)
+                        .accessibilityLabel(OfficeLocalization.string("문서 삭제"))
+                        .accessibilityIdentifier("wikiDelete-\(page.id)")
+                        .help(OfficeLocalization.string("문서 삭제"))
+                    }
                 }
             }
             .padding(9)
@@ -493,6 +563,33 @@ struct WikiKnowledgeView: View {
     }
 
     @MainActor
+    private func delete(_ page: WikiPage) async {
+        guard !deletingPageIDs.contains(page.id) else {
+            return
+        }
+        deletingPageIDs.insert(page.id)
+        deletionError = nil
+        actionNotice = nil
+        let client = OfficeDatabaseClient(baseURL: databaseBaseURL)
+
+        do {
+            try await client.deleteWikiPage(id: page.id)
+            pages.removeAll(where: { $0.id == page.id })
+            if selectedPageID == page.id {
+                selectedPageID = nil
+            }
+            actionNotice = OfficeLocalization.format(
+                "‘%@’ 문서를 삭제했습니다.",
+                page.title
+            )
+        } catch {
+            deletionError = error.localizedDescription
+        }
+
+        deletingPageIDs.remove(page.id)
+    }
+
+    @MainActor
     private func decide(
         _ proposal: WikiProposal,
         decision: WikiProposalDecision
@@ -548,9 +645,13 @@ private enum WikiProposalDecision {
 struct WikiOpenBook: View {
     let page: WikiPage
     let navigation: ArchiveBookNavigation
+    let isDeleting: Bool
     let onPrevious: () -> Void
     let onNext: () -> Void
+    let onDelete: () -> Void
     let onClose: () -> Void
+
+    @State private var isConfirmingDeletion = false
 
     private let bookColor = DashboardPalette.accent
 
@@ -645,6 +746,36 @@ struct WikiOpenBook: View {
                 Color.primary.opacity(0.055),
                 in: Capsule()
             )
+
+            Button {
+                isConfirmingDeletion = true
+            } label: {
+                Label(OfficeLocalization.string("문서 삭제"), systemImage: "trash")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(
+                        Color.primary.opacity(0.055),
+                        in: Capsule()
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(isDeleting)
+            .opacity(isDeleting ? 0.5 : 1)
+            .accessibilityLabel(OfficeLocalization.string("문서 삭제"))
+            .accessibilityIdentifier("wikiOpenBookDelete")
+            .confirmationDialog(
+                OfficeLocalization.format("‘%@’ 문서를 삭제할까요?", page.title),
+                isPresented: $isConfirmingDeletion,
+                titleVisibility: .visible
+            ) {
+                Button(OfficeLocalization.string("문서 삭제"), role: .destructive) {
+                    onDelete()
+                }
+                Button(OfficeLocalization.string("취소"), role: .cancel) {}
+            } message: {
+                Text(OfficeLocalization.string(WikiKnowledgeView.deletionMessage))
+            }
 
             Button(action: onClose) {
                 Label(OfficeLocalization.string("닫기"), systemImage: "xmark")
